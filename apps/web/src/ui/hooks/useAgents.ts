@@ -6,6 +6,7 @@
  * invalidates it generically; an active run ALSO polls every `RUN_POLL_MS` in case the socket is
  * down. Members see their own runs, admin+ every run — the route decides, the hook just lists.
  */
+import { agentRunTimelineSchema } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
   type AgentRunEvent,
@@ -14,6 +15,7 @@ import {
   agentRunEventSchema,
   agentRunSchema,
   agentRunWithEventsSchema,
+  agentStatsResponseSchema,
   type CreateAgentRunRequest,
   createAgentRunResponseSchema,
 } from '@rocketflare/shared/ai/agents'
@@ -134,6 +136,27 @@ export function useAgentRun(id: string | undefined) {
     ...agentRunQueryOptions(id ?? ''),
     enabled: Boolean(id),
     refetchInterval: q => runPollInterval(q.state.data?.status),
+  })
+}
+
+/** Per-agent runs, outcomes, tokens, cost and mean duration over `days`, plus each last run. */
+export function useAgentStats(days = 30) {
+  return useQuery({
+    queryKey: queryKeys.agentRuns.stats(days),
+    queryFn: () => api.get(`/api/agents/stats?days=${days}`, { schema: agentStatsResponseSchema }),
+  })
+}
+
+/** The inspector's timeline (`GET /runs/:id/timeline`) — admins only, read when its tab opens. */
+export function useAgentRunTimeline(id: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.agentRuns.timeline(id ?? ''),
+    queryFn: () =>
+      api.get(`/api/agents/runs/${encodeURIComponent(id ?? '')}/timeline`, {
+        schema: agentRunTimelineSchema,
+      }),
+    enabled: Boolean(id),
+    refetchInterval: q => runPollInterval(q.state.data?.run.status),
   })
 }
 

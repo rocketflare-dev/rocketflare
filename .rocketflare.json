@@ -58,7 +58,8 @@
         "apps/web/src/ui/pages/agents/outputs/research-topic.tsx",
         "apps/evals/suites/agents/research-topic.eval.ts",
         "apps/evals/datasets/research-topic.jsonl",
-        "apps/evals/baselines/agents-research-topic.json"
+        "apps/evals/baselines/agents-research-topic.json",
+        "apps/web/tests/agent-recordings/research-topic-onboarding.json"
       ],
       "registries": [
         "apps/web/src/api/services/agents/registry.ts#CORE_AGENTS",

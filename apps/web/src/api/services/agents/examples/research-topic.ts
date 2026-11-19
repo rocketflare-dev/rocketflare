@@ -130,9 +130,10 @@ function collectDocuments(resultText: string, into: Map<string, string>): void {
 }
 
 /**
- * Rebuild `seen` from a resumed transcript. A resumed loop does NOT replay its earlier turns, so
- * without this the documents found before the retry would be absent from `seen` and every citation
- * earned in the first attempt would be dropped by `verifyCitations` as if hallucinated. The
+ * Rebuild `seen` from the loop's final transcript. A resumed loop does NOT replay its earlier
+ * turns, and a tool result the journal serves emits no event, so `onEvent` alone would miss the
+ * documents found before a retry — and `verifyCitations` would drop every citation earned in the
+ * first attempt as if hallucinated. The
  * transcript already holds every tool result verbatim, so the map is derived from it — the state is
  * a fold of the log, which is the same reason the checkpoint is worth storing at all.
  */
@@ -306,7 +307,6 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
     // A retried `execute` step re-enters `run()` from the top; the checkpoint is what stops it
     // paying for every turn again. Null on a first attempt (or an unreadable stored value).
     const resume = await ctx.checkpoint.load()
-    if (resume) rehydrateSeen(resume.messages, seen)
 
     await ctx.step('research', 'Searching the knowledge base', 'running')
     const loop = await runToolLoop(ctx.chat.client, {
@@ -348,6 +348,12 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
       // three attempts can never spend three times the cap.
       ...(resume ? { resume } : {}),
       onCheckpoint: checkpoint => ctx.checkpoint.save(checkpoint),
+      // The journal records each turn and tool result as it settles: a retry that dies part-way
+      // through a turn is served what already finished instead of paying for it again, and the
+      // run stays strictly replayable after it settles (the checkpoint does not survive that).
+      journal: ctx.journal,
+      // Reaches the model call in flight: a cancel no longer waits for the turn to finish.
+      signal: ctx.signal,
       // The loop takes no AbortSignal, so these two callbacks ARE the cancellation poll: once per
       // model turn, and once per tool result — a run doing slow tool work still stops promptly.
       onStep: async step => {
@@ -393,6 +399,9 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         }
       },
     })
+    // The finished transcript is the whole record — the resumed turns, AND the tool results the
+    // journal served silently (an attempt that recorded them already emitted their events).
+    rehydrateSeen(loop.messages, seen)
     await ctx.step(
       'research',
       'Searching the knowledge base',

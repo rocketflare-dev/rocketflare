@@ -70,6 +70,8 @@ export interface ToolRow {
   isError: boolean
   /** False while the call has not returned yet (the row spins). */
   done: boolean
+  /** Never returned, and the run has settled: it never will — shown still, not spinning. */
+  stopped?: boolean
   /** The START of the call. Never rewritten by the answer — that is what `endedAt` is for. */
   at: Date
   endedAt?: Date
@@ -175,7 +177,8 @@ export interface TimelineGroup {
   key: string
   /** `null` for the synthetic groups. */
   step: AgentStepEventData | null
-  status: 'running' | 'done' | 'error'
+  /** `stopped`: still open when the run settled — it will never close (see `stopOpenWork`). */
+  status: 'running' | 'done' | 'error' | 'stopped'
   rows: TimelineRow[]
   /** The step row itself, when there is one — so the group header can carry its id. */
   headerId: string
@@ -657,6 +660,24 @@ export function selectWorkStats(rows: readonly TimelineRow[]): RunWorkStats {
     .map(([name, entry]) => ({ name, calls: entry.calls, totalMs: entry.totalMs }))
     .sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name))
   return stats
+}
+
+/**
+ * A SETTLED run's open work is over: a stage with no `done`, a tool call with no answer. That
+ * happens whenever a run is settled from outside its attempt — a force cancel, the sweeper, an
+ * attempt lost with its isolate — because only a live attempt closes what it opened. Left alone,
+ * those rows would spin forever on a cancelled run; this marks them `stopped`. Pure, and only
+ * ever applied when the RUN says it is over (`isRunActive` false), never inferred from the log.
+ */
+export function stopOpenWork(groups: readonly TimelineGroup[]): TimelineGroup[] {
+  return groups.map(group => {
+    const rows = group.rows.map(row =>
+      row.kind === 'tool' && !row.done ? { ...row, stopped: true } : row
+    )
+    const changed = rows.some((row, i) => row !== group.rows[i])
+    if (group.status !== 'running' && !changed) return group
+    return { ...group, status: group.status === 'running' ? 'stopped' : group.status, rows }
+  })
 }
 
 /**

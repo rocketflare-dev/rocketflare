@@ -506,10 +506,15 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   Detail: `.claude/rules/api.md`.
 - **Workflow**: `AgentRunWorkflow` (§9). **Concurrency is a DB claim row, never a `Map`**:
   `ACTIVE_RUN_STATUSES` (exclusive index, includes parked runs) ⊃ `CLAIMABLE_RUN_STATUSES`
-  (the claim). Keep those two lists separate. A lost instance is settled on read, and there is no
-  sweeper cron.
-- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; plugins add their
-  own tasks, and each expression must appear in both tomls.
+  (the claim). Keep those two lists separate. A lost instance is settled on read, and by the
+  `sweepLostRuns` cron for a run nobody reads (below).
+- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; `*/10 * * * *`
+  runs `sweepLostRuns` — up to 100 active runs untouched for 10 minutes, oldest first, each
+  through `sweepRun`: a `queued` row that never got its instance gets one, `queued`/`running`
+  goes through `reconcileRun` (settles only what the runtime says has ended), `awaiting_input`
+  through `expireParkedRun`. Without it a dead run nobody opens holds its exclusive slot and counts
+  toward the tenant cap forever. Plugins add their own tasks, and each expression must appear in
+  both tomls.
 - **Realtime (D8)**: `NotificationsHub` DO, one per tenant, stateless, using the hibernation API
   with RPC publish. `GET /ws` resolves the cookie itself, and refuses an `Origin` outside the same
   allowlist as CORS and CSRF. Removing a member, signing out, blocking a person, suspending a tenant
@@ -656,8 +661,88 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   or public handler with `ctx.startAgentRun` (§16), the same `enqueueRun`. A plugin agent
   reaches `ctx.interrupt`, the resolved `chatModel` and `storage()` through `AgentCtx` (`@/plugins/api`). The Workflow runs `claim → execute#N → (resume#N | expire#N) → finish`, and
   **every step name carries its round**, because a repeated name replays the recorded result.
-  A retry resumes: `ctx.checkpoint` keeps the tool-loop transcript and `ctx.once(key, fn)` gives
-  once-per-run effects (a DB unique index; at-least-once with a recorded result).
+  That body is `runAgentRun` (`workflows/agent-run-body.ts`), written against the neutral `Step`
+  in `src/platform/types.ts` — the run-engine seam shared with Rocketpod, whose OpenWorkflow
+  adapter drives the same body; `AgentRunWorkflow` is the Cloudflare adapter. A retry resumes:
+  `ctx.checkpoint` keeps the tool-loop transcript and `ctx.once(key, fn)` gives once-per-run
+  effects (a DB unique index; at-least-once with a recorded result).
+- **Durable loop (D44)**: `runToolLoop({ journal: ctx.journal })` records every model turn and
+  every tool result in `agent_run_turns` AS IT SETTLES, and checkpoints the assistant turn BEFORE
+  its tools run. A retry — the 10-minute step timeout, an evicted isolate, a database blip — is
+  served what was recorded: a model turn asked about the same transcript (`request_hash`) is not
+  billed again, a tool call with a settled result (keyed by its `toolCallId`) is not run again,
+  even part-way through a turn, and steering notes folded into a recorded turn are re-applied
+  rather than re-asked. A transcript that changed underneath a record (an unrecorded read re-ran
+  and answered differently) asks the model and replaces the record. An unrecorded read simply
+  runs again; a tool marked `Tool.sideEffects` writes `started` first, and a retry that finds
+  `started` with no result settles it as an **unknown outcome** the model sees
+  (`UNKNOWN_OUTCOME_RESULT`) — unless the tool is also `durable`, which re-runs it with
+  `call.idempotencyKey` (the `toolCallId`) for the system it writes to. The policy's salvage call
+  is journaled too (turn 0). A loop inside a `ctx.scope`/`ctx.map` item has its own journal
+  (`items[2]/tool-loop`), so it resumes from the record although scopes have no checkpoint; a
+  plugin's `ctx.toolLoop` binds the journal for it. The journal outlives the settle (the
+  checkpoint does not) for `AGENT_TRANSCRIPT_RETENTION_DAYS` (default 30, nightly
+  `pruneAgentTurns`), which is what makes a tool-loop run strictly replayable. **Cancel reaches
+  the call in flight**: each `execute` attempt polls its row every 3 s (`watchCancel`,
+  `services/agents/cancel.ts`) and aborts `ctx.signal` on a cancel; every call through
+  `ctx.chat.client` (and `decide`'s client) carries the signal and is RACED against it, so even a
+  provider that ignores it (Workers AI) stops being waited for, and an aborted attempt settles
+  `cancelled`, never as a retryable `unavailable`. Pass `ctx.signal` to `runToolLoop` and your own
+  `fetch`es; a plugin's `ctx.toolLoop` / `ctx.structured` pass it already. A settled cancel
+  projects as AG-UI's `RUN_FINISHED { outcome: { type: 'cancelled' } }`, not a `RUN_ERROR`. A
+  cancel of a `running` run silent for longer than a step can run (`ATTEMPT_DEAD_MS`, 12 min — its
+  attempt died with its isolate) settles at once; and a run settled OUTSIDE its attempt (cancel,
+  force, the sweeper, a read reconciling) still ends its log with a `status` event carrying a
+  `reason`, so the timeline — which shows a settled run's unclosed work as stopped — tells the end.
+  **Tracing a run**: the first claim exports a zero-length `run started` span under the run's root
+  id (`rocketflare.run.pending`, the trace's name and tags), so a backend lists the run while it
+  is still going; the root `invoke_agent <key>` is still recorded once, at `finish` — an OTLP span
+  cannot be updated, and a backend that keeps the first copy of an id would keep the unfinished
+  one. Every span of a run carries `gen_ai.conversation.id` = the run id (AG-UI's `threadId`);
+  the `ai_spans.conversation_id` column stays a chat thread's. **Keys**: tool
+  calls are keyed by the model's `toolCallId`, never an author key; a loop's own key is
+  `RunToolLoopOptions.key` (default `tool-loop`); `ctx.once(label, fn, { inputs })` keys on the
+  label plus a hash of `inputs` (`label#<12 hex>`), so `for (q of queries) ctx.once('search', fn,
+  { inputs: q })` is one record per query; and any key used twice in ONE attempt — two `once`
+  calls, or two loops — throws `EffectKeyConflictError` (event code `agent_effect_key_conflict`,
+  never retried). Order-derived keys were rejected: Workflows cannot pin an instance to the code
+  it started on, so a run parked across a deploy would replay new code against old positions; data
+  keys survive that. Why: the durable-agents review (`docs/research/durable-agents-review-2026-11.md`
+  in the kit) — a mid-turn crash re-billed the turn and re-ran every tool that had finished.
+- **Versions, children, inspector (D44 phase 3)**: **version pinning** — every run records the
+  agent's `meta.version` (`agent_runs.agent_version`, default 1) and the Worker deployment it last
+  ran on (`worker_version_id`, from the `[version_metadata]` binding `CF_VERSION_METADATA`). An
+  attempt that finds a different `meta.version` applies `meta.onVersionChange`: `continue` (the
+  default — sound because every key is data-derived; a `status` event `reason: 'version_changed'`
+  says so), `fail` (code `agent_version_changed`), or `rerun` (cancel, then a NEW run of the same
+  input, idempotency key `rerun:<runId>` — the old run's record is the audit trail). `pinned: true`
+  forces `fail` and is the one place order-derived keys are allowed: a repeated `ctx.once` label
+  becomes `label@2`, `label@3` instead of a conflict. **Bump `meta.version` when a change moves or
+  renames a top-level `once`/`decide` key or changes what a decision is about**; the recordings
+  check (`apps/web/tests/agent-recordings/*.json`, written by `agent:replay --record <dir>`)
+  replays each committed run on every gate and fails with "bump `meta.version`" when such a change
+  arrives at the same version. **HITL**: `meta.hitl = { timeout, remindAfter, onTimeout }` — an
+  ask's deadline is `timeout` capped at `AGENT_INTERRUPT_TIMEOUT`; the `*/10` cron's
+  `sendReminders` reminds ONCE at `remindAfter`; `onTimeout: 'reject'` answers an expired ask as a
+  rejection by nobody (`cancelled`, note `Nobody answered before the deadline`) and wakes the run,
+  where the default `expire` cancels it. An ask may name `assignees: { userIds, groupIds }`
+  (visibility groups): they are the ones notified, see it in their inbox, may read the run and
+  answer — the requester then may not; an owner/admin always may. **Child runs**: `ctx.spawn(key,
+  agentKey, input)` starts another agent as its own run (`parent_run_id`, id from
+  `spawn:<parent>:<key>`, so a retried parent finds the same child), parks the parent with NO ask
+  while it runs, and the child's `finish` (or a cancel of it) wakes the parent, which gets the
+  output (recorded as effect `spawn:<key>`, what replay serves) or `ChildRunFailedError`. The
+  child's budget is what the parent could still spend (`agent_runs.budget`), and the parent's meter
+  counts every descendant's spend; a cancel cascades down; a parent that ends unsuccessfully
+  cancels its active children. Children are left out of `GET /runs` unless `?parentRunId=` and
+  carry `rocketflare.parent_run_id`/`parent_trace_id` on their spans. **Inspector**: `GET
+  /api/agents/runs/:id/timeline` (`@rocketflare/shared/ai/agent-timeline`) merges events, turns,
+  tool calls, effects, decisions, asks and children by time, with versions and spend vs budget —
+  `rocketflare agents inspect <runId>` and the run page's admin **Inspect** tab read it; `runs list`
+  gains `--parent`, `--since`, `--agent-version`. The agents UI scales by agent: `/agents` is one row
+  per agent (last run, 30-day runs/tokens/avg time/cost from ONE `GET /api/agents/stats`, scoped like
+  the runs list), each agent has `/agents/:agentKey` (metrics + its runs), and `/agents/runs` lists
+  every run. Why: the durable-agents review's phase 3 (#156).
 - **Human-in-the-loop (#17)**: `ctx.interrupt({ key, spec })` parks the run on
   `step.waitForEvent`. The key must be stable across attempts. Answering is a compare-and-set on the
   row, *then* a nudge to the instance (`not_found` → restart as `<runId>-rN`). There are four
@@ -690,7 +775,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   the record: `decide` from `agent_run_decisions` (same questions about the same state → `served`;
   reworded → `drift`; same questions about a different state, because upstream code changed what the
   decision is about → `stale`), `once` from `agent_run_effects`, `interrupt` from
-  `agent_run_interrupts`; anything the record cannot answer is a MISS (`strict`, the default — no
+  `agent_run_interrupts`, a tool loop's turns and tool results from its journal (`agent_run_turns`,
+  D44 — same transcript and system prompt → `served`; changed → served and flagged `drift` in
+  strict, asked again in live); anything the record cannot answer is a MISS (`strict`, the default — no
   model call at all) or asked for real (`--live`, which also re-runs a `ctx.once(key, fn, { replay:
   'rerun' })` — a pure model call whose prompt may have changed). `--live` reads the tenant's
   knowledge base, prompts and model choice as they are TODAY, through the Worker's own resolver —
@@ -699,8 +786,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   provider, or a key where the Worker uses Workers AI: the dense leg reads only chunks of the
   query vector's model, so another tier quietly degrades to keyword search). Each run replays in a READ ONLY
   transaction and `ctx.db` refuses writes before they are sent (listed, not fatal). Per run: a
-  verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, and each decision's
-  status; exit 1 unless every run matches. `--candidate <file>` replays another definition with the
+  verdict (`match` / `differs` / `incomplete`), the output diff by JSON path, each decision's
+  status, each loop turn's (`turns`), and `orderDrift` when today's code asks its top-level `once`
+  / `decide` keys in a different order from the run (a moved step — what a run parked across that
+  deploy would feel); a drifted turn or a moved key makes the verdict `differs`; exit 1 unless
+  every run matches. `--candidate <file>` replays another definition with the
   same key — how a compiled variant is proven against the full agent's history. Local script only:
   no route, no UI. Why: D37 made the judgments recorded; replay makes the CODE around them testable.
 - **Volume (D39)**: exclusivity is the `concurrency_key` slot above (PR #77), so a non-exclusive
@@ -1077,7 +1167,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
 
   **D32 decisions** (design grilling, 2026-09-25): our own OTLP exporter behind the existing seam —
   not Cloudflare's native tracing, not the Langfuse SDK · the backend is platform-wide only ·
-  content capture is on by default, with a flag to disable · agent context comes from the CLI
+  content capture was decided on by default but SHIPPED off (`OBSERVABILITY_CAPTURE_CONTENT`
+  defaults to `false` in `config.ts`: prompts are other people's data, so capture is opt-in) ·
+  agent context comes from the CLI
   reading our own Postgres, not a backend REST adapter.
 - **Evals (D33)**: `apps/evals`, its own workspace package because vitest-evals needs vitest 4 and
   the kit's suites are on vitest 5. `pnpm eval [suite] [--model x] [--judge-model y] [--compare]`
@@ -1142,8 +1234,8 @@ no document summary or thumbnail (the card is an excerpt; Workers cannot rasteri
 no images inside rendered Markdown (a model's or document's image is shown as a link,
 `MarkdownImageLink`); `charOffset` does not map to PDF pages; no frontend tools in chat and no human approval in chat (a
 tool with an approval gate is available to agent runs only), no `STATE_DELTA`; protobuf has no
-stream cursor; a cancelled run emits nothing rather than AG-UI 1.0's `RUN_FINISHED` `cancelled`
-outcome; no token-level streaming for runs (would need a per-run DO); char-based history budget
+stream cursor; a cancelled CHAT turn emits nothing rather than AG-UI 1.0's `RUN_FINISHED`
+`cancelled` outcome (the client closed the socket — agent runs do emit it); no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
 lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
@@ -1197,26 +1289,59 @@ call and, under `ctx.map`, by the calls in flight; **chat has no spend cap**: th
 daily cap meter agent rows only, so a chat turn on a platform key is bounded by nothing but its turn
 and output-token limits; the daily cap is a UTC day and TypeSafe is unpriced, so decisions count
 toward tokens alone; `map`
-runs inside one step on one DB client (six in flight is the ceiling, and a tool loop inside a scope
-restarts on a retry — there is no per-scope checkpoint); a budget error raised inside a tool
+runs inside one step on one DB client (six in flight is the ceiling; a tool loop inside a scope
+has no checkpoint and resumes only through its journal, re-reading every recorded turn); a budget error raised inside a tool
 handler is reported to the model as a tool error rather than stopping the run; no batch UI, no
 per-batch cancel, and a batch's runs are not grouped on the runs page. Policy (D39): when a handler
 raises an interrupt under concurrent execution, in-flight sibling results are discarded and run again
-on resume (extending sequential behaviour where subsequent calls have not yet run); a salvage that
-succeeds and then loses its step is paid for again; `maxDurationSeconds` does not count time
+on resume unless the loop has a journal, which keeps the siblings that settled; without a journal a
+salvage that succeeds and then loses its step is paid for again; `maxDurationSeconds` does not count time
 between the last checkpoint and a crash; a policy reaches a loop only when the agent passes it
 (`runToolLoop` has no registry to read); `authorizeTool` is per loop, not a run- or tenant-wide
 rule. Decisions (D37): no
 zod-schema → questions compiler, the `llm_self_report` fallback is uncalibrated with no vote/logprob
 mode, TypeSafe calls are unpriced (no published rates), no per-agent decisions provider
-(`agent_models` is chat-only), and a `sift` over 100 items is the caller's to batch. Replay (D38): a tool loop's model
-turns are not recorded, so a `runToolLoop` agent (`research-topic`) replays only `--live`; steering
+(`agent_models` is chat-only), and a `sift` over 100 items is the caller's to batch. Durable loop
+(D44): only a loop given `journal` records anything (a hand-built `runToolLoop` without it behaves as
+before); a `started` marker is written before the handler, so a side-effect call that died before
+it sent anything still settles as an unknown outcome; an unrecorded read re-runs and may answer
+differently, which re-asks every later turn; a recorded tool result is trusted by `toolCallId`
+alone (provider ids are unique per response — an adapter that minted repeating ids would collide);
+a key conflict is detected within one attempt, not between two attempts that reached different
+code; a `ctx.once` without `inputs` is still the author's key; `callStructuredTool` and
+`ctx.chat.client` calls outside a loop are not journaled (wrap them in `once`). The run-engine seam
+covers the Workflow step only — jobs, realtime and storage are still Worker bindings, unlike
+Rocketpod's `Platform`. Operability (D44 phase 2): cancel is polled (up to 3 s late, one indexed
+read per poll while an attempt runs), and a model call abandoned mid-flight may be billed by the
+provider with no `ai_usage` row; the sweeper checks 100 runs per 10 minutes, so a backlog of lost
+runs drains over several sweeps; Workflows' per-Workflow `concurrency.limit` (2026-11-10) is NOT
+set — it caps instances across ALL tenants and does not count `waiting` ones, so it cannot back
+the per-tenant active-run cap (counted, then inserted); it is a platform-wide cost/noisy-neighbour
+knob, set in BOTH tomls on every deploy if you want one (`docs/DEPLOY.md`). Phase 3 (D44): versions
+are detected, never prevented — Workflows still resumes a parked run on today's code, and
+`onVersionChange` only decides what happens next; the recordings check sees only the runs you
+commit (record from dev or seeded tenants — a recording holds the run's input and model turns), and
+its turn drift is not checked (a system prompt naming the tenant drifts by design); `rerun` is a new
+run, so a parent waiting on a child that reran sees the child `cancelled`; an `onTimeout: 'reject'`
+deadline is applied by the 10-minute sweeper, so it lands up to ~20 minutes late, and at the
+`AGENT_INTERRUPT_TIMEOUT` cap the Workflow's own wait ends first and cancels — keep `hitl.timeout`
+shorter; reminders are one per ask; assignees are checked against tenant membership at notify and
+answer time, not when the ask is raised; a child's budget share is fixed when it is spawned (two
+children spawned together may each get the whole remainder — the parent's meter, which counts both,
+is what stops the overspend, at the parent's next call); there is no fan-in primitive beyond
+`Promise.all` of spawns, no depth limit beyond the budget, and a child never steers its parent; the
+inspector is read-only and shows no transcript (the trace and replay do). Replay (D38): a tool loop replays strictly only inside the journal's
+retention window — an older run's first turn is a `chat` miss, and `--live` is the fallback; steering
 notes are all handed over at the first call; a run that predates a `once` key misses it; no route
 or UI (a local script over a database URL), and `--live` holds one read-only transaction per run. The demo seed's
 vectors are deterministic, so dense search over seeded docs is noise. Tracing: no per-tenant
 backends (BYO keys via `sealSecret`), no native `tracing.enterSpan`, no metrics export, no
 Langfuse/Phoenix MCP; inline ingest from `POST /api/ai/documents/ingest` is untraced (no active
-span); the backend receives a run's root only at `finish`, so an in-flight run has no root there;
+span); the backend receives a run's root only at `finish` — before that it has the `run started`
+span and each finished `execute#N`, never a long step's spans before the step ends; the GenAI names
+are pinned to semconv `GENAI_SEMCONV_VERSION` (1.45.0, sent as `schemaUrl`) and the agent spans
+are still Development upstream; `gen_ai.*_ref` points at the app's own `GET /api/traces/:id`, only
+when content is captured (auth-gated, never a signed URL — and gone after the 14-day retention);
 exported content is capped at 32 000 chars per value. Evals: no in-app eval UI or dataset editor;
 the report UI has no side-by-side view (the diff is `eval:view`'s terminal table); no HTTP targets
 against a deployed instance, no red-teaming, no push to Langfuse datasets; a run that parks on a

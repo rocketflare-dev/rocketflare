@@ -135,6 +135,7 @@ id = "<KV_RATE_LIMIT_STAGING_ID>"
 [triggers]
 crons = [
   "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
+  "*/10 * * * *",  # Every 10 minutes — settle agent runs whose Workflow instance ended unsettled
   # An installed plugin's crons go here too, identical in both files (D31): a plugin declares the
   # EXPRESSION in its `plugin.json` and contributes the TASK through `ServerPlugin.scheduledTasks`,
   # and a task registered under an expression no toml declares simply never runs. The analytics
@@ -191,6 +192,11 @@ remote = true
 name = "rocketflare-agent-run-staging"
 binding = "AGENT_RUN_WORKFLOW"
 class_name = "AgentRunWorkflow"
+
+# The Worker deployment a run executes on (`agent_runs.worker_version_id`, D44): with
+# `meta.version` it is how a run parked across a deploy is told apart. No create step.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
 
 # ---- Added in later phases (keep this list in sync with wrangler.toml) ----------
 # Phase 4 (D19): optional [[analytics_engine_datasets]] for product telemetry — not wired yet

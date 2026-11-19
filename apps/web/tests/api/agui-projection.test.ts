@@ -51,6 +51,9 @@ const run = (over: Partial<AgentRun> = {}): AgentRun => ({
   batchId: null,
   triggerEvent: null,
   triggerEventId: null,
+  agentVersion: 1,
+  workerVersionId: null,
+  parentRunId: null,
   ...over,
 })
 
@@ -310,9 +313,13 @@ describe('projectRunToAgui', () => {
 
   it('distinguishes a cancelled run from one that is still going', () => {
     // A finite array cannot say "cancelled" by omitting the terminal event: that is how an ACTIVE
-    // run is represented. A settled cancel is a coded RUN_ERROR.
+    // run is represented. A settled cancel is RUN_FINISHED with AG-UI's own `cancelled` outcome.
     const cancelled = projectRunToAgui(run({ status: 'cancelled', output: null }), [])
-    expect(cancelled.at(-1)).toMatchObject({ type: 'RUN_ERROR', code: 'agent_run_cancelled' })
+    expect(cancelled.at(-1)).toMatchObject({
+      type: 'RUN_FINISHED',
+      outcome: { type: 'cancelled' },
+    })
+    expect(aguiTypes(cancelled)).not.toContain('RUN_ERROR')
     for (const status of ['queued', 'running'] as const) {
       const active = projectRunToAgui(run({ status, output: null }), [])
       expect(aguiTypes(active)).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])

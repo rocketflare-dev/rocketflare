@@ -84,6 +84,53 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
    * cap and hands back no answer.
    */
   policy?: AgentPolicy
+  /**
+   * The agent's version, `1` when absent. **Bump it when a change would move what a run in
+   * flight already recorded**: its `once` / `decide` / `interrupt` / `spawn` keys or their order,
+   * its input or output schema, its tools. A prompt edit does not need one — model turns are
+   * recorded by what was asked (`request_hash`), not by where. Every run records the version it
+   * runs under (`agent_runs.agent_version`); a run that resumes under another meets
+   * {@link AgentMeta.onVersionChange}, and the gate's recorded-run replay fails a key-order change
+   * that did not bump it.
+   */
+  version?: number
+  /**
+   * Keys from ORDER, not data: a repeated `ctx.once` label is the next occurrence (`label@2`)
+   * rather than a conflict. Only sound when a run never meets another version of the code, so a
+   * pinned agent's `onVersionChange` is always `fail`.
+   */
+  pinned?: boolean
+  /**
+   * What a run does when it resumes (a retry, or an answered ask) under a different
+   * {@link AgentMeta.version} than the one it recorded. `continue` (the default): carry on —
+   * sound because keys come from recorded data. `fail`: settle it `failed`, code
+   * `agent_version_changed` (forced for `pinned`). `rerun`: cancel it and start a new run of the
+   * same input under today's version (the new run's id is on the old run's `status` event).
+   */
+  onVersionChange?: AgentVersionChangePolicy
+  /** Human-in-the-loop timing for this agent's asks. */
+  hitl?: AgentHitl
+}
+
+export const AGENT_VERSION_CHANGE_POLICIES = ['continue', 'fail', 'rerun'] as const
+export type AgentVersionChangePolicy = (typeof AGENT_VERSION_CHANGE_POLICIES)[number]
+
+/**
+ * `remindAfter` (a Workflows duration, `'1 day'`): the assignees of an ask still pending after it
+ * are reminded ONCE, by the sweeper. `onTimeout` is what an ask that expired means: `expire` (the
+ * default) cancels the run; `reject` answers it as a rejection and the run carries on — an
+ * approval gate with `onReject: 'tell_model'` then tells the model, any other ask cancels. Never
+ * approve-by-default: silence is not consent.
+ */
+export interface AgentHitl {
+  /**
+   * How long an ask stays open (a Workflows duration), capped at `AGENT_INTERRUPT_TIMEOUT` —
+   * the Workflow's own wait. Set it SHORTER than that for `onTimeout: 'reject'`: the sweeper
+   * (every 10 minutes) applies it, and at the cap the Workflow's wait ends first and cancels.
+   */
+  timeout?: string
+  remindAfter?: string
+  onTimeout?: 'expire' | 'reject'
 }
 
 /** A per-run spending cap. Either side may be absent — the deployment's default applies. */
@@ -217,6 +264,12 @@ export const agentRunSchema = z.object({
   triggerEvent: z.string().nullable().default(null),
   /** That event's `plugin_events` id. The row is pruned after the retention window; this is not. */
   triggerEventId: z.string().uuid().nullable().default(null),
+  /** The `meta.version` the run executes under. Defaulted for an older server. */
+  agentVersion: z.number().int().positive().default(1),
+  /** The Worker deployment the run last executed on, when the deployment says. */
+  workerVersionId: z.string().nullable().default(null),
+  /** The run that spawned this one (`ctx.spawn`); null for a top-level run. */
+  parentRunId: z.string().uuid().nullable().default(null),
 })
 export type AgentRun = z.infer<typeof agentRunSchema>
 
@@ -231,6 +284,12 @@ export const agentRunListQuerySchema = paginationQuerySchema.extend({
   status: agentRunStatusSchema.optional(),
   /** Only the runs one batch created. */
   batchId: z.string().uuid().optional(),
+  /** The children one run spawned. Without it the list holds top-level runs only. */
+  parentRunId: z.string().uuid().optional(),
+  /** Created at or after this instant. */
+  since: z.coerce.date().optional(),
+  /** Runs that recorded this `meta.version` — the ones a version change affects. */
+  agentVersion: z.coerce.number().int().positive().optional(),
 })
 export type AgentRunListQuery = z.infer<typeof agentRunListQuerySchema>
 
@@ -443,6 +502,48 @@ export const agentRunWithEventsSchema = agentRunSchema.extend({
     .optional(),
 })
 export type AgentRunWithEvents = z.infer<typeof agentRunWithEventsSchema>
+
+// ---- Per-agent stats (GET /api/agents/stats) -----------------------------------------------------
+
+export const agentStatsQuerySchema = z.object({
+  /** The window, in days back from now. */
+  days: z.coerce.number().int().min(1).max(365).default(30),
+})
+export type AgentStatsQuery = z.infer<typeof agentStatsQuerySchema>
+
+/**
+ * One agent's runs in the window, as the caller may see them (a member: their own; admin+: all) —
+ * child runs included, since they are runs of that agent. `lastRun` is the newest top-level run
+ * the caller may see, in or out of the window.
+ */
+export const agentStatsSchema = z.object({
+  agentKey: agentKeySchema,
+  runs: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  /** Queued, running or awaiting input now. */
+  active: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+  /** Priced calls only; an unpriced model counts in `tokens` alone. */
+  costUsd: z.number().nonnegative(),
+  /** Mean wall-clock of the window's settled runs; null when none settled. */
+  avgDurationMs: z.number().nonnegative().nullable(),
+  lastRun: z
+    .object({
+      id: z.string().uuid(),
+      status: agentRunStatusSchema,
+      createdAt: z.coerce.date(),
+      finishedAt: z.coerce.date().nullable(),
+    })
+    .nullable(),
+})
+export type AgentStats = z.infer<typeof agentStatsSchema>
+
+export const agentStatsResponseSchema = z.object({
+  since: z.coerce.date(),
+  items: z.array(agentStatsSchema),
+})
+export type AgentStatsResponse = z.infer<typeof agentStatsResponseSchema>
 
 // ---- Suspend / resume ----------------------------------------------------------------------------
 

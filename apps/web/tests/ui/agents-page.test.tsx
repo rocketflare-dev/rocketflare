@@ -9,7 +9,9 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
+import AgentPage from '@/ui/pages/agents/AgentPage'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'
+import AllRunsPage from '@/ui/pages/agents/AllRunsPage'
 import RunPage from '@/ui/pages/agents/RunPage'
 import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import {
@@ -65,10 +67,30 @@ const run = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
+const stats = (overrides: Record<string, unknown> = {}) => ({
+  since: '2025-05-02T00:00:00Z',
+  items: [
+    {
+      agentKey: FIXTURE_AGENT,
+      runs: 12,
+      succeeded: 10,
+      failed: 1,
+      active: 1,
+      tokens: 15300,
+      costUsd: 0.0123,
+      avgDurationMs: 42_000,
+      lastRun: { id: RUN_ID, status: 'succeeded', createdAt: now, finishedAt: now },
+      ...overrides,
+    },
+  ],
+})
+
 function mount(routes: RouteTable = {}, route = '/agents') {
   const fetchMock = stubFetch({
     '/api/agents': AGENTS,
     '/api/agents/runs': paged([]),
+    '/api/agents/stats': stats(),
+    '/api/agents/interrupts': paged([]),
     ...routes,
   })
   // The same route pair App.tsx mounts — two PAGES now, not one page and a drawer — so
@@ -76,6 +98,8 @@ function mount(routes: RouteTable = {}, route = '/agents') {
   renderWithProviders(
     <Routes>
       <Route path="/agents" element={<AgentsPage />} />
+      <Route path="/agents/runs" element={<AllRunsPage />} />
+      <Route path="/agents/:agentKey" element={<AgentPage />} />
       <Route path="/agents/runs/:runId" element={<RunPage />} />
     </Routes>,
     { session: makeSession(), route }
@@ -89,20 +113,60 @@ describe('Agents page', () => {
     useToastStore.setState({ toasts: [] })
   })
 
-  it('lists the registry with the exclusive badge and the runs table', async () => {
-    mount({
-      '/api/agents/runs': paged([
-        run({ status: 'succeeded', startedAt: now, finishedAt: '2025-06-01T00:00:04Z' }),
-      ]),
-    })
-    expect(await screen.findByText('Fixture agent', { selector: 'span' })).toBeInTheDocument()
-    expect(screen.getByText('exclusive')).toBeInTheDocument()
+  it('lists each agent once, with its last run and 30-day metrics, and no runs table', async () => {
+    const fetchMock = mount()
+    const table = await screen.findByRole('table', { name: 'Agents' })
+    const row = within(table).getByText('Fixture agent').closest('tr') as HTMLElement
+    expect(within(row).getByRole('link', { name: 'Fixture agent' })).toHaveAttribute(
+      'href',
+      `/agents/${FIXTURE_AGENT}`
+    )
+    expect(within(row).getByText('exclusive')).toBeInTheDocument()
+    expect(await within(row).findByText('12 · 1 failed · 1 active')).toBeInTheDocument()
+    expect(within(row).getByText(/^15\.3k$/i)).toBeInTheDocument()
+    expect(within(row).getByText('42s')).toBeInTheDocument()
+    expect(within(row).getByText('$0.0123')).toBeInTheDocument()
+    expect(within(row).getByRole('link', { name: 'Last run of Fixture agent' })).toHaveAttribute(
+      'href',
+      `/agents/runs/${RUN_ID}`
+    )
+    expect(screen.queryByRole('table', { name: 'Agent runs' })).toBeNull()
+    // One request for every agent's metrics, never one per agent.
+    expect(
+      fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/agents/stats'))
+    ).toHaveLength(1)
+    expect(screen.getByRole('link', { name: 'All runs' })).toHaveAttribute('href', '/agents/runs')
+  })
+
+  it("an agent's page shows its metrics and only its runs", async () => {
+    const fetchMock = mount(
+      {
+        '/api/agents/runs': paged([
+          run({ status: 'succeeded', startedAt: now, finishedAt: '2025-06-01T00:00:04Z' }),
+        ]),
+      },
+      `/agents/${FIXTURE_AGENT}`
+    )
+    expect(await screen.findByRole('heading', { name: 'Fixture agent' })).toBeInTheDocument()
+    const metrics = await screen.findByLabelText('Agent metrics')
+    expect(await within(metrics).findByText('12')).toBeInTheDocument()
+    expect(within(metrics).getByText('10 succeeded · 1 failed')).toBeInTheDocument()
     const table = await screen.findByRole('table', { name: 'Agent runs' })
     expect(within(table).getByText('Succeeded')).toBeInTheDocument()
     expect(within(table).getByText('You')).toBeInTheDocument()
     expect(within(table).getByText('4s')).toBeInTheDocument()
-    expect(screen.getByLabelText('Agent')).toHaveValue('')
-    expect(screen.getByLabelText('Status')).toHaveValue('')
+    // Fixed to this agent: no agent filter, and every request names it.
+    expect(screen.queryByLabelText('Agent')).toBeNull()
+    const runCalls = fetchMock.mock.calls
+      .map(([input]) => String(input))
+      .filter(u => u.includes('/api/agents/runs?'))
+    expect(runCalls.length).toBeGreaterThan(0)
+    expect(runCalls.every(u => u.includes(`agentKey=${FIXTURE_AGENT}`))).toBe(true)
+  })
+
+  it('an unknown agent key is an empty state, not a crash', async () => {
+    mount({}, '/agents/no-such-agent')
+    expect(await screen.findByText('No such agent')).toBeInTheDocument()
   })
 
   it('toasts and opens the existing run when the 202 is deduplicated', async () => {
@@ -140,9 +204,10 @@ describe('Agents page', () => {
     expect(useToastStore.getState().toasts).toHaveLength(0)
   })
 
-  it('sends the agent and status filters as query params', async () => {
-    const fetchMock = mount()
+  it('all runs: sends the agent and status filters as query params', async () => {
+    const fetchMock = mount({}, '/agents/runs')
     await screen.findByText('No runs yet')
+    expect(screen.getByLabelText('Agent')).toHaveValue('')
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'failed' } })
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([input]) => String(input).includes('status=failed'))).toBe(

@@ -106,7 +106,7 @@ export async function handleChatCompact(
       userId: conversation.userId,
       conversationId,
       kind: 'job',
-      spanName: 'job chat.compact',
+      spanName: 'invoke_workflow chat.compact',
       tags: ['chat', 'compaction'],
       metadata: { folded: pending.length, model: resolved.model },
     },

@@ -117,11 +117,15 @@ The server surface: the context family, and the types a plugin must be able to n
   - `step( key: string, label: string, status: 'running' \| 'done' \| 'error', detail?: string ): Promise<void>`
     A durable timeline row. Never throws — progress must not be able to fail a run.
   - `checkCancelled(): Promise<void>`
-    Throws when the run was asked to stop. Call it between model turns; the loop takes no signal.
-  - `once<T>(key: string, fn: () => Promise<T>): Promise<T>`
+    Throws when the run was asked to stop. Call it between model turns.
+  - `signal: AbortSignal`
+    Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to your own `fetch`es so a cancel reaches them in flight.
+  - `once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>`
     Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
+  - `spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>`
+    Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output. This run parks while the child runs and is woken when it settles; a failed or cancelled…
   - `toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>`
-    The agentic loop, with this run's client, model, ceiling and approval plumbing already bound.
+    The agentic loop, with this run's client, model, ceiling, approval plumbing and journal already bound: a retried attempt is served the turns and tool results it already recorded,…
   - `structured<T>(options: PluginStructuredOptions<T>): Promise<T>`
     One forced tool call, zod-validated, one retry with the issues fed back.
   - `decide: AgentDecide`
@@ -426,7 +430,7 @@ The server surface: the context family, and the types a plugin must be able to n
   What a plugin's IdP proved about the person, handed to `signIn`.
 - `type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' \| 'maxTokens' > & { maxTokens?: number }`
   `callStructuredTool` minus what the runtime supplies.
-- `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' > & { maxTokens?: number }`
+- `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' \| 'journal' > & { maxTokens?: number }`
   `runToolLoop` minus what the runtime supplies.
 - `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
   The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
@@ -1376,7 +1380,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: AgentCtx.prompt :: prompt(vars?: Record<string, string | undefined>): Promise<string>
 @/plugins/api :: member :: AgentCtx.step :: step( key: string, label: string, status: 'running' | 'done' | 'error', detail?: string ): Promise<void>
 @/plugins/api :: member :: AgentCtx.checkCancelled :: checkCancelled(): Promise<void>
-@/plugins/api :: member :: AgentCtx.once :: once<T>(key: string, fn: () => Promise<T>): Promise<T>
+@/plugins/api :: member :: AgentCtx.signal :: signal: AbortSignal
+@/plugins/api :: member :: AgentCtx.once :: once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
+@/plugins/api :: member :: AgentCtx.spawn :: spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
 @/plugins/api :: member :: AgentCtx.toolLoop :: toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
 @/plugins/api :: member :: AgentCtx.structured :: structured<T>(options: PluginStructuredOptions<T>): Promise<T>
 @/plugins/api :: member :: AgentCtx.decide :: decide: AgentDecide
@@ -1556,7 +1562,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
 @/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
-@/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
+@/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal' > & { maxTokens?: number }
 @/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
 @/plugins/api :: function :: prunePlatformDocuments :: async function prunePlatformDocuments( ctx: JobCtx | CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"

@@ -14,12 +14,15 @@ import { count, eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decideWithShapes } from '@/api/services/agents/decisions'
 import { triageResearchAgent } from '@/api/services/agents/examples/triage-research'
+import { effectKey } from '@/api/services/agents/keys'
 import type { AgentContext, AnyAgentDefinition } from '@/api/services/agents/registry'
 import {
   diffJson,
   listReplayableRuns,
   liveReplayWarnings,
+  orderDriftOf,
   replayRun,
+  verdictOf,
 } from '@/api/services/agents/replay'
 import { enqueueRun, getRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
@@ -283,7 +286,8 @@ describe('replay', () => {
       logger: fakeLogger(),
     })
     expect(result.replayStatus).toBe('miss')
-    expect(result.misses).toContainEqual({ kind: 'chat', key: 'chat' })
+    // The miss names the loop turn nothing recorded — research-topic's first.
+    expect(result.misses).toContainEqual({ kind: 'chat', key: 'tool-loop turn 1' })
   })
 
   it('a write the agent makes is refused and listed; uncaught, it fails the replay', async () => {
@@ -387,6 +391,37 @@ describe('liveReplayWarnings', () => {
 })
 
 describe('diffJson', () => {
+  it('order drift: the keys both sides asked, in a different order', () => {
+    expect(orderDriftOf(['once:a', 'decide:b', 'once:c'], ['once:a', 'decide:b', 'once:c'])).toBe(
+      undefined
+    )
+    // A key only one side has is a miss or an unused decision, not a move.
+    expect(orderDriftOf(['once:a', 'once:gone', 'once:c'], ['once:a', 'once:c', 'once:new'])).toBe(
+      undefined
+    )
+    expect(
+      orderDriftOf(['once:a', 'decide:b', 'once:c'], ['decide:b', 'once:a', 'once:c'])
+    ).toEqual({
+      recorded: ['once:a', 'decide:b', 'once:c'],
+      replayed: ['decide:b', 'once:a', 'once:c'],
+    })
+    // A moved key makes an otherwise identical replay differ.
+    expect(
+      verdictOf('succeeded', 'succeeded', [], [], 0, {
+        turns: [],
+        orderDrift: { recorded: ['once:a', 'once:b'], replayed: ['once:b', 'once:a'] },
+      })
+    ).toBe('differs')
+  })
+
+  it('effectKey: the label alone, or label#hash over the inputs in a fixed key order', async () => {
+    expect(await effectKey('search')).toBe('search')
+    const one = await effectKey('search', { q: 'alpha', limit: 3 })
+    expect(one).toMatch(/^search#[0-9a-f]{12}$/)
+    expect(await effectKey('search', { limit: 3, q: 'alpha' })).toBe(one)
+    expect(await effectKey('search', { q: 'beta', limit: 3 })).not.toBe(one)
+  })
+
   it('reports paths, compares dates as JSON and caps the list', () => {
     expect(diffJson({ a: 1, b: [1, 2] }, { a: 1, b: [1, 3, 4] })).toEqual([
       { path: '$.b[1]', recorded: 2, replayed: 3 },

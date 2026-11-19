@@ -7,7 +7,7 @@
  * the app, and the recorder already runs it in `waitUntil`.
  */
 import type { Logger } from '../utils/core/logger'
-import { contentAttributes } from './genai-attributes'
+import { contentAttributes, GENAI_SEMCONV_SCHEMA_URL } from './genai-attributes'
 import { encodeOtlpProtobuf } from './otlp-protobuf'
 import type { RecordedSpan, SpanSink } from './recorder'
 import type { SpanAttributeValue } from './tracer'
@@ -43,7 +43,12 @@ export interface OtlpSpan {
 export interface OtlpExportRequest {
   resourceSpans: {
     resource: { attributes: OtlpKeyValue[] }
-    scopeSpans: { scope: { name: string; version?: string }; spans: OtlpSpan[] }[]
+    scopeSpans: {
+      scope: { name: string; version?: string }
+      /** The semantic-conventions version the attribute names follow (`GENAI_SEMCONV_SCHEMA_URL`). */
+      schemaUrl?: string
+      spans: OtlpSpan[]
+    }[]
   }[]
 }
 
@@ -61,6 +66,11 @@ export interface OtlpExporterOptions {
   resource: OtlpResource
   /** Add the `langfuse.observation.*` content aliases. */
   langfuse: boolean
+  /**
+   * `<APP_URL>/api/traces` when the local store keeps content too: a captured model span then
+   * carries `gen_ai.*_ref` URIs to its stored copy. Never a signed URL — the route is auth-gated.
+   */
+  contentRefBase?: string
   /** Injected for tests. */
   fetch?: typeof fetch
   logger?: Pick<Logger, 'warn' | 'debug'>
@@ -92,9 +102,21 @@ function keyValues(attributes: Record<string, SpanAttributeValue | undefined>): 
 
 const unixNano = (date: Date): string => (BigInt(date.getTime()) * 1_000_000n).toString()
 
-export function toOtlpSpan(span: RecordedSpan, options: { langfuse: boolean }): OtlpSpan {
+export function toOtlpSpan(
+  span: RecordedSpan,
+  options: { langfuse: boolean; contentRefBase?: string }
+): OtlpSpan {
+  // Only a span the store keeps: it has a tenant (`ai_spans` skips one without).
+  const ref =
+    options.contentRefBase && span.tenantId
+      ? `${options.contentRefBase}/${span.traceId}#${span.spanId}`
+      : undefined
   const content = span.content
-    ? contentAttributes(span.kind, span.content, { root: span.root, langfuse: options.langfuse })
+    ? contentAttributes(span.kind, span.content, {
+        root: span.root,
+        langfuse: options.langfuse,
+        ref,
+      })
     : {}
   return {
     traceId: span.traceId,
@@ -115,7 +137,7 @@ export function toOtlpSpan(span: RecordedSpan, options: { langfuse: boolean }): 
 export function toOtlpRequest(
   spans: RecordedSpan[],
   resource: OtlpResource,
-  options: { langfuse: boolean; scopeVersion?: string }
+  options: { langfuse: boolean; scopeVersion?: string; contentRefBase?: string }
 ): OtlpExportRequest {
   return {
     resourceSpans: [
@@ -133,6 +155,7 @@ export function toOtlpRequest(
         scopeSpans: [
           {
             scope: { name: SCOPE_NAME, version: options.scopeVersion ?? resource.serviceVersion },
+            schemaUrl: GENAI_SEMCONV_SCHEMA_URL,
             spans: spans.map(s => toOtlpSpan(s, options)),
           },
         ],
@@ -146,7 +169,10 @@ export function createOtlpExporter(options: OtlpExporterOptions): SpanSink {
   const fetchImpl = options.fetch ?? fetch
   return async spans => {
     if (spans.length === 0) return
-    const request = toOtlpRequest(spans, options.resource, { langfuse: options.langfuse })
+    const request = toOtlpRequest(spans, options.resource, {
+      langfuse: options.langfuse,
+      contentRefBase: options.contentRefBase,
+    })
     const binary = options.protocol === 'http/protobuf'
     try {
       const res = await fetchImpl(url, {

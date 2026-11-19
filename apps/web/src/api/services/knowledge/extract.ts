@@ -726,7 +726,7 @@ export async function extractDocumentFacts(
       tracer: deps.tracer,
       tenantId: input.tenantId,
       kind: 'job',
-      spanName: 'job knowledge.extract',
+      spanName: 'invoke_workflow knowledge.extract',
       metadata: { documentId: input.documentId },
     },
     async () => run()

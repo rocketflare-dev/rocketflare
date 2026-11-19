@@ -14,7 +14,12 @@ import {
   createAgentRunBatchResponseSchema,
 } from '@rocketflare/shared/ai/agents'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { runAgentRunsList, runAgentsList, runAgentsRun } from '../src/commands/agents'
+import {
+  runAgentRunsList,
+  runAgentsInspect,
+  runAgentsList,
+  runAgentsRun,
+} from '../src/commands/agents'
 import { EXIT_ERROR, exitCodeFor } from '../src/errors'
 import {
   captureError,
@@ -216,5 +221,66 @@ describe('agents runs list', () => {
     expect(calls[0]?.url.searchParams.get('batchId')).toBe(BATCH)
     expect(calls[0]?.url.searchParams.get('agentKey')).toBe('fixture-batchable')
     expect(out.content()).toContain('Could not start the workflow')
+  })
+})
+
+describe('agents inspect', () => {
+  it('prints the timeline, the version drift and the spend against the budget', async () => {
+    const { store } = await setup()
+    const parent = run({ status: 'succeeded', agentVersion: 2 })
+    const child = run({ parentRunId: parent.id, status: 'succeeded' })
+    const { fetch, calls } = mockFetch({
+      [`/api/agents/runs/${parent.id}/timeline`]: () =>
+        jsonResponse({
+          run: parent,
+          versions: { agentVersion: 2, currentAgentVersion: 3, workerVersionId: 'w-1' },
+          spend: {
+            own: { calls: 2, tokens: 300, costUsd: 0.01 },
+            tree: { calls: 3, tokens: 450, costUsd: 0.015 },
+            budget: { maxTokens: 1000 },
+          },
+          children: [
+            {
+              id: child.id,
+              agentKey: 'fixture-agent',
+              status: 'succeeded',
+              createdAt: '2026-10-12T10:00:01.000Z',
+              finishedAt: '2026-10-12T10:00:05.000Z',
+            },
+          ],
+          entries: [
+            { at: '2026-10-12T10:00:00.000Z', kind: 'event', label: 'status running', ref: null },
+            {
+              at: '2026-10-12T10:00:01.000Z',
+              kind: 'child',
+              label: 'spawned fixture-agent',
+              ref: child.id,
+            },
+          ],
+        }),
+    })
+    const { ctx, out } = await testContext({ store, fetch })
+    await runAgentsInspect(ctx, parent.id)
+    expect(calls).toHaveLength(1)
+    const text = out.content()
+    expect(text).toContain('deployed: v3')
+    expect(text).toContain('with children 450 tokens')
+    expect(text).toContain('max 1000 tokens')
+    expect(text).toContain('spawned fixture-agent')
+  })
+
+  it('passes --parent, --since and --agent-version to the runs list', async () => {
+    const { store } = await setup()
+    const { fetch, calls } = mockFetch({
+      '/api/agents/runs': () =>
+        jsonResponse({ items: [], pagination: { page: 1, pageSize: 20, total: 0, totalPages: 0 } }),
+    })
+    const { ctx } = await testContext({ store, fetch })
+    const parentId = '00000000-0000-4000-8000-000000000999'
+    await runAgentRunsList(ctx, { parent: parentId, since: '2026-11-01', agentVersion: 2 })
+    const params = calls[0]?.url.searchParams
+    expect(params?.get('parentRunId')).toBe(parentId)
+    expect(params?.get('since')).toBe('2026-11-01')
+    expect(params?.get('agentVersion')).toBe('2')
   })
 })

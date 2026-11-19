@@ -224,7 +224,8 @@ describe('runToolLoop: answering a gate', () => {
       approvals: approval(),
     })
     const result = await run
-    expect(send).toHaveBeenCalledWith({ to: 'a@b.c' })
+    // The handler is told which call it answers; the id doubles as its idempotency key.
+    expect(send).toHaveBeenCalledWith({ to: 'a@b.c' }, { toolCallId: 'c1', idempotencyKey: 'c1' })
     expect(result.terminalInput).toEqual({ answer: 'ok' })
     // The first request of the resumed attempt already carries the tool_result turn.
     const first = sent[0]?.at(-1)
@@ -242,7 +243,10 @@ describe('runToolLoop: answering a gate', () => {
       approvals: approval({ input: { to: 'corrected@example.test' } }),
     })
     await run
-    expect(send).toHaveBeenCalledWith({ to: 'corrected@example.test' })
+    expect(send).toHaveBeenCalledWith(
+      { to: 'corrected@example.test' },
+      { toolCallId: 'c1', idempotencyKey: 'c1' }
+    )
   })
 
   it('cancel_run throws InterruptDeclinedError and never runs the tool', async () => {

@@ -10,6 +10,7 @@ import {
   CheckCircleIcon,
   ChevronRightIcon,
   ExclamationCircleIcon,
+  StopCircleIcon,
 } from '@heroicons/react/24/outline'
 import { formatDuration } from '@/ui/lib/format'
 import { TimelineRow } from './TimelineRow'
@@ -96,5 +97,7 @@ function GroupIcon({ status }: { status: Group['status'] }) {
   if (status === 'done') return <CheckCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-success" />
   if (status === 'error')
     return <ExclamationCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-error" />
+  if (status === 'stopped')
+    return <StopCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted" aria-label="Stopped" />
   return <span className="loading loading-spinner loading-xs mt-0.5 shrink-0 text-primary" />
 }

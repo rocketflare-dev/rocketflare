@@ -59,6 +59,8 @@ const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
 // Also carries the markdown renderer (run transcripts) — lazy for the same reason.
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
 const RunPage = lazy(() => import('@/ui/pages/agents/RunPage'))
+const AgentPage = lazy(() => import('@/ui/pages/agents/AgentPage'))
+const AllRunsPage = lazy(() => import('@/ui/pages/agents/AllRunsPage'))
 // The knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
@@ -190,6 +192,23 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
                 <AgentsPage />
+              </RequireGuard>
+            }
+          />
+          {/* `runs` is a static segment, so it outranks `:agentKey` — no agent may be keyed `runs`. */}
+          <Route
+            path="/agents/runs"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <AllRunsPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/agents/:agentKey"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <AgentPage />
               </RequireGuard>
             }
           />

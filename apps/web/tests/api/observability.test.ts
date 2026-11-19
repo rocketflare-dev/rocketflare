@@ -8,6 +8,11 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { traceStep } from '@/api/observability/context'
+import {
+  GENAI_SEMCONV_SCHEMA_URL,
+  kindAttributes,
+  spanNameFor,
+} from '@/api/observability/genai-attributes'
 import { toOtlpRequest, tracesUrl } from '@/api/observability/otlp-fetch'
 import { encodeOtlpProtobuf } from '@/api/observability/otlp-protobuf'
 import { createTracer, type RecordedSpan } from '@/api/observability/recorder'
@@ -152,6 +157,7 @@ describe('OTLP/JSON shape', () => {
           scopeSpans: [
             {
               scope: { name: 'rocketflare', version: '1.2.3' },
+              schemaUrl: 'https://opentelemetry.io/schemas/1.45.0',
               spans: [
                 {
                   traceId: '0af7651916cd43dd8448eb211c80319c',
@@ -496,5 +502,63 @@ describe('OTLP/protobuf', () => {
     const [status] = sub(span ?? [], 15)
     expect(text(status?.find(f => f.field === 2)?.value ?? new Uint8Array())).toBe('bad')
     expect(status?.find(f => f.field === 3)?.value).toBe(2n)
+    // ScopeSpans.schema_url (3): the pinned conventions version travels with every export.
+    expect(text(scopeSpans?.find(f => f.field === 3)?.value ?? new Uint8Array())).toBe(
+      GENAI_SEMCONV_SCHEMA_URL
+    )
+  })
+})
+
+describe('GenAI agent span conventions', () => {
+  it('a job is invoke_workflow; agent and tool keep invoke_agent and execute_tool', () => {
+    expect(spanNameFor('job', 'document.index')).toBe('invoke_workflow document.index')
+    expect(kindAttributes('job')['gen_ai.operation.name']).toBe('invoke_workflow')
+    expect(spanNameFor('agent', 'research')).toBe('invoke_agent research')
+    expect(spanNameFor('tool', 'lookup')).toBe('execute_tool lookup')
+  })
+
+  it('a captured model span carries _ref URIs to its stored copy; nothing without capture', async () => {
+    const run = async (capture: 'true' | 'false') => {
+      const { fetchImpl, posts } = recordingFetch()
+      const tracer = tracerFor(
+        cfgWith({
+          OTEL_EXPORTER_OTLP_ENDPOINT: 'https://x.test',
+          OBSERVABILITY_CAPTURE_CONTENT: capture,
+          APP_URL: 'https://app.example.test/',
+        }),
+        { fetch: fetchImpl, store: async () => {} }
+      )
+      await withAgentTrace('chat', { tracer, tenantId: 't' }, async trace => {
+        trace.generation({
+          name: 'm',
+          model: 'm',
+          provider: 'anthropic',
+          input: [{ role: 'user', content: 'hi' }],
+          output: 'hello',
+          startTime: new Date(),
+          endTime: new Date(),
+        })
+        return 'ok'
+      })
+      await tracer.flush()
+      return JSON.parse(String(posts[0]?.body)) as {
+        resourceSpans: {
+          scopeSpans: {
+            spans: {
+              traceId: string
+              spanId: string
+              attributes: { key: string; value: { stringValue?: string } }[]
+            }[]
+          }[]
+        }[]
+      }
+    }
+    const body = await run('true')
+    const llm = body.resourceSpans[0]?.scopeSpans[0]?.spans.find(span =>
+      span.attributes.some(a => a.key === 'gen_ai.input.messages')
+    )
+    const ref = llm?.attributes.find(a => a.key === 'gen_ai.input.messages_ref')?.value.stringValue
+    expect(ref).toBe(`https://app.example.test/api/traces/${llm?.traceId}#${llm?.spanId}`)
+    expect(JSON.stringify(await run('false'))).not.toContain('_ref')
   })
 })

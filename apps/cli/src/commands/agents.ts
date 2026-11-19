@@ -9,6 +9,7 @@
  * batch.
  */
 import { readFile } from 'node:fs/promises'
+import { agentRunTimelineSchema } from '@rocketflare/shared/ai/agent-timeline'
 import {
   AGENT_RUN_BATCH_MAX,
   type AgentRunBatchItem,
@@ -161,6 +162,12 @@ export interface AgentRunsListOptions {
   agent?: string
   status?: string
   batch?: string
+  /** One run's children (`ctx.spawn`); without it, children are left out. */
+  parent?: string
+  /** Runs created at or after this ISO date or time. */
+  since?: string
+  /** Runs recorded under this `meta.version`. */
+  agentVersion?: number
   page?: number
   pageSize?: number
 }
@@ -175,6 +182,9 @@ export async function runAgentRunsList(
       agentKey: options.agent,
       status: options.status,
       batchId: options.batch,
+      parentRunId: options.parent,
+      since: options.since,
+      agentVersion: options.agentVersion,
       page: options.page,
       pageSize: options.pageSize,
     },
@@ -184,6 +194,7 @@ export async function runAgentRunsList(
       { header: 'Created', value: r => formatDate(r.createdAt) },
       { header: 'Run', value: r => r.id },
       { header: 'Agent', value: r => r.agentKey },
+      { header: 'v', value: r => String(r.agentVersion) },
       {
         header: 'Status',
         value: r => r.status,
@@ -193,4 +204,52 @@ export async function runAgentRunsList(
     ])
   )
   ctx.out.text(formatPagination(data.pagination))
+}
+
+const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`
+
+/**
+ * `agents inspect <runId>` — the run's timeline (`GET /api/agents/runs/:id/timeline`): every
+ * record it left, by time, with its versions, its children and its spend against its budget.
+ */
+export async function runAgentsInspect(ctx: CommandContext, runId: string): Promise<void> {
+  if (!runId) throw new CliError('Give the run id: rocketflare agents inspect <runId>')
+  const { data, raw } = await requireClient(ctx).request(
+    'GET',
+    `/api/agents/runs/${encodeURIComponent(runId)}/timeline`,
+    { schema: agentRunTimelineSchema }
+  )
+  ctx.out.data(raw, () => {
+    const { run, versions, spend, children, entries } = data
+    const status = run.status === 'failed' ? chalk.red(run.status) : run.status
+    const moved =
+      versions.currentAgentVersion !== null &&
+      versions.currentAgentVersion !== versions.agentVersion
+        ? chalk.yellow(` (deployed: v${versions.currentAgentVersion})`)
+        : ''
+    const lines = [
+      `${chalk.bold(run.agentKey)} ${run.id}  ${status}  attempt ${run.attempt}`,
+      `version v${versions.agentVersion}${moved}  worker ${versions.workerVersionId ?? '—'}${
+        run.parentRunId ? `  parent ${run.parentRunId}` : ''
+      }`,
+      `spend ${spend.own.tokens} tokens ${usd(spend.own.costUsd)} in ${spend.own.calls} calls` +
+        (children.length
+          ? `; with children ${spend.tree.tokens} tokens ${usd(spend.tree.costUsd)}`
+          : '') +
+        (spend.budget.maxTokens !== undefined ? `  / max ${spend.budget.maxTokens} tokens` : '') +
+        (spend.budget.maxCostUsd !== undefined ? `  / max ${usd(spend.budget.maxCostUsd)}` : ''),
+    ]
+    if (run.error) lines.push(chalk.red(`error: ${run.error}`))
+    lines.push('')
+    const start = entries[0]?.at.getTime() ?? 0
+    lines.push(
+      renderTable(entries, [
+        { header: '+s', value: e => ((e.at.getTime() - start) / 1000).toFixed(1) },
+        { header: 'Kind', value: e => e.kind, style: text => chalk.dim(text) },
+        { header: 'What', value: e => e.label },
+        { header: 'Ref', value: e => e.ref ?? '' },
+      ])
+    )
+    return lines.join('\n')
+  })
 }

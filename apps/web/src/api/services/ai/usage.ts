@@ -72,7 +72,13 @@ export interface RunSpend {
   costMicrocents: number
 }
 
-export async function runSpend(db: Database, tenantId: string, runId: string): Promise<RunSpend> {
+export async function runSpend(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  /** Also every run this one spawned, and theirs (`agent_runs.parent_run_id`, D44). */
+  options: { descendants?: boolean } = {}
+): Promise<RunSpend> {
   const [row] = await db
     .select({
       calls: sql<number>`count(*)::int`,
@@ -83,7 +89,14 @@ export async function runSpend(db: Database, tenantId: string, runId: string): P
       costMicrocents: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint`,
     })
     .from(aiUsage)
-    .where(and(eq(aiUsage.tenantId, tenantId), eq(aiUsage.agentRunId, runId)))
+    .where(
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        options.descendants
+          ? sql`${aiUsage.agentRunId} IN (WITH RECURSIVE tree(id) AS (SELECT ${runId}::uuid UNION ALL SELECT r.id FROM agent_runs r JOIN tree t ON r.parent_run_id = t.id WHERE r.tenant_id = ${tenantId}) SELECT id FROM tree)`
+          : eq(aiUsage.agentRunId, runId)
+      )
+    )
   return {
     calls: Number(row?.calls ?? 0),
     inputTokens: Number(row?.inputTokens ?? 0),

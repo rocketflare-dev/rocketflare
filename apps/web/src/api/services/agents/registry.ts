@@ -25,6 +25,7 @@ import {
   type Tool,
   type ToolApproval,
   type ToolLoopCheckpoint,
+  type ToolLoopJournal,
   toolInputSchema,
 } from '../ai/agent-loop'
 import type { AiEnv, ChatClient } from '../ai/types'
@@ -38,6 +39,7 @@ import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
 import { triageResearchAgent } from './examples/triage-research'
 import type { MapOptions } from './fanout'
+import type { AgentRunsEnv } from './runs'
 
 /** Emitted by the run into `agent_run_events` (and nudged to viewers). */
 export interface AgentEvent {
@@ -49,6 +51,10 @@ export interface AgentEvent {
 export interface AgentRunEnv {
   AI?: AiEnv['AI']
   JOBS_QUEUE?: JobsQueue | null
+  /** For `ctx.spawn` and a version `rerun`: a run starting another run. */
+  AGENT_RUN_WORKFLOW?: AgentRunsEnv['AGENT_RUN_WORKFLOW']
+  /** The Worker deployment the attempt runs on (`[version_metadata]`). */
+  CF_VERSION_METADATA?: { id: string }
 }
 
 /** What an agent asks a person through {@link AgentContext.interrupt}. */
@@ -90,6 +96,13 @@ export interface OnceOptions {
    * it. `'inner'` is for a `once` that only memoises other recorded calls — `ctx.map`'s items.
    */
   replay?: 'serve' | 'rerun' | 'inner'
+  /**
+   * What makes THIS call different from another with the same label — the query, the item id.
+   * The recorded key becomes `label#<hash of inputs>`, so `for (q of queries) ctx.once('search',
+   * fn, { inputs: q })` is one record per query rather than the first query's result three times.
+   * jsonb-shaped; must be the same value on every attempt.
+   */
+  inputs?: unknown
 }
 
 /** What `run()` receives. Never carries a client-supplied tenant id. */
@@ -109,6 +122,12 @@ export interface AgentContext<Input = unknown> {
   emit(event: AgentEvent): Promise<void>
   /** Throws `AgentCancelledError` when the run was asked to stop — call between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts the moment a cancel is requested (polled every few seconds while the attempt runs).
+   * Every call through `ctx.chat.client` already carries it; pass it to `runToolLoop` as `signal`
+   * and to your own `fetch`es, so a cancel reaches work in flight instead of waiting for it.
+   */
+  signal: AbortSignal
   /** The resolved (traced) client for `meta.promptKey` and the model/max_tokens to pass it. */
   chat: { client: ChatClient; model: string; maxOutputTokens: number }
   /**
@@ -129,11 +148,22 @@ export interface AgentContext<Input = unknown> {
     save(checkpoint: ToolLoopCheckpoint): Promise<void>
   }
   /**
+   * The tool loop's journal (`agent_run_turns`) — hand it to `runToolLoop` as `journal`. Every
+   * model turn and tool result is recorded as it settles, so a retried attempt is never billed for
+   * a turn it already took and never re-runs a tool that already finished, even part-way through a
+   * turn; a `Tool.sideEffects` call that may have run settles as an unknown outcome instead. It is
+   * also what a strict `agent:replay` answers a tool-loop agent from. Scoped like every keyed
+   * primitive, so a loop inside `ctx.map` has a journal of its own.
+   */
+  journal: ToolLoopJournal
+  /**
    * Run `fn` at most once per `key` across every attempt of this run, replaying its recorded result
    * afterwards. **Anything with a side effect the run must not repeat goes through here** — an
    * ingest, a ledger write, an outbound call — because an `execute` retry re-enters `run()` from the
-   * top. `key` is yours and must be stable across attempts. The result is stored as jsonb: return
-   * ids and scalars, not rows. At-least-once with a recorded result, not exactly-once.
+   * top. `key` is yours and must be stable across attempts; **the same key twice in one attempt
+   * throws `EffectKeyConflictError`** — a call that repeats with different arguments passes them
+   * as `options.inputs`, which become part of the key. The result is stored as jsonb: return ids
+   * and scalars, not rows. At-least-once with a recorded result, not exactly-once.
    *
    * `options.replay` matters only to a REPLAY of the run (`agent:replay`), never to the run
    * itself: `'rerun'` marks `fn` as a pure model call a live replay may make again — so a changed
@@ -141,6 +171,15 @@ export interface AgentContext<Input = unknown> {
    * because `fn` may have a side effect.
    */
   once<T>(key: string, fn: () => Promise<T>, options?: OnceOptions): Promise<T>
+  /**
+   * Start another agent as a CHILD run — its own instance and attempts, `parent_run_id` = this
+   * run — and resolve with its output. While it runs, this run parks (it costs nothing) and is
+   * woken when the child settles. `key` is yours and must be stable across attempts, like every
+   * key: it is what a retried or resumed run uses to find the same child. A child that failed or
+   * was cancelled throws `ChildRunFailedError` (catch it to carry on). Its budget is what this run
+   * could still spend; a cancel of this run cancels it. For a short sub-task, call inline instead.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
   /**
    * Ask a person, and suspend the run until they answer.
    *

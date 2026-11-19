@@ -22,6 +22,7 @@
  * shape a plugin can get subtly wrong.
  */
 
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
 import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import type { AccessScope } from '../../api/services/access-sql'
@@ -201,19 +202,36 @@ export interface AgentCtx<Input = unknown> {
     status: 'running' | 'done' | 'error',
     detail?: string
   ): Promise<void>
-  /** Throws when the run was asked to stop. Call it between model turns; the loop takes no signal. */
+  /** Throws when the run was asked to stop. Call it between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to
+   * your own `fetch`es so a cancel reaches them in flight.
+   */
+  signal: AbortSignal
   /**
    * Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
    *
    * **Anything with a side effect goes through here** — an ingest, a ledger write, an outbound
    * call — because a retry re-enters `run()` from the TOP, and so does a resume after a human
-   * answered. `key` is yours and must be stable across attempts. The result is stored as jsonb, so
-   * return ids and scalars, never rows.
+   * answered. `key` is yours and must be stable across attempts, and **the same key twice in one
+   * attempt throws** — a call that repeats with different arguments passes them as
+   * `options.inputs`, which become part of the key (`label#<hash>`). The result is stored as
+   * jsonb, so return ids and scalars, never rows.
    */
-  once<T>(key: string, fn: () => Promise<T>): Promise<T>
+  once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
   /**
-   * The agentic loop, with this run's client, model, ceiling and approval plumbing already bound.
+   * Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output.
+   * This run parks while the child runs and is woken when it settles; a failed or cancelled child
+   * throws. `key` must be stable across attempts. Its budget is what this run could still spend.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
+  /**
+   * The agentic loop, with this run's client, model, ceiling, approval plumbing and journal
+   * already bound: a retried attempt is served the turns and tool results it already recorded,
+   * so it is never billed twice and never re-runs a finished tool. Mark a tool that writes
+   * `sideEffects: true` (and `durable: true` if it passes `call.idempotencyKey` on); give a
+   * second loop in the same run its own `key`.
    */
   toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
   /** One forced tool call, zod-validated, one retry with the issues fed back. */
@@ -249,7 +267,7 @@ export interface AgentCtx<Input = unknown> {
 /** `runToolLoop` minus what the runtime supplies. */
 export type PluginToolLoopOptions = Omit<
   RunToolLoopOptions,
-  'model' | 'maxTokens' | 'approvals' | 'runApproved'
+  'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal'
 > & { maxTokens?: number }
 
 /** `callStructuredTool` minus what the runtime supplies. */
@@ -286,8 +304,11 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     prompt: vars => ctx.prompt(vars),
     step: (key, label, status, detail) => ctx.step(key, label, status, detail),
     checkCancelled: () => ctx.checkCancelled(),
-    once: (key, fn) => ctx.once(key, fn),
+    signal: ctx.signal,
+    once: (key, fn, options) =>
+      ctx.once(key, fn, options?.inputs !== undefined ? { inputs: options.inputs } : undefined),
     decide: ctx.decide,
+    spawn: (key, agentKey, input) => ctx.spawn(key, agentKey, input),
     interrupt: ask => ctx.interrupt(ask),
     chatModel: { provider: ctx.chat.client.provider, model: ctx.chat.model },
     toolLoop: options =>
@@ -297,12 +318,15 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
         approvals: ctx.approvals,
         runApproved: ctx.once,
+        journal: ctx.journal,
+        signal: options.signal ?? ctx.signal,
       }),
     structured: options =>
       callStructuredTool(ctx.chat.client, {
         ...options,
         model: ctx.chat.model,
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
+        signal: options.signal ?? ctx.signal,
       }),
   }
 }

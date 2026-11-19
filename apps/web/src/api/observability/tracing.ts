@@ -119,6 +119,12 @@ export function tracerFor(cfg: AppConfig, options: TracerForOptions = {}): Trace
         headers: settings.headers,
         protocol: settings.protocol,
         langfuse: settings.preset === 'langfuse',
+        // The stored copy outlives nothing the backend has, but it is the one a person with
+        // access can open from the span — and only when the store keeps the content at all.
+        ...(options.store &&
+          cfg.OBSERVABILITY_CAPTURE_CONTENT && {
+            contentRefBase: `${cfg.APP_URL.replace(/\/$/, '')}/api/traces`,
+          }),
         resource: {
           serviceName: cfg.APP_NAME,
           serviceVersion: cfg.RELEASE_VERSION,

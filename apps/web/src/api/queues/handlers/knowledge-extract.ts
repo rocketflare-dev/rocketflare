@@ -7,7 +7,7 @@
  * logged and ACKED — nothing a retry could change; the daily cap re-enqueues the same message for
  * the next UTC day and acks this one; a provider or database failure THROWS and the consumer
  * retries — safe, because every attempt starts by deleting the facts the document's last attempt
- * wrote. The work is one `job knowledge.extract` trace with a span per section. A run that wrote or
+ * wrote. The work is one `invoke_workflow knowledge.extract` trace with a span per section. A run that wrote or
  * removed facts nudges `entity.changed { entity: 'knowledge' }` tenant-wide, so the review badge,
  * the list and an open entity page refetch.
  */

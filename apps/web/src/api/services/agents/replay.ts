@@ -22,10 +22,20 @@
  *                    answered row → the replay stops `parked`.
  *   `ctx.steering`   the run's `steering` events, all handed over on the first call — an
  *                    approximation: the run itself saw them when they arrived.
- *   chat, tools      strict: a miss. live: the real client and the real (read-only) tools —
- *                    so a live replay reads the tenant's knowledge base, prompts and model
- *                    choice as they are TODAY, not as they were (`liveReplayWarnings` says when
- *                    knowledge search would be degraded in the replaying process).
+ *   tool loops       `agent_run_turns` (the journal, `ctx.journal`) by loop key and turn: a model
+ *                    turn asked about the same transcript is served; a changed transcript or
+ *                    system prompt is served and flagged `drift` in strict mode, asked again in
+ *                    live. A tool call the record settled is served by its `toolCallId` in both
+ *                    modes. A run settled more than `AGENT_TRANSCRIPT_RETENTION_DAYS` ago has no
+ *                    journal any more, and its first turn is a `chat` miss.
+ *   chat, tools      anything else — strict: a miss. live: the real client and the real
+ *                    (read-only) tools — so a live replay reads the tenant's knowledge base,
+ *                    prompts and model choice as they are TODAY, not as they were
+ *                    (`liveReplayWarnings` says when knowledge search would be degraded in the
+ *                    replaying process).
+ *   key order        the order today's code asks its top-level `once` / `decide` keys, against
+ *                    the order the run recorded them: a different order is `orderDrift` — the
+ *                    code moved a step, which a run parked across that deploy would feel.
  *   events, artifacts, the checkpoint — captured in memory.
  *
  * **Nothing is written, and the database says so.** Each run replays inside a READ ONLY
@@ -52,19 +62,30 @@ import type { AppConfig } from '../../../config'
 import { type Database, pgErrorCode } from '../../../db/client'
 import {
   type AgentRunDecisionRow,
+  type AgentRunEventRow,
   type AgentRunInterruptRow,
   type AgentRunRow,
+  type AgentRunTurnRow,
   agentRunDecisions,
   agentRunEffects,
   agentRunEvents,
   agentRunInterrupts,
   agentRuns,
+  agentRunTurns,
   tenants,
+  tenantUsers,
 } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
 import { accessScopeForUser } from '../access'
-import { InterruptDeclinedError, InterruptRequested, type Tool } from '../ai/agent-loop'
+import {
+  InterruptDeclinedError,
+  InterruptRequested,
+  type RecordedModelTurn,
+  type Tool,
+  type ToolLoopJournal,
+  type TurnHashes,
+} from '../ai/agent-loop'
 import { AiNotConfiguredError } from '../ai/errors'
 import {
   DECISIONS_FALLBACK_PROMPT_KEY,
@@ -78,11 +99,13 @@ import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import { type Decision, decideWithShapes, questionsHash, toDecision } from './decisions'
 import { withFanout } from './fanout'
 import { approvalsForRun } from './interrupts'
+import { attemptKeys, effectKey } from './keys'
 import type { AgentContext, AgentEvent, AgentInterruptAnswer, AnyAgentDefinition } from './registry'
 import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
 import { buildAgentTools } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
+import { groupRunTurns, type LoopRows } from './turns'
 
 /** `strict`: the record or nothing. `live`: what the record cannot answer is asked for real. */
 export type ReplayMode = 'strict' | 'live'
@@ -149,6 +172,22 @@ export interface ReplayDecision {
   changed?: string[]
 }
 
+export type ReplayTurnStatus =
+  /** The journal answered it: same transcript, same system prompt. */
+  | 'served'
+  /** Strict: answered from the journal although the transcript or system prompt changed. */
+  | 'drift'
+  /** Live: asked for real — not recorded, or the record no longer matched. */
+  | 'asked'
+
+export interface ReplayTurn {
+  /** The loop's journal key (`tool-loop`, `items[2]/tool-loop`). */
+  loop: string
+  /** 1-based; 0 is the policy's forced final answer. */
+  turn: number
+  status: ReplayTurnStatus
+}
+
 export interface ReplayResult {
   runId: string
   agentKey: string
@@ -160,6 +199,13 @@ export interface ReplayResult {
   verdict: 'match' | 'differs' | 'incomplete'
   outputDiff: JsonDiffEntry[]
   decisions: ReplayDecision[]
+  /** Every tool-loop model turn the replay took, and where its answer came from. */
+  turns: ReplayTurn[]
+  /**
+   * Set when today's code asks its top-level `once` / `decide` keys in a different order from
+   * the run — both lists hold only the keys both sides asked, in each side's order.
+   */
+  orderDrift?: { recorded: string[]; replayed: string[] }
   misses: { kind: ReplayMissKind; key: string }[]
   /** Writes the agent attempted and the replay refused — information, not a failure. */
   writes: string[]
@@ -174,6 +220,8 @@ export interface ReplayResult {
 export interface ReplayOptions {
   /** Default `strict`: never resolves a model, never calls one. */
   mode?: ReplayMode
+  /** Replay these rows (a recording's) instead of reading the run's from the database. */
+  rows?: RecordRows
   logger: Logger
 }
 
@@ -276,13 +324,17 @@ async function replayInside(
 ): Promise<ReplayResult> {
   const mode = options.mode ?? 'strict'
   const { tenantId, id: runId } = run
-  const record = await loadRecord(tx, tenantId, runId)
+  const record = recordOf(options.rows ?? (await loadRecordRows(tx, tenantId, runId)))
   const misses: ReplayResult['misses'] = []
   const writes: string[] = []
   const reran: string[] = []
   const events: AgentEvent[] = []
   const artifacts = new Map<string, AgentArtifact>()
   const decisions = new Map<string, ReplayDecision>()
+  const turns: ReplayTurn[] = []
+  /** Top-level keys in the order today's code asked them (`once:`/`decide:` prefixed). */
+  const asked: string[] = []
+  const onceKeys = attemptKeys('once', { orderDerived: agent.meta.pinned === true })
   let liveUsage: TokenUsage = ZERO_USAGE
   const db = refuseWrites(tx, writes)
 
@@ -305,6 +357,7 @@ async function replayInside(
       error: 'The recorded input no longer parses with the current inputSchema',
       verdict: 'incomplete',
       decisions: [],
+      turns: [],
       artifacts: [],
     }
   }
@@ -344,6 +397,7 @@ async function replayInside(
       }))
 
   const decide = decideWithShapes(async (key, request): Promise<Decision> => {
+    if (isTopLevel(key)) asked.push(`decide:${key}`)
     const parsed = decisionRequestSchema.parse(request)
     const hash = await questionsHash(parsed.questions)
     const recorded = record.decisions.get(key)
@@ -385,6 +439,8 @@ async function replayInside(
     }
   })
 
+  const journal = replayJournal(record.turns, live ? 'live' : 'strict', turns)
+
   const ctx = withFanout({
     db,
     cfg,
@@ -399,14 +455,20 @@ async function replayInside(
       events.push(event)
     },
     checkCancelled: async () => {},
+    // A replay is never cancelled from outside.
+    signal: new AbortController().signal,
     chat: live?.chat ?? {
-      client: missingChat(() => miss('chat', 'chat')),
+      client: missingChat(() => miss('chat', journal.pending() ?? 'chat')),
       model: 'replay',
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
     },
     tools,
     checkpoint: { load: async () => null, save: async () => {} },
-    once: async (key, fn, onceOptions) => {
+    journal: journal.journal,
+    once: async (label, fn, onceOptions) => {
+      // The runtime's own key and its own guard: a key reused in one attempt fails here too.
+      const key = onceKeys.claim(await effectKey(label, onceOptions?.inputs))
+      if (onceOptions?.replay !== 'inner' && isTopLevel(key)) asked.push(`once:${key}`)
       const recorded = record.effects.get(key)
       // A `ctx.map` item: run it again, so what it asks is answered from the record and a
       // change to the item's code shows. Its own recorded result is only a cache.
@@ -417,6 +479,14 @@ async function replayInside(
       }
       if (recorded) return recorded.result as never
       throw miss('once', key)
+    },
+    // A child run's recorded output (the `spawn:<key>` effect): replay never starts a child.
+    spawn: async (key, _agentKey, _input) => {
+      const effect = `spawn:${key}`
+      if (isTopLevel(key)) asked.push(`once:${effect}`)
+      const recorded = record.effects.get(effect)
+      if (recorded) return recorded.result as never
+      throw miss('once', effect)
     },
     approvals: await approvalsForRun(db, tenantId, runId),
     interrupt: async ask =>
@@ -486,15 +556,93 @@ async function replayInside(
   }
   const outputDiff = replayStatus === 'succeeded' ? diffJson(run.output, output) : []
   const decisionList = [...decisions.values()]
+  const orderDrift = orderDriftOf(record.order, asked)
   return {
     ...base,
     replayStatus,
     ...(error && { error }),
-    verdict: verdictOf(run.status, replayStatus, outputDiff, decisionList, misses.length),
+    verdict: verdictOf(run.status, replayStatus, outputDiff, decisionList, misses.length, {
+      turns,
+      orderDrift,
+    }),
     outputDiff,
     decisions: decisionList,
+    turns,
+    ...(orderDrift && { orderDrift }),
     artifacts: [...artifacts.keys()],
     ...(live && { liveUsage }),
+  }
+}
+
+/** A key a scope or a `ctx.map` item did not prefix — its position is the code's, not a race's. */
+function isTopLevel(key: string): boolean {
+  return !key.includes('/')
+}
+
+/** Runtime bookkeeping under `agent_run_effects`, never an agent's own `once`. */
+const INTERNAL_EFFECT_PREFIXES = ['steering:', 'notify:', 'tool:']
+
+/**
+ * The keys both sides asked, each in its own order; drift when the two orders differ. Keys only
+ * one side has are misses or unused decisions already — this reports MOVES, nothing else.
+ */
+export function orderDriftOf(
+  recorded: readonly string[],
+  replayed: readonly string[]
+): ReplayResult['orderDrift'] {
+  const seen = new Set(replayed)
+  const both = new Set(recorded.filter(key => seen.has(key)))
+  const a = recorded.filter(key => both.has(key))
+  const b = [...new Set(replayed)].filter(key => both.has(key))
+  return a.some((key, i) => key !== b[i]) ? { recorded: a, replayed: b } : undefined
+}
+
+/**
+ * The journal a replay answers tool loops from. Nothing is written; a served turn re-emits its
+ * events so the replay's timeline is whole. `pending()` names the turn being asked for, so a
+ * strict miss says which turn the record could not answer.
+ */
+function replayJournal(
+  loops: ReadonlyMap<string, LoopRows>,
+  mode: ReplayMode,
+  turns: ReplayTurn[]
+): { journal: ToolLoopJournal; pending(): string | undefined } {
+  const keys = attemptKeys('tool loop')
+  let pending: string | undefined
+  return {
+    pending: () => pending,
+    journal: {
+      async open(loop) {
+        keys.claim(loop)
+        const rows = loops.get(loop) ?? { models: new Map(), tools: new Map() }
+        return {
+          reemitServed: true,
+          modelTurn: turn => {
+            pending = `${loop} turn ${turn}`
+            const recorded = rows.models.get(turn) ?? null
+            if (!recorded && mode === 'live') turns.push({ loop, turn, status: 'asked' })
+            return recorded
+          },
+          accept: (turn: number, recorded: RecordedModelTurn, current: TurnHashes) => {
+            const same =
+              recorded.requestHash === current.requestHash &&
+              recorded.systemHash === current.systemHash
+            const status: ReplayTurnStatus = same ? 'served' : mode === 'strict' ? 'drift' : 'asked'
+            turns.push({ loop, turn, status })
+            if (status !== 'asked') pending = undefined
+            return status !== 'asked'
+          },
+          // A live call answered it; a chat call after the loop is not this turn's.
+          recordModelTurn: async () => {
+            pending = undefined
+          },
+          toolCall: toolCallId => rows.tools.get(toolCallId) ?? null,
+          startToolCall: async () => {},
+          settleToolCall: async () => {},
+          forgetToolCall: async () => {},
+        }
+      },
+    },
   }
 }
 
@@ -503,10 +651,12 @@ export function verdictOf(
   replayed: ReplayStatus,
   outputDiff: JsonDiffEntry[],
   decisions: ReplayDecision[],
-  misses: number
+  misses: number,
+  moves: Pick<ReplayResult, 'turns' | 'orderDrift'> = { turns: [] }
 ): ReplayResult['verdict'] {
   if (misses > 0 || replayed === 'parked' || replayed === 'input_incompatible') return 'incomplete'
   if (recorded !== replayed || outputDiff.length > 0) return 'differs'
+  if (moves.orderDrift || moves.turns.some(t => t.status !== 'served')) return 'differs'
   const moved = decisions.some(
     d =>
       d.status === 'drift' ||
@@ -522,18 +672,38 @@ export function verdictOf(
 interface RunRecord {
   decisions: Map<string, AgentRunDecisionRow>
   effects: Map<string, { result: unknown }>
+  turns: Map<string, LoopRows>
+  /** Top-level `once:`/`decide:` keys in the order the run first recorded them. */
+  order: string[]
   interrupts: Map<string, AgentRunInterruptRow>
   steering: Awaited<ReturnType<AgentContext['steering']>>
 }
 
-async function loadRecord(db: Database, tenantId: string, runId: string): Promise<RunRecord> {
-  const [decisions, effects, interrupts, steering] = await Promise.all([
+/**
+ * Everything replay reads about one run, as rows — what `loadRecordRows` reads from the database,
+ * and what a recording file (`exportRunRecording`) carries, so the gate can replay a run with no
+ * database of the deployment's at hand.
+ */
+export interface RecordRows {
+  decisions: AgentRunDecisionRow[]
+  effects: { key: string; result: unknown; at: Date }[]
+  interrupts: AgentRunInterruptRow[]
+  steering: AgentRunEventRow[]
+  turns: AgentRunTurnRow[]
+}
+
+export async function loadRecordRows(
+  db: Database,
+  tenantId: string,
+  runId: string
+): Promise<RecordRows> {
+  const [decisions, effects, interrupts, steering, turns] = await Promise.all([
     db
       .select()
       .from(agentRunDecisions)
       .where(and(eq(agentRunDecisions.tenantId, tenantId), eq(agentRunDecisions.runId, runId))),
     db
-      .select({ key: agentRunEffects.key, result: agentRunEffects.result })
+      .select({ key: agentRunEffects.key, result: agentRunEffects.result, at: agentRunEffects.at })
       .from(agentRunEffects)
       .where(and(eq(agentRunEffects.tenantId, tenantId), eq(agentRunEffects.runId, runId))),
     db
@@ -551,16 +721,176 @@ async function loadRecord(db: Database, tenantId: string, runId: string): Promis
         )
       )
       .orderBy(asc(agentRunEvents.seq)),
+    db
+      .select()
+      .from(agentRunTurns)
+      .where(and(eq(agentRunTurns.tenantId, tenantId), eq(agentRunTurns.runId, runId))),
   ])
+  return { decisions, effects, interrupts, steering, turns }
+}
+
+function recordOf(rows: RecordRows): RunRecord {
+  const { decisions, effects, interrupts, steering } = rows
+  const order = [
+    ...effects
+      .filter(e => isTopLevel(e.key) && !INTERNAL_EFFECT_PREFIXES.some(p => e.key.startsWith(p)))
+      .map(e => ({ key: `once:${e.key}`, at: e.at.getTime() })),
+    ...decisions
+      .filter(d => isTopLevel(d.key))
+      .map(d => ({ key: `decide:${d.key}`, at: d.createdAt.getTime() })),
+  ]
+    .sort((a, b) => a.at - b.at)
+    .map(entry => entry.key)
   return {
     decisions: new Map(decisions.map(d => [d.key, d])),
     effects: new Map(effects.map(e => [e.key, { result: e.result }])),
+    turns: groupRunTurns(rows.turns),
+    order,
     interrupts: new Map(interrupts.map(i => [i.key, i])),
     steering: steering.flatMap(row => {
       const parsed = steeringNoteDataSchema.safeParse(row.data)
       return parsed.success ? [{ ...parsed.data, eventId: row.id, at: row.at }] : []
     }),
   }
+}
+
+// ---- recordings: a settled run as a file the gate replays ------------------------------------
+
+/** The file format version a recording is written in. */
+export const RECORDING_FORMAT = 1
+
+/**
+ * One settled run, everything replay needs, as JSON. What the gate's recorded-run check replays
+ * (`tests/api/agent-recordings.test.ts`) — a key-order change at an unchanged `meta.version` fails
+ * there with "bump `meta.version`". **It holds the run's input, output and answers**: record runs
+ * from development or a seeded staging tenant, never a customer's, and read the file before you
+ * commit it.
+ */
+export interface RunRecording {
+  format: typeof RECORDING_FORMAT
+  agentKey: string
+  agentVersion: number
+  recordedAt: string
+  run: {
+    status: AgentRunStatus
+    input: unknown
+    output: unknown
+    error: string | null
+    /**
+     * The requester's role then — the replay runs as a user of this role, because what the tools
+     * offer (and so every recorded request hash) depends on what the requester may do. Null for a
+     * run nobody requested.
+     */
+    requesterRole: string | null
+  }
+  rows: RecordRows
+}
+
+export async function exportRunRecording(db: Database, run: AgentRunRow): Promise<RunRecording> {
+  const membership = run.requestedByUserId
+    ? await db.query.tenantUsers.findFirst({
+        columns: { role: true },
+        where: and(
+          eq(tenantUsers.tenantId, run.tenantId),
+          eq(tenantUsers.userId, run.requestedByUserId)
+        ),
+      })
+    : undefined
+  return {
+    format: RECORDING_FORMAT,
+    agentKey: run.agentKey,
+    agentVersion: run.agentVersion,
+    recordedAt: new Date().toISOString(),
+    run: {
+      status: run.status,
+      input: run.input,
+      output: run.output ?? null,
+      error: run.error,
+      requesterRole: membership?.role ?? null,
+    },
+    rows: await loadRecordRows(db, run.tenantId, run.id),
+  }
+}
+
+/** A recording read back from JSON: its timestamps are strings again until revived here. */
+export function parseRunRecording(json: string): RunRecording {
+  const revived = JSON.parse(json, (key, value) =>
+    typeof value === 'string' && /(At|^at)$/.test(key) && ISO_INSTANT.test(value)
+      ? new Date(value)
+      : value
+  ) as RunRecording
+  if (revived.format !== RECORDING_FORMAT) {
+    throw new Error(`Recording format ${String(revived.format)} is not ${RECORDING_FORMAT}`)
+  }
+  return revived
+}
+
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/
+
+/**
+ * The row a recording replays as: a fresh id inside `tenantId` (the test's own), the recorded
+ * status, input and output, requested by `userId` — a user of `run.requesterRole` there, so the
+ * tools offered are the ones the run was offered. Nothing of the recording tenant is read.
+ */
+export function recordingRunRow(
+  recording: RunRecording,
+  tenantId: string,
+  userId: string | null
+): AgentRunRow {
+  const now = new Date()
+  return {
+    id: crypto.randomUUID(),
+    tenantId,
+    agentKey: recording.agentKey as AgentRunRow['agentKey'],
+    status: recording.run.status,
+    input: recording.run.input,
+    output: recording.run.output,
+    error: recording.run.error,
+    requestedByUserId: userId,
+    instanceId: null,
+    attempt: 1,
+    startedAt: now,
+    finishedAt: now,
+    cancelRequestedAt: null,
+    checkpoint: null,
+    traceId: null,
+    concurrencyKey: null,
+    batchId: null,
+    triggerEvent: null,
+    triggerEventId: null,
+    inputFromRequester: false,
+    agentVersion: recording.agentVersion,
+    workerVersionId: null,
+    parentRunId: null,
+    budget: null,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+/**
+ * The gate's question about one recording: did today's code move the keys the run recorded,
+ * without bumping `meta.version`? `null` when it did not (or when the version was bumped — a
+ * recording of an older version is expected to drift). Output and turn changes are not a version
+ * matter: a prompt edit changes answers and needs no bump.
+ */
+export function versionBumpNeeded(
+  recording: RunRecording,
+  currentVersion: number,
+  result: ReplayResult
+): string | null {
+  if (recording.agentVersion !== currentVersion) return null
+  const keyMisses = result.misses.filter(m => m.kind !== 'chat' && m.kind !== 'tool')
+  const unused = result.decisions.filter(d => d.status === 'unused').map(d => `decide:${d.key}`)
+  if (!result.orderDrift && keyMisses.length === 0 && unused.length === 0) return null
+  const moved = [
+    ...(result.orderDrift
+      ? [`order ${result.orderDrift.recorded.join(',')} → ${result.orderDrift.replayed.join(',')}`]
+      : []),
+    ...keyMisses.map(m => `new ${m.kind} key "${m.key}"`),
+    ...unused.map(k => `no longer asked: ${k}`),
+  ]
+  return `${recording.agentKey}: the keys a run records moved (${moved.join('; ')}) but meta.version is still ${currentVersion} — bump \`meta.version\` so runs in flight meet onVersionChange`
 }
 
 /** The runtime's interrupt semantics over a recorded row (`runtime.ts` `ctx.interrupt`). */

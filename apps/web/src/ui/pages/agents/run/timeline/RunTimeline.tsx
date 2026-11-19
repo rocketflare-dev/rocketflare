@@ -25,6 +25,7 @@ import {
   buildTimeline,
   defaultExpanded,
   groupTimeline,
+  stopOpenWork,
   type TimelineEvent,
   windowGroups,
 } from './timelineModel'
@@ -39,16 +40,22 @@ const TIMELINE_MAX_HEIGHT = 'lg:max-h-[max(24rem,calc(100vh-22rem))]'
 
 export function RunTimeline({
   events,
+  settled = false,
   className = '',
 }: {
   events: readonly TimelineEvent[]
+  /** The run has settled: work it left open is shown stopped, never spinning. */
+  settled?: boolean
   className?: string
 }) {
   const [toggled, setToggled] = useState<Set<string>>(() => new Set())
   const [showAll, setShowAll] = useState(false)
 
   const rows = useMemo(() => buildTimeline(events), [events])
-  const groups = useMemo(() => groupTimeline(rows), [rows])
+  const groups = useMemo(() => {
+    const grouped = groupTimeline(rows)
+    return settled ? stopOpenWork(grouped) : grouped
+  }, [rows, settled])
   const expandedByDefault = useMemo(() => defaultExpanded(groups), [groups])
   const { visible, hiddenGroups, hiddenRows } = useMemo(
     () => windowGroups(groups, showAll),

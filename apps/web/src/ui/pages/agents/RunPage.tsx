@@ -41,6 +41,7 @@ import { outputFor } from './outputs'
 import { RunStatusBadge } from './RunStatusBadge'
 import { ActionRequiredPanel } from './run/ActionRequiredPanel'
 import { RunArtifactsTab } from './run/output/RunArtifactsTab'
+import { RunInspectTab } from './run/output/RunInspectTab'
 import { RunOutputTab } from './run/output/RunOutputTab'
 import { RunUsageTab } from './run/output/RunUsageTab'
 import { RunErrorAlert } from './run/RunErrorAlert'
@@ -109,7 +110,11 @@ export default function RunPage() {
   return (
     <div className="max-w-7xl">
       <PageHeader
-        breadcrumbs={[{ label: 'Agents', to: '/agents' }, { label: title }]}
+        breadcrumbs={[
+          { label: 'Agents', to: '/agents' },
+          ...(run.data ? [{ label: title, to: `/agents/${run.data.agentKey}` }] : []),
+          { label: run.data ? `Run ${run.data.id.slice(0, 8)}` : title },
+        ]}
         title={title}
         badge={run.data && <RunStatusBadge status={run.data.status} />}
       />
@@ -190,6 +195,10 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       label: 'Usage',
       content: <RunUsageTab run={run} stats={stats} requestedBy={requestedBy} />,
     },
+    // The operator's view: every record, versions, spend against the budget.
+    ...(isAdminLevel()
+      ? [{ id: 'inspect', label: 'Inspect', content: <RunInspectTab runId={run.id} /> }]
+      : []),
   ]
 
   return (
@@ -222,7 +231,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
               setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
             }
           />
-          <RunTimeline events={run.events} />
+          <RunTimeline events={run.events} settled={!isRunActive(run.status)} />
           {isRunActive(run.status) && <SteerComposer runId={run.id} />}
         </SectionPanel>
         <div className="order-1 lg:order-2 space-y-3 min-w-0">
