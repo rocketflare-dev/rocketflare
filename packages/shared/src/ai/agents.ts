@@ -503,6 +503,48 @@ export const agentRunWithEventsSchema = agentRunSchema.extend({
 })
 export type AgentRunWithEvents = z.infer<typeof agentRunWithEventsSchema>
 
+// ---- Per-agent stats (GET /api/agents/stats) -----------------------------------------------------
+
+export const agentStatsQuerySchema = z.object({
+  /** The window, in days back from now. */
+  days: z.coerce.number().int().min(1).max(365).default(30),
+})
+export type AgentStatsQuery = z.infer<typeof agentStatsQuerySchema>
+
+/**
+ * One agent's runs in the window, as the caller may see them (a member: their own; admin+: all) —
+ * child runs included, since they are runs of that agent. `lastRun` is the newest top-level run
+ * the caller may see, in or out of the window.
+ */
+export const agentStatsSchema = z.object({
+  agentKey: agentKeySchema,
+  runs: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  /** Queued, running or awaiting input now. */
+  active: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+  /** Priced calls only; an unpriced model counts in `tokens` alone. */
+  costUsd: z.number().nonnegative(),
+  /** Mean wall-clock of the window's settled runs; null when none settled. */
+  avgDurationMs: z.number().nonnegative().nullable(),
+  lastRun: z
+    .object({
+      id: z.string().uuid(),
+      status: agentRunStatusSchema,
+      createdAt: z.coerce.date(),
+      finishedAt: z.coerce.date().nullable(),
+    })
+    .nullable(),
+})
+export type AgentStats = z.infer<typeof agentStatsSchema>
+
+export const agentStatsResponseSchema = z.object({
+  since: z.coerce.date(),
+  items: z.array(agentStatsSchema),
+})
+export type AgentStatsResponse = z.infer<typeof agentStatsResponseSchema>
+
 // ---- Suspend / resume ----------------------------------------------------------------------------
 
 /**

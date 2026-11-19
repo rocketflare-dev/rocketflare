@@ -739,7 +739,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   /api/agents/runs/:id/timeline` (`@rocketflare/shared/ai/agent-timeline`) merges events, turns,
   tool calls, effects, decisions, asks and children by time, with versions and spend vs budget —
   `rocketflare agents inspect <runId>` and the run page's admin **Inspect** tab read it; `runs list`
-  gains `--parent`, `--since`, `--agent-version`. Why: the durable-agents review's phase 3 (#156).
+  gains `--parent`, `--since`, `--agent-version`. The agents UI scales by agent: `/agents` is one row
+  per agent (last run, 30-day runs/tokens/avg time/cost from ONE `GET /api/agents/stats`, scoped like
+  the runs list), each agent has `/agents/:agentKey` (metrics + its runs), and `/agents/runs` lists
+  every run. Why: the durable-agents review's phase 3 (#156).
 - **Human-in-the-loop (#17)**: `ctx.interrupt({ key, spec })` parks the run on
   `step.waitForEvent`. The key must be stable across attempts. Answering is a compare-and-set on the
   row, *then* a nudge to the instance (`not_found` → restart as `<runId>-rN`). There are four

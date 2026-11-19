@@ -110,7 +110,11 @@ export default function RunPage() {
   return (
     <div className="max-w-7xl">
       <PageHeader
-        breadcrumbs={[{ label: 'Agents', to: '/agents' }, { label: title }]}
+        breadcrumbs={[
+          { label: 'Agents', to: '/agents' },
+          ...(run.data ? [{ label: title, to: `/agents/${run.data.agentKey}` }] : []),
+          { label: run.data ? `Run ${run.data.id.slice(0, 8)}` : title },
+        ]}
         title={title}
         badge={run.data && <RunStatusBadge status={run.data.status} />}
       />

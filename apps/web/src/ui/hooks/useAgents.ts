@@ -15,6 +15,7 @@ import {
   agentRunEventSchema,
   agentRunSchema,
   agentRunWithEventsSchema,
+  agentStatsResponseSchema,
   type CreateAgentRunRequest,
   createAgentRunResponseSchema,
 } from '@rocketflare/shared/ai/agents'
@@ -135,6 +136,14 @@ export function useAgentRun(id: string | undefined) {
     ...agentRunQueryOptions(id ?? ''),
     enabled: Boolean(id),
     refetchInterval: q => runPollInterval(q.state.data?.status),
+  })
+}
+
+/** Per-agent runs, outcomes, tokens, cost and mean duration over `days`, plus each last run. */
+export function useAgentStats(days = 30) {
+  return useQuery({
+    queryKey: queryKeys.agentRuns.stats(days),
+    queryFn: () => api.get(`/api/agents/stats?days=${days}`, { schema: agentStatsResponseSchema }),
   })
 }
 

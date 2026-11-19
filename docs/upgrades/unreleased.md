@@ -61,6 +61,7 @@ Phase 3 adds version pinning, HITL deadlines, reminders and assignees, child run
   - `GET /api/agents/runs` no longer lists child runs by default.
 - **Cancel with no live attempt.** Cancelling a `running` run that has been silent for longer than a step can run (`ATTEMPT_DEAD_MS`, 12 minutes) settles it at once instead of waiting for a poll that will never come.
 - **Out-of-band settles end the log.** A run settled outside its attempt appends a final `status` event whose `reason` is `cancel_requested`, `forced`, `no_live_attempt` or `reconciled`. That covers a cancel of a queued or parked run, a force, and a settle by the sweeper or a read.
+- **Agents pages.** `/agents` is now one full-width row per agent: last run, 30-day runs, tokens, average time and cost, plus Run. It no longer has a runs table beside it. Each agent has a page, `/agents/:agentKey`, with metric cards and its own runs. `/agents/runs` lists every run, and the awaiting link is now `/agents/runs?awaiting=1`. All metrics come from one new endpoint, `GET /api/agents/stats?days=`, scoped like the runs list.
 - **Stopped work in the timeline.** The run timeline shows the stages and tool calls a settled run left open as stopped (`stopOpenWork`), not spinning.
 - Why: `docs/CONCEPTS.md` §9 "Versions, children, inspector (D44 phase 3)".
 
@@ -109,13 +110,14 @@ Lint (#162):
 15. Add `[version_metadata]` with `binding = "CF_VERSION_METADATA"` to BOTH tomls (and to the test fixtures, if you kept them). Then run `pnpm --filter @rocketflare/web exec wrangler types`.
 16. If one of your agents should not continue across a deploy, set `meta.version` and `onVersionChange`. To have the gate catch a key change that came without a version bump, record a run into `apps/web/tests/agent-recordings/` with `--record`.
 17. If your code lists runs through `GET /api/agents/runs` and expects children, pass `parentRunId`. If your own code called `notifyApprovers`, import it from `services/agents/hitl`.
-18. Port the CLI `agents inspect` (`apps/cli/src/commands/agents.ts` and `cli.ts`) and the UI Inspect tab (`RunInspectTab.tsx`, `useAgentRunTimeline`, and `queryKeys.agentRuns.timeline`).
-19. In the root `package.json` and `apps/web/package.json`, change the `lint` script from `biome check . --diagnostic-level=error` to `biome check . --error-on-warnings`.
-20. In `scripts/lib/gate-lib.mjs`, change the `lint` step's `display` to `biome check . --error-on-warnings`.
-21. In `.claude/rules/code-quality.md`, replace "`pnpm lint` (errors only)" with "`pnpm lint` (a warning fails it, as an error does)".
-22. Port the kit diff's code edits from the release; every one is local to the line Biome names.
-23. Run `pnpm exec biome check .` and fix each warning it still reports in your own code: an app's own code can carry warnings the kit never had.
-24. Port `apps/web/tests/config/ci-workflows.test.ts` (the `runs()` helper and the unreadable-API case) and the `window.scrollTo` stub in `apps/web/tests/ui/setup.ts` from the release.
+18. Copy `services/agents/stats.ts` and add the `/stats` route, plus `agentStats*Schema` in the shared `agents.ts`. Copy `pages/agents/{AgentPage,AllRunsPage,RunsTable,agentMetrics}.tsx` and the new `AgentsPage.tsx`, and add the `/agents/runs` and `/agents/:agentKey` routes to `App.tsx`. Point any link of yours at `/agents?awaiting=1` to `/agents/runs?awaiting=1` instead. If you customised `AgentsPage`, move the runs-table part of your change into `RunsTable.tsx`.
+19. Port the CLI `agents inspect` (`apps/cli/src/commands/agents.ts` and `cli.ts`) and the UI Inspect tab (`RunInspectTab.tsx`, `useAgentRunTimeline`, and `queryKeys.agentRuns.timeline`).
+20. In the root `package.json` and `apps/web/package.json`, change the `lint` script from `biome check . --diagnostic-level=error` to `biome check . --error-on-warnings`.
+21. In `scripts/lib/gate-lib.mjs`, change the `lint` step's `display` to `biome check . --error-on-warnings`.
+22. In `.claude/rules/code-quality.md`, replace "`pnpm lint` (errors only)" with "`pnpm lint` (a warning fails it, as an error does)".
+23. Port the kit diff's code edits from the release; every one is local to the line Biome names.
+24. Run `pnpm exec biome check .` and fix each warning it still reports in your own code: an app's own code can carry warnings the kit never had.
+25. Port `apps/web/tests/config/ci-workflows.test.ts` (the `runs()` helper and the unreadable-API case) and the `window.scrollTo` stub in `apps/web/tests/ui/setup.ts` from the release.
 
 ## Conflicts to expect
 

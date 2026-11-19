@@ -1,6 +1,17 @@
-# Agents UI (`/agents`, `/agents/runs/:runId`)
+# Agents UI (`/agents`, `/agents/:agentKey`, `/agents/runs`, `/agents/runs/:runId`)
 
-`AgentsPage` (roster + runs table) and `RunPage` (its OWN lazy chunk), both `read AgentRun`. Also
+Four pages, each its own lazy chunk, all `read AgentRun`, all full width:
+- `AgentsPage` (`/agents`): ONE row per agent — title (→ its page), one-line description, badges,
+  last run (status + time ago → the run), 30-day runs / tokens / avg time / cost, Run. Every metric
+  comes from ONE `GET /api/agents/stats` (`useAgentStats`), never a request per agent; no runs
+  table here — it must stay readable at fifty agents. "N waiting on you" → `/agents/runs?awaiting=1`.
+- `AgentPage` (`/agents/:agentKey`): description, Run, four metric cards, and `RunsTable` fixed to
+  the agent (`fixedAgentKey`: no agent filter, no agent column). An unknown key is an empty state.
+- `AllRunsPage` (`/agents/runs`): `RunsTable` across agents, with the agent filter. The static
+  `runs` segment outranks `:agentKey`, so no agent may be keyed `runs`.
+- `RunPage`: breadcrumbs Agents → the agent → the run.
+Metric formatting is `agentMetrics.tsx` (compact tokens; costs under $1 keep four decimals).
+ Also
 covers `hooks/useAgents.ts`, `hooks/useRunStream.ts`, `hooks/useNavBadges.ts`,
 `lib/runAguiStream.ts`, `lib/notificationLink.ts`. Polling and the `['agent-run-agui']` cache rule
 are in `.claude/rules/ui.md`.
@@ -122,7 +133,7 @@ are in `.claude/rules/ui.md`.
   `isRunActive`). Once `cancelRequestedAt` is set it stays ENABLED as "Force cancel" (the server
   terminates the Workflow instance and settles the row). `SteerComposer` posts `POST …/steering`
   while active; the note is an event row. Requested-by is "You" / short id / "system".
-- The runs table's filters live in `useSearchParams` (`/agents?awaiting=1` has a chip), and every
+- `RunsTable`'s filters live in `useSearchParams` (`/agents/runs?awaiting=1` has a chip), and every
   row is a real `<Link>`. The SideNav badge is `NavItem.badgeKey`/`badgeTone` resolved by
   `useNavBadges()` inside `SideNav`, fed by `GET /interrupts?status=pending&pageSize=1` under
   `['agent-run','awaiting']` (`useAwaitingInterruptCount`) — never polled.

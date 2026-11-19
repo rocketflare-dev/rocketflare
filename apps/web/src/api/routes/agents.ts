@@ -26,7 +26,9 @@ import type { AgentRunTimeline } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
   type AgentRunWithEvents,
+  type AgentStatsResponse,
   agentRunListQuerySchema,
+  agentStatsQuerySchema,
   type BindableAgentListResponse,
   bindableAgentListQuerySchema,
   type CreateAgentRunBatchResponse,
@@ -77,6 +79,7 @@ import {
   toAgentRun,
   toAgentRunEvent,
 } from '../services/agents/runs'
+import { agentStats } from '../services/agents/stats'
 import { runTimeline } from '../services/agents/timeline'
 import { bindableAgents } from '../services/agents/triggers'
 import { runSpend } from '../services/ai/usage'
@@ -201,6 +204,25 @@ agentsRouter.get('/bindable', validate('query', bindableAgentListQuerySchema), a
 })
 
 // ---- GET /api/agents/runs -------------------------------------------------------------------------
+
+// ---- GET /api/agents/stats -----------------------------------------------------------------------
+
+/**
+ * Per-agent runs, outcomes, tokens, cost and mean duration over `?days=` (default 30), plus each
+ * agent's newest run — the agents page's one request. Scoped like the runs list: a member's own
+ * runs, admin+ every run (`services/agents/stats.ts`).
+ */
+agentsRouter.get('/stats', validate('query', agentStatsQuerySchema), async c => {
+  const { db, tenantId, user, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const { days } = c.req.valid('query')
+  const body: AgentStatsResponse = await agentStats(
+    db,
+    { tenantId, ...(isAdminLevel(auth) ? {} : { requestedByUserId: user.id }) },
+    days
+  )
+  return c.json(body)
+})
 
 agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c => {
   const { db, tenantId, user, auth } = withAuthAndDb(c)
