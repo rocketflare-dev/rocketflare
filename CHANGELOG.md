@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.40.0 — 2026-11-19
+
+Knowledge facts are built only from documents a reader may see and settled only by those allowed, invitations follow their issuer, suspended organisations run no queued jobs, the chunker runs in linear bounded work, and security reports publish counts only.
+[Porting note](docs/upgrades/0.40.0.md).
+
 ## 0.39.0 — 2026-11-19
 
 Agent runs survive crashes and cancels: the tool loop records each model turn and tool result, so a retry neither re-bills a turn nor re-runs a finished tool; a cancel reaches the call in flight; a cron settles lost runs.
