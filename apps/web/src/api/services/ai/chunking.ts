@@ -20,6 +20,13 @@
  * single row longer than a window is the one case that is hard-split), its overlap is whole rows,
  * and every chunk holding rows without the table's own header carries `tableHeader`.
  *
+ * **Context is bounded, so storage and embedding grow with the document.** `tableHeader` is the
+ * header whole when it fits a quarter of the window, else the header row's first columns and ` …`
+ * — header + rows always fit one window; a header wider than a window is itself cut into windows.
+ * A heading title is cut to `HEADING_TITLE_MAX_CHARS` in `headingPath`, and `embeddingInput`
+ * prefixes at most `EMBEDDING_CONTEXT_MAX_CHARS` of context. Headings and delimiter rows are
+ * recognised by a linear scan, never a backtracking regex: every line costs time in its length.
+ *
  * `headingPath` and `tableHeader` are context for the EMBEDDER (`embeddingInput`) and the lexical
  * index (`chunks.search_vector`), never part of the stored text. `page` is always null:
  * `AI.toMarkdown` emits no page markers to read it from (docs/CONCEPTS.md §9, Known gaps).
@@ -34,6 +41,13 @@ export const DEFAULT_CHUNK_TOKENS = 800
 export const DEFAULT_OVERLAP_TOKENS = 100
 /** How a heading path is joined for storage (`chunks.heading_path`) and display. */
 export const HEADING_PATH_SEPARATOR = ' › '
+/** A heading title longer than this is cut in `headingPath` (the stored text keeps all of it). */
+export const HEADING_TITLE_MAX_CHARS = 200
+/**
+ * The most context (heading path + table header) `embeddingInput` puts before a chunk's text —
+ * half a default window, so what is embedded stays within 1.5 windows whatever the document.
+ */
+export const EMBEDDING_CONTEXT_MAX_CHARS = (DEFAULT_CHUNK_TOKENS * CHARS_PER_TOKEN) / 2
 
 export interface ChunkOptions {
   maxTokens?: number
@@ -67,14 +81,17 @@ export function headingPathLabel(path: readonly string[]): string | null {
 
 /**
  * What gets EMBEDDED for a chunk: heading path, then table header, then the text — context the
- * stored slice lacks. `chunks.search_vector` indexes the same three, in the same order.
+ * stored slice lacks. `chunks.search_vector` indexes the same three, in the same order. The
+ * context is cut to `EMBEDDING_CONTEXT_MAX_CHARS`; the text never is.
  */
 export function embeddingInput(
   chunk: Pick<TextChunk, 'text' | 'headingPath' | 'tableHeader'>
 ): string {
-  return [headingPathLabel(chunk.headingPath), chunk.tableHeader, chunk.text]
+  const context = [headingPathLabel(chunk.headingPath), chunk.tableHeader]
     .filter((part): part is string => Boolean(part))
     .join('\n\n')
+    .slice(0, EMBEDDING_CONTEXT_MAX_CHARS)
+  return context ? `${context}\n\n${chunk.text}` : chunk.text
 }
 
 /** The last ~`chars` characters of `text`, starting at a word boundary (never mid-word). */
@@ -123,8 +140,54 @@ interface Line {
 }
 
 const FENCE_RE = /^ {0,3}(`{3,}|~{3,})/
-const HEADING_RE = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/
-const TABLE_DELIMITER_RE = /^ {0,3}\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-+:?[ \t]*)*\|?[ \t]*$/
+/** The line terminators a heading title can never contain. */
+const LINE_BREAK_RE = /[\n\r\u2028\u2029]/
+const DELIMITER_CELL_RE = /^[ \t]*:?-+:?[ \t]*$/
+
+const isBlankChar = (ch: string | undefined) => ch === ' ' || ch === '\t'
+
+/**
+ * An ATX heading — up to three spaces, `#`..`######`, then a space, a tab or the end; the title
+ * is the rest without a closing `#` run (one preceded by a space or tab) and surrounding
+ * whitespace. A single left-to-right pass and a scan back from the right: no regex, so the cost
+ * is linear in the line whatever it holds.
+ */
+function parseAtxHeading(line: string): { level: number; title: string } | null {
+  let i = 0
+  while (i < 3 && line[i] === ' ') i++
+  const hashes = i
+  while (i < line.length && i - hashes < 6 && line[i] === '#') i++
+  const level = i - hashes
+  if (level === 0) return null
+  if (i < line.length && !isBlankChar(line[i])) return null
+  if (LINE_BREAK_RE.test(line.slice(i))) return null
+  while (isBlankChar(line[i])) i++
+  let end = line.length
+  while (end > i && isBlankChar(line[end - 1])) end--
+  // A closing run of `#` counts only when a space or tab separates it from the title.
+  let run = end
+  while (run > i && line[run - 1] === '#') run--
+  if (run < end && run > i && isBlankChar(line[run - 1])) {
+    end = run
+    while (end > i && isBlankChar(line[end - 1])) end--
+  }
+  return { level, title: line.slice(i, end).trim().slice(0, HEADING_TITLE_MAX_CHARS) }
+}
+
+/** A GFM delimiter row (`|---|:--:|`), checked cell by cell so the cost stays linear. */
+function isTableDelimiter(line: string): boolean {
+  let i = 0
+  while (i < 3 && line[i] === ' ') i++
+  if (line[i] === '|') i++
+  let end = line.length
+  while (end > i && isBlankChar(line[end - 1])) end--
+  if (end > i && line[end - 1] === '|') end--
+  if (end <= i) return false
+  return line
+    .slice(i, end)
+    .split('|')
+    .every(cell => DELIMITER_CELL_RE.test(cell))
+}
 
 function splitLines(text: string): Line[] {
   const lines: Line[] = []
@@ -154,8 +217,7 @@ function splitLines(text: string): Line[] {
       fence = { char: marker[0] as string, length: marker.length }
       code = true
     } else {
-      const match = HEADING_RE.exec(content)
-      if (match) heading = { level: (match[1] as string).length, title: (match[2] ?? '').trim() }
+      heading = parseAtxHeading(content)
     }
     lines.push({ start, end, text: content, code, heading })
     if (nl === -1) break
@@ -208,7 +270,7 @@ function isTableStart(lines: Line[], i: number): boolean {
     !delimiter.code &&
     head.text.includes('|') &&
     delimiter.text.includes('|') &&
-    TABLE_DELIMITER_RE.test(delimiter.text)
+    isTableDelimiter(delimiter.text)
   )
 }
 
@@ -252,6 +314,21 @@ function splitBlocks(text: string, lines: Line[]): Block[] {
     if (range) blocks.push({ kind: 'paragraph', start: range[0], end: range[1] })
   }
   return blocks
+}
+
+/**
+ * The table header a later chunk carries: whole when it fits `budget`, else the header row's
+ * first columns — cut after the last `|` that fits, when that keeps at least half of it — with
+ * ` …` (the delimiter row is dropped: it would no longer line up).
+ */
+function carriedTableHeader(header: string, budget: number): string {
+  if (header.length <= budget) return header
+  const nl = header.indexOf('\n')
+  const row = nl === -1 ? header : header.slice(0, nl)
+  let cut = row.slice(0, Math.max(0, budget - 2))
+  const pipe = cut.lastIndexOf('|')
+  if (pipe >= cut.length / 2) cut = cut.slice(0, pipe + 1)
+  return `${cut.trimEnd()} …`
 }
 
 /** The headings two paths share, outermost first. */
@@ -343,8 +420,11 @@ export function chunkText(text: string, options: ChunkOptions = {}): TextChunk[]
     /** An oversized table: windows of whole rows, overlapping by whole rows. */
     const splitTable = (table: Block, leadStart: number) => {
       const rows = table.rows ?? []
-      const header = table.header ?? ''
-      const laterLimit = Math.max(Math.floor(maxChars / 2), maxChars - header.length - 2)
+      // What each later window carries: the header itself, or its start when it is wider than a
+      // quarter of the window — so header + rows always fit one window, and a wide header is not
+      // repeated whole on every chunk.
+      const header = carriedTableHeader(table.header ?? '', Math.floor(maxChars / 4))
+      const laterLimit = maxChars - header.length - 2
       let first = true // the first window opens with the header itself (and any lead-in text)
       let winStart = leadStart
       let winRow = 0 // first row in the current window (overlap rows included)
@@ -356,7 +436,9 @@ export function chunkText(text: string, options: ChunkOptions = {}): TextChunk[]
         const row = rows[idx] as [number, number]
         if (j === idx) {
           if (first) {
-            emit(leadStart, table.headerEnd ?? table.start) // a header too wide to share
+            // A header too wide to share: a chunk of its own, cut into windows when it is wider
+            // than one.
+            splitLong(leadStart, table.headerEnd ?? table.start, null)
             first = false
             winStart = row[0]
             winRow = idx

@@ -78,8 +78,10 @@ Rules:
   spend is `ai_usage` feature `evals.judge`
 - **Ingest**: `chunking.ts` (~800 tokens / 100 overlap, 4 chars per token; every chunk an EXACT
   slice `[charStart, charEnd)` of the stored text, every chunk begins and ends at a heading — whole sections that fit a window packed together, only a longer one cut inside — with the shared `headingPath`,
-  GFM tables split between rows with `tableHeader` on the later chunks; `embeddingInput` prefixes
-  path + header to what is EMBEDDED, never to the stored text; text is normalised —
+  GFM tables split between rows with `tableHeader` on the later chunks — bounded to a quarter of
+  the window, so a wide header is cut, never repeated whole; `embeddingInput` prefixes path +
+  header (at most `EMBEDDING_CONTEXT_MAX_CHARS`) to what is EMBEDDED, never to the stored text;
+  line classification is a linear scan — never add a backtracking regex on the upload path; text is normalised —
   `normalizeDocumentText`, control chars + CRLF — before it is stored or chunked);
   `ingest.ts` — `ingestText(db, cfg, env, input, { jobs })` and `ingestFile(db, cfg, env, input, {
   jobs, storage })` (original to R2 as a `files` row scope `documents`, `fileId` on the document).

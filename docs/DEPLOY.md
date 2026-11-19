@@ -680,9 +680,13 @@ holding the custom domains. One token may serve both environments.
 
 ## Observability
 
-- `[observability.logs] enabled = true, head_sampling_rate = 1, invocation_logs = false` in both
-  files: structured `console`/pino output is retained in the Workers Logs dashboard; invocation
-  logs are off to keep the volume to what the app emits.
+- `[observability.logs] enabled = true, head_sampling_rate = 1, invocation_logs = true` in both
+  files: structured `console`/pino output is retained in the Workers Logs dashboard, alongside one
+  platform invocation line per request (method, URL, status, Ray ID, duration) — what tells "the
+  Worker answered 403" from "Cloudflare did, before the Worker". Each counts toward the plan's log
+  events; on a high-traffic app lower `head_sampling_rate` rather than turn invocation logs off.
+  Invocation logs record each request's full URL, query string included, so treat access to
+  Workers Logs (and any Logpush destination) as sensitive.
 - `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml] [--format pretty]` streams live logs;
   `--status error` filters.
 - `pnpm --filter @rocketflare/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
