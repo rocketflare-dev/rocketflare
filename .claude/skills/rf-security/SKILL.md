@@ -42,7 +42,8 @@ judgement calls it asks for and it does the rest the same way every run.
 
 **The repository is public.** Findings, proofs and reports stay in
 `~/.rocketflare/security-runs/<repo>/run-<N>`, and out of the repository, issues, PRs and commit
-messages, until the fix has released. Fix commits describe the behaviour, not the attack.
+messages. Fix commits describe the behaviour, not the attack, and only counts are ever published
+(see "Public report").
 
 ## Choosing a run
 
@@ -124,22 +125,33 @@ Verification Program if the work needs it.
 
 ## Public report
 
-Nothing from a run directory is ever published. When fixes have released, a person writes an
-entries file by hand and `node $A public-report <entries.json> [--out report.md]` renders it
-(`report.md` and `report.json`; stdout without `--out`):
+Nothing from a run directory is ever published, and **a public report carries counts only**: no
+line, title or description of any individual issue, even after its fix has released. When fixes
+have released, a person writes an entries file of counts by hand and
+`node $A public-report <entries.json> [--out report.md]` renders it (`report.md` and
+`report.json`; stdout without `--out`):
 
 ```json
 {
   "repos": ["my-app"],
-  "runs": [{ "date": "2026-01-02", "commit": "abc1234", "scope": "whole repository", "coverage_units": 40, "agent_calls": 90 }],
-  "findings": [{ "severity": "high", "line": "A neutral one-line description.", "release": "1.4.0", "repo": "my-app" }],
-  "hardening": [{ "line": "A neutral one-line description.", "release": "1.4.0" }]
+  "runs": [{ "date": "2026-01-02", "commit": "abc1234", "scope": "whole repository", "coverage_units": 40, "agent_calls": 90,
+             "confirmed": { "high": 1, "medium": 2, "low": 3 }, "fixed_in": ["1.4.0"] }],
+  "fixed": [{ "release": "1.4.0", "repo": "my-app", "high": 1, "medium": 2, "low": 3, "hardening": 4 }],
+  "contact": "security@example.com"
 }
 ```
 
-It fails closed and writes nothing when an item has no fixing release, a finding's `repo` is not
-in `repos`, or any field is not one of those above. It never reads `findings.json`. Write each
-`line` as the behaviour that was wrong, never how to reproduce it.
+`confirmed` is what each run confirmed and `fixed_in` the releases that fixed it; `fixed` has one
+entry per repository and release. `critical` may be added to any count (default 0); `contact` is
+optional and defaults to `security@rocketflare.dev`. The report renders the runs table, the counts
+by release and severity with totals, and a fixed sentence: individual issues are not published, and
+"Please request the detailed report by emailing <contact>".
+
+It fails closed, lists every problem and writes nothing when any field could describe an issue
+(`line`, `title`, `description`, an old `findings` or `hardening` list), a field is unknown or
+missing, a count is negative or not a whole number, a count has no fixing release, a run's
+`fixed_in` names a release with no `fixed` entry, or a `repo` is not in `repos`. It never reads
+`findings.json`. `scope` describes what was audited, never an issue.
 
 ## After the run
 

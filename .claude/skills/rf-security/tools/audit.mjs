@@ -1710,37 +1710,50 @@ ${meta.usage.unmeasured_agents.length ? `\nNo transcript found for ${meta.usage.
 // public-report
 
 /**
- * The only fields a public report may carry, per list. Anything else in the input is refused, so
- * a field someone adds later stays private until it is added here on purpose.
+ * A public report carries counts only: the runs, and how many issues of each severity were fixed
+ * in each release. These are the only fields it may carry, per object; anything else in the
+ * input is refused, so a field someone adds later stays private until it is added here on purpose.
+ * `contact` is optional (default `PUBLIC_CONTACT`) and so is a `critical` count (default 0).
  */
 export const PUBLIC_FIELDS = {
-  top: ['repos', 'runs', 'findings', 'hardening'],
-  run: ['date', 'commit', 'scope', 'coverage_units', 'agent_calls'],
-  finding: ['severity', 'line', 'release', 'repo'],
-  hardening: ['line', 'release'],
+  top: ['repos', 'runs', 'fixed'],
+  run: ['date', 'commit', 'scope', 'coverage_units', 'agent_calls', 'confirmed', 'fixed_in'],
+  counts: ['high', 'medium', 'low'],
+  fixed: ['release', 'repo', 'high', 'medium', 'low', 'hardening'],
 }
-const PUBLIC_SEVERITIES = ['critical', 'high', 'medium', 'low', 'informational']
+const PUBLIC_OPTIONAL = { top: ['contact'], counts: ['critical'], fixed: ['critical'] }
+const PUBLIC_SEVERITIES = ['critical', 'high', 'medium', 'low']
+/** Field names that would describe an individual issue: refused by name, wherever they appear. */
+const PUBLIC_ISSUE_TEXT = ['line', 'title', 'description', 'summary', 'details', 'detail', 'text', 'note', 'notes', 'name', 'fingerprint', 'reproduction', 'remediation']
+/** Lists of individual issues (the old shape): refused by name at the top level. */
+const PUBLIC_ISSUE_LISTS = ['findings', 'hardening', 'entries', 'items']
+export const PUBLIC_CONTACT = 'security@rocketflare.dev'
 const RELEASE_RE = /^\d+\.\d+\.\d+$/
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const MAX_LINE = 200
 
 /**
- * Every reason `input` may not be published, or [] when it may. Fail closed: an unknown field, a
- * missing one, a finding with no fixing release or from a repository not on the file's own
- * allowlist each refuse the whole file.
+ * Every reason `input` may not be published, or [] when it may. Fail closed: a field that could
+ * describe an issue, an unknown or missing field, a count that is not a whole number, a count with
+ * no fixing release or from a repository not on the file's own allowlist each refuse the whole file.
  */
 export function publicReportProblems(input) {
   const problems = []
   const isObject = v => v !== null && typeof v === 'object' && !Array.isArray(v)
   if (!isObject(input)) return ['the input must be a JSON object']
-  const fields = (value, allowed, at) => {
+  const fields = (value, kind, at) => {
     if (!isObject(value)) {
       problems.push(`${at}: must be an object`)
       return false
     }
+    const allowed = [...PUBLIC_FIELDS[kind], ...(PUBLIC_OPTIONAL[kind] ?? [])]
     for (const key of Object.keys(value)) {
-      if (!allowed.includes(key)) problems.push(`${at}: unknown field "${key}" (allowed: ${allowed.join(', ')})`)
+      if (allowed.includes(key)) continue
+      if (PUBLIC_ISSUE_TEXT.includes(key)) problems.push(`${at}: "${key}" describes an issue; a public report carries counts only`)
+      else if (kind === 'top' && PUBLIC_ISSUE_LISTS.includes(key)) problems.push(`${at}: "${key}" lists individual issues; a public report carries counts only`)
+      else problems.push(`${at}: unknown field "${key}" (allowed: ${allowed.join(', ')})`)
     }
-    for (const key of allowed) if (!(key in value)) problems.push(`${at}: missing "${key}"`)
+    for (const key of PUBLIC_FIELDS[kind]) if (!(key in value)) problems.push(`${at}: missing "${key}"`)
     return true
   }
   const text = (value, at) => {
@@ -1751,90 +1764,112 @@ export function publicReportProblems(input) {
   const count = (value, at) => {
     if (!Number.isInteger(value) || value < 0) problems.push(`${at}: must be a whole number`)
   }
-  const release = (value, at) => {
-    if (typeof value !== 'string' || !RELEASE_RE.test(value)) {
-      problems.push(`${at}: needs the release that fixed it (X.Y.Z); an unfixed item is never published`)
-    }
+  const severities = (value, at) => {
+    for (const s of PUBLIC_SEVERITIES) if (s in value) count(value[s], `${at}.${s}`)
+    return PUBLIC_SEVERITIES.reduce((n, s) => n + (Number.isInteger(value[s]) && value[s] > 0 ? value[s] : 0), 0)
   }
-  fields(input, PUBLIC_FIELDS.top, 'file')
-  const lists = ['repos', 'runs', 'findings', 'hardening']
-  for (const key of lists) if (key in input && !Array.isArray(input[key])) problems.push(`${key}: must be a list`)
+  fields(input, 'top', 'file')
+  for (const key of PUBLIC_FIELDS.top) if (key in input && !Array.isArray(input[key])) problems.push(`${key}: must be a list`)
+  if ('contact' in input && (typeof input.contact !== 'string' || !EMAIL_RE.test(input.contact))) {
+    problems.push('contact: must be an email address')
+  }
   const repos = Array.isArray(input.repos) ? input.repos : []
   if (Array.isArray(input.repos)) {
     if (repos.length === 0) problems.push('repos: list at least one repository the report may name')
     repos.forEach((r, i) => text(r, `repos[${i}]`))
   }
+  const releases = new Set()
+  if (Array.isArray(input.fixed)) {
+    const seen = new Set()
+    input.fixed.forEach((f, i) => {
+      const at = `fixed[${i}]`
+      if (!fields(f, 'fixed', at)) return
+      if (typeof f.release !== 'string' || !RELEASE_RE.test(f.release)) {
+        problems.push(`${at}.release: needs the release that fixed it (X.Y.Z); an unfixed issue is never counted`)
+      } else releases.add(f.release)
+      if (!repos.includes(f.repo)) problems.push(`${at}.repo: "${f.repo}" is not in repos, so it may not be named`)
+      const key = `${f.repo} ${f.release}`
+      if (seen.has(key)) problems.push(`${at}: ${key} is listed twice; one entry per repository and release`)
+      seen.add(key)
+      count(f.hardening, `${at}.hardening`)
+      const n = severities(f, at) + (Number.isInteger(f.hardening) && f.hardening > 0 ? f.hardening : 0)
+      if (n === 0) problems.push(`${at}: counts nothing; leave it out`)
+    })
+  }
   if (Array.isArray(input.runs)) {
     if (input.runs.length === 0) problems.push('runs: list at least one run')
     input.runs.forEach((run, i) => {
       const at = `runs[${i}]`
-      if (!fields(run, PUBLIC_FIELDS.run, at)) return
+      if (!fields(run, 'run', at)) return
       if (typeof run.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(run.date)) problems.push(`${at}.date: must be YYYY-MM-DD`)
       if (typeof run.commit !== 'string' || !/^[0-9a-f]{7,40}$/.test(run.commit)) problems.push(`${at}.commit: must be a commit id`)
       text(run.scope, `${at}.scope`)
       count(run.coverage_units, `${at}.coverage_units`)
       count(run.agent_calls, `${at}.agent_calls`)
-    })
-  }
-  if (Array.isArray(input.findings)) {
-    input.findings.forEach((f, i) => {
-      const at = `findings[${i}]`
-      if (!fields(f, PUBLIC_FIELDS.finding, at)) return
-      if (!PUBLIC_SEVERITIES.includes(f.severity)) problems.push(`${at}.severity: one of ${PUBLIC_SEVERITIES.join(', ')}`)
-      text(f.line, `${at}.line`)
-      release(f.release, `${at}.release`)
-      if (!repos.includes(f.repo)) problems.push(`${at}.repo: "${f.repo}" is not in repos, so it may not be named`)
-    })
-  }
-  if (Array.isArray(input.hardening)) {
-    input.hardening.forEach((h, i) => {
-      const at = `hardening[${i}]`
-      if (!fields(h, PUBLIC_FIELDS.hardening, at)) return
-      text(h.line, `${at}.line`)
-      release(h.release, `${at}.release`)
+      const confirmed =
+        'confirmed' in run && fields(run.confirmed, 'counts', `${at}.confirmed`) ? severities(run.confirmed, `${at}.confirmed`) : 0
+      if (!Array.isArray(run.fixed_in)) {
+        if ('fixed_in' in run) problems.push(`${at}.fixed_in: must be a list of releases`)
+        return
+      }
+      if (confirmed > 0 && run.fixed_in.length === 0) {
+        problems.push(`${at}.fixed_in: confirmed counts need the release that fixed them (X.Y.Z); an unfixed issue is never counted`)
+      }
+      for (const r of run.fixed_in) {
+        if (typeof r !== 'string' || !RELEASE_RE.test(r)) problems.push(`${at}.fixed_in: "${r}" is not a release (X.Y.Z)`)
+        else if (Array.isArray(input.fixed) && !releases.has(r)) problems.push(`${at}.fixed_in: ${r} has no entry in fixed`)
+      }
     })
   }
   return problems
 }
 
-const byRelease = (a, b) => {
-  const pa = a.release.split('.').map(Number)
-  const pb = b.release.split('.').map(Number)
+const releaseOrder = (a, b) => {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
   for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i]
   return 0
 }
 
-/** The report, built from the allowlisted fields alone: `{ json, markdown }`. */
+/** The report, built from the allowlisted counts alone: `{ json, markdown }`. */
 export function publicReport(input) {
-  const pick = (value, keys) => Object.fromEntries(keys.map(k => [k, value[k]]))
-  const runs = input.runs.map(r => pick(r, PUBLIC_FIELDS.run))
-  const findings = input.findings
-    .map(f => pick(f, PUBLIC_FIELDS.finding))
-    .sort((a, b) => sevRank[a.severity] - sevRank[b.severity] || byRelease(a, b) || (a.line < b.line ? -1 : 1))
-  const hardening = input.hardening.map(h => pick(h, PUBLIC_FIELDS.hardening)).sort(byRelease)
-  const counts = Object.fromEntries(
-    PUBLIC_SEVERITIES.map(s => [s, findings.filter(f => f.severity === s).length]).filter(([, n]) => n > 0)
-  )
-  const json = { runs, counts, findings, hardening }
-  const md = ['# Security audit report', '', '## Runs', '']
-  md.push('| Date | Commit | Scope | Coverage units | Agent calls |', '|---|---|---|---|---|')
-  for (const r of runs) md.push(`| ${r.date} | \`${r.commit.slice(0, 12)}\` | ${cell(r.scope)} | ${r.coverage_units} | ${r.agent_calls} |`)
-  md.push('', '## Fixed findings', '')
-  if (findings.length === 0) md.push('None listed.')
-  else {
-    md.push(Object.entries(counts).map(([s, n]) => `${n} ${s}`).join(', '), '')
-    md.push('| Severity | Repository | Fixed in | Finding |', '|---|---|---|---|')
-    for (const f of findings) md.push(`| ${f.severity} | ${cell(f.repo)} | ${f.release} | ${cell(f.line)} |`)
+  const sev = v => Object.fromEntries(PUBLIC_SEVERITIES.map(s => [s, v[s] ?? 0]))
+  const runs = input.runs.map(r => ({
+    date: r.date,
+    commit: r.commit,
+    scope: r.scope,
+    coverage_units: r.coverage_units,
+    agent_calls: r.agent_calls,
+    confirmed: sev(r.confirmed),
+    fixed_in: [...r.fixed_in].sort(releaseOrder),
+  }))
+  const fixed = input.fixed
+    .map(f => ({ release: f.release, repo: f.repo, ...sev(f), hardening: f.hardening }))
+    .sort((a, b) => releaseOrder(a.release, b.release) || (a.repo < b.repo ? -1 : a.repo > b.repo ? 1 : 0))
+  const totals = Object.fromEntries([...PUBLIC_SEVERITIES, 'hardening'].map(k => [k, fixed.reduce((n, f) => n + f[k], 0)]))
+  const notice =
+    'Individual issues are not published, before or after their fix: this report gives counts only. ' +
+    `Please request the detailed report by emailing ${input.contact ?? PUBLIC_CONTACT}`
+  const json = { runs, fixed, totals, notice }
+  // A critical column appears only when something critical was counted.
+  const shown = PUBLIC_SEVERITIES.filter(s => s !== 'critical' || totals.critical > 0 || runs.some(r => r.confirmed.critical > 0))
+  const title = s => s[0].toUpperCase() + s.slice(1)
+  const row = cells => `| ${cells.join(' | ')} |`
+  const md = ['# Security audit report', '', notice, '', '## Runs', '']
+  md.push(row(['Date', 'Commit', 'Scope', 'Coverage units', 'Agent calls', ...shown.map(title), 'Fixed in']))
+  md.push(row(Array(6 + shown.length).fill('---')))
+  for (const r of runs) {
+    md.push(row([r.date, `\`${r.commit.slice(0, 12)}\``, cell(r.scope), r.coverage_units, r.agent_calls, ...shown.map(s => r.confirmed[s]), r.fixed_in.join(', ') || '-']))
   }
-  md.push('', '## Hardening', '')
-  if (hardening.length === 0) md.push('None listed.')
-  else {
-    md.push('| Fixed in | Change |', '|---|---|')
-    for (const h of hardening) md.push(`| ${h.release} | ${cell(h.line)} |`)
-  }
+  md.push('', 'Each run counts the issues it confirmed, so an issue two runs confirmed is in both rows.')
+  md.push('', '## Fixed, by release', '')
+  md.push(row(['Release', 'Repository', ...shown.map(title), 'Hardening']))
+  md.push(row(Array(3 + shown.length).fill('---')))
+  for (const f of fixed) md.push(row([f.release, cell(f.repo), ...shown.map(s => f[s]), f.hardening]))
+  md.push(row(['Total', '', ...shown.map(s => totals[s]), totals.hardening]))
   md.push(
     '',
-    'Only items fixed in a released version are listed. One run finds about half of what is there, so a',
+    'Only issues fixed in a released version are counted. One run finds about half of what is there, so a',
     'clean area is not evidence that it has no bugs.',
     ''
   )
@@ -1842,7 +1877,7 @@ export function publicReport(input) {
 }
 
 /**
- * `public-report <entries.json> [--out <file.md>]`: a publishable report from a file a person
+ * `public-report <entries.json> [--out <file.md>]`: a publishable report of counts from a file a person
  * curated by hand. It never reads a run directory or findings.json; it refuses the whole input on
  * any problem. `--out x.md` writes x.md and x.json (never over an existing file); without it the
  * markdown goes to stdout.
@@ -2315,7 +2350,7 @@ const COMMANDS = {
   report: [cmdReport, 'report  final metadata + REPORT.md, FINDINGS-DETAIL.md, NEEDS-VALIDATION.md'],
   cost: [cmdCost, 'cost [--no-write]  measured tokens and estimated USD (prices.json) into usage.json + metadata'],
   'check-result': [cmdCheckResult, 'check-result --agent <id> [--file f]  an agent checks its own result before handing back'],
-  'public-report': [cmdPublicReport, 'public-report <entries.json> [--out <file.md>]  a publishable report from a hand-curated file (fixed items only; refuses unknown fields)'],
+  'public-report': [cmdPublicReport, 'public-report <entries.json> [--out <file.md>]  a publishable report of counts only from a hand-curated file (fixed issues only; refuses any field that describes an issue)'],
   guard: [cmdGuard, 'guard snapshot|check [--label x]  fail if anything outside the run dir changed'],
   finish: [cmdFinish, 'finish  the audit is no longer active (the guard hook stops)'],
 }

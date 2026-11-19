@@ -2100,9 +2100,10 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
   run is active the guard hook in `.claude/settings.json` refuses deletes, moves, credential reads
   and writes outside the run directory for every agent, and a snapshot around each wave stops the
   run if anything else changed.
-- **Privacy**: runs live in `~/.rocketflare/security-runs/<app>/run-N`. `audit.mjs public-report`
-  renders a publishable report from a hand-curated file of fixed items only, from an allowlist of
-  fields, and never reads a run's findings.
+- **Privacy**: runs live in `~/.rocketflare/security-runs/<app>/run-N`. A public report carries
+  counts only, never an individual issue: `audit.mjs public-report` renders it from a hand-curated
+  file of counts by run, release and severity (fixed issues only), refuses any field that could
+  describe an issue, and never reads a run's findings.
 - **Cadence**: a diff-scoped `standard` run before a release touching auth, tenancy/RLS, the
   identity or plugin seams, or AI tool binding (the kit's `kit:release` warns, never fails,
   `AUDIT_CADENCE_GLOBS` in `scripts/release.mjs`); a quarterly `deep` run. A fixed finding's proof
@@ -2112,4 +2113,4 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
 so runtime- and browser-specific behaviour needs a separate local check; it needs Docker and a
 model budget; one run finds about half of what is there, so a clean area proves nothing; the guard
 is a Claude Code hook, so it binds only agents run through Claude Code in this checkout; the
-public report is only as neutral as the lines a person writes for it.
+public report's counts are typed by hand, so nothing checks them against the runs.

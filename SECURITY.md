@@ -22,11 +22,12 @@ an [ordinary issue](https://github.com/rocketflare-dev/rocketflare/issues/new) t
 ## How the kit is audited
 
 The kit ships the audit it is reviewed with: `/rf-security`, a multi-agent review against
-[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) whose findings stay outside the repository until
-their fixes have released. Run it on your own copy too:
+[`docs/THREAT-MODEL.md`](docs/THREAT-MODEL.md) whose findings stay outside the repository and
+are never published one by one. Run it on your own copy too:
 [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) covers the modes, what each costs, and what a
 result does and does not prove.
 
-What the audits found, once fixed, is published with the release that fixed each finding:
+Only counts are published: how many issues each audit run confirmed and how many of each severity
+each release fixed, never the individual findings:
 [rocketflare.dev/security](https://rocketflare.dev/security/) and its
 [track record](https://rocketflare.dev/security/track-record/).
