@@ -8,7 +8,8 @@
  * The decision, over every candidate scored in [0, 1]:
  *
  * - exactly one candidate at or above `LINK_THRESHOLD` (or exactly one exact name/alias match
- *   among several) → link to it, adding the mention's names to a staging entity's aliases;
+ *   among several) → link to it, adding the mention's names to a staging entity's aliases when
+ *   the document is tenant-visible (see `ResolveContext.documentVisibility`);
  * - several at or above it, or the best in the review band [`REVIEW_THRESHOLD`, `LINK_THRESHOLD`)
  *   → a NEW staging entity carrying `possibleMatches` and `reviewerUserId` — the "is this the same
  *   as …?" review item. Never a guess, so two similar names never silently share facts;
@@ -28,7 +29,8 @@ import type { EntityKind, PossibleMatchCandidate } from '@rocketflare/shared/ai/
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { knowledgeEntities } from '../../../db/schema'
-import { fullAccessScope } from '../access'
+import { type AccessScope, fullAccessScope } from '../access'
+import { entityVisibleSql } from './facts-sql'
 import { resolverFor } from './resolve'
 import type { EntityTypeRegistration } from './types'
 
@@ -62,6 +64,14 @@ export interface ResolvedEntity {
 export interface ResolveContext {
   db: Database
   tenantId: string
+  /**
+   * The visibility of the document the mention was read from. Only a `tenant` document adds
+   * names to an entity — as aliases of the one it links to, or of the one it creates. An entity
+   * is shared by every document that names it, and its aliases are shown (and searched) wherever
+   * the entity is visible, so a name read from a group-restricted document would reach members
+   * who cannot open it. The mention still links by every name it has.
+   */
+  documentVisibility: 'tenant' | 'groups'
   /** Who is asked about a possible match. */
   reviewerUserId: string | null
   /** Embeds a name, or null without an embedder. */
@@ -175,6 +185,7 @@ async function embeddingCandidates(
 }
 
 async function addAliases(ctx: ResolveContext, id: string, names: readonly string[]) {
+  if (ctx.documentVisibility !== 'tenant') return
   const row = await ctx.db.query.knowledgeEntities.findFirst({
     columns: { name: true, aliases: true },
     where: and(eq(knowledgeEntities.id, id), eq(knowledgeEntities.tenantId, ctx.tenantId)),
@@ -366,7 +377,7 @@ export async function commitPlanned(
       tenantId: ctx.tenantId,
       type: plan.type,
       name: plan.names[0] as string,
-      aliases: plan.names.slice(1),
+      aliases: ctx.documentVisibility === 'tenant' ? plan.names.slice(1) : [],
       embedding: plan.embedding?.vector ?? null,
       embeddingModel: plan.embedding?.model ?? null,
       possibleMatches: review,
@@ -448,12 +459,15 @@ function addFound(into: Map<string, FoundEntity>, found: FoundEntity) {
  * by trigram over name and aliases, scored as the better of `similarity` and
  * `word_similarity(query, name)` (so a short name matches the longer one it is part of); a
  * PROMOTED one answers as the domain row it became; merged ones are skipped (their facts moved).
- * Then each registered domain type's resolver. Best first, `limit` at most, every query in
- * `tenantId`. Which of their facts the reader may see is the caller's predicate.
+ * Then each registered domain type's resolver. Best first, `limit` at most, every query in the
+ * reader's tenant. A staging entity counts only when the reader may see it (`entityVisibleSql`):
+ * its name and aliases came from documents, so one known only from documents the reader cannot
+ * open answers exactly like a name nobody knows. Which of their facts the reader may see is the
+ * caller's predicate.
  */
 export async function findEntitiesByName(
   db: Database,
-  tenantId: string,
+  scope: AccessScope,
   name: string,
   options: {
     types?: readonly string[]
@@ -461,6 +475,7 @@ export async function findEntitiesByName(
     limit: number
   }
 ): Promise<FoundEntity[]> {
+  const { tenantId } = scope
   const query = name.trim()
   if (!query || options.limit <= 0) return []
   const found = new Map<string, FoundEntity>()
@@ -480,7 +495,8 @@ export async function findEntitiesByName(
         eq(knowledgeEntities.tenantId, tenantId),
         isNull(knowledgeEntities.mergedInto),
         options.types?.length ? inArray(knowledgeEntities.type, [...options.types]) : undefined,
-        sql`${score} >= ${LOOKUP_MIN_SCORE}`
+        sql`${score} >= ${LOOKUP_MIN_SCORE}`,
+        entityVisibleSql(scope)
       )
     )
     .orderBy(sql`${score} desc`)
@@ -516,14 +532,16 @@ export async function findEntitiesByName(
  * Staging entities a free-text query MENTIONS — for `search_knowledge`'s facts block: a name or
  * alias that appears in the query (`word_similarity(name, query)` — the share of the NAME found
  * in some stretch of the query — at or above `MENTION_MIN_SCORE`, which a whole name passes and a
- * passing word of a long one does not). Promoted ones answer as their domain row.
+ * passing word of a long one does not). Promoted ones answer as their domain row. Only entities
+ * the reader may see (`entityVisibleSql`).
  */
 export async function entitiesMentionedIn(
   db: Database,
-  tenantId: string,
+  scope: AccessScope,
   query: string,
   limit: number
 ): Promise<FoundEntity[]> {
+  const { tenantId } = scope
   const text = query.trim()
   if (!text || limit <= 0) return []
   const score = sql<number>`greatest(word_similarity(${knowledgeEntities.name}, ${text}), coalesce((select max(word_similarity(a, ${text})) from unnest(${knowledgeEntities.aliases}) as a where length(a) >= 3), 0))`
@@ -542,7 +560,8 @@ export async function entitiesMentionedIn(
         eq(knowledgeEntities.tenantId, tenantId),
         isNull(knowledgeEntities.mergedInto),
         sql`length(${knowledgeEntities.name}) >= 3`,
-        sql`${score} >= ${MENTION_MIN_SCORE}`
+        sql`${score} >= ${MENTION_MIN_SCORE}`,
+        entityVisibleSql(scope)
       )
     )
     .orderBy(sql`${score} desc`)

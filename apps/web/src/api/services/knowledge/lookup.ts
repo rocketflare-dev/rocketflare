@@ -31,6 +31,7 @@ import {
   selectFacts,
   viewState,
 } from './facts-read'
+import { stateInViewSql } from './facts-sql'
 import { knowledgeEntityTypes } from './registry'
 
 /** Entities one lookup resolves a name to. */
@@ -52,8 +53,9 @@ export interface LookupFactsInput {
   asOf?: string
 }
 
-function stateWhere(asOf: Date | null): SQL | undefined {
-  if (!asOf) return inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES])
+/** Answerable in the reader's view: a fact superseded only out of it is answerable for them. */
+function stateWhere(scope: AccessScope, asOf: Date | null): SQL | undefined {
+  if (!asOf) return stateInViewSql(scope, ANSWERABLE_FACT_STATES)
   return and(
     inArray(knowledgeFacts.state, [...ANSWERABLE_FACT_STATES, 'superseded']),
     sql`(${knowledgeFacts.validFrom} is null or ${knowledgeFacts.validFrom} <= ${asOf})`,
@@ -152,7 +154,7 @@ async function readFor(
   asOf: Date | null,
   max: number
 ): Promise<{ facts: ReadFact[]; omitted: number }> {
-  const found = await selectFacts(db, scope, and(where, stateWhere(asOf)), {
+  const found = await selectFacts(db, scope, and(where, stateWhere(scope, asOf)), {
     orderBy: [
       asc(knowledgeFacts.entityType),
       asc(knowledgeFacts.entityId),
@@ -169,6 +171,9 @@ function namesOf(found: readonly FoundEntity[]): Map<string, string> {
   return new Map(found.map(e => [refKey(e), e.name]))
 }
 
+const unknownEntityHint = (name: string) =>
+  `No entity called "${name}" is known. Try another spelling, a shorter name, or search_knowledge.`
+
 /** `lookup_facts`. */
 export async function lookupFacts(
   db: Database,
@@ -184,17 +189,12 @@ export async function lookupFacts(
   }
   let found: FoundEntity[] = []
   if (input.entity) {
-    found = await findEntitiesByName(db, scope.tenantId, input.entity, {
+    found = await findEntitiesByName(db, scope, input.entity, {
       types: input.type ? [input.type] : undefined,
       registrations: knowledgeEntityTypes(),
       limit: LOOKUP_MAX_ENTITIES,
     })
-    if (found.length === 0) {
-      return {
-        entities: [],
-        hint: `No entity called "${input.entity}" is known. Try another spelling, a shorter name, or search_knowledge.`,
-      }
-    }
+    if (found.length === 0) return { entities: [], hint: unknownEntityHint(input.entity) }
   }
   const where = and(
     found.length > 0 ? refWhere(found) : undefined,
@@ -224,7 +224,7 @@ export async function factsForQuery(
   scope: AccessScope,
   query: string
 ): Promise<FactHitGroup[]> {
-  const found = await entitiesMentionedIn(db, scope.tenantId, query, SEARCH_FACTS_MAX_ENTITIES)
+  const found = await entitiesMentionedIn(db, scope, query, SEARCH_FACTS_MAX_ENTITIES)
   if (found.length === 0) return []
   const { facts } = await readFor(db, scope, refWhere(found), null, SEARCH_FACTS_MAX_FACTS)
   return toGroups(db, scope, facts, namesOf(found))

@@ -154,13 +154,15 @@ export async function reviewFact(
   const { scope } = reader
   const before = await readVisibleFact(db, scope, factId)
   assertMayReview(reader, before.row.reviewerUserId)
-  if (!ANSWERABLE.includes(before.row.state)) {
+  // In the reader's view: a fact superseded only by one they cannot see is reviewable for them.
+  const viewed = viewState(before)
+  if (!ANSWERABLE.includes(viewed)) {
     throw new ConflictError(
-      `This fact is ${before.row.state} — there is nothing left to review`,
+      `This fact is ${viewed} — there is nothing left to review`,
       ERROR_CODES.factNotReviewable
     )
   }
-  if (action === 'confirm' && viewState(before) === 'conflicting') {
+  if (action === 'confirm' && viewed === 'conflicting') {
     throw new ConflictError(
       'Another source disagrees with this fact: choose it with "prefer", or "reject" it',
       ERROR_CODES.factConflicting
@@ -179,11 +181,12 @@ export async function reviewFact(
       }
     }
     // confirm, or the chosen side of a prefer: confirmed by this person; still `conflicting` only
-    // while a conflict the reader could not see remains linked.
+    // while a conflict the reader could not see remains linked, and still `superseded` while the
+    // later fact they could not see stands.
     await tx
       .update(knowledgeFacts)
       .set({
-        state: sql`case when cardinality(${knowledgeFacts.conflictsWith}) > 0 then 'conflicting' else 'accepted' end`,
+        state: sql`case when ${knowledgeFacts.state} = 'superseded' and ${knowledgeFacts.supersededById} is not null then 'superseded' when cardinality(${knowledgeFacts.conflictsWith}) > 0 then 'conflicting' else 'accepted' end`,
         confirmedBy: reader.userId,
         confirmedAt: new Date(),
         updatedAt: new Date(),
