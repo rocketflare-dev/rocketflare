@@ -332,7 +332,7 @@ export function readRunAgentTail(input: KitRunAgentInput):
     } {
   if (input.tools.length > 0) return { ok: false, code: 'agui_client_tools_unsupported' }
   const last = input.messages[input.messages.length - 1]
-  if (!last || last.role !== 'user') return { ok: false, code: 'agui_last_message_not_user' }
+  if (last?.role !== 'user') return { ok: false, code: 'agui_last_message_not_user' }
   if (typeof last.content !== 'string') return { ok: false, code: 'agui_unsupported_content' }
   const content = last.content.trim()
   if (!content || content.length > MAX_MESSAGE_LENGTH)

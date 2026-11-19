@@ -2936,7 +2936,7 @@ export function newlyAddedDependencies(install = {}, packageJsons = {}) {
  */
 export function addedByPlugins(surfaces = [], id) {
   const self = surfaces.find(s => s?.id === id)
-  if (!self || !self.addedDependencies) return null
+  if (!self?.addedDependencies) return null
   const out = {}
   for (const s of surfaces) {
     for (const [pkg, names] of Object.entries(s?.addedDependencies ?? {})) {

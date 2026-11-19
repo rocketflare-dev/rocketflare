@@ -31,7 +31,7 @@
     "db:studio": "pnpm --filter @rocketflare/web db:studio",
     "seed": "pnpm --filter @rocketflare/web seed",
     "types": "pnpm --filter @rocketflare/web types",
-    "lint": "biome check . --diagnostic-level=error",
+    "lint": "biome check . --error-on-warnings",
     "lint:all": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format . --write",

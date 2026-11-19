@@ -227,7 +227,7 @@ export interface ToolApproval {
  */
 export function appendUserText(messages: ChatMessage[], text: string): void {
   const last = messages[messages.length - 1]
-  if (!last || last.role !== 'user') {
+  if (last?.role !== 'user') {
     messages.push({ role: 'user', content: text })
     return
   }
@@ -482,7 +482,7 @@ export interface RunToolLoopOptions {
    * goes through {@link appendUserText}, so a note after a turn of tool results never becomes a
    * second consecutive user turn.
    */
-  beforeTurn?: (turn: number) => Promise<ChatMessage[] | void>
+  beforeTurn?: (turn: number) => Promise<ChatMessage[] | undefined>
   /**
    * The run's limits and what running out means (`AgentMeta.policy`) — pass the agent's
    * `meta.policy`. `maxTurns` above stays the ceiling. Without a policy the loop behaves as it
@@ -633,7 +633,7 @@ type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
  */
 function pendingToolUses(messages: ChatMessage[]): ToolUseBlock[] {
   const last = messages[messages.length - 1]
-  if (!last || last.role !== 'assistant' || typeof last.content === 'string') return []
+  if (last?.role !== 'assistant' || typeof last.content === 'string') return []
   return toolUsesOf(last.content)
 }
 
@@ -1009,7 +1009,7 @@ export async function runToolLoop(
     for (let i = 0; i < toolUses.length; i++) {
       const block = toolUses[i]
       const task = outcomes[i]
-      if (!task || task.kind !== 'result') {
+      if (task?.kind !== 'result') {
         break
       }
       results.push({

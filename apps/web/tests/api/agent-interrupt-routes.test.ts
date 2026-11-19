@@ -111,15 +111,10 @@ async function actor(role: 'owner' | 'admin' | 'member' = 'member') {
 
 async function memberOf(tenantId: string, role: 'member' | 'admin' = 'member') {
   const user = await createTestUser(db)
+  await linkUserToTenant(db, user.id, tenantId, role)
   return {
     user,
-    cookie: sessionCookieHeader(
-      await createTestSession(
-        db,
-        user.id,
-        (await linkUserToTenant(db, user.id, tenantId, role), tenantId)
-      )
-    ),
+    cookie: sessionCookieHeader(await createTestSession(db, user.id, tenantId)),
   }
 }
 
