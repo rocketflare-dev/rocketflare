@@ -861,8 +861,13 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`Pricing › Annual plans`); on the Brightside corpus this keeps 54 chunks where one chunk per
   section made 343 fragments, and recall@10 fell with them; a GFM table (how `toMarkdown`
   renders a spreadsheet sheet) splits only between rows, and a chunk holding rows without the
-  header stores it as `table_header`. Heading path and table header are prefixed to the text that
-  is EMBEDDED and indexed, never to the stored chunk. `page` is always null (see gaps).
+  header stores it as `table_header` — the whole header when it fits a quarter of the window,
+  else the header row's first columns and ` …`, so header plus rows always fit one window and a
+  wide header is never repeated whole on every chunk. Heading path and table header are prefixed
+  to the text that is EMBEDDED and indexed, never to the stored chunk, and that prefix is cut to
+  `EMBEDDING_CONTEXT_MAX_CHARS` (a heading title to `HEADING_TITLE_MAX_CHARS` in the path), so
+  stored and embedded text grow with the document. Headings and table delimiter rows are found
+  by a linear scan of each line, never a backtracking regex. `page` is always null (see gaps).
   Search is hybrid dense + lexical (the lexical half matches ANY query word against
   `chunks.search_vector` — a GENERATED tsvector over heading path + table header + text with a GIN
   index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
@@ -1106,7 +1111,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   choosing between two values for the same time has said the other was never right; a conflict
   from a document hidden from the reviewer stays linked, so the fact stays `conflicting` for the
   admins who see both); 409 `fact_not_reviewable` on `rejected` / `superseded`. Only the item's
-  reviewer or a manager acts (403). `GET /entities/:type/:id` — the entity card (staging by uuid,
+  reviewer or a manager acts (403). Because `prefer` settles the other sides too, a member may
+  prefer only when every visible conflict is an item they review and no other person confirmed;
+  otherwise it is a 403 `fact_conflict_needs_admin` with nothing written (the UI shows the
+  message as an error), the conflict stays open for an admin, and the member can still `reject`
+  their own side. `GET /entities/:type/:id` — the entity card (staging by uuid,
   or a domain row of a registered type: its label, the names of staging entities promoted to it as
   aliases), every visible fact in every state. `POST /entities/:id/merge { into }` (a staging
   target of the same type: names become its aliases, `merged_into` set, facts moved — to the row a

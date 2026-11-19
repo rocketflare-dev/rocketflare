@@ -107,6 +107,11 @@ export const ERROR_CODES = {
   accountExists: 'account_exists',
   /** 409: `confirm` on a fact in conflict — settle it with `prefer` (use this one) or `reject`. */
   factConflicting: 'fact_conflicting',
+  /**
+   * 403: `prefer` would reject a fact the reader may not settle themselves — another person
+   * reviews it, it has no reviewer, or another person confirmed it. An admin decides the conflict.
+   */
+  factConflictNeedsAdmin: 'fact_conflict_needs_admin',
   /** 409: the fact is `rejected` or `superseded` — history, nothing left to review. */
   factNotReviewable: 'fact_not_reviewable',
   /** 409: the staging entity was already merged or promoted, so it cannot be merged or promoted again. */

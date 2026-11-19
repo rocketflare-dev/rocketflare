@@ -6,13 +6,17 @@
  * and `fuseByRank` (Reciprocal Rank Fusion: an item in both lists outranks a single-signal top hit,
  * ranks are carried, ties break deterministically).
  */
+
+import { INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
 import { describe, expect, it } from 'vitest'
 import {
   CHARS_PER_TOKEN,
   chunkText,
   DEFAULT_CHUNK_TOKENS,
+  EMBEDDING_CONTEXT_MAX_CHARS,
   embeddingInput,
   estimateTokens,
+  HEADING_TITLE_MAX_CHARS,
   headingPathLabel,
   normalizeLineEndings,
   overlapTail,
@@ -256,6 +260,130 @@ describe('chunkText — tables', () => {
     expectExactSlices(text, chunks)
     expect(chunks.length).toBeGreaterThan(1)
     for (const c of chunks) expect(c.tableHeader).toBeNull()
+  })
+})
+
+describe('chunkText — linear time on any line', () => {
+  /** Wall-clock milliseconds for one `chunkText` call. */
+  const timed = (text: string) => {
+    const t0 = performance.now()
+    chunkText(text)
+    return performance.now() - t0
+  }
+  // A large ordinary document is the yardstick: one short line must never cost more than it does.
+  const prose = Array.from({ length: 400 }, (_, i) => `## Part ${i}\n\n${words(150, 'p')}`).join(
+    '\n\n'
+  )
+  const yardstick = () => Math.max(50, timed(prose))
+
+  it('a heading-like line that is not a heading is rejected in linear time', () => {
+    const bound = 5 * yardstick()
+    for (const sep of ['\u2028', '\u2029', '\r']) {
+      const line = `#${' '.repeat(3000)}${sep}`
+      expect(timed(`intro\n${line}\nbody`)).toBeLessThan(bound)
+    }
+  }, 120_000)
+
+  it('a long line under a table-like row is classified in linear time', () => {
+    const bound = 5 * yardstick()
+    const text = `| a | b |\n|-${' '.repeat(100_000)}x\n| 1 | 2 |`
+    expect(timed(text)).toBeLessThan(bound)
+  }, 120_000)
+
+  it('recognises ATX headings as it always has', () => {
+    const cases: [string, string[]][] = [
+      ['# Title', ['Title']],
+      ['   ### Three spaces', ['Three spaces']],
+      ['    # Four spaces is code', []],
+      ['#hashtag', []],
+      ['####### seven', []],
+      ['#\tTabbed', ['Tabbed']],
+      ['## Closed ##   ', ['Closed']],
+      ['## Not closed #x', ['Not closed #x']],
+      ['# a \t##', ['a']],
+      ['#  padded  ', ['padded']],
+      ['# C# and F#', ['C# and F#']],
+      ['# ', []],
+      ['#', []],
+      ['# a\u2028b', []],
+    ]
+    for (const [line, path] of cases) {
+      const [chunk] = chunkText(`${line}\n\nBody.`)
+      expect([line, chunk?.headingPath]).toEqual([line, path])
+    }
+  })
+
+  it('a very long heading title is cut in the heading path, never in the text', () => {
+    const title = words(2000, 't')
+    const text = `# ${title}\n\n${words(2000, 'b')}`
+    const chunks = chunkText(text)
+    expectExactSlices(text, chunks)
+    for (const c of chunks) {
+      expect(c.headingPath).toHaveLength(1)
+      expect(c.headingPath[0]?.length).toBeLessThanOrEqual(HEADING_TITLE_MAX_CHARS)
+      expect(title.startsWith(c.headingPath[0] ?? '')).toBe(true)
+    }
+  })
+})
+
+describe('chunkText — a wide table header is carried within a bound', () => {
+  const maxChars = DEFAULT_CHUNK_TOKENS * CHARS_PER_TOKEN
+
+  /** A table whose header row alone is `headerChars` wide, filled with short rows to `total`. */
+  function wideTable(headerChars: number, total: number): { text: string; header: string } {
+    let row = '|'
+    for (let i = 0; row.length < headerChars; i++) row += ` col${i} |`
+    const header = `${row}\n|---|`
+    const lines = [header]
+    let size = header.length
+    for (let r = 0; ; r++) {
+      const line = `| r${r} | value ${r} |`
+      if (size + 1 + line.length > total) break
+      lines.push(line)
+      size += 1 + line.length
+    }
+    return { text: lines.join('\n'), header }
+  }
+
+  it('at the ingest cap, stored and embedded text stay proportional to the document', () => {
+    const { text, header } = wideTable(100_000, INGEST_TEXT_MAX_CHARS)
+    expect(text.length).toBeLessThanOrEqual(INGEST_TEXT_MAX_CHARS)
+    const chunks = chunkText(text)
+    expectExactSlices(text, chunks)
+    const stored = chunks.reduce((n, c) => n + c.text.length + (c.tableHeader?.length ?? 0), 0)
+    const embedded = chunks.reduce((n, c) => n + embeddingInput(c).length, 0)
+    expect(stored).toBeLessThanOrEqual(3 * text.length)
+    expect(embedded).toBeLessThanOrEqual(3 * text.length)
+    for (const c of chunks) {
+      expect(c.text.length).toBeLessThanOrEqual(maxChars)
+      expect(embeddingInput(c).length).toBeLessThanOrEqual(maxChars + EMBEDDING_CONTEXT_MAX_CHARS)
+      if (c.tableHeader !== null) {
+        expect(c.text.length + c.tableHeader.length).toBeLessThanOrEqual(maxChars)
+        // What is carried is the start of the header: its first column names.
+        expect(header.startsWith(c.tableHeader.replace(/ …$/, ''))).toBe(true)
+      }
+    }
+    // Every body row is still stored whole in some chunk.
+    const all = new Set(chunks.flatMap(c => c.text.split('\n')))
+    for (const line of text.split('\n').slice(2)) expect(all.has(line)).toBe(true)
+  })
+
+  it('a header that fits a quarter of the window is carried whole, as before', () => {
+    const { text, header } = wideTable(maxChars / 4 - 20, 20_000)
+    const later = chunkText(text).slice(1)
+    expect(later.length).toBeGreaterThan(2)
+    for (const c of later) expect(c.tableHeader).toBe(header)
+  })
+
+  it('embeddingInput bounds the context it adds and never cuts the text', () => {
+    const text = words(50, 'x')
+    const input = embeddingInput({
+      text,
+      headingPath: ['A'],
+      tableHeader: 'h'.repeat(10 * EMBEDDING_CONTEXT_MAX_CHARS),
+    })
+    expect(input.endsWith(`\n\n${text}`)).toBe(true)
+    expect(input.length).toBeLessThanOrEqual(EMBEDDING_CONTEXT_MAX_CHARS + 2 + text.length)
   })
 })
 

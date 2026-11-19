@@ -4,7 +4,7 @@ previous: 0.39.0
 date: null
 breaking: false
 migrations: []
-areas: [api, docs, config]
+areas: [api, docs, config, shared]
 touches_surfaces: [feature-knowledge]
 requires_surfaces: []
 manual: false
@@ -12,7 +12,7 @@ manual: false
 
 ## What changed
 
-Knowledge facts are built and matched only from documents a reader may see, invitations follow their issuer at sign-up, suspended organisations run no queued jobs, and public security reports carry counts only.
+Knowledge facts are built only from documents a reader may see and settled only by those allowed, invitations follow their issuer, suspended organisations run no queued jobs, the chunker runs in linear bounded work, and security reports publish counts only.
 
 - Extraction prompt and decision-model material (known entities, accepted facts, held values) come from tenant-visible documents only, whatever the document being read (`services/knowledge/extract.ts`, `promptScope`).
 - `ResolveContext` gains a required `documentVisibility`; a `groups` document adds no aliases to the entity it links to or creates (`services/knowledge/entities.ts`).
@@ -26,6 +26,13 @@ Knowledge facts are built and matched only from documents a reader may see, invi
 - The `findings` and `hardening` lists and every `line` are gone; `line`, `title`, `description` or any unknown field refuses the whole file, as do a count with no fixing release, a negative or fractional count, or a repo not in `repos`.
 - `report.md`/`report.json` carry a fixed sentence: individual issues are not published, "Please request the detailed report by emailing <contact>" (default `security@rocketflare.dev`).
 - `SKILL.md` "Public report", `docs/SECURITY-AUDIT.md`, `docs/CONCEPTS.md` (rf-security) and `SECURITY.md` state that only counts are ever published.
+- `POST /api/knowledge/facts/:id/review { action: 'prefer' }` by a member who cannot manage knowledge is a 403 `fact_conflict_needs_admin`, with nothing written, when a visible conflict is reviewed by someone else, has no reviewer, or was confirmed by another person. An admin still settles any conflict, and the member can still `reject` their own side.
+- New error code `fact_conflict_needs_admin` in `@rocketflare/shared/errors`.
+- `chunking.ts` recognises ATX headings and GFM delimiter rows with a linear scan instead of a regex. Every heading and delimiter row is recognised exactly as before.
+- A table header wider than a quarter of the chunk window is carried as its first columns plus ` …`, so header and rows fit one window. A header wider than a window is split into windows of its own. Narrower headers are carried whole, as before.
+- `embeddingInput` cuts the heading path and table header it prefixes to `EMBEDDING_CONTEXT_MAX_CHARS` (1600) and never cuts the chunk text. A heading title is cut to `HEADING_TITLE_MAX_CHARS` (200) in `headingPath`.
+- `docs/DEPLOY.md` § Observability now matches the tomls (`invocation_logs = true`) and says invocation logs record each request's URL.
+- Why: `docs/CONCEPTS.md` §9, the chunking paragraph and the knowledge review endpoints.
 - Rationale: `docs/CONCEPTS.md` §9 "Knowledge facts" (extraction and "Reading facts").
 
 ## How to apply
@@ -44,6 +51,11 @@ Knowledge facts are built and matched only from documents a reader may see, invi
 12. Take the "Public report" section of `.claude/skills/rf-security/SKILL.md` and the "Publishing a report" section of `docs/SECURITY-AUDIT.md`.
 13. Set `"contact"` in your entries file to your own security address; without it the report names `security@rocketflare.dev`, the kit's.
 14. Rewrite any existing entries file in the new shape: per run, the confirmed counts by severity and the releases that fixed them; one `fixed` entry per repository and release with its counts by severity and its hardening count. Drop every `line`.
+15. Port `apps/web/src/api/services/knowledge/review.ts`: add `assertMaySettleConflicts` and call it at the start of the `prefer` branch inside the transaction of `reviewFact`.
+16. Add `factConflictNeedsAdmin: 'fact_conflict_needs_admin'` to `ERROR_CODES` in `packages/shared/src/errors.ts`.
+17. If a test of your own has a member `prefer` a fact whose conflicts have no `reviewerUserId`, or another person's, seed those conflicts with the member as reviewer, or make the call as an admin.
+18. Port `apps/web/src/api/services/ai/chunking.ts` whole if you have not changed it; otherwise port `parseAtxHeading`, `isTableDelimiter`, `carriedTableHeader`, the `splitTable` changes, `embeddingInput` and the two new constants.
+19. Re-indexing is optional: a document chunked before this release keeps its stored `table_header` until it is next indexed.
 
 ## Conflicts to expect
 
@@ -51,6 +63,8 @@ Knowledge facts are built and matched only from documents a reader may see, invi
 - `apps/web/src/api/queues/jobs.ts` → a tenant-status check before dispatch → keep your own handler entries and take the check.
 - `apps/web/src/api/services/admin.ts` → `setUserBlocked` now runs in a transaction → keep your additions inside it.
 - `SECURITY.md` → its audit paragraph now says only counts are published → keep your own wording and links, but do not promise per-finding publication.
+- `apps/web/tests/api/knowledge-review.test.ts` → the prefer case seeds its conflicts with the member as reviewer → keep your own cases and apply the same seeding.
+- `apps/web/tests/config/chunking.test.ts` → new `describe` blocks appended before `fuseByRank` → keep both.
 
 ## Verify
 
@@ -60,3 +74,6 @@ Knowledge facts are built and matched only from documents a reader may see, invi
 4. `pnpm gate` passes.
 5. `pnpm web exec vitest run --project config tests/config/rf-security/public-report.test.ts` passes.
 6. `node .claude/skills/rf-security/tools/audit.mjs public-report <entries.json>` on a file with a `line` field prints `REFUSED` and `nothing written`, and exits 1.
+7. In `apps/web`, `NODE_ENV=test pnpm exec dotenv -e .env.test -- vitest run --project config tests/config/chunking.test.ts` passes.
+8. In `apps/web`, `NODE_ENV=test pnpm exec dotenv -e .env.test -- vitest run --project api tests/api/security/knowledge-prefer-authority.test.ts tests/api/knowledge-review.test.ts` passes.
+9. `grep -n "invocation_logs" docs/DEPLOY.md apps/web/wrangler.toml apps/web/wrangler.staging.toml` shows `true` everywhere.
