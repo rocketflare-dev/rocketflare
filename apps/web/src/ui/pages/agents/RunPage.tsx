@@ -227,7 +227,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
               setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
             }
           />
-          <RunTimeline events={run.events} />
+          <RunTimeline events={run.events} settled={!isRunActive(run.status)} />
           {isRunActive(run.status) && <SteerComposer runId={run.id} />}
         </SectionPanel>
         <div className="order-1 lg:order-2 space-y-3 min-w-0">

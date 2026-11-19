@@ -3,7 +3,11 @@
  * so the input and the result share a disclosure and the row spins until it returns. A knowledge
  * tool additionally renders the documents it found as a card strip.
  */
-import { ExclamationCircleIcon, WrenchScrewdriverIcon } from '@heroicons/react/24/outline'
+import {
+  ExclamationCircleIcon,
+  StopCircleIcon,
+  WrenchScrewdriverIcon,
+} from '@heroicons/react/24/outline'
 import { formatDuration } from '@/ui/lib/format'
 import { humaniseToolName, type ToolRow } from './timelineModel'
 import { JsonDisclosure, ToolResultCards } from './toolResults'
@@ -11,7 +15,9 @@ import { JsonDisclosure, ToolResultCards } from './toolResults'
 export function ToolCallRow({ row }: { row: ToolRow }) {
   return (
     <div className="flex items-start gap-2.5 text-sm" data-event-kind="tool">
-      {!row.done ? (
+      {row.stopped ? (
+        <StopCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-muted" aria-label="Stopped" />
+      ) : !row.done ? (
         <span className="loading loading-spinner loading-xs mt-0.5 shrink-0" />
       ) : row.isError ? (
         <ExclamationCircleIcon className="w-4 h-4 mt-0.5 shrink-0 text-error" />
@@ -23,7 +29,13 @@ export function ToolCallRow({ row }: { row: ToolRow }) {
           <span className="font-medium">{humaniseToolName(row.name)}</span>
           <span className={row.isError ? 'text-error' : 'text-muted'}>
             {' '}
-            {row.done ? (row.isError ? 'failed' : 'returned') : 'running…'}
+            {row.done
+              ? row.isError
+                ? 'failed'
+                : 'returned'
+              : row.stopped
+                ? 'stopped'
+                : 'running…'}
           </span>
           {row.durationMs !== undefined && (
             <span className="text-muted tabular-nums"> · {formatDuration(row.durationMs)}</span>

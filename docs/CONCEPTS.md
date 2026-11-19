@@ -689,7 +689,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   provider that ignores it (Workers AI) stops being waited for, and an aborted attempt settles
   `cancelled`, never as a retryable `unavailable`. Pass `ctx.signal` to `runToolLoop` and your own
   `fetch`es; a plugin's `ctx.toolLoop` / `ctx.structured` pass it already. A settled cancel
-  projects as AG-UI's `RUN_FINISHED { outcome: { type: 'cancelled' } }`, not a `RUN_ERROR`.
+  projects as AG-UI's `RUN_FINISHED { outcome: { type: 'cancelled' } }`, not a `RUN_ERROR`. A
+  cancel of a `running` run silent for longer than a step can run (`ATTEMPT_DEAD_MS`, 12 min — its
+  attempt died with its isolate) settles at once; and a run settled OUTSIDE its attempt (cancel,
+  force, the sweeper, a read reconciling) still ends its log with a `status` event carrying a
+  `reason`, so the timeline — which shows a settled run's unclosed work as stopped — tells the end.
   **Tracing a run**: the first claim exports a zero-length `run started` span under the run's root
   id (`rocketflare.run.pending`, the trace's name and tags), so a backend lists the run while it
   is still going; the root `invoke_agent <key>` is still recorded once, at `finish` — an OTLP span

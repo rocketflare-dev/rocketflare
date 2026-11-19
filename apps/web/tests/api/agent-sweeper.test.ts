@@ -12,7 +12,15 @@ import { eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { runSweepLostRuns, SWEEP_STALE_MS } from '@/api/scheduled'
 import { requestInterrupt } from '@/api/services/agents/interrupts'
-import { claimRun, enqueueRun, getRun, parkRun } from '@/api/services/agents/runs'
+import {
+  ATTEMPT_DEAD_MS,
+  claimRun,
+  enqueueRun,
+  getRun,
+  listEvents,
+  parkRun,
+  requestCancel,
+} from '@/api/services/agents/runs'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
 import { agentRuns } from '@/db/schema'
@@ -132,5 +140,51 @@ describe('sweepLostRuns', () => {
 
     expect(await statusOf(expired.tenant.id, expired.run.id)).toBe('cancelled')
     expect(await statusOf(inDate.tenant.id, inDate.run.id)).toBe('awaiting_input')
+  })
+})
+
+describe('cancel without a live attempt', () => {
+  const longAgo = () => new Date(Date.now() - ATTEMPT_DEAD_MS - 60_000)
+  const silence = (runId: string) =>
+    db
+      .update(agentRuns)
+      .set({ updatedAt: longAgo(), startedAt: longAgo(), createdAt: longAgo() })
+      .where(eq(agentRuns.id, runId))
+  const statusEvents = async (tenantId: string, runId: string) =>
+    (await listEvents(db, tenantId, runId))
+      .filter(e => e.type === 'status')
+      .map(e => e.data as { status: string; reason?: string })
+
+  it('settles a running run nothing has touched for longer than a step, and says why', async () => {
+    const { run, tenant } = await staleRun(env)
+    await silence(run.id)
+    const settled = await requestCancel(db, tenant.id, run.id, undefined, env)
+    expect(settled?.status).toBe('cancelled')
+    expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
+      status: 'cancelled',
+      reason: 'no_live_attempt',
+    })
+  })
+
+  it('only flags a run with a live attempt, and a second cancel forces it with an event', async () => {
+    const { run, tenant } = await staleRun(env)
+    await db.update(agentRuns).set({ updatedAt: new Date() }).where(eq(agentRuns.id, run.id))
+    expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('running')
+    expect(await statusEvents(tenant.id, run.id)).toEqual([])
+    expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('cancelled')
+    expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
+      status: 'cancelled',
+      reason: 'forced',
+    })
+  })
+
+  it('a settle found by reconciling with the engine ends the log too', async () => {
+    const { run, tenant } = await staleRun(env)
+    workflowStub(env).setStatus(run.id, { status: 'terminated' })
+    await runSweepLostRuns(db, env, fakeLogger())
+    expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
+      status: 'cancelled',
+      reason: 'reconciled',
+    })
   })
 })

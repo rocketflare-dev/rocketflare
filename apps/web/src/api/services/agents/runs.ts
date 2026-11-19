@@ -41,7 +41,7 @@ import {
   isRunActive,
 } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import { type Database, isUniqueViolation, rows } from '../../../db/client'
 import {
@@ -809,10 +809,22 @@ async function requestCancelOne(
       await expireInterrupts(db, tenantId, runId)
       await sendResumeEvent(env, updated ?? row, { interruptId: null })
     }
+    if (updated) await recordOutOfBandSettle(db, updated, 'cancel_requested', realtime)
     nudgeRun(realtime, tenantId, runId)
     return updated ?? getRun(db, tenantId, runId)
   }
   if (row.status !== 'running') return row
+
+  // No sign of life for longer than a step can run: no attempt holds this run (the Worker was
+  // restarted, the isolate evicted), so there is no poll to wait for — cancel it now, as a force
+  // would. A retried attempt that does turn up finds it settled and claims nothing.
+  if (Date.now() - (await lastSignOfLife(db, row)).getTime() > ATTEMPT_DEAD_MS) {
+    await terminateInstance(env, row)
+    const settled = await cancelRun(db, tenantId, runId)
+    if (settled) await recordOutOfBandSettle(db, settled, 'no_live_attempt', realtime)
+    nudgeRun(realtime, tenantId, runId)
+    return settled ?? getRun(db, tenantId, runId)
+  }
 
   if (!row.cancelRequestedAt) {
     const [updated] = await db
@@ -825,9 +837,56 @@ async function requestCancelOne(
   }
 
   await terminateInstance(env, row)
-  const settled = (await cancelRun(db, tenantId, runId)) ?? row
+  const forced = await cancelRun(db, tenantId, runId)
+  if (forced) await recordOutOfBandSettle(db, forced, 'forced', realtime)
   nudgeRun(realtime, tenantId, runId)
-  return settled
+  return forced ?? row
+}
+
+/**
+ * An attempt runs inside a step with a 10-minute timeout, so a `running` row silent for longer
+ * than that (plus a margin for the engine's own bookkeeping) has no live attempt.
+ */
+export const ATTEMPT_DEAD_MS = 12 * 60 * 1000
+
+/** The newest of the row's own update and its newest event: what a live attempt keeps moving. */
+async function lastSignOfLife(db: Database, row: AgentRunRow): Promise<Date> {
+  const [latest] = await db
+    .select({ at: agentRunEvents.at })
+    .from(agentRunEvents)
+    .where(and(eq(agentRunEvents.tenantId, row.tenantId), eq(agentRunEvents.runId, row.id)))
+    .orderBy(desc(agentRunEvents.seq))
+    .limit(1)
+  const candidates = [row.updatedAt, row.startedAt, latest?.at].filter(
+    (at): at is Date => at instanceof Date
+  )
+  return new Date(Math.max(...candidates.map(at => at.getTime()), row.createdAt.getTime()))
+}
+
+/**
+ * A run settled from OUTSIDE its attempt — a cancel, a force, the sweeper or a read reconciling
+ * with the engine — still ends its log with a `status` event, as one settled by its own attempt
+ * does. Without it the log's last word is whatever the dead attempt last wrote ("step running"),
+ * and the run's timeline, its AG-UI projection and the inspector all read a story that never ends.
+ * Best-effort: the ROW is the truth, so a failed append is logged by the caller's absence of it.
+ */
+async function recordOutOfBandSettle(
+  db: Database,
+  run: AgentRunRow,
+  reason: 'cancel_requested' | 'forced' | 'no_live_attempt' | 'reconciled',
+  realtime?: Realtime
+): Promise<void> {
+  try {
+    await appendEventAtomic(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      type: 'status',
+      data: { status: run.status, reason, ...(run.error && { error: run.error }) },
+      realtime,
+    })
+  } catch {
+    // The settle already happened; an event the log lacks is cosmetic, a thrown cancel is not.
+  }
 }
 
 /** Best-effort kill of the run's Workflow instance. Every failure is ignored on purpose. */
@@ -1090,6 +1149,16 @@ export const RECONCILE_LIVENESS_MS = 30_000
  * exactly as it always did. The whole cost of the guard is that a genuinely dead instance is
  * detected up to {@link RECONCILE_LIVENESS_MS} later than it would have been.
  */
+async function reconciled(
+  db: Database,
+  run: AgentRunRow,
+  settled: AgentRunRow | null
+): Promise<AgentRunRow> {
+  if (!settled) return run
+  await recordOutOfBandSettle(db, settled, 'reconciled')
+  return settled
+}
+
 export async function reconcileRun(
   db: Database,
   env: AgentRunsEnv,
@@ -1105,7 +1174,11 @@ export async function reconcileRun(
     status = await (await env.AGENT_RUN_WORKFLOW.get(run.instanceId)).status()
   } catch (err) {
     if (!isMissingInstanceError(err)) return run
-    return (await failRun(db, run.tenantId, run.id, 'Workflow instance not found')) ?? run
+    return reconciled(
+      db,
+      run,
+      await failRun(db, run.tenantId, run.id, 'Workflow instance not found')
+    )
   }
   switch (status.status) {
     // A `waiting` instance is parked on `step.waitForEvent` and is exactly where it should be. The
@@ -1116,13 +1189,13 @@ export async function reconcileRun(
       return run
     // `terminated` is what a forced cancel leaves behind — settle it as cancelled, not failed.
     case 'terminated':
-      return (await cancelRun(db, run.tenantId, run.id)) ?? run
+      return reconciled(db, run, await cancelRun(db, run.tenantId, run.id))
     case 'errored': {
       const reason = status.error?.message ?? 'Workflow instance errored'
-      return (await failRun(db, run.tenantId, run.id, reason)) ?? run
+      return reconciled(db, run, await failRun(db, run.tenantId, run.id, reason))
     }
     case 'complete':
-      return (await finishRun(db, run.tenantId, run.id, run.output ?? null)) ?? run
+      return reconciled(db, run, await finishRun(db, run.tenantId, run.id, run.output ?? null))
     default:
       return run
   }

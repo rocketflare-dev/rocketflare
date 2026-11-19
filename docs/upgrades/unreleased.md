@@ -59,6 +59,9 @@ Phase 3 adds version pinning, HITL deadlines, reminders and assignees, child run
   - `RunMeter` gains `budget`.
   - `notifyApprovers` moved from `runtime.ts` to `hitl.ts` and now takes the ask row.
   - `GET /api/agents/runs` no longer lists child runs by default.
+- **Cancel with no live attempt.** Cancelling a `running` run that has been silent for longer than a step can run (`ATTEMPT_DEAD_MS`, 12 minutes) settles it at once instead of waiting for a poll that will never come.
+- **Out-of-band settles end the log.** A run settled outside its attempt appends a final `status` event whose `reason` is `cancel_requested`, `forced`, `no_live_attempt` or `reconciled`. That covers a cancel of a queued or parked run, a force, and a settle by the sweeper or a read.
+- **Stopped work in the timeline.** The run timeline shows the stages and tool calls a settled run left open as stopped (`stopOpenWork`), not spinning.
 - Why: `docs/CONCEPTS.md` §9 "Versions, children, inspector (D44 phase 3)".
 
 Lint (#162):

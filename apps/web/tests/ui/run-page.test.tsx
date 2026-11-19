@@ -239,6 +239,37 @@ describe('RunPage', () => {
     expect(screen.getByRole('tab', { name: /Usage/ })).toBeInTheDocument()
   })
 
+  it('shows work a settled run left open as stopped, never spinning', async () => {
+    const cutOff = [
+      event(1, 'status', { status: 'running', attempt: 1 }),
+      event(2, 'step', { key: 'summarize', label: 'Summarising', status: 'running' }),
+      event(3, 'tool.start', { name: 'submit_summary', input: { style: 'bullets' } }),
+    ]
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        status: 'cancelled',
+        finishedAt: t(9),
+        events: cutOff,
+      }),
+    })
+    expect(await screen.findByText('stopped')).toBeInTheDocument()
+    expect(screen.getAllByLabelText('Stopped').length).toBeGreaterThanOrEqual(2)
+    expect(document.querySelector('.loading-spinner')).toBeNull()
+  })
+
+  it('still spins while the run is going', async () => {
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        events: [
+          event(1, 'status', { status: 'running', attempt: 1 }),
+          event(2, 'step', { key: 'summarize', label: 'Summarising', status: 'running' }),
+        ],
+      }),
+    })
+    await screen.findByText('Summarising')
+    expect(screen.queryByLabelText('Stopped')).toBeNull()
+  })
+
   it('gives an admin an Inspect tab with the timeline, its versions and its spend; a member none', async () => {
     const at = (s: number) => t(s)
     mount({
