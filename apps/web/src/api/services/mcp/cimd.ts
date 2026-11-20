@@ -97,6 +97,9 @@ export const cimdDocumentSchema = z.object({
   logo_uri: z.string().url().max(2048).optional(),
   client_uri: z.string().url().max(2048).optional(),
   token_endpoint_auth_method: z.string().optional(),
+  token_endpoint_auth_methods_supported: z.array(z.string()).max(20).optional(),
+  grant_types: z.array(z.string()).max(20).optional(),
+  response_types: z.array(z.string()).max(20).optional(),
 })
 export type CimdDocument = z.infer<typeof cimdDocumentSchema>
 
@@ -125,6 +128,23 @@ async function readCapped(body: ReadableStream<Uint8Array> | null, max: number) 
     offset += chunk.byteLength
   }
   return new TextDecoder().decode(all)
+}
+
+/**
+ * Whether the client can talk to a token endpoint that authenticates nobody. That is true when its
+ * preferred method is absent or `none`, and also when it prefers another method but lists `none`
+ * among the ones it supports. ChatGPT's document does exactly that: it prefers `private_key_jwt`
+ * and lists `none`. Our metadata advertises `none` alone, so such a client falls back to it, and we
+ * never accept a client credential. A client that can authenticate only with a secret or a key is
+ * refused.
+ */
+export function canActAsPublicClient(doc: {
+  token_endpoint_auth_method?: string
+  token_endpoint_auth_methods_supported?: readonly string[]
+}): boolean {
+  const preferred = doc.token_endpoint_auth_method
+  if (!preferred || preferred === 'none') return true
+  return doc.token_endpoint_auth_methods_supported?.includes('none') ?? false
 }
 
 /**
@@ -173,10 +193,16 @@ export async function fetchClientDocument(
   if (doc.client_id !== url.toString()) {
     throw new OAuthClientError('The client metadata document names a different client_id')
   }
-  if (doc.token_endpoint_auth_method && doc.token_endpoint_auth_method !== 'none') {
+  if (!canActAsPublicClient(doc)) {
     throw new OAuthClientError(
       'Only public clients (token_endpoint_auth_method "none") are supported'
     )
+  }
+  if (doc.grant_types && !doc.grant_types.includes('authorization_code')) {
+    throw new OAuthClientError('The client does not use the authorization_code grant')
+  }
+  if (doc.response_types && !doc.response_types.includes('code')) {
+    throw new OAuthClientError('The client does not use the code response type')
   }
   if (!doc.redirect_uris.every(registrableRedirect)) {
     throw new OAuthClientError(

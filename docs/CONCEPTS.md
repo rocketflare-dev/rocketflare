@@ -2220,8 +2220,13 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   response (RFC 9207), and no `registration_endpoint`. **Clients are their metadata document**
   (`services/mcp/cimd.ts`): `client_id` is an https URL on a public host and the default port; the
   fetch refuses redirects, takes ten seconds and 5 KB at most, needs a JSON type and a document
-  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. No DCR,
-  no static clients. `GET /oauth/authorize` resolves the client and checks `redirect_uri` (exact;
+  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. A
+  document must be usable as a public client: its `token_endpoint_auth_method` absent or `none`, or
+  `none` among its `token_endpoint_auth_methods_supported` (ChatGPT prefers `private_key_jwt` and
+  lists `none`, and falls back to it because our metadata offers nothing else); its `grant_types`
+  and `response_types`, when present, must include `authorization_code` and `code`. The three v1
+  clients' real documents are test fixtures (`tests/config/mcp-cimd.test.ts`). No DCR, no static
+  clients. `GET /oauth/authorize` resolves the client and checks `redirect_uri` (exact;
   loopback any port) BEFORE anything is redirected — until then an error is a page on our origin;
   after it, the error goes back with `state` and `iss`. PKCE S256 is mandatory, `resource` must be
   one of our MCP URLs (`invalid_target`), and the request waits ten minutes in `oauth_requests`.

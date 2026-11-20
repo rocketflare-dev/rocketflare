@@ -41,8 +41,11 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - Discovery at `/.well-known/oauth-protected-resource[/mcp|/mcp/t/<slug>]`, `/.well-known/oauth-authorization-server` and `/.well-known/openid-configuration`; clients identify themselves by a Client ID Metadata Document (`services/mcp/cimd.ts` fetches it behind a guard and caches it in `oauth_clients`). No dynamic registration.
 - `GET /oauth/authorize` → the app's own `/login` → `/oauth/continue` → the consent page `/consent` (a new SPA route) → `POST /oauth/consent` → a code → `POST /oauth/token` (`authorization_code`, `refresh_token` with rotation, reuse detection and a 30-second retry grace) and `POST /oauth/revoke`. PKCE S256 is mandatory.
 - Two platform tables, `oauth_clients` and `oauth_requests`, both in `RLS_REVOKED_TABLES`; `mcp_tokens` gains `successor_sealed`, and `mcp_grants` gains `activated_at` — a consent's grant is a connection (listed, counted, `mcp.client_connected`) only once its code is redeemed, and the nightly retention deletes one never redeemed.
+- A client metadata document is accepted when the client can act as a public client: `token_endpoint_auth_method` absent or `none`, or `none` among `token_endpoint_auth_methods_supported` (ChatGPT's document prefers `private_key_jwt` and lists `none`). Its `grant_types` and `response_types`, when present, must include `authorization_code` and `code`.
 - Removing a member or blocking a person revokes their connections in the same transaction (`revokeMcpGrantsOf` in `members.ts`, `idp-tenancy.ts`, `admin.ts`).
 - `/api/mcp/connections` (admins: list, revoke, `POST /revoke-all`) and `/api/mcp-connections` (a person's own, across organisations), shown as **Connected clients** in Settings → MCP and **Connected apps** in Profile (`ui/components/mcp/McpConnectionsTable.tsx`).
+- Settings → MCP renders a tool description's `inline code` as code instead of showing the backticks.
+- Fix, not MCP-specific: `pnpm dev:tunnel` never gave the Worker the tunnel's public URL. `scripts/tunnel-dev.mjs` passed `pnpm dev:api -- --var APP_URL:…`; pnpm 10 forwards the `--` literally and wrangler drops what follows, so the Worker kept `.dev.vars`'s localhost `APP_URL` for its redirects. It now passes `--var` with no `--` (`scripts/lib/tunnel-dev.mjs`).
 - `docs/THREAT-MODEL.md` gains the OAuth client and its model as actors, the codes, tokens and grants as assets, and an "MCP promises" list.
 
 ## How to apply
@@ -69,6 +72,7 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - `apps/web/wrangler.toml`, `wrangler.staging.toml` → `/mcp` entries in `run_worker_first` → keep your own entries alongside.
 - `apps/web/src/api/services/members.ts`, `idp-tenancy.ts`, `admin.ts` → a `revokeMcpGrantsOf` call inside the removal and block transactions (`blockDeprovisioned` now runs in a transaction) → keep yours and add the kit's call.
 - `apps/web/src/ui/App.tsx` → a `/consent` route → take the kit's line.
+- `apps/web/scripts/tunnel-dev.mjs` → its children now come from `scripts/lib/tunnel-dev.mjs`, with no `--` before `--var` → take the kit's version.
 - `apps/web/src/ui/pages/Profile.tsx` → a `ConnectedApps` panel after the sign-in methods → keep your own panels and add the kit's.
 - `apps/web/src/api/services/ai/chat-turn.ts`, `ai/chat-stats.ts`, `agents/runtime.ts`, `agents/replay.ts` → `buildAgentTools(` became `toolsFor('chat' | 'agents', ` → take the kit's line.
 
