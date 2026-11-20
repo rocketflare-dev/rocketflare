@@ -327,7 +327,7 @@ export async function eligibleOrganisations(
     out.push({
       ...tenant,
       tools: tools.map(t => ({ name: t.name, title: mcpToolProfile(t).title ?? null })),
-      connected: live !== null,
+      connected: live?.activatedAt != null,
     })
   }
   return out
@@ -501,18 +501,6 @@ export async function decideConsent(
         },
         now
       )
-      await recordActivity(tx, {
-        tenantId: grant.tenantId,
-        userId: input.userId,
-        type: 'mcp.client_connected',
-        subjectType: 'McpGrant',
-        subjectId: grant.id,
-        metadata: {
-          clientId: grant.clientId,
-          clientName: input.client.clientName,
-          scopes: grant.scopes,
-        },
-      })
     }
     return issueCode(tx, cfg, request, { userId: input.userId, grant }, now)
   })
@@ -602,13 +590,34 @@ export async function exchangeCode(
     const pair = await issueMcpTokenPair(tx, grant, { now })
     await tx
       .update(mcpGrants)
-      .set({ lastUsedAt: now })
+      .set({ lastUsedAt: now, activatedAt: grant.activatedAt ?? now })
       .where(and(eq(mcpGrants.tenantId, grant.tenantId), eq(mcpGrants.id, grant.id)))
-    await tx
+    const [client] = await tx
       .update(oauthClients)
       .set({ lastUsedAt: now })
       .where(eq(oauthClients.clientId, grant.clientId))
-    return { pair, scopes: grant.scopes, grant }
+      .returning({ clientName: oauthClients.clientName })
+    // The connection exists from its first redeemed code — a consent whose code is never
+    // exchanged leaves no connection behind (the nightly retention sweeps that grant).
+    if (!grant.activatedAt) {
+      await recordActivity(tx, {
+        tenantId: grant.tenantId,
+        userId: grant.userId,
+        type: 'mcp.client_connected',
+        subjectType: 'McpGrant',
+        subjectId: grant.id,
+        metadata: {
+          clientId: grant.clientId,
+          clientName: client?.clientName ?? null,
+          scopes: grant.scopes,
+        },
+      })
+    }
+    return {
+      pair,
+      scopes: grant.scopes,
+      grant: { ...grant, activatedAt: grant.activatedAt ?? now },
+    }
   })
   if (outcome instanceof OAuthError) throw outcome
   return outcome

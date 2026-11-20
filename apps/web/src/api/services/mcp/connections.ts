@@ -10,7 +10,7 @@
  */
 import type { McpScope } from '@rocketflare/shared/mcp'
 import type { McpConnection } from '@rocketflare/shared/oauth'
-import { and, count, desc, eq, gte, inArray, isNull } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { mcpGrants, mcpToolCalls, oauthClients, tenants, users } from '../../../db/schema'
@@ -52,6 +52,7 @@ export async function listMcpConnections(
     .leftJoin(oauthClients, eq(oauthClients.clientId, mcpGrants.clientId))
     .where(
       and(
+        isNotNull(mcpGrants.activatedAt),
         filter.tenantId ? eq(mcpGrants.tenantId, filter.tenantId) : undefined,
         filter.userId ? eq(mcpGrants.userId, filter.userId) : undefined,
         filter.status === 'live' ? isNull(mcpGrants.revokedAt) : undefined
@@ -183,14 +184,20 @@ export async function revokeOwnConnection(
   input: { userId: string; grantId: string },
   now = new Date()
 ): Promise<void> {
+  // The person's own grant, in whichever organisation it was made: found by owner, then revoked
+  // under that organisation's id like every other write to a tenant table.
   const [grant] = await db
-    .select({ id: mcpGrants.id })
+    .select({ id: mcpGrants.id, tenantId: mcpGrants.tenantId })
     .from(mcpGrants)
     .where(and(eq(mcpGrants.userId, input.userId), eq(mcpGrants.id, input.grantId)))
   if (!grant) throw new NotFoundError('Connection not found')
   await revokeWhere(
     db,
-    and(eq(mcpGrants.userId, input.userId), eq(mcpGrants.id, input.grantId)),
+    and(
+      eq(mcpGrants.tenantId, grant.tenantId),
+      eq(mcpGrants.userId, input.userId),
+      eq(mcpGrants.id, grant.id)
+    ),
     { byUserId: input.userId, reason: 'revoked_by_user', by: 'self' },
     now
   )

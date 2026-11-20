@@ -2267,14 +2267,22 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   read-only, Enable all after a confirmation, Selected with ticks); and the tools grouped Knowledge
   first then per plugin, each with its read-only/writes badge, annotations and 30-day call count,
   approval-gated and terminal tools greyed with the reason. The switch and the modes save at once;
-  the group and tool ticks save as one list.
+  the group and tool ticks save as one list. Below them, **Connected clients**: every live
+  connection in the organisation — the person, the client by the name its document claims and the
+  host its `client_id` was verified on, read or read-and-write, connected, last used, 30-day calls
+  — with Revoke and Revoke all, each after a confirmation.
+- **Profile → Connected apps** (`ui/pages/Profile.tsx`, shown where the deployment ships `mcp` and
+  the reader has at least one): the reader's own connections in every organisation, with Revoke.
+  Both tables are `components/mcp/McpConnectionsTable.tsx`.
+- A consent makes the grant, but it is a **connection** only once its code is redeemed
+  (`mcp_grants.activated_at`, set by the first token exchange, which also records
+  `mcp.client_connected`): an unredeemed grant is never listed or counted, and the nightly
+  retention deletes it an hour after it was made.
 
 **Known gaps:** only clients with a Client ID Metadata Document can connect (Claude, ChatGPT;
 Cursor has DCR only, VS Code is untested) — no DCR, no static clients; a Worker cannot resolve DNS,
 so a public name pointing at a private address is caught by the platform's egress, not by the
-fetch guard; a consent whose code is never exchanged leaves a grant with no tokens (it lapses
-idle); the Settings → MCP connected-clients list and Profile → Connected apps pages are API-only
-until the UI lands; a call's own model spend is not attributed to it (`cost_microcents` stays null;
+fetch guard; a call's own model spend is not attributed to it (`cost_microcents` stays null;
 embeddings for search are unmetered as everywhere else); a renamed organisation slug breaks grants
 made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the handler (bad
 arguments, an unknown tool) are not in the call log; no resources, prompts, approval tools or

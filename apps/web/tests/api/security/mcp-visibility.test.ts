@@ -215,13 +215,18 @@ describe('a group-only document over MCP', () => {
   })
 
   it('answers every tool exactly as chat answers the same person', async () => {
-    for (const who of [insider, outsider]) {
-      for (const name of Object.keys(CASES)) {
-        expect(await overMcp(who, name, argsFor(name)), name).toEqual(
-          await inChat(who, name, argsFor(name))
-        )
-      }
-    }
+    // Every pair at once: they only read, and in sequence they were the slowest case here.
+    const pairs = [insider, outsider].flatMap(who =>
+      Object.keys(CASES).map(name => ({ who, name }))
+    )
+    const answers = await Promise.all(
+      pairs.map(async ({ who, name }) => ({
+        name,
+        mcp: await overMcp(who, name, argsFor(name)),
+        chat: await inChat(who, name, argsFor(name)),
+      }))
+    )
+    for (const { name, mcp, chat } of answers) expect(mcp, name).toEqual(chat)
   })
 
   it('lists exactly the documents the HTTP route lists for the same person', async () => {

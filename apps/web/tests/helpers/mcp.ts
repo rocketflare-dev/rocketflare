@@ -51,6 +51,7 @@ export async function connectMcp(
     clientId: input.clientId ?? TEST_MCP_CLIENT_ID,
     scopes: input.scopes ?? ['mcp:read'],
     resource,
+    activatedAt: new Date(),
     ...(input.expiresAt && { expiresAt: input.expiresAt }),
   })
   const pair = await issueMcpTokenPair(db, grant)

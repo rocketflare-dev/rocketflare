@@ -78,6 +78,10 @@ const CORE_QUERY_KEYS = {
     all: ['mcp'] as const,
     settings: ['mcp', 'settings'] as const,
     tools: ['mcp', 'tools'] as const,
+    /** This organisation's connections (admins) */
+    connections: ['mcp', 'connections'] as const,
+    /** The reader's own connections, across every organisation */
+    myConnections: ['mcp', 'my-connections'] as const,
   },
   /** `/api/ai/*` — providers, readiness, prompt registry and usage */
   ai: {

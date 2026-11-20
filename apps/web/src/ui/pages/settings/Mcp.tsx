@@ -12,10 +12,24 @@
 import type { McpConnectPolicy, McpExposure, McpToolListing } from '@rocketflare/shared/mcp'
 import { sharedPlugins } from '@rocketflare/shared/plugins'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { ConfirmModal, SectionPanel, SettingToggle, SkeletonRows } from '@/ui/components/shared'
+import { McpConnectionsTable } from '@/ui/components/mcp/McpConnectionsTable'
+import {
+  ConfirmModal,
+  EmptyState,
+  SectionPanel,
+  SettingToggle,
+  SkeletonRows,
+} from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useGroups } from '@/ui/hooks/useGroups'
-import { useMcpSettings, useMcpTools, useUpdateMcpSettings } from '@/ui/hooks/useMcp'
+import {
+  useMcpConnections,
+  useMcpSettings,
+  useMcpTools,
+  useRevokeAllMcpConnections,
+  useRevokeMcpConnection,
+  useUpdateMcpSettings,
+} from '@/ui/hooks/useMcp'
 
 /** The name a CLI wants: lower-case, dashes, nothing else (`Acme Tools` → `acme-tools`). */
 export function cliServerName(name: string): string {
@@ -430,12 +444,72 @@ function ExposureSection() {
   )
 }
 
+/** Every live connection in the organisation, with Revoke and Revoke all. */
+function ConnectedClientsSection() {
+  const connections = useMcpConnections()
+  const revoke = useRevokeMcpConnection('tenant')
+  const revokeAll = useRevokeAllMcpConnections()
+  const [confirmAll, setConfirmAll] = useState(false)
+  const items = connections.data?.items ?? []
+  return (
+    <SectionPanel
+      flush
+      title="Connected clients"
+      description="Each connection is one person through one client, acting with that person's permissions."
+      actions={
+        items.length > 0 && (
+          <button
+            type="button"
+            className="btn btn-sm btn-ghost text-error"
+            onClick={() => setConfirmAll(true)}
+          >
+            Revoke all
+          </button>
+        )
+      }
+    >
+      {connections.isLoading ? (
+        <div className="px-5 pb-5">
+          <SkeletonRows rows={2} />
+        </div>
+      ) : connections.isError ? (
+        <p className="px-5 pb-5 text-sm text-error" role="alert">
+          Connections could not be loaded.
+        </p>
+      ) : items.length === 0 ? (
+        <EmptyState
+          message="No clients connected"
+          description="Connections appear here once someone connects a client with the URL above."
+        />
+      ) : (
+        <McpConnectionsTable
+          connections={items}
+          show="person"
+          revoking={revoke.isPending}
+          onRevoke={(c, done) => revoke.mutate(c.id, { onSuccess: done })}
+        />
+      )}
+      <ConfirmModal
+        isOpen={confirmAll}
+        title="Revoke every connection?"
+        message={`All ${items.length} connected ${items.length === 1 ? 'client stops' : 'clients stop'} working on their next call. People can connect again.`}
+        confirmText="Revoke all"
+        confirmButtonClass="btn-error"
+        isLoading={revokeAll.isPending}
+        onCancel={() => setConfirmAll(false)}
+        onConfirm={() => revokeAll.mutate(undefined, { onSuccess: () => setConfirmAll(false) })}
+      />
+    </SectionPanel>
+  )
+}
+
 export default function McpSettingsPage() {
   return (
     <div className="flex flex-col gap-6">
       <ConnectionSection />
       <ConnectPolicySection />
       <ExposureSection />
+      <ConnectedClientsSection />
     </div>
   )
 }

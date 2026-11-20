@@ -54,9 +54,11 @@ Installed plugins append tabs LAST via `settingsTabs(ctx)`.
   one connector per URL — and `serverUrl` under single. Every name comes from `serverName`
   (`APP_NAME`); `mcp-settings.test.tsx` bans `/rocketflare/i` from the rendered page.
 - Copy shows "Copied" on the button, never a toast (toasts are for errors).
+- **Connected clients** and Profile → **Connected apps** share `components/mcp/McpConnectionsTable`
+  (`show: 'person' | 'organisation'`). A revoke refetches both lists; errors toast, success does not.
 
 ## Tests
 
-`tests/ui/`: `ai-settings`, `prompts-settings`, `agent-models-settings`, `usage-settings`, `mcp-settings`, `people`,
+`tests/ui/`: `ai-settings`, `prompts-settings`, `agent-models-settings`, `usage-settings`, `mcp-settings`, `profile-connected-apps`, `people`,
 `api-keys`, `groups` (list/create flows, the 409 confirm, the `AccessPicker` empty-selection
 warning).

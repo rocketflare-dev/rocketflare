@@ -27,6 +27,7 @@ CREATE TABLE "oauth_requests" (
 	CONSTRAINT "oauth_requests_code_hash_unique" UNIQUE("code_hash")
 );
 --> statement-breakpoint
+ALTER TABLE "mcp_grants" ADD COLUMN "activated_at" timestamp with time zone;--> statement-breakpoint
 ALTER TABLE "mcp_tokens" ADD COLUMN "successor_sealed" text;--> statement-breakpoint
 ALTER TABLE "oauth_requests" ADD CONSTRAINT "oauth_requests_user_id_users_id_fk" FOREIGN KEY ("user_id") REFERENCES "public"."users"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "oauth_requests" ADD CONSTRAINT "oauth_requests_grant_id_mcp_grants_id_fk" FOREIGN KEY ("grant_id") REFERENCES "public"."mcp_grants"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

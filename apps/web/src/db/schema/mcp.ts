@@ -5,7 +5,8 @@
  *   default: off, read-only tools, everyone may connect).
  * - `mcp_grants` — one CONNECTION: one person, in one organisation, through one client, bound to
  *   the URL it was made for (`resource`: `/mcp` or `/mcp/t/<slug>`). Revocation is a column, so a
- *   revoked connection keeps its history.
+ *   revoked connection keeps its history. Made by the consent, live once its code is exchanged
+ *   (`activatedAt`).
  * - `mcp_tokens` — the access and refresh tokens of a grant, stored as SHA-256 hashes. A refresh
  *   rotates (`rotatedFrom` points at the token it replaced, `usedAt` marks it spent, and
  *   `successorSealed` lets a retry inside the grace get the same pair back).
@@ -67,6 +68,12 @@ export const mcpGrants = pgTable(
     /** The exact URL the grant is for; a token is refused on any other (the audience check). */
     resource: text('resource').notNull(),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * When the client first exchanged a code for tokens. A consent makes the grant before the
+     * client has redeemed anything; until this is set it is not a connection — not listed, not
+     * counted, and swept by the nightly retention once its code could no longer be redeemed.
+     */
+    activatedAt: timestamp('activated_at', { withTimezone: true }),
     /** Touched at most once a minute by a call; the idle limit counts from it. */
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }).notNull().defaultNow(),
     /** The absolute end, fixed when the grant is made. */

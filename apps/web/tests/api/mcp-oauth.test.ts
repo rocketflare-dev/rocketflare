@@ -9,6 +9,8 @@
  */
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
+import { listMcpConnections } from '@/api/services/mcp/connections'
+import { runPruneMcp } from '@/api/services/mcp/retention'
 import { loadConfig } from '@/config'
 import { activityEvents, mcpGrants, mcpTokens, oauthRequests } from '@/db/schema'
 import {
@@ -152,9 +154,15 @@ describe('authorize: before the redirect is trusted, errors are a page — never
   })
 
   it('a stale cache refetches the document — and a failed fetch fails, it never falls back', async () => {
-    await seedOAuthClient(db, { fetchedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) })
+    // Its own client: the shared one is cached for every file running alongside this one, and
+    // backdating it would send their authorizations to the (absent) network too.
+    const clientId = `https://stale-${crypto.randomUUID()}.example.com/client.json`
+    await seedOAuthClient(db, {
+      clientId,
+      fetchedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+    })
     // The api suites have no network, so the refetch fails exactly as an unreachable host would.
-    const res = await browserGet(env, authorizePath(validAuthorize(env)))
+    const res = await browserGet(env, authorizePath(validAuthorize(env, { client_id: clientId })))
     expect(res.status).toBe(400)
     expect(await res.text()).toContain('could not be fetched')
   })
@@ -278,20 +286,57 @@ describe('consent', () => {
     expect(again.status).toBe(404)
   })
 
-  it('approve answers a code with state and iss, records the connection, and is single-use', async () => {
+  it('approve answers a code with state and iss; the connection exists once the code is redeemed', async () => {
     const { cookie, tenant, user } = await member()
-    const { location } = await authorizeAndApprove(env, cookie, { tenantId: tenant.id })
-    expect(location.searchParams.get('state')).toBe('st-123')
-    expect(location.searchParams.get('iss')).toBe(ORIGIN)
+    const approved = await authorizeAndApprove(env, cookie, { tenantId: tenant.id })
+    expect(approved.location.searchParams.get('state')).toBe('st-123')
+    expect(approved.location.searchParams.get('iss')).toBe(ORIGIN)
     const [grant] = await db.select().from(mcpGrants).where(eq(mcpGrants.userId, user.id))
     expect(grant).toMatchObject({ tenantId: tenant.id, clientId: CLAUDE_LIKE_CLIENT })
-    const events = await db
-      .select()
-      .from(activityEvents)
-      .where(
-        and(eq(activityEvents.tenantId, tenant.id), eq(activityEvents.type, 'mcp.client_connected'))
-      )
-    expect(events).toHaveLength(1)
+    const connected = () =>
+      db
+        .select()
+        .from(activityEvents)
+        .where(
+          and(
+            eq(activityEvents.tenantId, tenant.id),
+            eq(activityEvents.type, 'mcp.client_connected')
+          )
+        )
+    const listed = () => listMcpConnections(db, cfg, { tenantId: tenant.id, status: 'all' })
+    // Approved but not redeemed: not a connection yet — nothing listed, nothing recorded.
+    expect(grant?.activatedAt).toBeNull()
+    expect(await connected()).toHaveLength(0)
+    expect(await listed()).toEqual([])
+
+    const res = await tokenPost(env, {
+      grant_type: 'authorization_code',
+      code: approved.code,
+      code_verifier: approved.verifier,
+      client_id: approved.clientId,
+      redirect_uri: approved.redirectUri,
+    })
+    expect(res.status).toBe(200)
+    expect(await connected()).toHaveLength(1)
+    expect((await listed()).map(c => c.id)).toEqual([grant?.id])
+  })
+
+  it('a consent whose code is never redeemed leaves nothing behind once the sweep runs', async () => {
+    const { cookie, tenant, user } = await member()
+    await authorizeAndApprove(env, cookie, { tenantId: tenant.id })
+    const grants = () => db.select().from(mcpGrants).where(eq(mcpGrants.userId, user.id))
+    // A sweep inside the hour leaves it — the code may still be on its way to the token endpoint.
+    await runPruneMcp(db, 90)
+    expect(await grants()).toHaveLength(1)
+    // Backdate this grant rather than run the sweep in the future: a future clock would also
+    // expire every other file's live tokens in the shared database.
+    await db
+      .update(mcpGrants)
+      .set({ createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000) })
+      .where(eq(mcpGrants.userId, user.id))
+    await runPruneMcp(db, 90)
+    expect(await grants()).toEqual([])
+    expect(await listMcpConnections(db, cfg, { tenantId: tenant.id, status: 'all' })).toEqual([])
   })
 
   it('reconnecting the same client to the same organisation with no wider scope skips the click', async () => {

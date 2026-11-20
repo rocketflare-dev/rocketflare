@@ -9,6 +9,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import McpSettingsPage, { cliServerName } from '@/ui/pages/settings/Mcp'
 import SettingsLayout from '@/ui/pages/settings/SettingsLayout'
+import { mcpConnection as connection } from './helpers/mcp'
 import {
   makeSession,
   makeTenant,
@@ -72,7 +73,7 @@ const tools = {
   ],
 }
 
-function stubMcp(over: Record<string, unknown> = {}) {
+function stubMcp(over: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
   let current = settingsResponse(over)
   return stubFetch({
     '/api/mcp/settings': () => current,
@@ -83,6 +84,8 @@ function stubMcp(over: Record<string, unknown> = {}) {
     },
     '/api/mcp/tools': tools,
     '/api/groups': { items: [] },
+    '/api/mcp/connections': { items: [] },
+    ...extra,
   })
 }
 
@@ -182,5 +185,59 @@ describe('Settings → MCP', () => {
         exposedTools: ['search_knowledge', 'example_tool'],
       })
     )
+  })
+
+  it('lists connected clients — person, claimed name and verified host — and revokes after a confirmation', async () => {
+    const fetchMock = stubMcp(
+      {},
+      {
+        '/api/mcp/connections': { items: [connection()] },
+        'DELETE /api/mcp/connections/00000000-0000-4000-8000-000000000001': () => null,
+      }
+    )
+    renderWithProviders(<McpSettingsPage />, { session: makeSession() })
+    const panel = (await screen.findByText('Connected clients')).closest('section') as HTMLElement
+    const row = (await within(panel).findByText('Ana')).closest('tr') as HTMLElement
+    expect(within(row).getByText('ana@acme.test')).toBeInTheDocument()
+    expect(within(row).getByText('Claude')).toBeInTheDocument()
+    expect(within(row).getByText('claude.ai')).toBeInTheDocument()
+    expect(within(row).getByText('7')).toBeInTheDocument()
+    fireEvent.click(within(row).getByRole('button', { name: 'Revoke' }))
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText(/Disconnect Claude for Ana/)).toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'DELETE')).toBe(false)
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke' }))
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([, i]) => i?.method === 'DELETE')).toBe(true)
+    )
+  })
+
+  it('Revoke all asks first, then ends every connection', async () => {
+    const fetchMock = stubMcp(
+      {},
+      {
+        '/api/mcp/connections': { items: [connection()] },
+        'POST /api/mcp/connections/revoke-all': { revoked: 1 },
+      }
+    )
+    renderWithProviders(<McpSettingsPage />, { session: makeSession() })
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke all' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke all' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, i]) =>
+            i?.method === 'POST' && String(input).includes('/api/mcp/connections/revoke-all')
+        )
+      ).toBe(true)
+    )
+  })
+
+  it('says so when nobody has connected', async () => {
+    stubMcp()
+    renderWithProviders(<McpSettingsPage />, { session: makeSession() })
+    expect(await screen.findByText('No clients connected')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Revoke all' })).toBeNull()
   })
 })

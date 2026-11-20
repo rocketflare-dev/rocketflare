@@ -3,12 +3,20 @@
  * prune): calls older than `MCP_CALL_RETENTION_DAYS`, and tokens past their own expiry — an
  * expired token can never be presented again, so keeping its hash buys nothing — and the
  * authorization server's requests and codes past their deadline. Grants are kept,
- * revoked or lapsed, so the admin's list still says who connected what and when it ended.
+ * revoked or lapsed, so the admin's list still says who connected what and when it ended — except
+ * a grant whose code was never redeemed, which never became a connection and goes once its code
+ * can no longer be exchanged.
  */
-import { and, isNotNull, lt } from 'drizzle-orm'
+import { and, isNotNull, isNull, lt } from 'drizzle-orm'
 import { affected, type Database } from '../../../db/client'
-import { mcpTokens, mcpToolCalls } from '../../../db/schema'
+import { mcpGrants, mcpTokens, mcpToolCalls } from '../../../db/schema'
 import { MCP_REFRESH_RETRY_GRACE_MS, pruneOAuthRequests } from './authorization'
+
+/**
+ * How long a consent's grant may wait for its code to be redeemed before the sweep takes it — far
+ * past the code's own sixty seconds, so a sweep can never race a live exchange.
+ */
+const UNREDEEMED_GRANT_MS = 60 * 60 * 1000
 
 export async function runPruneMcp(db: Database, retentionDays: number, now = new Date()) {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
@@ -28,5 +36,15 @@ export async function runPruneMcp(db: Database, retentionDays: number, now = new
       )
   )
   const requests = await pruneOAuthRequests(db, now)
-  return { calls, tokens, sealed, requests, cutoff: cutoff.toISOString() }
+  const unredeemed = affected(
+    await db
+      .delete(mcpGrants)
+      .where(
+        and(
+          isNull(mcpGrants.activatedAt),
+          lt(mcpGrants.createdAt, new Date(now.getTime() - UNREDEEMED_GRANT_MS))
+        )
+      )
+  )
+  return { calls, tokens, sealed, requests, unredeemed, cutoff: cutoff.toISOString() }
 }

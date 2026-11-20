@@ -3,7 +3,7 @@ version: unreleased
 previous: 0.40.0
 date: null
 breaking: false
-migrations: ["MCP server tables: mcp_settings, mcp_grants, mcp_tokens, mcp_tool_calls", "MCP authorization server: oauth_clients, oauth_requests, mcp_tokens.successor_sealed"]
+migrations: ["MCP server tables: mcp_settings, mcp_grants, mcp_tokens, mcp_tool_calls", "MCP authorization server: oauth_clients, oauth_requests, mcp_tokens.successor_sealed, mcp_grants.activated_at"]
 areas: [api, config, db, shared, ui, docs]
 touches_surfaces: [example-feature, feature-chat, feature-agents]
 requires_surfaces: []
@@ -35,9 +35,9 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 
 - Discovery at `/.well-known/oauth-protected-resource[/mcp|/mcp/t/<slug>]`, `/.well-known/oauth-authorization-server` and `/.well-known/openid-configuration`; clients identify themselves by a Client ID Metadata Document (`services/mcp/cimd.ts` fetches it behind a guard and caches it in `oauth_clients`). No dynamic registration.
 - `GET /oauth/authorize` → the app's own `/login` → `/oauth/continue` → the consent page `/consent` (a new SPA route) → `POST /oauth/consent` → a code → `POST /oauth/token` (`authorization_code`, `refresh_token` with rotation, reuse detection and a 30-second retry grace) and `POST /oauth/revoke`. PKCE S256 is mandatory.
-- Two platform tables, `oauth_clients` and `oauth_requests`, both in `RLS_REVOKED_TABLES`; `mcp_tokens` gains `successor_sealed`.
+- Two platform tables, `oauth_clients` and `oauth_requests`, both in `RLS_REVOKED_TABLES`; `mcp_tokens` gains `successor_sealed`, and `mcp_grants` gains `activated_at` — a consent's grant is a connection (listed, counted, `mcp.client_connected`) only once its code is redeemed, and the nightly retention deletes one never redeemed.
 - Removing a member or blocking a person revokes their connections in the same transaction (`revokeMcpGrantsOf` in `members.ts`, `idp-tenancy.ts`, `admin.ts`).
-- `/api/mcp/connections` (admins: list, revoke, `POST /revoke-all`) and `/api/mcp-connections` (a person's own, across organisations).
+- `/api/mcp/connections` (admins: list, revoke, `POST /revoke-all`) and `/api/mcp-connections` (a person's own, across organisations), shown as **Connected clients** in Settings → MCP and **Connected apps** in Profile (`ui/components/mcp/McpConnectionsTable.tsx`).
 - `docs/THREAT-MODEL.md` gains the OAuth client and its model as actors, the codes, tokens and grants as assets, and an "MCP promises" list.
 
 ## How to apply
@@ -63,6 +63,7 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - `apps/web/wrangler.toml`, `wrangler.staging.toml` → `/mcp` entries in `run_worker_first` → keep your own entries alongside.
 - `apps/web/src/api/services/members.ts`, `idp-tenancy.ts`, `admin.ts` → a `revokeMcpGrantsOf` call inside the removal and block transactions (`blockDeprovisioned` now runs in a transaction) → keep yours and add the kit's call.
 - `apps/web/src/ui/App.tsx` → a `/consent` route → take the kit's line.
+- `apps/web/src/ui/pages/Profile.tsx` → a `ConnectedApps` panel after the sign-in methods → keep your own panels and add the kit's.
 - `apps/web/src/api/services/ai/chat-turn.ts`, `ai/chat-stats.ts`, `agents/runtime.ts`, `agents/replay.ts` → `buildAgentTools(` became `toolsFor('chat' | 'agents', ` → take the kit's line.
 
 ## Verify

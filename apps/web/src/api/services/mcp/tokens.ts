@@ -46,6 +46,8 @@ export interface CreateMcpGrantInput {
   resource: string
   /** Defaults to `MCP_GRANT_MAX_DAYS` from now; the authorization server passes a shorter cap. */
   expiresAt?: Date
+  /** Set when the grant is made already redeemed (tests); the token exchange sets it otherwise. */
+  activatedAt?: Date
 }
 
 export async function createMcpGrant(
@@ -64,6 +66,7 @@ export async function createMcpGrant(
       resource: input.resource,
       expiresAt: input.expiresAt ?? new Date(now.getTime() + cfg.MCP_GRANT_MAX_DAYS * DAY_MS),
       lastUsedAt: now,
+      activatedAt: input.activatedAt ?? null,
     })
     .returning()
   if (!grant) throw new Error('mcp_grants: insert returned no row')
