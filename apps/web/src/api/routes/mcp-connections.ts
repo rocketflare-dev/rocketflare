@@ -4,7 +4,7 @@
  * - `mcpConnectionsRouter` at `/api/mcp-connections` — a person's OWN connections across every
  *   organisation (Profile → Connected apps): `GET /` and `DELETE /:id`. Only the deployment gate:
  *   a person can always see and end their own, even in an organisation that has since turned MCP
- *   off.
+ *   off. Account-wide, so a session only: an API key acts within its one organisation (403).
  * - `mcpTenantConnectionsRouter` under `/api/mcp/connections` — every connection in the current
  *   organisation, for whoever may `manage McpSettings`: `GET /`, `DELETE /:id` and
  *   `POST /revoke-all`.
@@ -21,14 +21,14 @@ import {
   revokeOwnConnection,
   revokeTenantConnection,
 } from '../services/mcp/connections'
-import { uuidParam, withAuth, withAuthAndDb } from '../utils/routes/route-helpers'
+import { uuidParam, withAccountAuth, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
 export const mcpConnectionsRouter = createRouter()
 
 mcpConnectionsRouter.get('/', validate('query', mcpConnectionListQuerySchema), async c => {
-  const { db, cfg, auth } = withAuth(c)
+  const { db, cfg, auth } = withAccountAuth(c)
   const { status } = c.req.valid('query')
   const body: McpConnectionListResponse = {
     items: await listMcpConnections(db, cfg, { userId: auth.user.id, status }),
@@ -37,7 +37,7 @@ mcpConnectionsRouter.get('/', validate('query', mcpConnectionListQuerySchema), a
 })
 
 mcpConnectionsRouter.delete('/:id', async c => {
-  const { db, auth } = withAuth(c)
+  const { db, auth } = withAccountAuth(c)
   await revokeOwnConnection(db, { userId: auth.user.id, grantId: uuidParam(c, 'id') })
   return c.body(null, 204)
 })

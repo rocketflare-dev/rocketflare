@@ -73,9 +73,11 @@ export function isWebSocketUpgrade(c: { req: { header(name: string): string | un
 
 /**
  * `/mcp`, the token and revocation endpoints and the OAuth discovery documents answer CORS
- * themselves — any origin, never credentials (`routes/mcp.ts`, `routes/oauth.ts`).
+ * themselves — any origin, never credentials (`routes/mcp.ts`, `routes/oauth.ts`). One trailing
+ * slash is the same path, so `/oauth/token/` is never answered with credentialed CORS.
  */
-export function isMcpPath(pathname: string): boolean {
+export function isMcpPath(path: string): boolean {
+  const pathname = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
   return (
     pathname === '/mcp' ||
     pathname.startsWith('/mcp/') ||

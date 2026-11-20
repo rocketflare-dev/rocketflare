@@ -119,13 +119,19 @@ function logCall(
   )
 }
 
-/** The per-connection then per-organisation cap; `null` when the call may go ahead. */
+/**
+ * The per-connection, then per-person, then per-organisation cap; `null` when the call may go
+ * ahead. The person's bucket sits between the two, so one member holding several connections
+ * cannot spend the whole organisation's minute.
+ */
 async function rateLimited(ctx: McpServerContext): Promise<CallResult | null> {
   if (!ctx.kv) return null
   const { caller, cfg } = ctx
+  const { tenantId, user } = caller.auth
   for (const [key, max] of [
     [`rl:mcp:grant:${caller.grant.id}`, cfg.MCP_CALLS_PER_GRANT_PER_MINUTE],
-    [`rl:mcp:tenant:${caller.auth.tenantId}`, cfg.MCP_CALLS_PER_TENANT_PER_MINUTE],
+    [`rl:mcp:user:${tenantId}:${user.id}`, cfg.MCP_CALLS_PER_USER_PER_MINUTE],
+    [`rl:mcp:tenant:${tenantId}`, cfg.MCP_CALLS_PER_TENANT_PER_MINUTE],
   ] as const) {
     const decision = await checkRateLimit(ctx.kv, key, { max, windowSeconds: 60 })
     if (!decision.allowed) {
@@ -168,13 +174,14 @@ export async function runMcpToolCall(
     return result
   }
 
-  const limited = await rateLimited(ctx)
-  if (limited) return finish(limited, 'rate_limited', 'rate_limited')
-  if (!tool.handler)
-    return finish(errorResult('unknown_tool', 'No such tool.'), 'error', 'unknown_tool')
-
   let raw: string
   try {
+    // Inside the try: a limiter that cannot be read fails the call closed — the tool does not
+    // run — as every other limiter in the app does, but as a tool error, logged, never a throw.
+    const limited = await rateLimited(ctx)
+    if (limited) return finish(limited, 'rate_limited', 'rate_limited')
+    if (!tool.handler)
+      return finish(errorResult('unknown_tool', 'No such tool.'), 'error', 'unknown_tool')
     raw = await tool.handler(input)
   } catch (err) {
     if (isApiError(err)) {
@@ -211,10 +218,12 @@ export async function runMcpToolCall(
   const parsed = parseObject(raw)
   const toolError = parsed && typeof parsed.error === 'string' ? parsed.error : null
   if (tool.mcp?.outputSchema) {
-    // A declared output shape is a promise the client checks; a dead end or a non-object answer
-    // cannot keep it, so it goes back as an error result carrying the same text.
-    if (parsed && !toolError) result.structuredContent = parsed
-    else result.isError = true
+    // A declared output shape is a promise the client checks; a dead end, a non-object answer or
+    // one over the size cap (whose structured copy would carry it all) cannot keep it, so it goes
+    // back as an error result carrying the same capped text.
+    if (parsed && !toolError && raw.length <= MCP_RESULT_MAX_CHARS) {
+      result.structuredContent = parsed
+    } else result.isError = true
   }
   return finish(result, toolError ? 'error' : 'ok', toolError)
 }

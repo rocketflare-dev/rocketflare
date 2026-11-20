@@ -13,9 +13,11 @@
  * 2. the Origin rule — absent is fine (every non-browser client), present must be ours;
  * 3. POST only — 405 for GET and DELETE (no SSE stream, no session to end);
  * 4. the caller (`services/mcp/caller.ts`) — 401 with the challenge, or 403 with the reason;
- * 5. the caller's tools: `toolsFor('mcp')` built from THEIR access scope and CASL grant, then
+ * 5. one message per request — a JSON-RPC batch is refused (-32600) in every protocol era, so
+ *    every call passes the call limits one at a time;
+ * 6. the caller's tools: `toolsFor('mcp')` built from THEIR access scope and CASL grant, then
  *    the organisation's exposure — once, outside the SDK's server factory;
- * 6. the SDK's handler, inside the tenant scope, with the response buffered so no tool runs
+ * 7. the SDK's handler, inside the tenant scope, with the response buffered so no tool runs
  *    after the scope's transaction has closed.
  */
 import { createMcpHandler } from '@modelcontextprotocol/server'
@@ -97,6 +99,31 @@ const originRule = createMiddleware<AppEnv>(async (c, next) => {
 
 mcpRouter.use('*', mcpCors, mcpDeploymentGate, originRule)
 
+/**
+ * A JSON-RPC batch (an array body) — refused in every protocol era. The 2026 era's SDK already
+ * refuses one; the 2025 era would dispatch its calls concurrently, and the call limits count one
+ * call at a time. The body is bounded by `jsonBodyLimit`; anything that does not parse is left to
+ * the SDK, which answers it with its own parse error.
+ */
+async function isBatch(req: Request): Promise<boolean> {
+  try {
+    return Array.isArray(JSON.parse(await req.clone().text()))
+  } catch {
+    return false
+  }
+}
+
+function batchRefused(): Response {
+  return Response.json(
+    {
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600, message: 'Bad Request: JSON-RPC batches are not supported' },
+    },
+    { status: 400 }
+  )
+}
+
 async function serve(c: AppContext, slug: string | undefined): Promise<Response> {
   if (c.req.method !== 'POST') {
     c.header('Allow', 'POST')
@@ -122,6 +149,8 @@ async function serve(c: AppContext, slug: string | undefined): Promise<Response>
     if (err instanceof McpChallengeError) c.header('WWW-Authenticate', err.challenge)
     throw err
   }
+
+  if (await isBatch(c.req.raw)) return batchRefused()
 
   const defer = makeDefer(c)
   defer(() => touchMcpGrant(db, caller.grant))
