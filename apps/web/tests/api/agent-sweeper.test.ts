@@ -9,7 +9,7 @@
  *   - a park whose every ask has expired is settled `cancelled`.
  */
 import { eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, vi } from 'vitest'
 import { runSweepLostRuns, SWEEP_STALE_MS } from '@/api/scheduled'
 import { requestInterrupt } from '@/api/services/agents/interrupts'
 import {
@@ -27,6 +27,7 @@ import { agentRuns } from '@/db/schema'
 import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT } from '../helpers/fixture-agents'
+import { itSweeps } from '../helpers/sweeps'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 vi.mock('@rocketflare/shared/plugins', async importOriginal =>
@@ -37,6 +38,8 @@ vi.mock('@/plugins/server', async importOriginal =>
 )
 
 const db = setupTestDatabase()
+// Every case backdates a run past the sweep's staleness: one sweep at a time across files.
+const sweepIt = (name: string, body: () => Promise<void>) => itSweeps(db, name, body)
 
 function fakeLogger() {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn(), child: () => log }
@@ -79,7 +82,7 @@ beforeEach(() => {
 })
 
 describe('sweepLostRuns', () => {
-  it('settles what the runtime says has ended, and nothing else', async () => {
+  sweepIt('settles what the runtime says has ended, and nothing else', async () => {
     const errored = await staleRun(env)
     const terminated = await staleRun(env)
     const running = await staleRun(env)
@@ -107,7 +110,7 @@ describe('sweepLostRuns', () => {
     expect(result.failed).toBe(0)
   })
 
-  it('creates the instance a queued run never got', async () => {
+  sweepIt('creates the instance a queued run never got', async () => {
     const { run, tenant } = await staleRun(env, { claim: false })
     await db.update(agentRuns).set({ instanceId: null }).where(eq(agentRuns.id, run.id))
     await backdate(run.id)
@@ -118,7 +121,7 @@ describe('sweepLostRuns', () => {
     expect((await getRun(db, tenant.id, run.id))?.instanceId).toBe(run.id)
   })
 
-  it('settles a park whose every ask has expired, and leaves one still in date', async () => {
+  sweepIt('settles a park whose every ask has expired, and leaves one still in date', async () => {
     const expired = await staleRun(env)
     const inDate = await staleRun(env)
     for (const [{ run, tenant }, offset] of [
@@ -155,30 +158,36 @@ describe('cancel without a live attempt', () => {
       .filter(e => e.type === 'status')
       .map(e => e.data as { status: string; reason?: string })
 
-  it('settles a running run nothing has touched for longer than a step, and says why', async () => {
-    const { run, tenant } = await staleRun(env)
-    await silence(run.id)
-    const settled = await requestCancel(db, tenant.id, run.id, undefined, env)
-    expect(settled?.status).toBe('cancelled')
-    expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
-      status: 'cancelled',
-      reason: 'no_live_attempt',
-    })
-  })
+  sweepIt(
+    'settles a running run nothing has touched for longer than a step, and says why',
+    async () => {
+      const { run, tenant } = await staleRun(env)
+      await silence(run.id)
+      const settled = await requestCancel(db, tenant.id, run.id, undefined, env)
+      expect(settled?.status).toBe('cancelled')
+      expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
+        status: 'cancelled',
+        reason: 'no_live_attempt',
+      })
+    }
+  )
 
-  it('only flags a run with a live attempt, and a second cancel forces it with an event', async () => {
-    const { run, tenant } = await staleRun(env)
-    await db.update(agentRuns).set({ updatedAt: new Date() }).where(eq(agentRuns.id, run.id))
-    expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('running')
-    expect(await statusEvents(tenant.id, run.id)).toEqual([])
-    expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('cancelled')
-    expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
-      status: 'cancelled',
-      reason: 'forced',
-    })
-  })
+  sweepIt(
+    'only flags a run with a live attempt, and a second cancel forces it with an event',
+    async () => {
+      const { run, tenant } = await staleRun(env)
+      await db.update(agentRuns).set({ updatedAt: new Date() }).where(eq(agentRuns.id, run.id))
+      expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('running')
+      expect(await statusEvents(tenant.id, run.id)).toEqual([])
+      expect((await requestCancel(db, tenant.id, run.id, undefined, env))?.status).toBe('cancelled')
+      expect((await statusEvents(tenant.id, run.id)).at(-1)).toEqual({
+        status: 'cancelled',
+        reason: 'forced',
+      })
+    }
+  )
 
-  it('a settle found by reconciling with the engine ends the log too', async () => {
+  sweepIt('a settle found by reconciling with the engine ends the log too', async () => {
     const { run, tenant } = await staleRun(env)
     workflowStub(env).setStatus(run.id, { status: 'terminated' })
     await runSweepLostRuns(db, env, fakeLogger())

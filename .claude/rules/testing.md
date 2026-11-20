@@ -99,6 +99,10 @@ behaviour rather than the attack.
   migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
+- A cross-tenant cron task under test (a prune, a sweep) also acts on OTHER files' rows. Assert only
+  on your own rows; and where the outcome depends on the caller's stubs (`runSweepLostRuns` asks the
+  file's own Workflow stub), hold `itSweeps`/`withSweepLock` (`tests/helpers/sweeps.ts`) from the
+  backdate to the last assertion
 - `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`'s
   HOST is local. Never point tests at Neon — except `pnpm test` on a throwaway gate branch, which
   needs `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` = the URL's
