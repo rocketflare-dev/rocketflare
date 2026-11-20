@@ -154,6 +154,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function anyTermTsquery(query: string): string \| null`
   The lexical half's query: every distinct word of the input, OR-ed (`a | b | c`), for `to_tsquery(SEARCH_TEXT_CONFIG, …)` to stem and stopword. ANY rather than ALL terms on purpose…
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
+- `class ApiError extends Error`
 - `type AppRouter = Hono<AppEnv>`
 - `interface BackgroundMethods`
   What every background context can do, tenant supplied per call.
@@ -172,11 +173,13 @@ The server surface: the context family, and the types a plugin must be able to n
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
   - `emit: Emit`
     Emit a declared plugin event (D42) for one organisation: validated against the declaration (400), recorded in `plugin_events`, one delivery queued per subscriber; never runs a…
+- `class BadRequestError extends ApiError`
 - `type BindableAgent = z.infer<typeof bindableAgentSchema>`
 - `function candidatePoolSize(limit: number): number`
   "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion.
 - `async function chatModelAvailable( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'>, tenantId: string, promptKey: string ): Promise<boolean>`
   Would a chat model resolve for this prompt key and tenant? Answers the same question `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up…
+- `class ConflictError extends ApiError`
 - `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
@@ -274,6 +277,7 @@ The server surface: the context family, and the types a plugin must be able to n
   The parsed payload of event `E`, as the declaring plugin's schema outputs it.
 - `function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>`
   Declare an AUTOMATIC start in an agent definition: `triggers: [eventTrigger('sites.form.submitted', { where: p => p.formName === 'contact', input: p => ({ text: p.fields.message…
+- `class ForbiddenError extends ApiError`
 - `function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]`
   Reciprocal Rank Fusion of two ordered candidate lists (best first). Pure.
 - `interface FusedItem<T>`
@@ -300,6 +304,7 @@ The server surface: the context family, and the types a plugin must be able to n
   A CUSTOM name a plugin may not emit. A TYPE, so the stream can say which code it was.
 - `function isAdminLevel(session: RoleView): boolean`
   May administer members / invitations / keys: owner, admin, support, or global admin.
+- `function isApiError(error: unknown): error is ApiError`
 - `function isGlobalAdmin(session: RoleView): boolean`
   `users.isGlobalAdmin` — the platform flag, independent of any tenant role.
 - `function isOwnerLevel(session: RoleView): boolean`
@@ -333,6 +338,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
 - `const noopTracer: Tracer`
   What a context carries when no sink is reachable (a unit test, a bare router).
+- `class NotFoundError extends ApiError`
 - `async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void>`
 - `interface NotifyInput`
 - `async function notifyMany( db: Database, userIds: string[], input: Omit<NotifyInput, 'userId'>, realtime?: Realtime )`
@@ -460,6 +466,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface PublicSiteFormPath`
 - `interface PublicSitesDeclaration`
   A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`). The host owns the request's order: cache lookup, rate limit (misses only),…
+- `class RateLimitedError extends ApiError`
 - `interface Realtime`
   Everything a service needs to nudge: how to defer, and the hub binding. Built by `withAuth`.
 - `function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent`
@@ -590,6 +597,7 @@ The server surface: the context family, and the types a plugin must be able to n
   - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
+- `class ServiceUnavailableError extends ApiError`
 - `interface SetResourceGroupsInput`
 - `function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL`
   `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
@@ -724,6 +732,7 @@ The server surface: the context family, and the types a plugin must be able to n
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
+- `class UnauthorizedError extends ApiError`
 - `function usageFeatureIssue(pluginId: string, feature: string): string \| null`
   Why `feature` is not a usage label `pluginId` may record under, or null when it may. Pure.
 - `type User = typeof users.$inferSelect`
@@ -1429,6 +1438,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
 @/plugins/api :: function :: anyTermTsquery :: function anyTermTsquery(query: string): string | null
 @/plugins/api :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
+@/plugins/api :: class :: ApiError :: class ApiError extends Error
 @/plugins/api :: type :: AppRouter :: type AppRouter = Hono<AppEnv>
 @/plugins/api :: interface :: BackgroundMethods :: interface BackgroundMethods
 @/plugins/api :: member :: BackgroundMethods.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
@@ -1439,9 +1449,11 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
 @/plugins/api :: member :: BackgroundMethods.emit :: emit: Emit
+@/plugins/api :: class :: BadRequestError :: class BadRequestError extends ApiError
 @/plugins/api :: type :: BindableAgent :: type BindableAgent = z.infer<typeof bindableAgentSchema>
 @/plugins/api :: function :: candidatePoolSize :: function candidatePoolSize(limit: number): number
 @/plugins/api :: function :: chatModelAvailable :: async function chatModelAvailable( ctx: Pick<PluginContext, 'db' | 'config' | 'env'>, tenantId: string, promptKey: string ): Promise<boolean>
+@/plugins/api :: class :: ConflictError :: class ConflictError extends ApiError
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
@@ -1499,6 +1511,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: type :: EventName :: type EventName = EventNameOf<InstalledShared>
 @/plugins/api :: type :: EventPayload :: type EventPayload = EventPayloadOf<InstalledShared, E>
 @/plugins/api :: function :: eventTrigger :: function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>
+@/plugins/api :: class :: ForbiddenError :: class ForbiddenError extends ApiError
 @/plugins/api :: function :: fuseByRank :: function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]
 @/plugins/api :: interface :: FusedItem :: interface FusedItem<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
@@ -1514,6 +1527,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: ingestPlatformDocument :: async function ingestPlatformDocument( ctx: JobCtx | CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>
 @/plugins/api :: class :: InvalidCustomEventError :: class InvalidCustomEventError extends Error
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
+@/plugins/api :: function :: isApiError :: function isApiError(error: unknown): error is ApiError
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
 @/plugins/api :: function :: isUniqueViolation :: function isUniqueViolation(err: unknown): boolean
@@ -1533,6 +1547,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
 @/plugins/api :: const :: noopTracer :: const noopTracer: Tracer
+@/plugins/api :: class :: NotFoundError :: class NotFoundError extends ApiError
 @/plugins/api :: function :: notify :: async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void>
 @/plugins/api :: interface :: NotifyInput :: interface NotifyInput
 @/plugins/api :: function :: notifyMany :: async function notifyMany( db: Database, userIds: string[], input: Omit<NotifyInput, 'userId'>, realtime?: Realtime )
@@ -1610,6 +1625,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PublicSiteCsp :: interface PublicSiteCsp
 @/plugins/api :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
 @/plugins/api :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
+@/plugins/api :: class :: RateLimitedError :: class RateLimitedError extends ApiError
 @/plugins/api :: interface :: Realtime :: interface Realtime
 @/plugins/api :: function :: realtimeEvent :: function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent
 @/plugins/api :: function :: recordActivity :: async function recordActivity(db: Database, input: ActivityInput): Promise<void>
@@ -1686,6 +1702,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
 @/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
+@/plugins/api :: class :: ServiceUnavailableError :: class ServiceUnavailableError extends ApiError
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
 @/plugins/api :: function :: sharedWithMyGroups :: function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL
 @/plugins/api :: interface :: SiftOptions :: interface SiftOptions<T>
@@ -1771,6 +1788,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
 @/plugins/api :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
+@/plugins/api :: class :: UnauthorizedError :: class UnauthorizedError extends ApiError
 @/plugins/api :: function :: usageFeatureIssue :: function usageFeatureIssue(pluginId: string, feature: string): string | null
 @/plugins/api :: type :: User :: type User = typeof users.$inferSelect
 @/plugins/api :: function :: validate :: function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )

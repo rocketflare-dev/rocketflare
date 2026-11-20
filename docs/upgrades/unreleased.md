@@ -56,6 +56,7 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - `SETUP.md` §1.10 and §2.10 warn that while `pnpm dev:tunnel` runs, the development instance and its password-less dev sign-in are public; §1.6 says `POST /auth/dev-login` signs in any email in development.
 - `docs/THREAT-MODEL.md` gains the OAuth client and its model as actors, the codes, tokens and grants as assets, and an "MCP promises" list.
 - Agent docs for building on MCP: `.claude/rules/tools.md` (the safe-tool checklist and the `callMcpTool` tests a tool owes, loaded where tools are written), the `/rf-mcp` skill (turn MCP on, add a tool, connect Claude or ChatGPT, troubleshoot), and `apps/web/src/api/services/mcp/CLAUDE.md` (the files and the invariants not to break). Root `CLAUDE.md` lists MCP in the stack and `/rf-mcp` among the skills an agent may run; `rf-how-do-i`'s MCP entry points at `/rf-mcp`; the threat model's metadata-fetch promise now says private-resolving names are left to the platform's egress.
+- `@/plugins/api` exports the HTTP error classes (`ApiError`, `BadRequestError`, `ForbiddenError`, `NotFoundError`, `ConflictError`, `RateLimitedError`, `ServiceUnavailableError`, `UnauthorizedError`, `isApiError`) from `plugins/api/errors.ts`, so a plugin tool or job (no `RequestCtx`) can refuse with a stable code; a plugin that defined its own copies can import these instead.
 
 ## How to apply
 

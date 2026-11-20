@@ -62,9 +62,11 @@ outside the app, acting as one person, so write every tool for it. In a plugin, 
   (`recordUsage`), under the tenant's caps, with no MCP tag (CONCEPTS §19 known gaps). Keep the
   spend of one call small and bounded: no unbounded loops of model or embedding calls.
 - **Errors.** A dead end is an answer, not a throw. Return JSON `{ error: '<stable_code>', hint }`,
-  as the core tools do, so the model can act on it. A thrown `ApiError` reaches the client as
-  `{ error: code, message }`, so its message is client text: no SQL, no stack, no internal names.
-  Anything else thrown becomes a generic `tool_failed`, and the server logs it.
+  as the core tools do, so the model can act on it. For a refusal, throw one of the HTTP error
+  classes from `@/plugins/api` (`ForbiddenError`, `NotFoundError`, `ConflictError`,
+  `BadRequestError`…) with a stable code. It reaches the client as `{ error: code, message }`, so
+  its message is client text: no SQL, no stack, no internal names. Anything else thrown becomes a
+  generic `tool_failed`, and the server logs it.
 
 ## Tests you owe
 

@@ -82,8 +82,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 ## Server slots (`ServerPlugin`)
 
 - **Its routes are kit routes in every respect** — `createRouter()`, `validate()` with a contract
-  from its own shared entry, `ctx.guard` with its own subject, typed errors, a tenant predicate on
-  every query. Only REGISTRATION differs: `mounts` (`['/api/<id>', router, middleware?]`), spread
+  from its own shared entry, `ctx.guard` with its own subject, typed errors (`ctx.notFound()`… in a
+  route; the same classes, `NotFoundError`, `ForbiddenError`…, from `@/plugins/api` in a tool or a
+  job), a tenant predicate on every query. Only REGISTRATION differs: `mounts` (`['/api/<id>', router, middleware?]`), spread
   LAST.
 - **A feature flag gates the MOUNT, not each route** — `requireFeature('<id>')` as the third element
   (404 `feature_disabled`); never `access Feature:<id>` (global admins' `manage all` passes it).

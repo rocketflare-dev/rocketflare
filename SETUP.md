@@ -684,7 +684,7 @@ pnpm plugin add <repo|path>[@ref]                  # read the plan; --apply inst
 Worker and database access — it is as trusting as merging a pull request — and the plan is what you
 say yes to. It will never generate a migration, edit a wrangler toml or write a resource id: those
 arrive as numbered steps you run yourself. The analytics plugin's are the `15 * * * *` cron and the
-`/cubejs-api` + `/mcp` prefixes in both tomls, and two `resolve` entries plus two proxy lines in
+`/cubejs-api` prefix in both tomls, and a `resolve` alias plus a proxy line in
 `apps/web/vite.config.ts`.
 
 **The drizzle-cube CLI / Claude Code plugin** (optional, with analytics installed): create

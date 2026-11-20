@@ -141,7 +141,7 @@ Field notes, in the order they bite:
   `coreEdits[].file` and `dependencies` keys as plain paths inside the repository, nothing under
   `.git/` and nothing through a symlink. The add plan prints the anchor
 - **`coreEdits`** are `{ file, after, lines[] }` — lines a CORE file needs (the analytics plugin's
-  `/cubejs-api` + `/mcp` dev-proxy lines and `@nivo/heatmap` alias in `apps/web/vite.config.ts`).
+  `/cubejs-api` dev-proxy line and `@nivo/heatmap` alias in `apps/web/vite.config.ts`).
   `add` inserts `lines` after the first line containing `after`, at its indentation, idempotently;
   `remove` reverts them byte for byte; `upgrade` follows the new release's list. Anchored on text,
   never a line number; a missing anchor THROWS naming the file. The plugin still edits nothing.
