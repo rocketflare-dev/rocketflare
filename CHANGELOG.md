@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.41.0 — 2026-11-20
+
+The MCP server's tool seam: one tool list for chat, agent runs and MCP, filtered by `toolsFor(surface, ctx)`, with `Tool.surfaces`, a `Tool.mcp` block, and `ServerPlugin.tools` replacing `agentTools` (still read, with a warning).
+[Porting note](docs/upgrades/0.41.0.md).
+
 ## 0.40.0 — 2026-11-19
 
 Knowledge facts are built only from documents a reader may see and settled only by those allowed, invitations follow their issuer, suspended organisations run no queued jobs, the chunker runs in linear bounded work, and security reports publish counts only.
