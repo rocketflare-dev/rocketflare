@@ -53,6 +53,7 @@ import type { Tracer } from '../../observability/tracer'
 import { withAgentTrace } from '../../observability/tracing'
 import { stripControlChars } from '../../utils/core/text'
 import { enqueueJob, type JobsQueue } from '../jobs'
+import { deleteDocumentsWithFacts } from '../knowledge/remove'
 import {
   deleteStoredFile,
   type StorageService,
@@ -694,7 +695,8 @@ async function dropStoredFile(
 
 /**
  * Delete what a source once ingested under `externalId` — the connector saw the item deleted
- * upstream. Chunks and grants cascade from the row; the uploaded original, if any, is removed from
+ * upstream. Its facts go first, undoing what they did to other facts (`deleteDocumentsWithFacts`);
+ * chunks and grants cascade from the row; the uploaded original, if any, is removed from
  * storage too. Answers whether there was anything to delete.
  */
 export async function deleteExternalDocument(
@@ -702,16 +704,12 @@ export async function deleteExternalDocument(
   input: { tenantId: string; source: string; externalId: string },
   deps: { storage?: StorageService | null } = {}
 ): Promise<boolean> {
-  const [row] = await db
-    .delete(documents)
-    .where(
-      and(
-        eq(documents.tenantId, input.tenantId),
-        eq(documents.source, input.source),
-        eq(documents.externalId, input.externalId)
-      )
-    )
-    .returning()
+  const [row] = await deleteDocumentsWithFacts(
+    db,
+    input.tenantId,
+    eq(documents.source, input.source),
+    eq(documents.externalId, input.externalId)
+  )
   if (!row) return false
   if (row.fileId && deps.storage) await dropStoredFile(db, deps.storage, input.tenantId, row.fileId)
   return true

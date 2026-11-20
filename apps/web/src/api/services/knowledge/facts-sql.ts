@@ -14,13 +14,11 @@
 import { type SQL, sql } from 'drizzle-orm'
 import { documents, knowledgeEntities, knowledgeFacts } from '../../../db/schema'
 import { type AccessScope, visibleDocuments } from '../access'
+import { restoredStateSql } from './remove'
 import { ACCEPT_CONFIDENCE } from './state'
 
-/**
- * The state a fact returns to when what it disagreed with, or was replaced by, is gone: a person
- * confirmed it, or it was read confidently → `accepted`; else `unconfirmed`.
- */
-export const restoredStateSql = sql`case when ${knowledgeFacts.confirmedAt} is not null or ${knowledgeFacts.confidence} >= ${ACCEPT_CONFIDENCE} then 'accepted' else 'unconfirmed' end`
+/** Defined beside the removal it serves, a leaf the ingest path can load (`remove.ts`). */
+export { restoredStateSql }
 
 /** The same decision in code, for a row already read. */
 export function restoredState(fact: {

@@ -62,6 +62,7 @@ import {
 } from '../services/ai/reindex'
 import { resolveEmbeddingsModel } from '../services/ai/resolve'
 import { searchKnowledgeChunks } from '../services/ai/retrieval'
+import { deleteDocumentsWithFacts } from '../services/knowledge/remove'
 import { nudge, realtimeEvent } from '../services/realtime'
 import { createR2Storage, deleteStoredFile, type StorageService } from '../services/storage'
 import type { AppContext } from '../types'
@@ -520,8 +521,9 @@ aiDocumentsRouter.delete('/:id', async c => {
   if (row.ownerUserId !== user.id && !can(c, 'delete', 'Document')) {
     throw new ForbiddenError('You can only delete documents you added')
   }
-  // Chunks cascade from the document row; the uploaded original (object + `files` row) goes with it.
-  await db.delete(documents).where(and(eq(documents.id, id), eq(documents.tenantId, tenantId)))
+  // Chunks cascade from the document row; its facts go first, undoing what they did to other
+  // facts; the uploaded original (object + `files` row) goes with it.
+  await deleteDocumentsWithFacts(db, tenantId, eq(documents.id, id))
   if (row.fileId) {
     const file = await db.query.files.findFirst({
       where: and(eq(files.id, row.fileId), eq(files.tenantId, tenantId)),
