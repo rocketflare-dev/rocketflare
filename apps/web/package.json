@@ -63,6 +63,7 @@
     "@casl/ability": "^7.1.1",
     "@heroicons/react": "^2.2.0",
     "@hono/zod-validator": "^0.9.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "@neondatabase/serverless": "^1.2.0",
     "@rocketflare/shared": "workspace:*",
     "@tanstack/react-query": "^5.105.1",
@@ -86,6 +87,7 @@
   "devDependencies": {
     "@cliftonc/cfld": "^0.2.7",
     "@iarna/toml": "^2.2.5",
+    "@modelcontextprotocol/client": "2.4.0",
     "@tailwindcss/postcss": "^4.3.3",
     "@tailwindcss/typography": "^0.5.20",
     "@tanstack/react-query-devtools": "^5.105.1",

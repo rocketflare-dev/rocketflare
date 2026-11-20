@@ -82,6 +82,7 @@ const grantAdmin: RoleGrant = can => {
  * | Trace          | manage      | read   | read   | read    | –      (spans hold other people's prompts) |
  * | Feedback       | manage      | create+read | create+read | create+read | create (on answers they can read) |
  * | KnowledgeFact  | manage      | manage | manage | manage  | read+update (own review items — the route's `reviewerUserId` check) |
+ * | McpSettings    | manage      | manage | manage | –       | –      (a member's own connections are a route predicate) |
  * | Feature:<f>    | access all  | by ctx | by ctx | access all | by ctx |
  */
 export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
@@ -91,8 +92,14 @@ export const rolePermissions: Record<EffectiveRole, RoleGrant> = {
   owner: (can, cannot, ctx) => {
     grantAdmin(can, cannot, ctx)
     can('manage', 'Tenant')
+    can('manage', 'McpSettings')
   },
-  admin: grantAdmin,
+  admin: (can, cannot, ctx) => {
+    grantAdmin(can, cannot, ctx)
+    // Not in `grantAdmin`, which `support` shares: who may connect an AI client, and what it may
+    // call, is the organisation's own decision — a visiting support role neither makes nor sees it.
+    can('manage', 'McpSettings')
+  },
   /** A global admin visiting from /admin: admin grants + `manage Tenant` + every feature. */
   support: (can, cannot, ctx) => {
     grantAdmin(can, cannot, ctx)

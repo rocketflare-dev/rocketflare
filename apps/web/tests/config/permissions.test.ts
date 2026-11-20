@@ -60,6 +60,8 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Feedback: { owner: 'create', admin: 'create', support: 'create', member: 'createOnly' },
   // Knowledge facts: anyone reads and reviews their own items; admin+ settles anyone's.
   KnowledgeFact: { owner: 'manage', admin: 'manage', support: 'manage', member: 'review' },
+  // MCP settings: owners and admins only — never support, which acts for the platform.
+  McpSettings: { owner: 'manage', admin: 'manage', support: 'none', member: 'none' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>

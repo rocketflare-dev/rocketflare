@@ -232,6 +232,13 @@
       "when": 1794993530923,
       "tag": "0032_kit-agent-durable-phase3",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795158150699,
+      "tag": "0033_kit-mcp-server",
+      "breakpoints": true
     }
   ]
 }

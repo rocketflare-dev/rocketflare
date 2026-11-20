@@ -698,8 +698,8 @@ and then deleted.
 
 ### 2.8 Feature flags `[ready]` (D30)
 
-Nothing to configure — flags work out of the box. The kit core ships one, `knowledge-facts`
-(default off; §2.5 "Knowledge facts"). The inert demo flag (`example-feature`, a nav item, a page
+Nothing to configure — flags work out of the box. The kit core ships two: `knowledge-facts`
+(default off; §2.5 "Knowledge facts") and `mcp` (environment-gated; §2.10). The inert demo flag (`example-feature`, a nav item, a page
 and a notes API) belongs to the reference PLUGIN of the same name (D31,
 `apps/web/src/plugins/example-feature/`), which is installed by default and safe to delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
 Rollout and the percentage decides deterministically; force it on or off for one organisation and
@@ -721,6 +721,25 @@ Verify: `pnpm cli features list --json` prints the effective flags for your tena
 ### 2.9 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@rocketflare/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
+
+### 2.10 MCP server — let AI clients connect `[ready]`
+
+The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships dark:
+
+1. Add `mcp` to `FEATURES_ENABLED` — in `apps/web/.dev.vars` locally, and in BOTH tomls' `[vars]`
+   for a deployed environment (comma-separated with any other key).
+2. As an owner or admin, open **Settings → MCP**, turn it on, and choose what is exposed (all
+   read-only tools by default) and who may connect (everyone by default).
+3. Paste the server URL into the client. `<APP_URL>/mcp/t/<slug>` is the same server pinned to one
+   organisation — use it to connect a second organisation from a client that allows one connector
+   per URL (claude.ai).
+
+Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
+`MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),
+`MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
+
+Verify: `curl -si -X POST <APP_URL>/mcp` answers 401 with a `WWW-Authenticate: Bearer
+resource_metadata="…"` header (404 means `mcp` is not in `FEATURES_ENABLED`).
 
 ---
 
