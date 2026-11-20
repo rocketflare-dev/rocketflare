@@ -10,7 +10,7 @@
 import { and, eq } from 'drizzle-orm'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { accessScopeForUser } from '@/api/services/access'
-import { toolsFor } from '@/api/services/agents/tools'
+import { CORE_TOOL_NAMES, toolsFor } from '@/api/services/agents/tools'
 import { setTenantOverride } from '@/api/services/features'
 import { MCP_GET_DOCUMENT_MAX_CHARS } from '@/api/services/mcp/server'
 import { loadConfig } from '@/config'
@@ -175,7 +175,10 @@ describe('a group-only document over MCP', () => {
     const client = await mcpClient(env, outsider.token)
     const listed = (await client.listTools()).tools.map(t => t.name)
     await client.close()
-    expect(listed.sort()).toEqual(Object.keys(CASES).sort())
+    // Core tools only: an installed plugin's tools are listed too, and each plugin proves its own
+    // scoping with `callMcpTool` in its own tests.
+    const core = listed.filter(name => CORE_TOOL_NAMES.includes(name))
+    expect(core.sort()).toEqual(Object.keys(CASES).sort())
   })
 
   it('does not exist for an outsider through any tool — no text, title, id, fact or entity', async () => {
