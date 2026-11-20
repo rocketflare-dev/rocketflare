@@ -2212,7 +2212,9 @@ public report's counts are typed by hand, so nothing checks them against the run
 **An AI client connects to the app at `/mcp` and acts as one person in one organisation, with that
 person's permissions and nothing more.** Clients are those that identify themselves with an OAuth
 Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. Plan and decisions:
-`docs/plans/mcp-server.md` (kit repository).
+`docs/plans/mcp-server.md` (kit repository). The `rf-mcp` skill drives turning it on, adding a
+tool and connecting a client; `.claude/rules/tools.md` is the checklist for a safe tool, and
+`apps/web/src/api/services/mcp/CLAUDE.md` maps the code and its invariants.
 
 - **Deployment gate**: the environment-gated `mcp` flag (§15). Without `mcp` in `FEATURES_ENABLED`,
   `/mcp`, `/oauth/*`, the OAuth `.well-known` documents, `/api/mcp/*` and `/api/mcp-connections`

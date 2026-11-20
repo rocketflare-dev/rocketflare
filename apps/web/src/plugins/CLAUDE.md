@@ -200,7 +200,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   hands the tool the same `ToolCtx`. Never mount on `/mcp`, `/oauth/*` or `/.well-known/oauth-*`
   (refused at load and by `plugin check`). **Prove it scopes over MCP** with `callMcpTool(db, tool,
   { as, tenant })` from `@testkit/integration` as a member of a second organisation (and outside
-  a group, for group-visible rows) — `example-feature`'s "over MCP" cases are the template.
+  a group, for group-visible rows) — `example-feature`'s "over MCP" cases are the template; the
+  full safe-tool checklist is `.claude/rules/tools.md`.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied
   after the kit's matrix; never `cannot` — that would change what every role may do.
 - **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seedDemo` are post-commit, idempotent,

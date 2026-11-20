@@ -79,8 +79,11 @@ What `/mcp` and `/oauth/*` must hold (`docs/CONCEPTS.md` §19); each is a findin
   membership, role, block, suspension, MCP switch and connect policy on every call.
 - Support users cannot connect; a client never carries global-admin reach.
 - Revocation (by the person, an admin, member removal or a block) takes effect on the next call.
-- The metadata-document fetch never reaches a private address, follows no redirect, and cannot be
-  made to buffer more than 5 KB.
+- The metadata-document fetch goes only to an https URL on the default port whose host is a public
+  name — never an IP literal, `localhost`, a single-label host or a private suffix (`.local`,
+  `.internal`, …) — follows no redirect, and cannot be made to buffer more than 5 KB. A Worker
+  cannot resolve DNS, so a public name that resolves to a private address is stopped by the
+  platform's egress, not by this check (`docs/CONCEPTS.md` §19, Known gaps).
 - There is no open redirect: before `redirect_uri` is validated against the client's own document,
   every error is a page on our origin.
 - PKCE S256 is mandatory; a code is single-use, sixty seconds, bound to its client, redirect URI,
