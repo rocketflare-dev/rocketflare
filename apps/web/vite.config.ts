@@ -73,12 +73,17 @@ export default defineConfig({
     },
     // Everything the Worker serves in production is proxied to `wrangler dev` here.
     // An installed plugin's own prefixes land here as `coreEdits` its manifest declares — `pnpm
-    // plugin add` writes them and `remove` reverts them. The analytics plugin's are `/cubejs-api`
-    // and `/mcp`.
+    // plugin add` writes them and `remove` reverts them. The analytics plugin's is `/cubejs-api`.
     proxy: {
       '/api': proxyTo(),
       '/auth': proxyTo(),
       '/ws': proxyTo(`ws://localhost:${ports.api}`, { ws: true }),
+      // The MCP server, its authorization server and the OAuth discovery documents — so a client
+      // pointed at the UI's port (a tunnel to it, say) reaches them. The consent PAGE is `/consent`,
+      // a client route Vite serves itself.
+      '/mcp': proxyTo(),
+      '/oauth': proxyTo(),
+      '^/\\.well-known/(oauth-|openid-configuration)': proxyTo(),
     },
   },
   resolve: {

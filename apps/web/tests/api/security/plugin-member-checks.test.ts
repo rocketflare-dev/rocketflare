@@ -57,7 +57,7 @@ const ctx = { db, config, logger, env } as never
 
 const examplePlugin = serverPlugins.find(p => p.shared.id === EXAMPLE_FEATURE_ID)
 if (!examplePlugin) throw new Error('example-feature is not installed')
-const originalAgentTools = examplePlugin.agentTools
+const originalTools = examplePlugin.tools
 const originalGrants = examplePlugin.grants
 // A plugin whose grants make `support` read-only, as a finance or integration plugin's do.
 examplePlugin.grants = {
@@ -66,13 +66,13 @@ examplePlugin.grants = {
 }
 
 afterAll(() => {
-  examplePlugin.agentTools = originalAgentTools
+  examplePlugin.tools = originalTools
   examplePlugin.grants = originalGrants
 })
 
 beforeEach(() => {
   seen.can = null
-  examplePlugin.agentTools = raw => {
+  examplePlugin.tools = raw => {
     seen.can = (raw as { can?: never }).can ?? null
     return []
   }

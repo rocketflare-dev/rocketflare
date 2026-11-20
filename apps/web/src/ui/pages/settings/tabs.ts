@@ -10,6 +10,7 @@ import {
   CpuChipIcon,
   DocumentTextIcon,
   KeyIcon,
+  LinkIcon,
   RectangleGroupIcon,
   SparklesIcon,
   UserGroupIcon,
@@ -26,6 +27,7 @@ export type CoreSettingsTabId =
   | 'prompts'
   | 'agent-models'
   | 'usage'
+  | 'mcp'
 
 export interface SettingsTabInfo<Id extends string = string> {
   id: Id
@@ -72,5 +74,13 @@ export const CORE_SETTINGS_TABS: readonly SettingsTabInfo<CoreSettingsTabId>[] =
     icon: ChartBarIcon,
     guard: { action: 'manage', subject: 'AiConfig' },
     keywords: ['cost', 'tokens', 'spend'],
+  },
+  {
+    id: 'mcp',
+    label: 'MCP',
+    icon: LinkIcon,
+    // The deployment ships it (the flag), and the reader may change it (owners and admins).
+    guard: [{ feature: 'mcp' }, { action: 'manage', subject: 'McpSettings' }],
+    keywords: ['claude', 'chatgpt', 'connectors', 'model context protocol', 'clients'],
   },
 ]

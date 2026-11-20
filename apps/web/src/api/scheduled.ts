@@ -27,6 +27,7 @@ import { claimReminder, notifyApprovers } from './services/agents/hitl'
 import { getAgent, isAgentKey } from './services/agents/registry'
 import { sweepRun } from './services/agents/runs'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
+import { runPruneMcp } from './services/mcp/retention'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
 import { pruneTenantCreationCounters } from './utils/db/tenant-helpers'
@@ -275,9 +276,18 @@ export const pruneEvents: ScheduledTask = {
   },
 }
 
+/** Nightly retention for the MCP server: the call log, expired tokens, spent OAuth requests. */
+export const pruneMcp: ScheduledTask = {
+  name: 'pruneMcp',
+  async run({ db, config, logger }) {
+    const result = await runPruneMcp(db, config.MCP_CALL_RETENTION_DAYS)
+    logger.info(result, 'pruneMcp: removed expired MCP calls and tokens')
+  },
+}
+
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
-  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns],
+  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns, pruneMcp],
   '*/10 * * * *': [sweepLostRuns, sendReminders],
 }
 

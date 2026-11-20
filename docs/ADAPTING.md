@@ -189,7 +189,7 @@ first and lives in the shared package, so the API, the UI and the CLI parse one 
 | route | `api/routes/<feature>.ts` + the mount table | `ServerPlugin.mounts` (+ `apiPrefixes` for a prefix outside `/api`) |
 | job handler | `coreHandlers` (`api/queues/jobs.ts`) | `ServerPlugin.jobHandlers` |
 | agent | `CORE_AGENT_KEYS` / `CORE_AGENTS` / `CORE_PROMPT_REGISTRY` | `SharedPlugin.agentKeys` + `ServerPlugin.agents` / `prompts` |
-| agent tool | `buildAgentTools` (`services/agents/tools/index.ts`) | `ServerPlugin.agentTools(ctx)` |
+| agent tool | `buildAgentTools` (`services/agents/tools/index.ts`) | `ServerPlugin.tools(ctx)` |
 | cron | `CORE_SCHEDULED_TASKS` (`api/scheduled.ts`) | `ServerPlugin.scheduledTasks` |
 | RLS exclusion / allow-list | `RLS_EXCLUDED_TABLES` / `CORE_UNSCOPED_ALLOWLIST` | `ServerPlugin.rlsExcludedTables` / `unscopedAllowlist` |
 | D29 visibility | `VISIBILITY_RESOURCES` (`services/access.ts`) | `ServerPlugin.visibilityResources` |

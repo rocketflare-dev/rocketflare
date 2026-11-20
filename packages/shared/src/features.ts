@@ -98,6 +98,20 @@ export const CORE_FEATURE_FLAGS = {
     defaultRolloutUnit: 'tenant',
     environmentGated: false,
   },
+  /**
+   * The MCP server and its settings page. Environment-gated: a deployment ships it only when
+   * `FEATURES_ENABLED` names `mcp`; where it ships it is ON for every tenant unless a global admin
+   * narrows the rollout, and each organisation's admins still turn it on for themselves.
+   */
+  mcp: {
+    label: 'MCP server',
+    description:
+      'Lets members connect AI clients (Claude, ChatGPT) to the workspace at /mcp, with the ' +
+      "tools the organisation's admins expose, acting with each member's own permissions.",
+    defaultState: 'on',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: true,
+  },
 } satisfies Record<(typeof CORE_FEATURES)[number], FeatureDefinition>
 
 /**

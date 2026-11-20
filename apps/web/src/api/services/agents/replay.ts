@@ -77,7 +77,6 @@ import {
 } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
-import { accessScopeForUser } from '../access'
 import {
   InterruptDeclinedError,
   InterruptRequested,
@@ -94,7 +93,7 @@ import {
   resolveEmbeddings,
 } from '../ai/resolve'
 import { addUsage, type ChatClient, ZERO_USAGE } from '../ai/types'
-import { requesterCan } from '../member-ability'
+import { runRequester } from '../member-ability'
 import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import { type Decision, decideWithShapes, questionsHash, toDecision } from './decisions'
 import { withFanout } from './fanout'
@@ -103,7 +102,7 @@ import { attemptKeys, effectKey } from './keys'
 import type { AgentContext, AgentEvent, AgentInterruptAnswer, AnyAgentDefinition } from './registry'
 import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
-import { buildAgentTools } from './tools'
+import { toolsFor } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
 import { groupRunTurns, type LoopRows } from './turns'
 
@@ -377,14 +376,14 @@ async function replayInside(
   const live = mode === 'live' ? await liveSeams(db, cfg, env, run, agent, tally) : null
   // The real tool list either way — a strict replay keeps the names and schemas an agent looks
   // up (`ctx.tools.find(...)`), and only the handlers become misses.
-  const scope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
-  const can = await requesterCan(db, cfg, tenantId, run.requestedByUserId)
-  const builtTools = await buildAgentTools({
+  const requester = await runRequester(db, cfg, tenantId, run.requestedByUserId)
+  const builtTools = await toolsFor('agents', {
     db,
     cfg,
     env,
-    scope,
-    can,
+    scope: requester.scope,
+    can: requester.can,
+    ...(requester.requester && { requester: requester.requester }),
     requesterUrls: requesterUrlsForRun(run, run.input),
   })
   const tools: Tool[] = live

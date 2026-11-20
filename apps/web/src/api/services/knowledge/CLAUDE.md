@@ -39,7 +39,9 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 - **Nothing writes a domain column.** A fact about a domain row is a `knowledge_facts` row pointing
   at it (`entity_kind: 'domain'`); acting on it is a person's job
 - **Re-extraction replaces** a document's facts first (`removeDocumentFacts`, which also unlinks
-  them from the conflicts they caused) — so a redelivery or a re-index is idempotent
+  them from the conflicts they caused) — so a redelivery or a re-index is idempotent. Deleting a
+  document runs the same repair before the row goes (`deleteDocumentsWithFacts`) — never delete a
+  `documents` row and leave its facts to the FK cascade
 - **…except a person's decisions.** `removeDocumentFacts(…, { keepDecided: true })` keeps every
   fact with `confirmed_at` set or state `rejected`; a new reading with the same entity, key and
   value — or one stored as judged `same` (`matchDecided`, same validity preferred) — REUSES that row (`keepDecidedFact`: new citation,

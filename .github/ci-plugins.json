@@ -1,11 +1,5 @@
 {
   "$purpose": "Plugins the kit's OWN CI installs on every pull request (kit.yml's `plugins` job), on top of `.rocketflare.json` `defaultPlugins` — which is what a fresh clone installs, and is empty: analytics is opt-in. A plugin here is a canary, not a default: analytics has the most tables, cubes, crons and UI of any plugin, so a kit change that breaks an installed plugin fails here, on the kit PR, rather than at the plugins repo's next unrelated pull request. `kit:release` refuses a version an entry is not ready for, exactly as it does for a default plugin. Kit-only: the rename deletes this file.",
-  "plugins": [
-    {
-      "id": "analytics",
-      "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "3.9.0",
-      "subdir": "plugins/analytics"
-    }
-  ]
+  "$paused": "Analytics 3.12.0 and earlier serve their own /mcp, which this kit now reserves, and the release that offers its cube tools through the kit's MCP server needs minKit 0.41.0. The canary returns pinned to that release once both are tagged; an empty list needs this reason (ci-plugins.test.ts).",
+  "plugins": []
 }

@@ -737,6 +737,30 @@ describe('pnpm plugin, with skills, end to end', () => {
     expect(manifest.skills).toEqual(['orders'])
     expect(manifest.paths.some((p: string) => p.startsWith('.claude/'))).toBe(false)
   })
+
+  it('exports neither the host’s copy of the release notes nor the paths the host added', () => {
+    const host = makeHost()
+    const declared = ['apps/web/src/plugins/orders/**']
+    const plugin = makePlugin({
+      manifest: { paths: declared },
+      files: {
+        'skills/orders/SKILL.md': skillMd('orders'),
+        'docs/upgrades/1.0.0.md': '# orders 1.0.0\n',
+        'docs/plugins/orders/guide.md': '# the plugin’s own doc\n',
+      },
+    })
+    expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+    expect(existsSync(path.join(host, 'docs/plugins/orders/upgrades/1.0.0.md'))).toBe(true)
+    const out = mkdtempSync(path.join(tmpdir(), 'rf-notes-export-'))
+    sandboxes.push(out)
+    expect(run(host, ['export', 'orders', out]).status).toBe(0)
+    expect(existsSync(path.join(out, 'docs/plugins/orders/upgrades'))).toBe(false)
+    expect(readFileSync(path.join(out, 'docs/plugins/orders/guide.md'), 'utf8')).toContain(
+      'own doc'
+    )
+    const manifest = JSON.parse(readFileSync(path.join(out, PLUGIN_MANIFEST_FILE), 'utf8'))
+    expect(manifest.paths).toEqual(declared)
+  })
 })
 
 // ---------------------------------------------------------------- upgrade and dependencies

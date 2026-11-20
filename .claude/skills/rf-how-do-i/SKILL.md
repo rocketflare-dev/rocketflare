@@ -81,7 +81,7 @@ than restating it here, so there is one source of truth. **Its table has two col
 and "The plugin slot", one row per layer — read the row for the answer from step 0 and quote that
 column.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
 `config` / `realtimeRoots` / `agentKeys`, `ServerPlugin.mounts` / `jobHandlers` / `agents` /
-`agentTools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
+`tools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
 `visibilityResources` / `hooks` / `knowledgeEntityTypes`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
 `agentForms`, and `CliPlugin.register` — each reached through one of the four published entry files
 (`apps/web/src/plugins/<id>/index.ts`, `.../ui/index.ts`,
@@ -177,6 +177,14 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
   - The app's own code subscribes in `apps/web/src/api/services/events/app-handlers.ts`. Worked
     example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
     `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
+
+- **"Let Claude / ChatGPT use our app" / "expose this to MCP"** — do not coach a new route, an API
+  key for the client, or a tool that takes a `tenantId`. The kit's MCP server (`docs/CONCEPTS.md`
+  §19) already signs the person in with the app's own login and acts as them in one organisation.
+  Connecting a client is configuration (`mcp` in `FEATURES_ENABLED`, then Settings → MCP);
+  exposing their own data is a TOOL, declared once for chat, agents and MCP, under
+  `.claude/rules/tools.md`, with `callMcpTool` tests. Run `/rf-mcp` for the steps, the local
+  tunnel test and troubleshooting.
 
 - **"The knowledge base should know facts about my customers / orders / suppliers"** (D43) — do
   not coach a new extraction job, a prompt or a column the model fills in. **Register an entity

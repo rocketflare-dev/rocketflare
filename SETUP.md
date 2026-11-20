@@ -220,7 +220,10 @@ http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, 
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
-(`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
+(`APP_ENV=development`). The page's shortcut acts only for the four seeded accounts, but the
+endpoint itself has no such list: in development, `POST /auth/dev-login` signs in ANY email
+address, with no password or link, and creates the user if it does not exist. It answers 404
+everywhere `APP_ENV` is not `development`.
 
 **Analytics check** (still in 1.6 — same terminal pair). Analytics is an opt-in PLUGIN
 (`docs/CONCEPTS.md` §8, §16) that the bootstrap does not install, so this applies only once you
@@ -303,7 +306,15 @@ adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm 
 `@duckdb/node-api` peer warning; neither is a problem.
 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
-For OAuth callbacks, emailed magic links or webhooks against your laptop:
+For OAuth callbacks, emailed magic links or webhooks against your laptop.
+
+> **While the tunnel runs, your development instance is on the public internet, dev sign-in
+> included.** `POST /auth/dev-login` takes no password and accepts any email (§1.6), so anyone who
+> learns the tunnel's hostname can sign in as any user — the owner, a global admin — read
+> everything in the local database, mint API keys and spend whatever AI and email keys
+> `.dev.vars` holds. Use dummy data only, keep real provider keys out of `.dev.vars` while it is
+> up, and stop the tunnel (Ctrl-C) as soon as you are done.
+
 ```bash
 pnpm web cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
 pnpm dev:tunnel       # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
@@ -673,7 +684,7 @@ pnpm plugin add <repo|path>[@ref]                  # read the plan; --apply inst
 Worker and database access — it is as trusting as merging a pull request — and the plan is what you
 say yes to. It will never generate a migration, edit a wrangler toml or write a resource id: those
 arrive as numbered steps you run yourself. The analytics plugin's are the `15 * * * *` cron and the
-`/cubejs-api` + `/mcp` prefixes in both tomls, and two `resolve` entries plus two proxy lines in
+`/cubejs-api` prefix in both tomls, and a `resolve` alias plus a proxy line in
 `apps/web/vite.config.ts`.
 
 **The drizzle-cube CLI / Claude Code plugin** (optional, with analytics installed): create
@@ -698,8 +709,8 @@ and then deleted.
 
 ### 2.8 Feature flags `[ready]` (D30)
 
-Nothing to configure — flags work out of the box. The kit core ships one, `knowledge-facts`
-(default off; §2.5 "Knowledge facts"). The inert demo flag (`example-feature`, a nav item, a page
+Nothing to configure — flags work out of the box. The kit core ships two: `knowledge-facts`
+(default off; §2.5 "Knowledge facts") and `mcp` (environment-gated; §2.10). The inert demo flag (`example-feature`, a nav item, a page
 and a notes API) belongs to the reference PLUGIN of the same name (D31,
 `apps/web/src/plugins/example-feature/`), which is installed by default and safe to delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
 Rollout and the percentage decides deterministically; force it on or off for one organisation and
@@ -721,6 +732,40 @@ Verify: `pnpm cli features list --json` prints the effective flags for your tena
 ### 2.9 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@rocketflare/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
+
+### 2.10 MCP server — let AI clients connect `[ready]`
+
+The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships dark:
+
+1. Add `mcp` to `FEATURES_ENABLED` — in `apps/web/.dev.vars` locally, and in BOTH tomls' `[vars]`
+   for a deployed environment (comma-separated with any other key).
+2. As an owner or admin, open **Settings → MCP**, turn it on, and choose what is exposed (all
+   read-only tools by default) and who may connect (everyone by default).
+3. Paste the server URL into the client (Claude: Settings → Connectors → Add custom connector;
+   Claude Code: `claude mcp add --transport http <name> <APP_URL>/mcp`; ChatGPT: a custom
+   connector). The client finds the app's authorization server itself, opens the app's own sign-in
+   page, and shows a consent screen where the person picks the organisation. `<APP_URL>/mcp/t/<slug>`
+   is the same server pinned to one organisation — use it to connect a second organisation from a
+   client that allows one connector per URL (claude.ai).
+4. A client must reach the app on a public https URL to sign in (`APP_URL`); locally that means a
+   tunnel. Clients identify themselves with a metadata document (CIMD) — Claude and ChatGPT do;
+   clients that only support dynamic registration (Cursor) cannot connect.
+   `pnpm dev:tunnel` gives a persistent public URL. Claude and Claude Code connect to it;
+   ChatGPT does not, because chatgpt.com refuses the metadata fetch from local `wrangler dev`
+   (workerd) with a 403 — a deployed Worker fetches it fine, so test ChatGPT on staging.
+   **The tunnel makes the whole development instance public, its password-less dev sign-in
+   included** (§1.10): anyone with the URL can sign in as any user. Connect a client with dummy
+   data only and stop the tunnel when you are done; test with real data on staging.
+
+Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
+`MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),
+`MCP_CALLS_PER_USER_PER_MINUTE` (120 — one person across all their connections in an
+organisation), `MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
+
+Verify: `curl -si -X POST <APP_URL>/mcp` answers 401 with a `WWW-Authenticate: Bearer
+resource_metadata="…"` header, and `curl -s <APP_URL>/.well-known/oauth-authorization-server`
+answers the metadata with `"client_id_metadata_document_supported": true` (404 for either means
+`mcp` is not in `FEATURES_ENABLED`).
 
 ---
 

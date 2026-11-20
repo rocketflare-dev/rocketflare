@@ -9,8 +9,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
 > **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
-> `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs` and `/rf-plugin` you
-> may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
+> `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs`, `/rf-mcp` and `/rf-plugin`
+> you may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
 > $35–200+; agree the mode and budget first, `docs/SECURITY-AUDIT.md`); **`/rf-provision` is
 > user-invoked only** (it creates paid resources and prompts for tokens on a TTY) — asked to deploy,
 > tell the user to run `/rf-provision`.
@@ -47,8 +47,12 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); evals (D33:
   `apps/evals`, vitest-evals on vitest 4, `pnpm eval`, never in the gate) + thumbs feedback →
   `rocketflare evals promote`
+- **MCP**: core server at `/mcp` and `/mcp/t/<slug>` (`services/mcp/`, `routes/mcp.ts`); OAuth only,
+  the app is its own authorization server (no API keys, no cookies); dark unless `FEATURES_ENABLED`
+  names `mcp`. A feature reaches MCP as a TOOL (`.claude/rules/tools.md`), never a route (`/rf-mcp`)
 - **Analytics**: not core — the opt-in `analytics` PLUGIN (D31, `/rf-plugin add analytics`; the
-  bootstrap skips it): drizzle-cube at `/cubejs-api`+`/mcp`, `:15`-cron fact tables, dashboards
+  bootstrap skips it): drizzle-cube at `/cubejs-api`, its cube tools through `tools` (so MCP too),
+  `:15`-cron fact tables, dashboards
 - **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` · `kit-only` (the kit's own
@@ -91,7 +95,7 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │  src/config.ts   loadConfig(env): zod over Cloudflare.Env; routes read c.get('config')
 │  src/permissions/  CASL owner/admin/member/support + isGlobalAdmin   src/db/  client, tenant-scope, schema/
 │  src/api/        index.ts (Hono app, middleware order, ASSETS catch-all) · queue.ts · scheduled.ts ·
-│                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, prompts.ts) ·
+│                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, mcp/, prompts.ts) ·
 │                  workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/ui/         React app
 │  src/plugins/    D31 seam: types.ts, api/ (the context family a plugin imports) + the
@@ -115,14 +119,8 @@ scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrad
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a
                    copy — kept by every copy; `node scripts/kit-check.mjs` checks it (CONCEPTS §13)
 docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo only) — CHANGELOG.md is the index
-.claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
-                   rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
-                   rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
-                   rf-traces (debug a run from its span tree; pick a tracing backend, D32) ·
-                   rf-evals (+ reference.md — author, run, compare, harvest, baseline, improve; D33) ·
-                   rf-agent-replay (replay an agent's past runs with today's code, no model calls; D38) ·
-                   rf-agent-docs (+ check.mjs — audit and fix CLAUDE.md, rules and skills) ·
-                   rf-security (+ tools/ runner and guard hook — audit against docs/THREAT-MODEL.md)
+.claude/skills/    the rf-* skills named at the top: SKILL.md + any reference/checklist files; rf-agent-docs
+                   ships check.mjs, rf-security tools/ (runner, guard hook)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
@@ -162,7 +160,7 @@ consulted only for a flag marked `environmentGated`; the rollout state itself li
 `IDENTITY_WEBHOOK_SECRET` for its identity events).
 
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
-code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md` · `docs/SECURITY-AUDIT.md`
+code-quality.md · cloudflare.md · tools.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md` · `docs/SECURITY-AUDIT.md`
 
 ## Non-Negotiables
 

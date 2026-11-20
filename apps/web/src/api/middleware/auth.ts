@@ -15,7 +15,12 @@
  * by design — the only cross-tenant auth path.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
+import type { FeatureFlagEvaluation } from '@rocketflare/shared/features'
+import type { GroupRef } from '@rocketflare/shared/groups'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { createMiddleware } from 'hono/factory'
+import type { AppConfig } from '../../config'
+import type { User } from '../../db/schema'
 import { buildAbility, resolveFeatures } from '../../permissions'
 import { API_KEY_SESSION_PREFIX, isApiKeySession } from '../auth/api-key-session'
 import { touchApiKeyUsage, validateApiKey } from '../auth/api-keys'
@@ -128,27 +133,55 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     listUserGroups(db, result.tenant.id, result.user.id),
     listFeatureFlagRows(db, result.tenant.id),
   ])
-  const features = await resolveFeatures(c.get('config'), flagRows, {
-    tenantId: result.tenant.id,
-    userId: result.user.id,
+  // A tenant key carries its CREATOR's groups, re-read on every request: removing someone
+  // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
+  // re-read the same way, so a rollout reaches API-key callers on their next request too.
+  return tenantAuthContext(c.get('config'), {
+    user: result.user,
+    tenant: result.tenant,
+    role: result.role,
+    groups,
+    flagRows,
+    sessionId: `${API_KEY_SESSION_PREFIX}${result.key.id}`,
+    isGlobalAdmin: result.user.isGlobalAdmin,
+  })
+}
+
+export interface TenantAuthInput {
+  user: User
+  tenant: { id: string; name: string; slug: string }
+  role: MembershipRole
+  groups: GroupRef[]
+  flagRows: readonly FeatureFlagEvaluation[]
+  /** What `AuthContext.session.id` reads — a credential without a session row names itself. */
+  sessionId: string
+  /** The person's platform flag — or `false` for a credential that must act as the member only. */
+  isGlobalAdmin: boolean
+}
+
+/**
+ * The `AuthContext` of a credential bound to ONE tenant (an API key, an MCP access token): the
+ * membership role, groups and features as read for this request, and the ability built from them
+ * exactly as the cookie path builds it. One assembly, so no credential can drift from the others.
+ */
+export async function tenantAuthContext(
+  cfg: AppConfig,
+  input: TenantAuthInput
+): Promise<AuthContext> {
+  const features = await resolveFeatures(cfg, input.flagRows, {
+    tenantId: input.tenant.id,
+    userId: input.user.id,
   })
   return {
-    user: result.user,
-    tenantId: result.tenant.id,
-    tenantUser: { role: result.role },
-    tenant: { id: result.tenant.id, name: result.tenant.name, slug: result.tenant.slug },
-    session: { id: `${API_KEY_SESSION_PREFIX}${result.key.id}` },
-    ability: buildAbility({
-      role: result.role,
-      isGlobalAdmin: result.user.isGlobalAdmin,
-      features,
-    }),
-    isGlobalAdmin: result.user.isGlobalAdmin,
+    user: input.user,
+    tenantId: input.tenant.id,
+    tenantUser: { role: input.role },
+    tenant: { id: input.tenant.id, name: input.tenant.name, slug: input.tenant.slug },
+    session: { id: input.sessionId },
+    ability: buildAbility({ role: input.role, isGlobalAdmin: input.isGlobalAdmin, features }),
+    isGlobalAdmin: input.isGlobalAdmin,
     features,
-    // A tenant key carries its CREATOR's groups, re-read on every request: removing someone
-    // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
-    // re-read the same way, so a rollout reaches API-key callers on their next request too.
-    groups,
+    groups: input.groups,
     accessRequestStatus: null,
   }
 }

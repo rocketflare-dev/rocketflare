@@ -11,6 +11,13 @@
  * - **A dead end is still information.** An empty knowledge base answers with a `hint` telling the
  *   model what to do instead, because a tool that says only "nothing found" makes a model invent.
  *
+ * **On every surface, MCP included.** No `surfaces` means chat, agent runs and the MCP server; the
+ * `mcp` block below is only what a client shows — a human title and the hints. Its scope and its
+ * read-only hint follow from having no `sideEffects`, so it is listed under the default "all
+ * read-only tools" exposure and needs only `mcp:read`. A plugin needs nothing else to reach a
+ * client: no mount, no auth, no token check of its own — `/mcp` resolves the person, their
+ * organisation and their permissions, and hands this tool the same `ToolCtx` chat would.
+ *
  * `defineTool` is a thin declaration helper; what it buys is that a plugin names `Tool` from the
  * plugin surface rather than from `services/ai/agent-loop`, which lives inside the deletable
  * `feature-agents` surface.
@@ -38,7 +45,7 @@ export const listExampleNotesInputSchema = z.object({
 export type ListExampleNotesInput = z.infer<typeof listExampleNotesInputSchema>
 
 /**
- * What `agentTools` contributes: the tool while the organisation has the flag, nothing otherwise.
+ * What `tools` contributes: the tool while the organisation has the flag, nothing otherwise.
  * The flag gates the mount and the nav; without this it would not gate the prompt, and every chat
  * turn and agent run of a deployment that never turned the feature on would carry the tool.
  */
@@ -54,6 +61,11 @@ export function listExampleNotesTool(ctx: ToolCtx): Tool<ListExampleNotesInput> 
       'List the example notes saved in this workspace, newest first, with their titles and text. ' +
       'Call it when the question is about what the team has written down here.',
     schema: listExampleNotesInputSchema,
+    mcp: {
+      title: 'List example notes',
+      // Reads only this workspace's own rows: nothing outside it, so not an open world.
+      annotations: { openWorldHint: false },
+    },
     async handler(input) {
       const { items, total } = await listExampleNotes(ctx.db, ctx.tenantId, {
         page: 1,

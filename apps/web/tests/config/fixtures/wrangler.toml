@@ -105,8 +105,20 @@ run_worker_first = [
   "/auth/*",
   "/ws",
   "/ws/*",
+  # The MCP server (a POST endpoint, but a client may probe it with a navigation-shaped GET).
+  "/mcp",
+  "/mcp/*",
+  # Its authorization server, and the three OAuth discovery documents a client fetches first.
+  "/oauth",
+  "/oauth/*",
+  "/.well-known/oauth-protected-resource",
+  "/.well-known/oauth-protected-resource/*",
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-authorization-server/*",
+  "/.well-known/openid-configuration",
+  "/.well-known/openid-configuration/*",
   # An installed plugin's own prefixes go here too, in barrel order (D31) — the analytics plugin
-  # adds "/cubejs-api" and "/mcp". `pnpm plugin add` prints the step; `pnpm provision cloudflare
+  # adds "/cubejs-api". `pnpm plugin add` prints the step; `pnpm provision cloudflare
   # <env>` writes it. The parity test reads `API_PREFIXES`, so a forgotten one fails the gate.
 ]
 

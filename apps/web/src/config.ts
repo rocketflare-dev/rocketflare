@@ -168,6 +168,22 @@ const coreConfigSchema = z.object({
   /** Invitation emails one tenant may queue per UTC day, whoever sends them (429 above it). */
   INVITATION_EMAILS_PER_TENANT_PER_DAY: optionalPositiveInt(1000),
   /**
+   * The MCP server (`/mcp`, when the deployment ships the `mcp` feature). A connection lapses
+   * after `MCP_GRANT_IDLE_DAYS` without a call or `MCP_GRANT_MAX_DAYS` after it was made, whichever
+   * comes first; the call log keeps `MCP_CALL_RETENTION_DAYS`. Tool calls are capped per minute
+   * per connection, per person in an organisation (across all their connections) and per
+   * organisation — over a cap the call answers a tool error the client's model can read, never a
+   * 429 that some clients treat as a dead server. The person's cap is twice one connection's, so
+   * someone running two clients at once is not slowed, and a fifth of the organisation's, so no
+   * single member can spend its whole minute.
+   */
+  MCP_GRANT_IDLE_DAYS: optionalPositiveInt(30),
+  MCP_GRANT_MAX_DAYS: optionalPositiveInt(90),
+  MCP_CALL_RETENTION_DAYS: optionalPositiveInt(90),
+  MCP_CALLS_PER_GRANT_PER_MINUTE: optionalPositiveInt(60),
+  MCP_CALLS_PER_USER_PER_MINUTE: optionalPositiveInt(120),
+  MCP_CALLS_PER_TENANT_PER_MINUTE: optionalPositiveInt(600),
+  /**
    * What one run may spend — tokens (input, output and prompt-cache reads and writes, every call
    * and decision) and USD. Unset = no cap. An agent's `meta.budget` overrides either. Checked before
    * every metered call; a run over it fails with event code `agent_budget_exceeded`, and so does a

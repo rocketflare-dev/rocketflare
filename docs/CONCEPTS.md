@@ -18,6 +18,7 @@ setup in `SETUP.md`; Cloudflare topology in `docs/DEPLOY.md`; RLS in `docs/RLS.m
 | 8 | [Analytics](#8-analytics) | 16 | [Plugins](#16-plugins) |
 |  |  | 17 | [Connectors](#17-connectors) |
 |  |  | 18 | [Security testing](#18-security-testing) |
+|  |  | 19 | [MCP server](#19-mcp-server) |
 
 **Layout (D26).** A pnpm workspace: `apps/web` (the Worker — Hono API + React UI, §§1–10),
 `apps/cli` (§11), `packages/shared` (zod contracts, §12), and `apps/evals` (developer-run eval
@@ -372,7 +373,10 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   override, no PATH binary and no managed copy. `pnpm install` never builds the package.
   `SETUP.md` 1.10.
 
-**Known gaps:** `pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
+**Known gaps:** while `pnpm dev:tunnel` runs, the development instance is public, and its
+password-less dev sign-in (`POST /auth/dev-login`, any email in development) with it: anyone who
+learns the hostname can sign in as any user (`SETUP.md` 1.10 — dummy data, stop it when done);
+`pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
 alone reads `DEV_API_PORT` from the shell only, not `.dev.vars`; no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
 path); no per-PR previews.
 
@@ -647,8 +651,15 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   supplies only the new message, and client `tools[]` are refused.
 - **Chat**: owned by `userId`; `chat-turn.ts` is the one implementation behind `/api/chat` and
   `/api/agui`. Everything that can fail as JSON runs before the stream opens, and stream writes use
-  `streamDatabase(c)`. A cancelled run emits no terminal event. Chat can call the three knowledge
-  tools (`CHAT_KNOWLEDGE_TOOLS`), capped at 6 turns. **Long threads are compacted**: a
+  `streamDatabase(c)`. A cancelled run emits no terminal event. Chat can call the knowledge
+  tools (`CHAT_KNOWLEDGE_TOOLS`), capped at 6 turns. **One tool list, filtered per surface**:
+  `buildAgentTools(ctx)` builds every tool (the knowledge tools, then each plugin's `tools`), and
+  chat, agent runs and the MCP server each ask `toolsFor('chat' | 'agents' | 'mcp', ctx)`
+  (`services/agents/tools/surfaces.ts`). A tool names its surfaces (`Tool.surfaces`, absent =
+  all); on `mcp` a terminal tool or one with an approval gate is never offered, and
+  `mcpToolProfile(tool)` derives the scope a call needs (`mcp:read`, or `mcp:write` for
+  `sideEffects`) and the annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint` from
+  `sideEffects` and `durable`, `openWorldHint` false), each overridable in `Tool.mcp`. **Long threads are compacted**: a
   character-budget window (`CHAT_HISTORY_MAX_CHARS`), with the dropped prefix folded into
   `conversations.summary` by the `chat.compact` job (compare-and-set). Document cards come from
   `kit.document` events produced by a pure mapper, so nothing about a card is stored. The admin
@@ -970,7 +981,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   "same as …?" item and its `reviewer_user_id`), a GIN trigram index on `name` and a
   `(tenant_id, type, lower(name))` lookup; `knowledge_facts` — identity (`entity_kind`
   `domain|staging`, `entity_type`, `entity_id` text, no FK), content (`key`, `value` jsonb,
-  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts;
+  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts, and
+  the delete — `DELETE /api/ai/documents/:id` or a connector's `deleteExternalDocument` — first
+  runs the same repair as re-extraction, in one transaction (`deleteDocumentsWithFacts`, `knowledge/remove.ts`), so a
+  fact one of them superseded or conflicted with alone is current again;
   `chunk_id` **set null** — a re-index replaces chunks and the fact keeps its span and quote),
   trust (`source_kind`, `confidence` 0..1), state (`state`, `superseded_by_id`, `conflicts_with
   uuid[]`), time (`valid_from`/`valid_to`, `observed_at`, `confirmed_by`/`confirmed_at`) and access
@@ -1010,7 +1024,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   absolute `char_start`/`char_end` and the quote — its value parses against the key's schema
   (`values.ts`: "£1,140" → 1140, "yes" → true, a case-blind enum), and every date resolves in CODE
   against `documents.created_at` (`dates.ts`: ISO, UK numeric day-first, "next Monday", "the first
-  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact.
+  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact,
+  and so does a value, its wording or a date longer than 2,000 characters, before anything parses
+  it.
   **Trust** (`source_kind`): `integration` for a plugin's `ingestDocument` (`documents.origin`),
   `agent` for an `agent:` source, else `upload`; the reviewer is the ingest's `reviewerUserId`
   (`documents.reviewer_user_id`), else the document's owner, else none. **Resolution**
@@ -1609,8 +1625,9 @@ The full gate stays green at every step. `SETUP.md` is the walkthrough.
   `environmentGated` flags. Then the admin rollout: tenant override → `on`/`off` → `rollout`
   percentage → registry default.
 - **Keys are code** (`FEATURES` + metadata). No migration is needed to add one; orphaned rows are
-  inert. The kit ships **no** flag — `example-feature`'s belongs to its plugin — so
-  `featureNameSchema` is a refined string.
+  inert. Core ships two: `knowledge-facts` (§9, a rollout flag, off by default) and `mcp` (§19,
+  environment-gated, on wherever the deployment ships it); `example-feature`'s belongs to its
+  plugin.
 - **`featureBucket` is a wire format**: FNV-1a over `"<key>:<unit>"` mod 100, with golden vectors
   in `features.test.ts`. It is monotonic (the percentage is never hashed) and independent across
   flags.
@@ -1691,13 +1708,41 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI
   (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
   compiles and passes the tests and only breaks at the next upgrade, where the check stops it first.
-- **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
+- **Tools**: `tools(ctx)` (renamed from `agentTools`, which is still read when `tools` is absent
+  and draws a `pnpm plugin check` warning) may be async and may return `[]`. That is how a tool reaches
   only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`,
   or its flag through `ToolCtx.features()` (`example-feature` does — a dark feature then costs no
   prompt tokens). A builder that throws is logged and skipped. `buildAgentTools` is therefore async.
+  Each tool picks where it is offered with `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all)
+  and shapes how an MCP client sees it with `mcp: { title?, annotations?, outputSchema?, scope? }`
+  (§9 "Chat": the defaults come from `sideEffects`). A terminal tool or one with an approval gate is
+  never offered on `mcp`. **Names**: one list goes to chat, agents and every MCP client, so a name is
+  1–64 of `A–Z a–z 0–9 _ -` (`MCP_TOOL_NAME_PATTERN` — MCP allows `.`, the chat models do not) and
+  unique across core and every plugin. The builder (`admittedPluginTools`) leaves out, and logs, a
+  plugin tool that breaks either rule — the core name or the first plugin keeps it — and
+  `pnpm plugin check` fails the same names statically (best effort: a name it cannot resolve from a
+  literal or a `const` is left to the runtime). It also WARNS on "Rocketflare" in a tool's `title` or
+  `description`, which a client shows under the deployment's own name.
+- **MCP**: a plugin's tool reaches MCP clients through `tools` and nothing else — no mount, no auth,
+  no token check of its own. `/mcp` resolves the person, their organisation, groups and CASL from
+  the connection, lists the tool under the organisation's exposure mode (§19), and calls it with the
+  same `ToolCtx` chat would (`requesterUrls: []`). `example-feature`'s `list_example_notes` carries
+  the reference `mcp` block. **A plugin proves its tool scopes over MCP** with `callMcpTool(db, tool,
+  { as, tenant, args?, scopes?, exposure? })` from `@testkit/integration`: it turns MCP on, writes a
+  real connection, lists and calls over the real `/mcp`, and answers `{ listed, listing, isError,
+  text, json, structured }` — call it as a member of another organisation, or outside a group, and
+  assert the rows are absent (`connectMcp` / `enableMcp` / `mcpClient` for a case that breaks the
+  connection afterwards).
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.
+  `ToolCtx.requester` is who is calling — `{ userId, role, isAdmin, groups }`, the groups with
+  each one's TYPE name — or `null` for a run nobody started (or whose requester was since blocked
+  or removed). The caller already resolved it (chat and MCP from the request's auth context, an
+  agent run from its requester at execute time, with the same two reads as `can` and `scope`), so
+  it costs no query; it is for SCOPING, such as a semantic layer's security context, while a gate
+  stays on `can`. `ToolCtx.features()` answers the caller's own resolved flags when it has them
+  (chat, MCP) and reads the tenant's once otherwise.
   `ToolCtx.requesterUrls` is the frozen set of http(s) URLs the person wrote themselves
   (`services/agents/tools/requester-urls.ts`): in chat, their own turns in the conversation; in an
   agent run, the input when a person submitted it through `POST /api/agents/runs` or `/runs/batch`
@@ -1721,6 +1766,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Credentials**: a plugin stores a tenant's key with `sealSecret` / `openSecret` from
   `@/plugins/api`. That is the kit's AES-GCM under `OAUTH_ENCRYPTION_KEY`, with a 503 when the key
   is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.
+- **Reserved paths**: `/mcp`, `/oauth` and the OAuth `.well-known` documents belong to core's MCP
+  server (§19). A plugin claiming one as a mount, an `apiPrefixes` entry or a public mount stops
+  the app at load (`assertNoReservedPluginPaths`), naming the plugin, and `pnpm plugin check` fails
+  it first (an `apiPrefixes` entry in the manifest, a `['/mcp', …]` mount tuple in the source) — a
+  plugin's MCP tools need no route of their own, only `tools`. The opt-in analytics plugin's own
+  `/mcp` (drizzle-cube, API-key auth) is refused by this; its plugins release moves its cube tools
+  onto `tools` and drops the mount and its vite `/mcp` proxy edit.
 - **Public mounts (D34)**: `publicMounts` are routes a third party calls with no session — an
   admin-consent callback, a webhook. Only under `/api/hooks/<id>` (so no toml edit and one
   enumerable prefix per plugin), mounted before the authed table with no `authMiddleware` and no
@@ -2154,3 +2206,141 @@ so runtime- and browser-specific behaviour needs a separate local check; it need
 model budget; one run finds about half of what is there, so a clean area proves nothing; the guard
 is a Claude Code hook, so it binds only agents run through Claude Code in this checkout; the
 public report's counts are typed by hand, so nothing checks them against the runs.
+
+## 19. MCP server
+
+**An AI client connects to the app at `/mcp` and acts as one person in one organisation, with that
+person's permissions and nothing more.** Clients are those that identify themselves with an OAuth
+Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. Plan and decisions:
+`docs/plans/mcp-server.md` (kit repository). The `rf-mcp` skill drives turning it on, adding a
+tool and connecting a client; `.claude/rules/tools.md` is the checklist for a safe tool, and
+`apps/web/src/api/services/mcp/CLAUDE.md` maps the code and its invariants.
+
+- **Deployment gate**: the environment-gated `mcp` flag (§15). Without `mcp` in `FEATURES_ENABLED`,
+  `/mcp`, `/oauth/*`, the OAuth `.well-known` documents, `/api/mcp/*` and `/api/mcp-connections`
+  answer 404. Each organisation's owners and admins then
+  turn it on at Settings → MCP (`mcp_settings.enabled`, off by default).
+- **Transport** (`routes/mcp.ts`, the official SDK's `createMcpHandler`): stateless Streamable
+  HTTP, POST only (405 otherwise), both protocol eras (2026-07-28 and the 2025-11-25 `initialize`
+  path), header/body agreement (-32020) from the SDK. Mounted before the mount table, outside the
+  global CORS (its own: any origin, no credentials, `WWW-Authenticate` exposed) and outside
+  `authMiddleware`. A browser `Origin` must be ours; none is fine. `capabilities.tools.listChanged`
+  is false and a `subscriptions/listen` request is refused, so no request is held open. A JSON-RPC
+  batch is refused (400, -32600) in both eras before the SDK sees it, so every call meets the
+  limits one at a time. The global CORS skips these paths with or without one trailing slash.
+- **Credential**: an OAuth access token (`mcpat_…`, one hour, SHA-256 at rest in `mcp_tokens`) of a
+  live grant (`mcp_grants`: user, tenant, client, scopes, the exact URL it is for). Never a cookie,
+  an API key or a CLI key. `/mcp/t/<slug>` is the same server pinned to one organisation, for a
+  client that keys connectors by URL; a token is refused on any URL but its grant's.
+- **The authorization server** (`services/mcp/authorization.ts`, `routes/oauth.ts`): the app is its
+  own OAuth 2.1 server, in Postgres. Discovery: RFC 9728 protected-resource metadata for `/mcp` and
+  every `/mcp/t/<slug>`, RFC 8414 metadata (also at `openid-configuration`) — S256 only, public
+  clients only (`none`), `client_id_metadata_document_supported`, `iss` on every authorization
+  response (RFC 9207), and no `registration_endpoint`. **Clients are their metadata document**
+  (`services/mcp/cimd.ts`): `client_id` is an https URL on a public host and the default port; the
+  fetch refuses redirects, takes ten seconds and 5 KB at most, needs a JSON type and a document
+  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. Every
+  refusal of a fetched document reads the same on the page ("could not be used"), the specific
+  cause only in the server log, so the page says nothing about what the URL reached. A document
+  is cached only once it registers the request's `redirect_uri`, and the nightly `pruneMcp` drops a
+  row unfetched for 30 days that no grant and no pending request names. A
+  document must be usable as a public client: its `token_endpoint_auth_method` absent or `none`, or
+  `none` among its `token_endpoint_auth_methods_supported` (ChatGPT prefers `private_key_jwt` and
+  lists `none`, and falls back to it because our metadata offers nothing else); its `grant_types`
+  and `response_types`, when present, must include `authorization_code` and `code`. The three v1
+  clients' real documents are test fixtures (`tests/config/mcp-cimd.test.ts`). No DCR, no static
+  clients. `GET /oauth/authorize` resolves the client and checks `redirect_uri` (exact;
+  loopback any port) BEFORE anything is redirected — until then an error is a page on our origin;
+  after it, the error goes back with `state` and `iss`. PKCE S256 is mandatory, `resource` must be
+  one of our MCP URLs (`invalid_target`, also for a slug that does not decode), and the request waits ten minutes in `oauth_requests`.
+  **Sign-in is the app's own `/login`** (a `returnUrl` to `/oauth/continue`), so every sign-in
+  method, the single-sign-on policy, `SIGNUP_MODE` and blocking apply unchanged. **Consent** is the
+  SPA page `/consent` (kit chrome, `frame-ancestors 'none'`): "<client> wants to use <APP_NAME> as
+  you", the client's name and logo as CLAIMS beside the verified host of its `client_id` and the
+  redirect host, a warning when it registers only loopback redirects, the organisations where
+  `resolveMcpMember` admits the person (an `/mcp/t/<slug>` request offers only that one), the
+  scopes and the tools. `POST /oauth/consent` (cookie + CSRF) re-checks it all, writes the grant
+  (absolute end `MCP_GRANT_MAX_DAYS`, capped by `OIDC_SESSION_MAX_AGE_DAYS` under IdP-managed
+  tenancy) and a code: SHA-256 at rest, sixty seconds, single-use — a second exchange revokes the
+  grant. A live grant for the same client, organisation and URL that covers the asked scopes is
+  remembered consent: no click. `POST /oauth/token` (form): `authorization_code` (PKCE verifier,
+  client, redirect and resource must match) and `refresh_token`, which rotates every time; a spent
+  refresh token presented again revokes the grant, **except** a retry within 30 seconds while its
+  successor is unused, which gets the same pair back — sealed (AES-GCM) under a key derived from
+  the spent token's own plaintext, so the database never holds an openable successor
+  (`services/mcp/seal.ts`). `POST /oauth/revoke` (RFC 7009): a refresh token ends the connection,
+  an access token itself; anything unknown is a silent 200. Rate limits: authorize, continue and
+  consent take `authRateLimit`; token and revoke — called from the hosted clients' shared server
+  IPs — take 600/min per IP plus 30/min per connection.
+- **Lifecycle**: removing a member (by an admin or the IdP) revokes their grants there, and blocking
+  someone (manually or by IdP deprovisioning) revokes all of theirs, in the same transaction
+  (`revokeMcpGrantsOf`). Role, group and policy changes need nothing: every call re-reads them.
+  Turning MCP off suspends connections (403) without revoking them.
+- **Connections**: `/api/mcp/connections` lists the organisation's (`manage McpSettings`) with
+  revoke and `POST /revoke-all`; `/api/mcp-connections` lists a person's own across organisations
+  with revoke — account-wide, so a session only: an API key gets 403 `insufficient_scope`. Activity: `mcp.client_connected`, `mcp.client_revoked` (who, and why).
+- **Who is calling** (`services/mcp/caller.ts`), re-read on every call, nothing cached on the grant:
+  401 `invalid_token` with the RFC 9728 challenge when the TOKEN is the problem (unknown, expired,
+  revoked, idle past `MCP_GRANT_IDLE_DAYS`, past `MCP_GRANT_MAX_DAYS`, another URL); 403 with a
+  code when the PERSON is (`blocked`, `tenant_suspended`, `mcp_disabled`, `mcp_not_allowed` — not a
+  member, a support role, outside "who can connect"). The `AuthContext` is built by the same
+  `tenantAuthContext` as an API key's, with `isGlobalAdmin` forced false: a client acts as the
+  membership, never with platform reach.
+- **Tools**: `toolsFor('mcp', ctx)` from the caller's own access scope, CASL and features
+  (`requesterUrls` empty — the client's model typed every argument), then the organisation's
+  exposure: `read_only` (default — tools with no `sideEffects` and the read scope), `all`, or
+  `selected`. A write tool is listed to a read-only token and answers 403 `insufficient_scope`
+  naming `mcp:read mcp:write` (the step-up). An unexposed tool is "not found". Every result opens
+  with a line saying it is data, not instructions, and is capped at 60 000 characters (a tool with
+  an `outputSchema` whose answer is over the cap sends no `structuredContent` — it would carry the
+  whole answer — and answers an error result with the capped text); `get_document` windows are
+  20 000.
+- **Limits and audit**: `MCP_CALLS_PER_GRANT_PER_MINUTE` (60), `MCP_CALLS_PER_USER_PER_MINUTE`
+  (120 — one person across all their connections in the organisation, so no member can spend the
+  organisation's minute alone) and `MCP_CALLS_PER_TENANT_PER_MINUTE` (600), checked in that order
+  on the KV window, answered as tool errors (`rate_limited`), never 429. A limiter that cannot be
+  read fails the call closed, as every limiter in the app does, but as a logged tool error
+  (`tool_failed`) rather than a thrown request. Model spend is not MCP's: a tool that calls a
+  model records it in `ai_usage` under that tool's own feature, as it does from chat, with nothing
+  marking it as an MCP call, under the same tenant caps. `mcp_tool_calls`
+  records each call — who, which connection, which tool, outcome, duration — never its arguments or
+  result; kept `MCP_CALL_RETENTION_DAYS` (90) by the nightly `pruneMcp`, which also drops expired
+  tokens. Each call is a `mcp <tool>` span with an `execute_tool` child.
+- **Visibility is the HTTP routes'**: `tests/api/security/mcp-visibility.test.ts` proves a
+  group-only document, its facts and its entities do not exist for an outsider through every core
+  tool the server lists (a new core tool without a case fails it), and that each answer equals
+  chat's for the same person.
+- **Branding**: what a client sees is `APP_NAME` and the organisation's name — `serverInfo`, the
+  instructions, the notice, every error. `mcp-server.test.ts` sets `APP_NAME="Acme Tools"` and bans
+  `/rocketflare/i` from every response.
+
+- **Settings → MCP** (`ui/pages/settings/Mcp.tsx`, the tab guarded by the `mcp` flag AND
+  `manage McpSettings`): the switch; the server URL to paste — the organisation's
+  `/mcp/t/<slug>` under multi-tenancy, `/mcp` under single — with setup snippets for Claude
+  (claude.ai/Desktop connector, `claude mcp add --transport http <name> <url>`, the name slugified
+  from `APP_NAME`) and ChatGPT; who can connect (everyone, admins, chosen groups); exposure (All
+  read-only, Enable all after a confirmation, Selected with ticks); and the tools grouped Knowledge
+  first then per plugin, each with its read-only/writes badge, annotations and 30-day call count,
+  approval-gated and terminal tools greyed with the reason. The switch and the modes save at once;
+  the group and tool ticks save as one list. Below them, **Connected clients**: every live
+  connection in the organisation — the person, the client by the name its document claims and the
+  host its `client_id` was verified on, read or read-and-write, connected, last used, 30-day calls
+  — with Revoke and Revoke all, each after a confirmation.
+- **Profile → Connected apps** (`ui/pages/Profile.tsx`, shown where the deployment ships `mcp` and
+  the reader has at least one): the reader's own connections in every organisation, with Revoke.
+  Both tables are `components/mcp/McpConnectionsTable.tsx`.
+- A consent makes the grant, but it is a **connection** only once its code is redeemed
+  (`mcp_grants.activated_at`, set by the first token exchange, which also records
+  `mcp.client_connected`): an unredeemed grant is never listed or counted, and the nightly
+  retention deletes it an hour after it was made.
+
+**Known gaps:** only clients with a Client ID Metadata Document can connect (Claude, ChatGPT;
+Cursor has DCR only, VS Code is untested) — no DCR, no static clients; a Worker cannot resolve DNS,
+so a public name pointing at a private address is caught by the platform's egress, not by the
+fetch guard; a call's own model spend is not attributed to it (`mcp_tool_calls.cost_microcents`
+is always null, and its `ai_usage` rows carry no MCP tag; embeddings for search are unmetered as
+everywhere else); a renamed organisation slug breaks grants
+made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the handler (bad
+arguments, an unknown tool) are not in the call log; ChatGPT cannot connect to local `wrangler dev`
+(chatgpt.com answers workerd's metadata fetch with 403; deployed Workers are not refused); no
+resources, prompts, approval tools or agents.

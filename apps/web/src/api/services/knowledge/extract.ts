@@ -47,7 +47,7 @@ import {
   type SourceKind,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { KNOWLEDGE_USAGE_FEATURES } from '@rocketflare/shared/ai/usage'
-import { and, asc, eq, inArray, isNull, type SQL, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
@@ -91,7 +91,7 @@ import {
   type ResolveContext,
   type ResolvedEntity,
 } from './entities'
-import { entityVisibleSql, restoredStateSql } from './facts-sql'
+import { entityVisibleSql } from './facts-sql'
 import {
   type EntityQuestion,
   type KnowledgeJudge,
@@ -101,6 +101,7 @@ import {
 import { judgedPairId, loadJudged, storeJudgements } from './judgements'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
+import { decidedSql, removeDocumentFacts, removeFacts } from './remove'
 import { recomputeKey } from './review'
 import {
   decideFactState,
@@ -156,6 +157,20 @@ const candidateSchema = z.object({
     .describe('When the value stops being true, as the document writes it; omit if unstated'),
 })
 export type FactCandidate = z.infer<typeof candidateSchema>
+
+/**
+ * The longest a model-returned value, its wording or a validity date may be. A real one is a few
+ * words; a longer one is dropped (`bad_value` / `bad_date`) before any coercion reads it, so the
+ * cost of checking a candidate never grows with what an endpoint chose to send back. Checked per
+ * candidate rather than in the tool schema, so one over-long candidate does not cost the section
+ * its other facts.
+ */
+export const MAX_CANDIDATE_TEXT_CHARS = 2000
+
+function overLong(value: unknown): boolean {
+  if (typeof value === 'string') return value.length > MAX_CANDIDATE_TEXT_CHARS
+  return Array.isArray(value) && value.some(overLong)
+}
 
 const submitFactsSchema = z.object({
   facts: z.array(candidateSchema).max(MAX_FACTS_PER_SECTION),
@@ -408,81 +423,6 @@ export function sectionMessage(input: {
   }
   parts.push('', '## Section', '<<<', section.text, '>>>')
   return parts.join('\n')
-}
-
-// ── Removing a document's facts ───────────────────────────────────────────────────────────────
-
-const uuidArray = (ids: readonly string[]) =>
-  sql`ARRAY[${sql.join(
-    ids.map(id => sql`${id}`),
-    sql`, `
-  )}]::uuid[]`
-
-/**
- * A fact a PERSON settled: confirmed (`confirmed_at` set — by `confirm` or as the chosen side of a
- * `prefer`) or `rejected` (only a review writes it: `reject`, or the losing side of a `prefer`).
- */
-const decidedSql = sql`(${knowledgeFacts.confirmedAt} is not null or ${knowledgeFacts.state} = 'rejected')`
-
-/**
- * Delete facts and undo what they did to the rest: their ids leave every `conflicts_with`, a fact
- * left conflicting with nothing — or superseded by a fact that no longer exists (the FK set it
- * null) — returns to `accepted` (a person confirmed it, or it was read confidently) or
- * `unconfirmed`. A person's decisions on OTHER facts (`rejected`, a confirmation) are untouched.
- */
-async function removeFacts(
-  db: Database,
-  tenantId: string,
-  where: SQL | undefined
-): Promise<number> {
-  return db.transaction(async tx => {
-    const removed = await tx
-      .delete(knowledgeFacts)
-      .where(and(eq(knowledgeFacts.tenantId, tenantId), where))
-      .returning({ id: knowledgeFacts.id })
-    if (removed.length === 0) return 0
-    const ids = uuidArray(removed.map(r => r.id))
-    await tx
-      .update(knowledgeFacts)
-      .set({
-        conflictsWith: sql`array(select x from unnest(${knowledgeFacts.conflictsWith}) as x where x <> all(${ids}))`,
-      })
-      .where(
-        and(eq(knowledgeFacts.tenantId, tenantId), sql`${knowledgeFacts.conflictsWith} && ${ids}`)
-      )
-    await tx
-      .update(knowledgeFacts)
-      .set({ state: restoredStateSql })
-      .where(
-        and(
-          eq(knowledgeFacts.tenantId, tenantId),
-          sql`((${knowledgeFacts.state} = 'conflicting' and cardinality(${knowledgeFacts.conflictsWith}) = 0) or (${knowledgeFacts.state} = 'superseded' and ${knowledgeFacts.supersededById} is null))`
-        )
-      )
-    return removed.length
-  })
-}
-
-/**
- * Delete a document's facts (`removeFacts`). With `keepDecided`, the facts a person settled stay
- * for the run to match against what it reads again (`extractDocumentFacts`, step 2) — and because
- * they stay IN THE TABLE rather than in memory, a run that fails half-way and is retried still
- * finds them.
- */
-export async function removeDocumentFacts(
-  db: Database,
-  tenantId: string,
-  documentId: string,
-  options: { keepDecided?: boolean } = {}
-): Promise<number> {
-  return removeFacts(
-    db,
-    tenantId,
-    and(
-      eq(knowledgeFacts.documentId, documentId),
-      options.keepDecided ? sql`not ${decidedSql}` : undefined
-    )
-  )
 }
 
 /** A kept decided fact of this document, as the run matches it. */
@@ -955,6 +895,10 @@ async function runExtraction(
         drop('unknown_key')
         continue
       }
+      if (overLong(candidate.value) || overLong(candidate.valueText)) {
+        drop('bad_value')
+        continue
+      }
       let coerced = coerceFactValue(schema, candidate.value, documentDate)
       if (!coerced.ok && candidate.valueText) {
         coerced = coerceFactValue(schema, candidate.valueText, documentDate)
@@ -963,7 +907,10 @@ async function runExtraction(
         drop('bad_value')
         continue
       }
-      const validity = resolveValidity(candidate, documentDate)
+      const validity =
+        overLong(candidate.validFrom) || overLong(candidate.validTo)
+          ? null
+          : resolveValidity(candidate, documentDate)
       if (!validity) {
         drop('bad_date')
         continue

@@ -2174,6 +2174,15 @@ export function pluginManifestProblems(manifest) {
       bad(field, `declares ${field} as other than an array of strings`, `set "${field}" to []`)
     }
   }
+  if (isStrArray(m.apiPrefixes)) {
+    for (const prefix of m.apiPrefixes.filter(isReservedPluginPath)) {
+      bad(
+        'apiPrefixes',
+        `declares the prefix ${prefix}, which core reserves for the MCP server and its authorization server`,
+        'move it under /api/<plugin id> — a plugin tool reaches MCP clients through ServerPlugin.tools, with no mount of its own'
+      )
+    }
+  }
 
   // **The floor, and the two fields it replaces.** A manifest still carrying `requires.kit` or
   // `requires.pluginApi` is a LOUD error naming the replacement, never a field quietly ignored:
@@ -2562,6 +2571,212 @@ export function isolationEvidence(source) {
  */
 export function declaresProperty(source, name) {
   return new RegExp(`\\b${escapeRe(name)}\\s*[:(]`).test(stripComments(source))
+}
+
+/**
+ * `ServerPlugin` members a plugin should stop declaring, each with the member that replaced it.
+ * The kit still reads every one of them, so `pnpm plugin check` WARNS rather than fails; a later
+ * kit release removes the old name with a porting-note step.
+ */
+export const DEPRECATED_SERVER_MEMBERS = [
+  {
+    name: 'agentTools',
+    replacement: 'tools',
+    fix:
+      'rename `agentTools:` to `tools:` in the ServerPlugin — same signature; a tool picks its ' +
+      "surfaces with `surfaces: ['chat' | 'agents' | 'mcp']` (absent = all)",
+  },
+]
+
+/**
+ * The deprecated members a source declares as a property or method (`agentTools: …`,
+ * `agentTools(ctx) {…}`) — never a mention in a comment, and never a property ACCESS
+ * (`plugin.agentTools(ctx)`), which is a caller rather than a declaration.
+ */
+export function deprecatedServerMembers(source) {
+  const text = stripComments(source)
+  return DEPRECATED_SERVER_MEMBERS.filter(m =>
+    new RegExp(`(?<![.\\w$])${escapeRe(m.name)}\\s*[:(]`).test(text)
+  )
+}
+
+/**
+ * The tool-name rule every surface accepts — a copy of `MCP_TOOL_NAME_PATTERN` in
+ * `packages/shared/src/mcp.ts` (this script cannot import TypeScript), pinned equal by
+ * `tests/config/plugin-lib.test.ts`. MCP allows `.` and 128 characters; the chat models' APIs do
+ * not, and one tool goes to both.
+ */
+export const TOOL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
+
+/** The names core's own tools answer to (`KNOWLEDGE_TOOLS`), pinned equal by the same test. */
+export const CORE_TOOL_NAMES = [
+  'search_knowledge',
+  'get_document',
+  'list_documents',
+  'lookup_facts',
+]
+
+/**
+ * The paths core reserves for the MCP server, its authorization server and the OAuth discovery
+ * documents — `isReservedPath` in `apps/web/src/api/utils/routes/api-prefixes.ts`, which refuses
+ * them at load; this is the static half `pnpm plugin check` reports before anything boots.
+ */
+export function isReservedPluginPath(path) {
+  const p = String(path).toLowerCase()
+  return (
+    p === '/mcp' ||
+    p.startsWith('/mcp/') ||
+    p === '/oauth' ||
+    p.startsWith('/oauth/') ||
+    p.startsWith('/.well-known/oauth-') ||
+    p === '/.well-known/openid-configuration'
+  )
+}
+
+/**
+ * Mount paths a plugin source claims on a reserved path: the first element of a `[path, …]` tuple
+ * (`mounts`, `publicMounts`) that is a string literal on one of them. Comments are stripped first.
+ */
+export function reservedMountPaths(source) {
+  const text = stripComments(source)
+  const out = new Set()
+  for (const m of text.matchAll(/\[\s*(['"`])(\/[^'"`\s]*)\1\s*,/g)) {
+    if (isReservedPluginPath(m[2])) out.add(m[2])
+  }
+  return [...out]
+}
+
+/** Every `const NAME = 'literal'` in a source — how a tool's `name: SOME_CONST` is resolved. */
+export function stringConstants(source) {
+  const out = new Map()
+  for (const m of stripComments(source).matchAll(
+    /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(['"`])([^'"`\n]*)\2/g
+  )) {
+    // `const X = \`a${b}\`` is not a constant this read can know.
+    if (m[2] === '`' && m[3].includes('${')) continue
+    out.set(m[1], m[3])
+  }
+  return out
+}
+
+/** The text between `open` and its matching `)`, skipping strings — or null when unbalanced. */
+function callBody(text, open) {
+  let depth = 0
+  let quote = null
+  for (let i = open; i < text.length; i++) {
+    const c = text[i]
+    if (quote) {
+      if (c === '\\') i++
+      else if (c === quote) quote = null
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') quote = c
+    else if (c === '(') depth++
+    else if (c === ')' && --depth === 0) return text.slice(open + 1, i)
+  }
+  return null
+}
+
+/** A run of `'a' + "b" + `c`` literals as one string (no `${}` evaluation), or null. */
+function concatenatedLiterals(text) {
+  const run = /^\s*((?:(['"`])(?:\\.|(?!\2)[^\\])*\2\s*\+?\s*)+)/.exec(text)
+  if (!run) return null
+  return [...run[1].matchAll(/(['"`])((?:\\.|(?!\1)[^\\])*)\1/g)].map(m => m[2]).join('')
+}
+
+/**
+ * The tools a plugin source declares through `defineTool({ … })`: each one's `name` (a literal,
+ * or an identifier found in `constants`; `null` when neither — the runtime check still sees it),
+ * and its `title` / `description` text when written as literals. Best effort by design: a static
+ * read cannot evaluate a builder, so this catches the declarations that are written plainly —
+ * which is every one the kit's reference plugin and its docs show — and the tool builder refuses
+ * the rest at runtime.
+ */
+export function declaredTools(source, constants = new Map()) {
+  const text = stripComments(source)
+  const out = []
+  for (const m of text.matchAll(/\bdefineTool\s*(?:<[^>]*>)?\s*\(/g)) {
+    const body = callBody(text, m.index + m[0].length - 1)
+    if (body === null) continue
+    const nameMatch = /(?:^|[,{\s])name\s*:\s*(?:(['"`])([^'"`]*)\1|([A-Za-z_$][\w$]*))/.exec(body)
+    // A template literal with a `${}` cannot be read statically: left to the runtime check.
+    const literal = nameMatch?.[2]
+    const interpolated = nameMatch?.[1] === '`' && literal?.includes('${')
+    const name = nameMatch
+      ? interpolated
+        ? null
+        : (literal ?? constants.get(nameMatch[3]) ?? null)
+      : null
+    const text_ = key => {
+      const k = new RegExp(`(?:^|[,{\\s])${key}\\s*:`).exec(body)
+      return k ? concatenatedLiterals(body.slice(k.index + k[0].length)) : null
+    }
+    out.push({ name, title: text_('title'), description: text_('description') })
+  }
+  return out
+}
+
+/**
+ * The kit's own name in a plugin tool's title or description. Built from parts so the rename
+ * leaves it alone: in a copy too, a plugin's tool text must not carry the kit's name (a client
+ * shows it under the deployment's own name).
+ */
+const KIT_NAME_IN_TEXT = new RegExp(['rocket', 'flare'].join(''), 'i')
+
+/**
+ * What is wrong with the tools every installed plugin declares, across all of them at once:
+ * a name outside {@link TOOL_NAME_RE} or one of {@link CORE_TOOL_NAMES} or another plugin's
+ * (`fail`), and the product's own name in a title or description (`warn` — a client shows that
+ * text under the DEPLOYMENT's name, never the kit's).
+ */
+export function toolProblems(declarations) {
+  const out = []
+  const owners = new Map(CORE_TOOL_NAMES.map(n => [n, 'core']))
+  for (const { pluginId, file, tools } of declarations) {
+    for (const t of tools) {
+      if (t.name !== null && !TOOL_NAME_RE.test(t.name)) {
+        out.push({
+          severity: 'fail',
+          pluginId,
+          file,
+          tool: t.name,
+          kind: 'name',
+          problem: `declares the tool "${t.name}", whose name is not 1–64 of A–Z a–z 0–9 _ -`,
+          fix: `rename it snake_case, prefixed with the plugin's namespace (e.g. "${pluginId.split('-')[0]}_${t.name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 40)}") — chat models and MCP clients both refuse other names`,
+        })
+      } else if (t.name !== null && owners.has(t.name) && owners.get(t.name) !== pluginId) {
+        const owner = owners.get(t.name)
+        out.push({
+          severity: 'fail',
+          pluginId,
+          file,
+          tool: t.name,
+          kind: 'clash',
+          problem: `declares the tool "${t.name}", which ${owner === 'core' ? 'is a core tool' : `'${owner}' also declares`}`,
+          fix: `rename it with the plugin's namespace ("${pluginId.split('-')[0]}_…") — the tool builder keeps the first and leaves this one out`,
+        })
+      } else if (t.name !== null && !owners.has(t.name)) {
+        owners.set(t.name, pluginId)
+      }
+      for (const [field, value] of [
+        ['title', t.title],
+        ['description', t.description],
+      ]) {
+        if (value && KIT_NAME_IN_TEXT.test(value)) {
+          out.push({
+            severity: 'warn',
+            pluginId,
+            file,
+            tool: t.name ?? '?',
+            kind: `brand-${field}`,
+            problem: `names the kit in the ${field} of the tool "${t.name ?? '?'}"`,
+            fix: 'a client shows tool text under the deployment\'s own name — say "this workspace" or "the organisation" instead',
+          })
+        }
+      }
+    }
+  }
+  return out
 }
 
 /**

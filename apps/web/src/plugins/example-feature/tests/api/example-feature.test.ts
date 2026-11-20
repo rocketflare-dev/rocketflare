@@ -35,6 +35,7 @@ import {
   EXAMPLE_NOTE_STATS_AGENT,
 } from '@rocketflare/shared/plugins/example-feature/index'
 import {
+  callMcpTool,
   createTestEnv,
   createTestSession,
   createTestTenant,
@@ -358,7 +359,7 @@ describe('the public ping link', () => {
   })
 })
 
-describe('agentTools', () => {
+describe('tools', () => {
   it('offers the tool only to an organisation with the flag', async () => {
     const dark = await createTestTenant(db)
     const names = async (tenant: string) =>
@@ -387,6 +388,61 @@ describe('list_example_notes', () => {
     ) as { total: number; hint?: string }
     expect(empty.total).toBe(0)
     expect(empty.hint).toMatch(/No example notes/)
+  })
+})
+
+/**
+ * The same tool over the MCP server — no code of the plugin's own: `/mcp` lists it from `tools`,
+ * under the organisation's exposure, and runs it with the caller's `ToolCtx`. The organisation comes
+ * from the connection, never from an argument, so the isolation proof is the mount's proof again:
+ * a member of the OTHER organisation is offered the tool and gets none of this one's notes.
+ */
+describe('list_example_notes over MCP', () => {
+  it('is listed with its title under the default read-only exposure and answers its own tenant', async () => {
+    const note = await createNote(ownerCookie, 'Shift rota')
+    const result = await callMcpTool(db, 'list_example_notes', {
+      as: memberId,
+      tenant: tenantId,
+      scopes: ['mcp:read'],
+      exposure: 'read_only',
+    })
+    expect(result.listed).toBe(true)
+    expect(result.listing?.title).toBe('List example notes')
+    expect(result.listing?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false })
+    expect(result.isError).toBe(false)
+    const answer = result.json as { notes: { noteId: string }[] }
+    expect(answer.notes.map(n => n.noteId)).toContain(note.id)
+  })
+
+  it('never lets one organisation read another’s notes through it', async () => {
+    const note = await createNote(ownerCookie, 'Only for tenant A')
+    const outsider = await createTestUser(db)
+    await linkUserToTenant(db, outsider.id, otherTenantId, 'member')
+    const result = await callMcpTool(db, 'list_example_notes', {
+      as: outsider.id,
+      tenant: otherTenantId,
+    })
+    // Offered — B has the flag too — so this is the predicate, not the gate, being proved.
+    expect(result.listed).toBe(true)
+    const answer = result.json as { notes: { noteId: string; title: string }[] }
+    expect(answer.notes.map(n => n.noteId)).not.toContain(note.id)
+    expect(result.text).not.toContain('Only for tenant A')
+  })
+
+  it('is not offered to an organisation without the flag, nor when it is not selected', async () => {
+    const dark = await createTestTenant(db)
+    const darkOwner = await createTestUser(db)
+    await linkUserToTenant(db, darkOwner.id, dark.id, 'owner')
+    expect(
+      (await callMcpTool(db, 'list_example_notes', { as: darkOwner.id, tenant: dark.id })).listed
+    ).toBe(false)
+    const unticked = await callMcpTool(db, 'list_example_notes', {
+      as: memberId,
+      tenant: tenantId,
+      exposure: 'selected',
+      exposedTools: [],
+    })
+    expect(unticked.listed).toBe(false)
   })
 })
 

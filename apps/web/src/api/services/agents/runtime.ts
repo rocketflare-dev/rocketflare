@@ -40,7 +40,6 @@ import { rootSpanIdForRun, traceIdForRun } from '../../observability/trace-ids'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
-import { accessScopeForUser } from '../access'
 import {
   InterruptDeclinedError,
   InterruptRequested,
@@ -51,7 +50,7 @@ import {
 import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import { DECISIONS_FALLBACK_PROMPT_KEY, resolveChat, resolveDecisions } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
-import { requesterCan } from '../member-ability'
+import { runRequester } from '../member-ability'
 import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
 import { toAgentArtifact, upsertArtifact } from './artifacts'
@@ -90,7 +89,7 @@ import {
   runOnce,
   saveCheckpoint,
 } from './runs'
-import { buildAgentTools } from './tools'
+import { toolsFor } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
 import { createTurnJournal } from './turns'
 import { checkRunVersion } from './versions'
@@ -333,7 +332,8 @@ export async function executeRun(
     if (version.settled) return { runId, ...version.settled }
     const input = agent.meta.inputSchema.parse(run.input)
     const resolved = await resolveChat(db, cfg, env, tenantId, { promptKey: agent.meta.promptKey })
-    const toolScope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
+    const requester = await runRequester(db, cfg, tenantId, run.requestedByUserId)
+    const toolScope = requester.scope
     // Answers to this run's gated tool calls, read ONCE per attempt and handed to the agent as
     // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
     const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
@@ -406,12 +406,13 @@ export async function executeRun(
           // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: await buildAgentTools({
+          tools: await toolsFor('agents', {
             db,
             cfg,
             env,
             scope: toolScope,
-            can: await requesterCan(db, cfg, tenantId, run.requestedByUserId),
+            can: requester.can,
+            ...(requester.requester && { requester: requester.requester }),
             // Recomputed every attempt, so a resumed run keeps them. Only a person's own input.
             requesterUrls: requesterUrlsForRun(run, input),
           }),

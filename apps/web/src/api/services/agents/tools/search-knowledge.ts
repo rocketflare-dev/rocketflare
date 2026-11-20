@@ -29,7 +29,9 @@
  */
 import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
 import type { FactHitGroup } from '@rocketflare/shared/ai/knowledge-facts'
+import type { GroupRef } from '@rocketflare/shared/groups'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
@@ -139,6 +141,19 @@ export interface SearchKnowledgeResult {
 }
 
 /** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, scope }`. */
+/**
+ * Who is behind a tool call, as the caller already knows it: the person's role in the tenant, the
+ * admin-level flag (owner, admin, support or a global admin — the same test the request context
+ * uses) and their groups with the name of each group's type. Their OWN facts, read-only; a tool
+ * uses them to scope (a semantic layer's security context), never to grant.
+ */
+export interface ToolRequester {
+  userId: string
+  role: MembershipRole | null
+  isAdmin: boolean
+  groups: readonly GroupRef[]
+}
+
 export interface AgentToolContext {
   db: Database
   cfg: AppConfig
@@ -173,6 +188,8 @@ export interface AgentToolContext {
    * `auth.features`). Absent: `buildAgentTools` reads the tenant's.
    */
   features?: readonly string[]
+  /** The person behind the call (`ToolRequester`); absent for a run nobody started. */
+  requester?: ToolRequester
 }
 
 export interface SearchKnowledgeToolOptions {
@@ -193,6 +210,7 @@ export function searchKnowledgeTool(
   const platformSources = options.platformSources?.length ? options.platformSources : undefined
   return {
     name: SEARCH_KNOWLEDGE_TOOL,
+    mcp: { title: 'Search the knowledge base' },
     description: `Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (\`passage\` n of \`totalPassages\`, and a \`charOffset\` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with \`documentId\`, read a whole document with \`get_document\`, or see what exists with \`list_documents\`. When nothing matches, the answer lists the documents that do exist so you can re-aim.${options.facts ? ' When the query names a known entity, the answer also carries `facts` about it, each with a `state`: when two facts are `conflicting`, or passages give different values, the sources disagree — say so and give each value with its document, never pick one silently.' : ''}`,
     schema: searchKnowledgeInputSchema,
     async handler(input) {

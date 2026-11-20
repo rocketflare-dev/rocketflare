@@ -108,6 +108,10 @@ export const RLS_REVOKED_TABLES = [
   'magic_link_tokens',
   'oauth_providers',
   'access_requests',
+  // The authorization server's client cache and pending requests / codes (`schema/oauth.ts`):
+  // written only by `/oauth/*` on the owner connection, before any tenant is chosen.
+  'oauth_clients',
+  'oauth_requests',
 ] as const
 
 /**

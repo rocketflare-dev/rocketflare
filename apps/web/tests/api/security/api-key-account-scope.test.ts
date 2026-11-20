@@ -1,11 +1,12 @@
 /**
  * An API key acts only within its organisation: it sees that one organisation in the tenant list,
  * and cannot create organisations, read its creator's invitations elsewhere or file an access
- * request. Its creator's own profile stays reachable, and a session cookie keeps every one of these.
+ * request, nor list or end its creator's AI-client connections (they span every organisation). Its
+ * creator's own profile stays reachable, and a session cookie keeps every one of these.
  */
 import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { accessRequests, teamInvitations, tenants } from '@/db/schema'
+import { accessRequests, mcpGrants, teamInvitations, tenants } from '@/db/schema'
 import {
   bearerHeader,
   createTestApiKey,
@@ -17,6 +18,8 @@ import {
   uniqueId,
 } from '../../helpers/auth'
 import { setupTestDatabase } from '../../helpers/db'
+import { connectMcp, mcpTestEnv } from '../../helpers/mcp'
+import { seedOAuthClient } from '../../helpers/oauth'
 import { json, request } from '../../helpers/request'
 
 const db = setupTestDatabase()
@@ -95,5 +98,38 @@ describe('API keys stay inside their organisation', () => {
     expect((await request('/api/me', { headers: key })).status).toBe(200)
     const res = await request('/api/me', { method: 'PATCH', headers: key }, { json: { name: 'K' } })
     expect(res.status).toBe(200)
+  })
+
+  it("a key cannot list its creator's AI-client connections; the session can", async () => {
+    const env = mcpTestEnv()
+    const { user, second, key, cookie } = await creatorWithKey()
+    const clientId = await seedOAuthClient(db)
+    await connectMcp(db, env, { tenantId: second.id, userId: user.id, clientId })
+    const res = await request('/api/mcp-connections?status=all', { headers: key }, { env })
+    expect(res.status).toBe(403)
+    expect(await json(res)).toMatchObject({ statusCode: 403, code: 'insufficient_scope' })
+    const viaCookie = (await json(
+      await request('/api/mcp-connections?status=all', { headers: cookie }, { env })
+    )) as { items: { tenant: { id: string } }[] }
+    expect(viaCookie.items.map(i => i.tenant.id)).toContain(second.id)
+  })
+
+  it("a key cannot end its creator's AI-client connection", async () => {
+    const env = mcpTestEnv()
+    const { user, second, key } = await creatorWithKey()
+    const clientId = await seedOAuthClient(db)
+    const { grant } = await connectMcp(db, env, { tenantId: second.id, userId: user.id, clientId })
+    const res = await request(
+      `/api/mcp-connections/${grant.id}`,
+      { method: 'DELETE', headers: key },
+      { env }
+    )
+    expect(res.status).toBe(403)
+    expect(await json(res)).toMatchObject({ code: 'insufficient_scope' })
+    const [row] = await db
+      .select({ revokedAt: mcpGrants.revokedAt })
+      .from(mcpGrants)
+      .where(eq(mcpGrants.id, grant.id))
+    expect(row?.revokedAt).toBeNull()
   })
 })

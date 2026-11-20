@@ -7,28 +7,34 @@
  * `error`/`hint` the model can act on plus, where useful, the documents that DO exist — a tool
  * that says only "nothing found" makes a model invent. An app appends its own tools to
  * `buildAgentTools`; an agent on `runToolLoop` passes `[...ctx.tools, ...own, terminal]`.
+ * Every caller asks through `toolsFor(surface, ctx)`, which filters that one list for the surface
+ * asking — chat, agents or the MCP server (`./surfaces.ts`).
  *
  * Every numeric input is `z.coerce.number()`: small models — the Workers AI floor among them — hand
  * back tool arguments with the numbers as strings (`"offset": "29525"`), and rejecting that wastes
  * a turn on a validation error the model often cannot diagnose. Coerce what is unambiguous; keep
  * the bounds.
  */
+import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
+import { MCP_TOOL_NAME_PATTERN } from '@rocketflare/shared/mcp'
 import type { AnyServerPlugin } from '../../../../plugins/server'
 import { serverPlugins } from '../../../../plugins/server'
 import { loggerFor } from '../../../utils/core/logger'
 import type { AccessScope } from '../../access-sql'
-import type { Tool } from '../../ai/agent-loop'
+import type { Tool, ToolSurface } from '../../ai/agent-loop'
 import { tenantFeatures } from '../../features'
 import { getDocumentTool } from './get-document'
 import { listDocumentsTool } from './list-documents'
 import { lookupFactsTool } from './lookup-facts'
 import { type AgentToolContext, searchKnowledgeTool } from './search-knowledge'
+import { offeredOn } from './surfaces'
 
 export * from './event-summary'
 export * from './get-document'
 export * from './list-documents'
 export * from './lookup-facts'
 export * from './search-knowledge'
+export * from './surfaces'
 
 /**
  * Every built-in tool a run gets on `ctx.tools`, in the order an agent normally needs them —
@@ -36,7 +42,10 @@ export * from './search-knowledge'
  * answerable without every agent importing it. A plugin tool is built from the same `ctx`, so it
  * is bound to the run's tenant and access scope like the three above.
  *
- * A plugin's `agentTools` may be ASYNC, and that is what lets it answer per tenant: it reads its
+ * The list is UNFILTERED — every surface's tools. Callers use {@link toolsFor}; this is the one
+ * place an app appends a kit-wide tool of its own.
+ *
+ * A plugin's `tools` may be ASYNC, and that is what lets it answer per tenant: it reads its
  * own settings row for `ctx.scope.tenantId` and returns `[]` when the tenant has not turned it on,
  * so the model never sees a tool that could only fail. **A builder that throws is logged and
  * skipped** — one broken plugin must not take chat or every agent run down with it.
@@ -47,16 +56,21 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     log.warn({ err, pluginId }, 'plugin knowledgeSources failed; its sources are left out')
   )
   const contributed = await Promise.allSettled(
-    serverPlugins.map(async p => (await p.agentTools?.(ctx)) ?? [])
+    serverPlugins.map(async p => (await pluginTools(p, ctx)) ?? [])
   )
-  const pluginTools = contributed.flatMap((result, i) => {
-    if (result.status === 'fulfilled') return result.value
-    loggerFor(ctx.cfg, { pluginId: serverPlugins[i]?.shared.id }).warn(
-      { err: result.reason },
-      'plugin agentTools failed; its tools are left out of this run'
-    )
-    return []
-  })
+  const fromPlugins = admittedPluginTools(
+    contributed.map((result, i) => {
+      const pluginId = serverPlugins[i]?.shared.id ?? 'unknown'
+      if (result.status === 'fulfilled') return { pluginId, tools: result.value }
+      loggerFor(ctx.cfg, { pluginId }).warn(
+        { err: result.reason },
+        'plugin tools failed; its tools are left out of this run'
+      )
+      return { pluginId, tools: [] }
+    }),
+    (pluginId, tool, problem) =>
+      loggerFor(ctx.cfg, { pluginId }).warn({ tool }, `plugin tool left out: ${problem}`)
+  )
   // Knowledge facts (D43) ride on the tenant's flag: `lookup_facts` and search's facts block.
   const features = ctx.features ?? (await tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId))
   const facts = features.includes('knowledge-facts')
@@ -65,8 +79,63 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     getDocumentTool(ctx) as Tool,
     listDocumentsTool(ctx) as Tool,
     ...(facts ? [lookupFactsTool(ctx) as Tool] : []),
-    ...pluginTools,
+    ...fromPlugins,
   ]
+}
+
+/** Every name a core tool answers to, whether or not this tenant is offered it right now. */
+export const CORE_TOOL_NAMES: readonly string[] = Object.values(KNOWLEDGE_TOOLS)
+
+/**
+ * The plugin tools that may join the list, in plugin order. A tool is left out — reported through
+ * `onDrop`, never thrown, because one bad plugin must not take chat, agents or `/mcp` down — when
+ * its name is not one every surface accepts (`MCP_TOOL_NAME_PATTERN`), when it is a core tool's
+ * name (a plugin must never shadow `search_knowledge`, whose visibility rules it does not share),
+ * or when an earlier plugin already took it. `pnpm plugin check` refuses the same names statically;
+ * this is the runtime half, for names a static read cannot see.
+ */
+export function admittedPluginTools(
+  contributions: readonly { pluginId: string; tools: readonly Tool[] }[],
+  onDrop: (pluginId: string, tool: string, problem: string) => void
+): Tool[] {
+  const taken = new Map<string, string>(CORE_TOOL_NAMES.map(name => [name, 'core']))
+  const out: Tool[] = []
+  for (const { pluginId, tools } of contributions) {
+    for (const tool of tools) {
+      const owner = taken.get(tool.name)
+      if (!MCP_TOOL_NAME_PATTERN.test(tool.name)) {
+        onDrop(pluginId, tool.name, 'the name is not 1–64 of A–Z a–z 0–9 _ -')
+      } else if (owner) {
+        onDrop(
+          pluginId,
+          tool.name,
+          `the name is already ${owner === 'core' ? "a core tool's" : `'${owner}'s`}`
+        )
+      } else {
+        taken.set(tool.name, pluginId)
+        out.push(tool)
+      }
+    }
+  }
+  return out
+}
+
+/**
+ * The tools offered on `surface` — chat, an agent run's `ctx.tools`, or the MCP server — from the
+ * one list {@link buildAgentTools} builds. A tool names its surfaces (`Tool.surfaces`, absent =
+ * all); on `mcp` a terminal tool and an approval-gated one are never offered. What a TENANT
+ * exposes over MCP, and what a token's scopes allow, is the MCP server's filter on top of this.
+ */
+export async function toolsFor(surface: ToolSurface, ctx: AgentToolContext): Promise<Tool[]> {
+  return (await buildAgentTools(ctx)).filter(tool => offeredOn(tool, surface))
+}
+
+/** A plugin's tools: `tools`, or the deprecated `agentTools` it replaces when `tools` is absent. */
+export function pluginTools(
+  plugin: Pick<AnyServerPlugin, 'tools' | 'agentTools'>,
+  ctx: AgentToolContext
+): Tool[] | Promise<Tool[]> | undefined {
+  return plugin.tools ? plugin.tools(ctx) : plugin.agentTools?.(ctx)
 }
 
 /** `<plugin id>:<kind>` — what a platform source must look like (and never the core `kit:`). */

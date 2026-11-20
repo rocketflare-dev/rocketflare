@@ -120,6 +120,18 @@ export const ERROR_CODES = {
   entityTargetNotFound: 'entity_target_not_found',
   /** 400: promote on an entity type with no domain table or resolver — there is no row to promote to. */
   entityTypeNotPromotable: 'entity_type_not_promotable',
+  /**
+   * 401 on `/mcp`: no access token, or one that is unknown, expired, revoked, issued for another
+   * URL, or whose connection has lapsed. The `WWW-Authenticate` challenge says where to sign in.
+   */
+  invalidToken: 'invalid_token',
+  /** 403 on `/mcp`: the organisation has MCP turned off (its connections are suspended, not revoked). */
+  mcpDisabled: 'mcp_disabled',
+  /**
+   * 403 on `/mcp`: the person may not use a client here — no longer a member, a support role, or
+   * outside the organisation's "who can connect" policy. Never 401: signing in again changes nothing.
+   */
+  mcpNotAllowed: 'mcp_not_allowed',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

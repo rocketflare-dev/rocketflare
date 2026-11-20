@@ -21,7 +21,7 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 - `App.tsx` — providers `ErrorBoundary` → `QueryClientProvider` → `AuthProvider` →
   `AbilityProvider` → `WebSocketProvider` → `BrowserRouter`; dev-only `ReactQueryDevtools` in a
   `Suspense`. Route table in three tiers: public (`/login`, `/magic-link/sent`,
-  `/magic-link/confirm`, `/invite/:token`), signed-in (`/cli/confirm`), signed-in-without-tenant (`/select-tenant`, `/pending`,
+  `/magic-link/confirm`, `/invite/:token`), signed-in (`/cli/confirm`), signed-in-without-tenant (`/consent` — an AI client's OAuth consent, `/select-tenant`, `/pending`,
   `/no-access` — `ProtectedRoute requireTenant={false}`), and the shell (`/*` — `ProtectedRoute`,
   `Layout` mounted ONCE, nested `<Routes>` beneath it; each `<main>` has its own `ErrorBoundary`
   reset on pathname). Installed plugins' routes are mapped per tier inside the same `Suspense`; a `workspace`-tier route lives in the shell, and `Layout`'s `workspace` prop gives it the rail, no padding and the full height.

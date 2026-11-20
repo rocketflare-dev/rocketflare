@@ -55,7 +55,7 @@ vi.mock('@/api/services/agents/tools', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/services/agents/tools')>()
   return {
     ...actual,
-    buildAgentTools: vi.fn(async (ctx: AgentToolContext) => {
+    toolsFor: vi.fn(async (_surface: string, ctx: AgentToolContext) => {
       state.built.push(ctx)
       return []
     }),

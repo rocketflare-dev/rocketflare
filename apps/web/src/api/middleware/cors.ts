@@ -6,7 +6,8 @@
  * `scripts/lib/dev-ports.mjs`) work with only `APP_URL` following the UI port: the Worker cannot
  * read the shell's environment. A tunnel's origin arrives as `APP_URL` (`--var`). Runs BEFORE
  * csrf so preflights are answered.
- * WebSocket upgrades (`/ws`) bypass it: CORS does not govern the handshake (the route checks
+ * `/mcp` bypasses it too: the MCP server allows any origin WITHOUT credentials, which this handler
+ * (credentials on) must never answer for. WebSocket upgrades (`/ws`) bypass it: CORS does not govern the handshake (the route checks
  * membership), and the DO's 101 response has immutable headers that `cors()` would try to set.
  */
 import { cors } from 'hono/cors'
@@ -70,6 +71,23 @@ export function isWebSocketUpgrade(c: { req: { header(name: string): string | un
   return c.req.header('Upgrade')?.toLowerCase() === 'websocket'
 }
 
+/**
+ * `/mcp`, the token and revocation endpoints and the OAuth discovery documents answer CORS
+ * themselves — any origin, never credentials (`routes/mcp.ts`, `routes/oauth.ts`). One trailing
+ * slash is the same path, so `/oauth/token/` is never answered with credentialed CORS.
+ */
+export function isMcpPath(path: string): boolean {
+  const pathname = path.length > 1 && path.endsWith('/') ? path.slice(0, -1) : path
+  return (
+    pathname === '/mcp' ||
+    pathname.startsWith('/mcp/') ||
+    pathname === '/oauth/token' ||
+    pathname === '/oauth/revoke' ||
+    pathname.startsWith('/.well-known/oauth-') ||
+    pathname === '/.well-known/openid-configuration'
+  )
+}
+
 export const corsMiddleware = createMiddleware<AppEnv>((c, next) =>
-  isWebSocketUpgrade(c) ? next() : corsHandler(c, next)
+  isWebSocketUpgrade(c) || isMcpPath(c.req.path) ? next() : corsHandler(c, next)
 )

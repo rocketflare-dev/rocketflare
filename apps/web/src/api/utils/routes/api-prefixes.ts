@@ -12,7 +12,8 @@
  *    directly and never goes near the asset router, so `wrangler-parity.test.ts` asserts the tomls
  *    mirror this list instead.
  *
- * `/ws` is the realtime upgrade. The analytics plugin adds `/cubejs-api` and `/mcp`.
+ * `/ws` is the realtime upgrade; `/mcp` is the MCP server; `/oauth` and the three OAuth discovery
+ * documents are its authorization server (the consent PAGE is the SPA's `/consent`, outside them). The analytics plugin adds `/cubejs-api`.
  *
  * A plugin may own a prefix OUTSIDE `/api` — a protocol endpoint, say. Those are unioned in
  * from the server barrel, which means installing such a plugin also means adding its patterns to
@@ -21,7 +22,62 @@
  */
 import { serverPlugins } from '../../../plugins/server'
 
-const CORE_API_PREFIXES = ['/api', '/auth', '/ws'] as const
+const CORE_API_PREFIXES = [
+  '/api',
+  '/auth',
+  '/ws',
+  '/mcp',
+  '/oauth',
+  // The OAuth discovery documents (the rest of `/.well-known` stays the asset router's).
+  '/.well-known/oauth-protected-resource',
+  '/.well-known/oauth-authorization-server',
+  '/.well-known/openid-configuration',
+] as const
+
+/**
+ * Paths core owns that no plugin may claim — as a mount, an `apiPrefixes` entry or a public
+ * mount: the MCP server, its authorization server, and the OAuth discovery documents. A plugin
+ * there would shadow the server or answer for its identity.
+ */
+export const RESERVED_PLUGIN_PATHS = ['/mcp', '/oauth', '/.well-known/oauth-'] as const
+
+/** Does `path` fall on a reserved path (`/mcp`, `/mcp/…`, `/oauth/…`, `/.well-known/oauth-…`)? */
+export function isReservedPath(path: string): boolean {
+  const p = path.toLowerCase()
+  return (
+    p === '/mcp' ||
+    p.startsWith('/mcp/') ||
+    p === '/oauth' ||
+    p.startsWith('/oauth/') ||
+    p.startsWith('/.well-known/oauth-') ||
+    p === '/.well-known/openid-configuration'
+  )
+}
+
+interface PluginPaths {
+  shared: { id: string }
+  mounts?: readonly (readonly [string, ...unknown[]])[]
+  apiPrefixes?: readonly string[]
+  publicMounts?: readonly (readonly [string, ...unknown[]])[]
+}
+
+/** Throw, naming the plugin and the path, when any installed plugin claims a reserved path. */
+export function assertNoReservedPluginPaths(plugins: readonly PluginPaths[]): void {
+  for (const plugin of plugins) {
+    const claimed = [
+      ...(plugin.mounts ?? []).map(m => m[0]),
+      ...(plugin.apiPrefixes ?? []),
+      ...(plugin.publicMounts ?? []).map(m => m[0]),
+    ]
+    const reserved = claimed.find(isReservedPath)
+    if (reserved) {
+      throw new Error(
+        `plugin "${plugin.shared.id}" claims ${reserved}, which core reserves for the MCP server ` +
+          'and its authorization server — move it under /api/<plugin id>'
+      )
+    }
+  }
+}
 
 export const API_PREFIXES: readonly string[] = [
   ...CORE_API_PREFIXES,

@@ -74,11 +74,13 @@ import {
   classifyPluginFile,
   claudeHookProblems,
   coreEditsByFile,
+  declaredTools,
   declaresProperty,
   declaresPublicSites,
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
+  deprecatedServerMembers,
   describeClash,
   describeClaudeHook,
   eventClashes,
@@ -119,6 +121,7 @@ import {
   renderList,
   renderSteps,
   reprovisionStep,
+  reservedMountPaths,
   resolveSubdir,
   restoreWorkerFirst,
   revertCoreEdits,
@@ -128,8 +131,10 @@ import {
   skillDirProblem,
   skillFileProblems,
   skillTarget,
+  stringConstants,
   surfaceDirectories,
   tableClashes,
+  toolProblems,
   undeclaredManifestEvents,
   undeclaredSkillDirs,
   withoutDependencies,
@@ -2424,6 +2429,42 @@ function cmdCheck(args, host) {
       }
     }
 
+    // A member the kit renamed still works — the host reads the old name when the new one is
+    // absent — so this is a warning, never a failure: a released plugin keeps passing until the
+    // kit release that removes the old name, whose porting note says so.
+    const serverTree = `apps/web/src/plugins/${id}`
+    if (existsSync(abs(serverTree))) {
+      const seen = new Map()
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const m of deprecatedServerMembers(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          if (!seen.has(m.name)) seen.set(m.name, { ...m, file: `${serverTree}/${f}` })
+      }
+      for (const m of seen.values())
+        add('warn', `${id}:deprecated:${m.name}`, {
+          file: m.file,
+          problem: `declares \`${m.name}\`, which the kit renamed \`${m.replacement}\``,
+          fix: m.fix,
+        })
+    }
+
+    // **The MCP server's paths are core's.** The host refuses a plugin mounted there at load, but
+    // that is a crash on boot; this says the same thing before anything runs. A plugin's tools
+    // reach MCP clients through `ServerPlugin.tools` — it never needs a mount or auth of its own.
+    if (existsSync(abs(serverTree))) {
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const path of reservedMountPaths(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          add('fail', `${id}:reserved-path:${path}`, {
+            file: `${serverTree}/${f}`,
+            problem: `mounts ${path}, which core reserves for the MCP server and its authorization server`,
+            fix:
+              'move the mount under /api/<plugin id>, and give an MCP client this data as a tool ' +
+              "in ServerPlugin.tools (surfaces: ['mcp', …]) — the host's /mcp lists it for you",
+          })
+      }
+    }
+
     // Two separate things a plugin with tables owes, and neither is visible from the other side.
     const tables = (anchor.schema?.tables ?? []).filter(
       t => !(anchor.schema?.rlsExcluded ?? []).includes(t)
@@ -2493,6 +2534,37 @@ function cmdCheck(args, host) {
         })
       }
     }
+  }
+  // **Tool names (MCP).** One list goes to chat, agents and every MCP client, so a name is unique
+  // across core and every plugin and is one every surface accepts. The tool builder keeps the first
+  // and drops the rest at runtime; this names them before that silently happens. Best effort: a
+  // name a static read cannot resolve is left to the runtime check.
+  const toolDeclarations = []
+  for (const { manifest } of anchors) {
+    const tree = `apps/web/src/plugins/${manifest.id}`
+    if (!existsSync(abs(tree))) continue
+    const sources = walk(abs(tree))
+      .filter(f => /\.tsx?$/.test(f) && !/(^|\/)tests?\//.test(f))
+      .map(f => ({ file: `${tree}/${f}`, text: readFileSync(abs(`${tree}/${f}`), 'utf8') }))
+    const sharedDir = `packages/shared/src/plugins/${manifest.id}`
+    const sharedText = existsSync(abs(sharedDir))
+      ? walk(abs(sharedDir))
+          .filter(f => /\.ts$/.test(f))
+          .map(f => readFileSync(abs(`${sharedDir}/${f}`), 'utf8'))
+          .join('\n')
+      : ''
+    const constants = stringConstants([sharedText, ...sources.map(x => x.text)].join('\n'))
+    for (const { file, text } of sources) {
+      const tools = declaredTools(text, constants)
+      if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+    }
+  }
+  for (const p of toolProblems(toolDeclarations)) {
+    add(p.severity, `${p.pluginId}:tool-${p.kind}:${p.tool}`, {
+      file: p.file,
+      problem: p.problem,
+      fix: p.fix,
+    })
   }
   // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
   // nothing enforces it, because nothing derives a table name from an id — so the collision is the
@@ -2650,6 +2722,10 @@ function cmdExport(args, host) {
     // plugin repository is that repository's own tooling and is never copied into a host.
     const out = d.startsWith(SKILLS_ROOT) ? `skills/${d.slice(SKILLS_ROOT.length)}` : d
     for (const rel of walk(abs(d))) {
+      // `docs/plugins/<id>/upgrades/` is the HOST's copy of the plugin's release notes, written by
+      // `add` from the plugin's own `docs/upgrades/` — exporting it would plant a stale second
+      // copy in the plugin repository. Anything else under `docs/plugins/<id>/` is the plugin's.
+      if (d === `docs/plugins/${id}` && rel.split(path.sep)[0] === 'upgrades') continue
       const file = path.join(target, out, rel)
       mkdirSync(path.dirname(file), { recursive: true })
       writeFileSync(file, readFileSync(abs(`${d}/${rel}`)))
@@ -2669,7 +2745,13 @@ function cmdExport(args, host) {
     minKit: floorOf(anchor),
     // The skill directories are the HOST's half of a declared skill, derived from "skills" at
     // every install — carrying them in "paths" would be a second statement of the same thing.
-    paths: (surface.paths ?? []).filter(p => !p.startsWith(SKILLS_ROOT)),
+    // The plugin's OWN `paths` when it declared them; the host's additions (`docs/plugins/<id>/**`
+    // for the notes it copies, each skill's host directory) are re-derived at every install.
+    paths:
+      anchor.paths ??
+      (surface.paths ?? []).filter(
+        p => !p.startsWith(SKILLS_ROOT) && p !== `docs/plugins/${id}/**`
+      ),
     registries: surface.registries,
   }
   writeFileSync(path.join(target, PLUGIN_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`)

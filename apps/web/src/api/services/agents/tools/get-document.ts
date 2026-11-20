@@ -91,6 +91,7 @@ export function getDocumentTool(ctx: AgentToolContext): Tool<GetDocumentInput> {
   const fallback = Math.min(GET_DOCUMENT_DEFAULT_CHARS, cap)
   return {
     name: GET_DOCUMENT_TOOL,
+    mcp: { title: 'Read a document' },
     description: `Read one knowledge-base document's text, whole or in windows: \`offset\` and \`maxChars\` select a character range (default and maximum ${cap} characters, from the start; the answer reports \`totalChars\`, \`hasMore\` and \`nextOffset\`, so a long document is read by calling again with \`nextOffset\` until \`hasMore\` is false). Use it after search_knowledge when a passage is cut off or you need the surrounding context, or on any id from list_documents. An unknown id answers with the documents that do exist.`,
     schema: getDocumentSchema(cap),
     async handler(input) {

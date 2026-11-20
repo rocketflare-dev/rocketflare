@@ -33,7 +33,7 @@ import type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-import type { AgentToolContext } from '../../api/services/agents/tools'
+import type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
 import { noRequesterUrls } from '../../api/services/agents/tools/requester-urls'
 import type {
   CallStructuredToolOptions,
@@ -66,12 +66,16 @@ export type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-export type { AgentToolContext } from '../../api/services/agents/tools'
+export type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
 export type {
+  McpToolAnnotations,
+  McpToolScope,
   Tool,
   ToolApproval,
   ToolLoopCheckpoint,
   ToolLoopResult,
+  ToolMcpOptions,
+  ToolSurface,
 } from '../../api/services/ai/agent-loop'
 /**
  * The retrieval primitives, for a plugin that searches a corpus of its own the way the kit
@@ -86,7 +90,7 @@ export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/service
 export { AiNotConfiguredError, recordUsage, toolInputSchema }
 
 /**
- * What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the
+ * What `ServerPlugin.tools(ctx)` is handed, spelled as the plugin surface rather than as the
  * runtime's internal shape.
  *
  * `scope` and not `tenantId`: the scope carries the tenant AND what this particular requester may
@@ -129,6 +133,22 @@ export interface ToolCtx {
    * feature costs no prompt tokens and the model never sees a tool it could only fail with.
    */
   features(): Promise<readonly string[]>
+  /**
+   * The person behind this call — their role, the admin-level flag (owner, admin, support or a
+   * global admin) and their groups with each group's TYPE name — or `null` for a run nobody
+   * started. Their own facts, already resolved by the caller; use them to SCOPE (a semantic
+   * layer's security context), and gate on `can` rather than on `role`.
+   */
+  requester: ToolRequester | null
+}
+
+/** One lazy read, shared by every call of the returned function. */
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let value: Promise<T> | undefined
+  return () => {
+    value ??= read()
+    return value
+  }
 }
 
 /** Adapt the runtime's tool context. The only place a plugin's tools name a core internal. */
@@ -143,7 +163,11 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
     ...(ctx.maxDocumentChars !== undefined && { maxDocumentChars: ctx.maxDocumentChars }),
     requesterUrls: ctx.requesterUrls ?? noRequesterUrls(),
     storage: () => filesStorage(ctx.env as PluginBindings),
-    features: () => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId),
+    // The caller's resolved flags when it has them (chat, MCP); otherwise the tenant's, read once.
+    features: ctx.features
+      ? async () => ctx.features as readonly string[]
+      : once(() => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId)),
+    requester: ctx.requester ?? null,
   }
 }
 
@@ -154,6 +178,11 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
  *
  * A tool with **no handler is TERMINAL**: its validated input is the agent's answer, and the loop
  * stops when the model calls it.
+ *
+ * **Where it is offered**: `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all). On the MCP
+ * server a tool needs a handler and no approval gate, and `mcp` shapes how a client sees it:
+ * `scope` (`mcp:read`, or `mcp:write` for a `sideEffects` tool), `annotations` (defaulted from
+ * `sideEffects`/`durable`), `title`, `outputSchema`. Whether a tenant exposes it is the tenant's.
  */
 export function defineTool<Input>(tool: Tool<Input>): Tool<Input> {
   return tool

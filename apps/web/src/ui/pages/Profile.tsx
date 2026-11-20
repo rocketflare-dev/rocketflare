@@ -10,6 +10,7 @@ import { LinkIcon } from '@heroicons/react/24/outline'
 import { updateProfileRequestSchema } from '@rocketflare/shared/user-settings'
 import { useEffect, useRef, useState } from 'react'
 import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
+import { McpConnectionsTable } from '@/ui/components/mcp/McpConnectionsTable'
 import {
   FieldError,
   fieldErrorFor,
@@ -20,6 +21,8 @@ import {
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
 import { useMyGroups } from '@/ui/hooks/useGroups'
+import { useMyMcpConnections, useRevokeMcpConnection } from '@/ui/hooks/useMcp'
+import { useFeature } from '@/ui/hooks/usePermissions'
 import {
   AVATAR_ACCEPT,
   useLinkedProviders,
@@ -42,6 +45,7 @@ export default function Profile() {
       <ProfileForm />
       <YourGroups />
       <SignInMethods />
+      <ConnectedApps />
     </div>
   )
 }
@@ -333,6 +337,32 @@ function SignInMethods() {
           )}
         </ul>
       )}
+    </SectionPanel>
+  )
+}
+
+/**
+ * The AI clients (Claude, ChatGPT…) the reader has connected, in every organisation, each with
+ * Revoke. Shown only where the deployment ships MCP, and only once there is something to show.
+ */
+function ConnectedApps() {
+  const shipped = useFeature('mcp')
+  const { data } = useMyMcpConnections(shipped)
+  const revoke = useRevokeMcpConnection('own')
+  const items = data?.items ?? []
+  if (!shipped || items.length === 0) return null
+  return (
+    <SectionPanel
+      flush
+      title="Connected apps"
+      description="AI clients you connected. Each acts as you, with your permissions, in one organisation."
+    >
+      <McpConnectionsTable
+        connections={items}
+        show="organisation"
+        revoking={revoke.isPending}
+        onRevoke={(c, done) => revoke.mutate(c.id, { onSuccess: done })}
+      />
     </SectionPanel>
   )
 }
