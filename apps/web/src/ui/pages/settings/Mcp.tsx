@@ -42,6 +42,29 @@ export function cliServerName(name: string): string {
 
 const PROVIDER_CORE = 'core'
 
+/**
+ * A tool description with its `inline code` spans rendered as code and everything else as text.
+ * Descriptions are written for models, in markdown, but the only markdown they use is inline code,
+ * so this does without a markdown renderer. Nothing is parsed as HTML.
+ */
+export function DescriptionText({ text }: { text: string }) {
+  const parts = text.split(/`([^`\n]+)`/)
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the split is positional and never reordered
+          <code key={i} className="text-xs">
+            {part}
+          </code>
+        ) : (
+          part
+        )
+      )}
+    </>
+  )
+}
+
 function providerLabel(provider: string): string {
   if (provider === PROVIDER_CORE) return 'Knowledge'
   return sharedPlugins.find(p => p.id === provider)?.label ?? provider
@@ -325,7 +348,9 @@ function ToolRow({
           {a.openWorldHint && <Badge>reaches outside services</Badge>}
           {!unavailable && tool.exposed && <Badge>exposed</Badge>}
         </div>
-        <p className="text-sm text-secondary mt-0.5 line-clamp-2">{tool.description}</p>
+        <p className="text-sm text-secondary mt-0.5 line-clamp-2">
+          <DescriptionText text={tool.description} />
+        </p>
         {unavailable && tool.unavailableReason && (
           <p className="text-xs text-muted mt-0.5">{UNAVAILABLE_TEXT[tool.unavailableReason]}</p>
         )}

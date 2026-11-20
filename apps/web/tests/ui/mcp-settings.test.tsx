@@ -5,9 +5,9 @@
  * the tools are grouped Knowledge first, unavailable ones greyed with their reason, and under
  * "Selected" the ticks save as one list.
  */
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import McpSettingsPage, { cliServerName } from '@/ui/pages/settings/Mcp'
+import McpSettingsPage, { cliServerName, DescriptionText } from '@/ui/pages/settings/Mcp'
 import SettingsLayout from '@/ui/pages/settings/SettingsLayout'
 import { mcpConnection as connection } from './helpers/mcp'
 import {
@@ -242,5 +242,19 @@ describe('Settings → MCP', () => {
     renderWithProviders(<McpSettingsPage />, { session: makeSession() })
     expect(await screen.findByText('No clients connected')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Revoke all' })).toBeNull()
+  })
+})
+
+describe('a tool description', () => {
+  it('shows inline code as code, without the backticks, and never as HTML', () => {
+    const { container } = render(
+      <DescriptionText text="Read with `get_document`, then `offset` <b>more</b>" />
+    )
+    expect(container.textContent).toBe('Read with get_document, then offset <b>more</b>')
+    expect([...container.querySelectorAll('code')].map(c => c.textContent)).toEqual([
+      'get_document',
+      'offset',
+    ])
+    expect(container.querySelector('b')).toBeNull()
   })
 })
