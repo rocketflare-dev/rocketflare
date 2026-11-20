@@ -170,6 +170,9 @@ describe('Settings → MCP', () => {
     expect(within(knowledge).getByText(/needs an approval/i)).toBeInTheDocument()
     const plugin = screen.getByRole('region', { name: 'Example feature' })
     expect(within(plugin).getByText('writes')).toBeInTheDocument()
+    // A titled tool shows its name beside the title; an untitled one shows its name once.
+    expect(within(knowledge).getByText('search_knowledge')).toBeInTheDocument()
+    expect(within(plugin).getAllByText('example_tool')).toHaveLength(1)
   })
 
   it('under Selected saves the ticked tools as one list', async () => {

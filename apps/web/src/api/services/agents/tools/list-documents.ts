@@ -114,6 +114,7 @@ export async function listKnowledgeDocuments(
 export function listDocumentsTool(ctx: AgentToolContext): Tool<ListDocumentsInput> {
   return {
     name: LIST_DOCUMENTS_TOOL,
+    mcp: { title: 'List documents' },
     description:
       "List the documents in this workspace's knowledge base, newest first, with their titles, ids and sizes. Call it when you need to know what material exists — to choose search wording, to pick a document to read in full with `get_document`, or to state honestly that a topic is not covered. Only indexed (searchable) documents are listed.",
     schema: listDocumentsInputSchema,

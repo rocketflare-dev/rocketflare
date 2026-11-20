@@ -193,6 +193,7 @@ export function searchKnowledgeTool(
   const platformSources = options.platformSources?.length ? options.platformSources : undefined
   return {
     name: SEARCH_KNOWLEDGE_TOOL,
+    mcp: { title: 'Search the knowledge base' },
     description: `Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (\`passage\` n of \`totalPassages\`, and a \`charOffset\` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with \`documentId\`, read a whole document with \`get_document\`, or see what exists with \`list_documents\`. When nothing matches, the answer lists the documents that do exist so you can re-aim.${options.facts ? ' When the query names a known entity, the answer also carries `facts` about it, each with a `state`: when two facts are `conflicting`, or passages give different values, the sources disagree — say so and give each value with its document, never pick one silently.' : ''}`,
     schema: searchKnowledgeInputSchema,
     async handler(input) {

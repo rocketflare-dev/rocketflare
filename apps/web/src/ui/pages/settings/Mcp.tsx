@@ -318,7 +318,7 @@ function ToolRow({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">{tool.title ?? tool.name}</span>
-          <code className="text-xs text-muted">{tool.name}</code>
+          {tool.title && <code className="text-xs text-muted">{tool.name}</code>}
           {tool.readOnly ? <Badge>read-only</Badge> : <Badge tone="warning">writes</Badge>}
           {a.destructiveHint && <Badge>destructive</Badge>}
           {a.idempotentHint && !tool.readOnly && <Badge>idempotent</Badge>}

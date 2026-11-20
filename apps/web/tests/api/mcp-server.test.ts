@@ -327,6 +327,13 @@ describe('exposure', () => {
       expect.arrayContaining(['search_knowledge', 'get_document', 'list_documents'])
     )
     for (const tool of tools) expect(tool.annotations?.readOnlyHint, tool.name).toBe(true)
+    // A client shows people the title, so every core tool carries one.
+    const titles = Object.fromEntries(tools.map(t => [t.name, t.title]))
+    expect(titles).toMatchObject({
+      search_knowledge: 'Search the knowledge base',
+      get_document: 'Read a document',
+      list_documents: 'List documents',
+    })
     const result = await client.callTool({ name: 'list_documents', arguments: {} })
     expect(toolJson(result)).toBeTruthy()
     await client.close()
