@@ -4,7 +4,7 @@
  * request's redirect URI is never cached; the nightly sweep drops a stale cache row nobody refers
  * to; and a `resource` that does not decode is `invalid_target`, not a server error.
  */
-import { eq, like } from 'drizzle-orm'
+import { eq, inArray, like } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import {
   CIMD_UNUSABLE,
@@ -99,21 +99,14 @@ describe('the client cache', () => {
   })
 
   it('drops a stale row nobody refers to, and keeps one a grant or a pending request names', async () => {
-    const stale = new Date(Date.now() - 31 * DAY)
+    // Every row is seeded fresh and its references made BEFORE any is backdated: other files
+    // run the same nightly sweep against the shared database, and must never see a stale row
+    // that this case means to be referenced.
     const prefix = `https://sweep-${crypto.randomUUID()}.example.com/`
-    const unreferenced = await seedOAuthClient(db, {
-      clientId: `${prefix}unreferenced.json`,
-      fetchedAt: stale,
-    })
+    const unreferenced = await seedOAuthClient(db, { clientId: `${prefix}unreferenced.json` })
     const fresh = await seedOAuthClient(db, { clientId: `${prefix}fresh.json` })
-    const granted = await seedOAuthClient(db, {
-      clientId: `${prefix}granted.json`,
-      fetchedAt: stale,
-    })
-    const pending = await seedOAuthClient(db, {
-      clientId: `${prefix}pending.json`,
-      fetchedAt: stale,
-    })
+    const granted = await seedOAuthClient(db, { clientId: `${prefix}granted.json` })
+    const pending = await seedOAuthClient(db, { clientId: `${prefix}pending.json` })
 
     const tenant = await createTestTenant(db)
     const user = await createTestUser(db)
@@ -127,9 +120,14 @@ describe('the client cache', () => {
       codeChallenge: 'x'.repeat(43),
       expiresAt: new Date(Date.now() + 10 * 60_000),
     })
+    await db
+      .update(oauthClients)
+      .set({ fetchedAt: new Date(Date.now() - 31 * DAY) })
+      .where(inArray(oauthClients.clientId, [unreferenced, granted, pending]))
 
+    // The count is not asserted: a sweep from another file may take the row first.
     const result = await runPruneMcp(db, 90)
-    expect(result.clients).toBeGreaterThanOrEqual(1)
+    expect(result.clients).toBeTypeOf('number')
     const left = await db
       .select({ clientId: oauthClients.clientId })
       .from(oauthClients)
