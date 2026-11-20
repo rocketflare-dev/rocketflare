@@ -2722,6 +2722,10 @@ function cmdExport(args, host) {
     // plugin repository is that repository's own tooling and is never copied into a host.
     const out = d.startsWith(SKILLS_ROOT) ? `skills/${d.slice(SKILLS_ROOT.length)}` : d
     for (const rel of walk(abs(d))) {
+      // `docs/plugins/<id>/upgrades/` is the HOST's copy of the plugin's release notes, written by
+      // `add` from the plugin's own `docs/upgrades/` — exporting it would plant a stale second
+      // copy in the plugin repository. Anything else under `docs/plugins/<id>/` is the plugin's.
+      if (d === `docs/plugins/${id}` && rel.split(path.sep)[0] === 'upgrades') continue
       const file = path.join(target, out, rel)
       mkdirSync(path.dirname(file), { recursive: true })
       writeFileSync(file, readFileSync(abs(`${d}/${rel}`)))
@@ -2741,7 +2745,13 @@ function cmdExport(args, host) {
     minKit: floorOf(anchor),
     // The skill directories are the HOST's half of a declared skill, derived from "skills" at
     // every install — carrying them in "paths" would be a second statement of the same thing.
-    paths: (surface.paths ?? []).filter(p => !p.startsWith(SKILLS_ROOT)),
+    // The plugin's OWN `paths` when it declared them; the host's additions (`docs/plugins/<id>/**`
+    // for the notes it copies, each skill's host directory) are re-derived at every install.
+    paths:
+      anchor.paths ??
+      (surface.paths ?? []).filter(
+        p => !p.startsWith(SKILLS_ROOT) && p !== `docs/plugins/${id}/**`
+      ),
     registries: surface.registries,
   }
   writeFileSync(path.join(target, PLUGIN_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`)
