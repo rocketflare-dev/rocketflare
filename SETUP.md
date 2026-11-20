@@ -739,6 +739,9 @@ The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships 
 4. A client must reach the app on a public https URL to sign in (`APP_URL`); locally that means a
    tunnel. Clients identify themselves with a metadata document (CIMD) — Claude and ChatGPT do;
    clients that only support dynamic registration (Cursor) cannot connect.
+   `pnpm dev:tunnel` gives a persistent public URL. Claude and Claude Code connect to it;
+   ChatGPT does not, because chatgpt.com refuses the metadata fetch from local `wrangler dev`
+   (workerd) with a 403 — a deployed Worker fetches it fine, so test ChatGPT on staging.
 
 Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
 `MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),

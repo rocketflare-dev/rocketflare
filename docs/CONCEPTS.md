@@ -2309,5 +2309,6 @@ so a public name pointing at a private address is caught by the platform's egres
 fetch guard; a call's own model spend is not attributed to it (`cost_microcents` stays null;
 embeddings for search are unmetered as everywhere else); a renamed organisation slug breaks grants
 made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the handler (bad
-arguments, an unknown tool) are not in the call log; no resources, prompts, approval tools or
-agents.
+arguments, an unknown tool) are not in the call log; ChatGPT cannot connect to local `wrangler dev`
+(chatgpt.com answers workerd's metadata fetch with 403; deployed Workers are not refused); no
+resources, prompts, approval tools or agents.
