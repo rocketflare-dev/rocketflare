@@ -16,7 +16,8 @@
  */
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { defineTool } from '@/plugins/api'
+import { groupMembers, groups, groupTypes } from '@/db/schema'
+import { defineTool, toolCtx } from '@/plugins/api'
 import {
   createTestSession,
   createTestTenant,
@@ -50,6 +51,21 @@ vi.mock('@/plugins/server', () => {
         ],
       },
       { shared: { id: 'late-plugin', label: 'Late' }, tools: () => [tool('late_read')] },
+      // Echoes who `ToolCtx` says is calling, and the flags it answers with.
+      {
+        shared: { id: 'whoami-plugin', label: 'Who am I' },
+        tools: (ctx: Parameters<typeof toolCtx>[0]) => [
+          defineTool({
+            name: 'whoami_read',
+            description: 'who is calling',
+            schema: z.object({}),
+            handler: async () => {
+              const c = toolCtx(ctx)
+              return JSON.stringify({ requester: c.requester, features: await c.features() })
+            },
+          }),
+        ],
+      },
       // Still on the deprecated name: it must keep reaching clients until the kit removes it.
       { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_read')] },
       // Names the builder refuses: a core tool's, another plugin's, one a chat model rejects.
@@ -169,5 +185,53 @@ describe('a plugin tool over MCP', () => {
     expect(byName.search_knowledge).toMatchObject({ provider: 'core' })
     expect(byName.fixture_read).toMatchObject({ provider: 'fixture-plugin' })
     expect(byName['shadow.dotted']).toBeUndefined()
+  })
+})
+
+describe('ToolCtx over MCP', () => {
+  it('carries the caller’s own role, admin flag and groups, and their resolved flags', async () => {
+    const { tenant, owner } = await setup()
+    const member = await createTestUser(db)
+    await linkUserToTenant(db, member.id, tenant.id, 'member')
+    const [type] = await db
+      .insert(groupTypes)
+      .values({ tenantId: tenant.id, name: 'Department' })
+      .returning()
+    const [finance] = await db
+      .insert(groups)
+      .values({ tenantId: tenant.id, groupTypeId: type?.id ?? '', name: 'Finance' })
+      .returning()
+    await db
+      .insert(groupMembers)
+      .values({ tenantId: tenant.id, groupId: finance?.id ?? '', userId: member.id })
+
+    const asMember = await connectMcp(db, env, { tenantId: tenant.id, userId: member.id })
+    const seen = toolJson(
+      await (await mcpClient(env, asMember.accessToken)).callTool({
+        name: 'whoami_read',
+        arguments: {},
+      })
+    ) as {
+      requester: unknown
+      features: string[]
+    }
+    expect(seen.requester).toEqual({
+      userId: member.id,
+      role: 'member',
+      isAdmin: false,
+      groups: [{ id: finance?.id, name: 'Finance', typeName: 'Department' }],
+    })
+    expect(seen.features).toContain('mcp')
+
+    const asOwner = await connectMcp(db, env, { tenantId: tenant.id, userId: owner.id })
+    const owned = toolJson(
+      await (await mcpClient(env, asOwner.accessToken)).callTool({
+        name: 'whoami_read',
+        arguments: {},
+      })
+    ) as {
+      requester: { role: string; isAdmin: boolean; groups: unknown[] }
+    }
+    expect(owned.requester).toMatchObject({ role: 'owner', isAdmin: true, groups: [] })
   })
 })

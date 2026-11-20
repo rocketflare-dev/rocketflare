@@ -1728,6 +1728,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.
+  `ToolCtx.requester` is who is calling — `{ userId, role, isAdmin, groups }`, the groups with
+  each one's TYPE name — or `null` for a run nobody started (or whose requester was since blocked
+  or removed). The caller already resolved it (chat and MCP from the request's auth context, an
+  agent run from its requester at execute time, with the same two reads as `can` and `scope`), so
+  it costs no query; it is for SCOPING, such as a semantic layer's security context, while a gate
+  stays on `can`. `ToolCtx.features()` answers the caller's own resolved flags when it has them
+  (chat, MCP) and reads the tenant's once otherwise.
   `ToolCtx.requesterUrls` is the frozen set of http(s) URLs the person wrote themselves
   (`services/agents/tools/requester-urls.ts`): in chat, their own turns in the conversation; in an
   agent run, the input when a person submitted it through `POST /api/agents/runs` or `/runs/batch`

@@ -183,7 +183,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **`tools(ctx)`** (the old name `agentTools` still works and draws a `plugin check` warning) is
   bound to the caller's `AgentToolContext` (its `AccessScope`: read what the
   REQUESTER may read, never a `tenantId` it chose). A tool that writes is offered on
-  `ToolCtx.can('manage', YOUR_SUBJECT)`, never on `scope.bypass`, which is row visibility. A tool
+  `ToolCtx.can('manage', YOUR_SUBJECT)`, never on `scope.bypass`, which is row visibility.
+  `ToolCtx.requester` (`{ userId, role, isAdmin, groups }`, null with nobody behind the run) is
+  the caller's own role and groups, already resolved — scope by it, never query for them. A tool
   that fetches a URL reads only one in `ToolCtx.requesterUrls` (what the person typed) or one its
   own search returned — never a URL the model, a page or a document supplied. Appended after the kit's three knowledge tools;
   `[]` for a tenant without it; a throw is logged and skipped. A test pinning the tool list must be

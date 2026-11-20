@@ -84,6 +84,7 @@ export type {
   ToolLoopCheckpoint,
   ToolLoopResult,
   ToolMcpOptions,
+  ToolRequester,
   ToolSurface,
 } from './ai'
 export {

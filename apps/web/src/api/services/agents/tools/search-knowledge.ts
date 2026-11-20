@@ -29,7 +29,9 @@
  */
 import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
 import type { FactHitGroup } from '@rocketflare/shared/ai/knowledge-facts'
+import type { GroupRef } from '@rocketflare/shared/groups'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
@@ -139,6 +141,19 @@ export interface SearchKnowledgeResult {
 }
 
 /** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, scope }`. */
+/**
+ * Who is behind a tool call, as the caller already knows it: the person's role in the tenant, the
+ * admin-level flag (owner, admin, support or a global admin — the same test the request context
+ * uses) and their groups with the name of each group's type. Their OWN facts, read-only; a tool
+ * uses them to scope (a semantic layer's security context), never to grant.
+ */
+export interface ToolRequester {
+  userId: string
+  role: MembershipRole | null
+  isAdmin: boolean
+  groups: readonly GroupRef[]
+}
+
 export interface AgentToolContext {
   db: Database
   cfg: AppConfig
@@ -173,6 +188,8 @@ export interface AgentToolContext {
    * `auth.features`). Absent: `buildAgentTools` reads the tenant's.
    */
   features?: readonly string[]
+  /** The person behind the call (`ToolRequester`); absent for a run nobody started. */
+  requester?: ToolRequester
 }
 
 export interface SearchKnowledgeToolOptions {

@@ -33,7 +33,7 @@ import type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-import type { AgentToolContext } from '../../api/services/agents/tools'
+import type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
 import { noRequesterUrls } from '../../api/services/agents/tools/requester-urls'
 import type {
   CallStructuredToolOptions,
@@ -66,7 +66,7 @@ export type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-export type { AgentToolContext } from '../../api/services/agents/tools'
+export type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
 export type {
   McpToolAnnotations,
   McpToolScope,
@@ -133,6 +133,22 @@ export interface ToolCtx {
    * feature costs no prompt tokens and the model never sees a tool it could only fail with.
    */
   features(): Promise<readonly string[]>
+  /**
+   * The person behind this call — their role, the admin-level flag (owner, admin, support or a
+   * global admin) and their groups with each group's TYPE name — or `null` for a run nobody
+   * started. Their own facts, already resolved by the caller; use them to SCOPE (a semantic
+   * layer's security context), and gate on `can` rather than on `role`.
+   */
+  requester: ToolRequester | null
+}
+
+/** One lazy read, shared by every call of the returned function. */
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let value: Promise<T> | undefined
+  return () => {
+    value ??= read()
+    return value
+  }
 }
 
 /** Adapt the runtime's tool context. The only place a plugin's tools name a core internal. */
@@ -147,7 +163,11 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
     ...(ctx.maxDocumentChars !== undefined && { maxDocumentChars: ctx.maxDocumentChars }),
     requesterUrls: ctx.requesterUrls ?? noRequesterUrls(),
     storage: () => filesStorage(ctx.env as PluginBindings),
-    features: () => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId),
+    // The caller's resolved flags when it has them (chat, MCP); otherwise the tenant's, read once.
+    features: ctx.features
+      ? async () => ctx.features as readonly string[]
+      : once(() => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId)),
+    requester: ctx.requester ?? null,
   }
 }
 

@@ -686,6 +686,8 @@ The server surface: the context family, and the types a plugin must be able to n
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin…
   - `features(): Promise<readonly string[]>`
     The feature keys the run's organisation has — what `ctx.features(tenantId)` answers in a job. A plugin whose tool belongs to a flagged surface returns `[]` when the flag is off,…
+  - `requester: ToolRequester \| null`
+    The person behind this call — their role, the admin-level flag (owner, admin, support or a global admin) and their groups with each group's TYPE name — or `null` for a run nobody…
 - `function toolInputSchema(schema: ZodType): JsonSchema`
   JSON Schema (draft-07, `$schema` stripped) for a tool input.
 - `interface ToolLoopCheckpoint`
@@ -693,6 +695,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ToolLoopResult`
 - `interface ToolMcpOptions`
   A tool's MCP presentation; see {@link Tool.mcp}.
+- `interface ToolRequester`
+  Who is behind a tool call, as the caller already knows it: the person's role in the tenant, the admin-level flag (owner, admin, support or a global admin — the same test the…
 - `type ToolSurface = (typeof TOOL_SURFACES)[number]`
 - `function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient`
   Wrap a client so each call emits a `chat <model>` child of `trace`. Unchanged when tracing is off.
@@ -1744,10 +1748,12 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ToolCtx.requesterUrls :: requesterUrls: ReadonlySet<string>
 @/plugins/api :: member :: ToolCtx.storage :: storage(): StorageService
 @/plugins/api :: member :: ToolCtx.features :: features(): Promise<readonly string[]>
+@/plugins/api :: member :: ToolCtx.requester :: requester: ToolRequester | null
 @/plugins/api :: function :: toolInputSchema :: function toolInputSchema(schema: ZodType): JsonSchema
 @/plugins/api :: interface :: ToolLoopCheckpoint :: interface ToolLoopCheckpoint
 @/plugins/api :: interface :: ToolLoopResult :: interface ToolLoopResult
 @/plugins/api :: interface :: ToolMcpOptions :: interface ToolMcpOptions
+@/plugins/api :: interface :: ToolRequester :: interface ToolRequester
 @/plugins/api :: type :: ToolSurface :: type ToolSurface = (typeof TOOL_SURFACES)[number]
 @/plugins/api :: function :: traceChatClient :: function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient
 @/plugins/api :: interface :: TraceHandle :: interface TraceHandle
