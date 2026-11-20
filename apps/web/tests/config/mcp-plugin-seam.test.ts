@@ -108,6 +108,25 @@ describe('plugin check — tools', () => {
     ])
     // A name no static read can resolve is left to the runtime check, not guessed.
     expect(declaredTools('defineTool({ name: built.name })')[0]?.name).toBeNull()
+    // So is a template literal that interpolates — directly or through a constant.
+    // (`$` + `{` spelled apart so these stay source text, not interpolations.)
+    const $ = '$'
+    const templated = `const PREFIX = \`x_\`\nconst N = \`${$}{PREFIX}load\`\n`
+    const interpolated = `defineTool({ name: \`${$}{PREFIX}${$}{name}\` })`
+    expect(declaredTools(interpolated)[0]?.name).toBeNull()
+    expect(
+      declaredTools(`${templated}defineTool({ name: N })`, stringConstants(templated))[0]?.name
+    ).toBeNull()
+    expect(stringConstants(templated).get('PREFIX')).toBe('x_')
+    expect(
+      toolProblems([
+        {
+          pluginId: 'x',
+          file: 'f.ts',
+          tools: declaredTools(interpolated),
+        },
+      ])
+    ).toEqual([])
   })
 
   it('fails a bad or colliding name and warns on the kit’s name in tool text', () => {

@@ -2652,6 +2652,8 @@ export function stringConstants(source) {
   for (const m of stripComments(source).matchAll(
     /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*(['"`])([^'"`\n]*)\2/g
   )) {
+    // `const X = \`a${b}\`` is not a constant this read can know.
+    if (m[2] === '`' && m[3].includes('${')) continue
     out.set(m[1], m[3])
   }
   return out
@@ -2697,7 +2699,14 @@ export function declaredTools(source, constants = new Map()) {
     const body = callBody(text, m.index + m[0].length - 1)
     if (body === null) continue
     const nameMatch = /(?:^|[,{\s])name\s*:\s*(?:(['"`])([^'"`]*)\1|([A-Za-z_$][\w$]*))/.exec(body)
-    const name = nameMatch ? (nameMatch[2] ?? constants.get(nameMatch[3]) ?? null) : null
+    // A template literal with a `${}` cannot be read statically: left to the runtime check.
+    const literal = nameMatch?.[2]
+    const interpolated = nameMatch?.[1] === '`' && literal?.includes('${')
+    const name = nameMatch
+      ? interpolated
+        ? null
+        : (literal ?? constants.get(nameMatch[3]) ?? null)
+      : null
     const text_ = key => {
       const k = new RegExp(`(?:^|[,{\\s])${key}\\s*:`).exec(body)
       return k ? concatenatedLiterals(body.slice(k.index + k[0].length)) : null
