@@ -69,6 +69,8 @@ export type {
   AgentSummary,
   Decision,
   FusedItem,
+  McpToolAnnotations,
+  McpToolScope,
   PickOptions,
   PickResult,
   PluginAgent,
@@ -81,6 +83,8 @@ export type {
   ToolCtx,
   ToolLoopCheckpoint,
   ToolLoopResult,
+  ToolMcpOptions,
+  ToolSurface,
 } from './ai'
 export {
   AiNotConfiguredError,

@@ -51,7 +51,7 @@ import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
 import { accessScopeOf } from '../access'
-import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
+import { CHAT_GET_DOCUMENT_MAX_CHARS, toolsFor } from '../agents/tools'
 import { requesterUrlsFromTexts } from '../agents/tools/requester-urls'
 import { enqueueJob } from '../jobs'
 import { resolvePrompt } from '../prompts'
@@ -396,7 +396,7 @@ export async function prepareChatTurn(
     // interactive reply shares the Worker's CPU and subrequest budget, so it gets the lower cap.
     buildTools: cfg.CHAT_KNOWLEDGE_TOOLS
       ? sdb =>
-          buildAgentTools({
+          toolsFor('chat', {
             db: sdb,
             cfg,
             env: c.env,

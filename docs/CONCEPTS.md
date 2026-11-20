@@ -647,8 +647,15 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   supplies only the new message, and client `tools[]` are refused.
 - **Chat**: owned by `userId`; `chat-turn.ts` is the one implementation behind `/api/chat` and
   `/api/agui`. Everything that can fail as JSON runs before the stream opens, and stream writes use
-  `streamDatabase(c)`. A cancelled run emits no terminal event. Chat can call the three knowledge
-  tools (`CHAT_KNOWLEDGE_TOOLS`), capped at 6 turns. **Long threads are compacted**: a
+  `streamDatabase(c)`. A cancelled run emits no terminal event. Chat can call the knowledge
+  tools (`CHAT_KNOWLEDGE_TOOLS`), capped at 6 turns. **One tool list, filtered per surface**:
+  `buildAgentTools(ctx)` builds every tool (the knowledge tools, then each plugin's `tools`), and
+  chat, agent runs and the MCP server each ask `toolsFor('chat' | 'agents' | 'mcp', ctx)`
+  (`services/agents/tools/surfaces.ts`). A tool names its surfaces (`Tool.surfaces`, absent =
+  all); on `mcp` a terminal tool or one with an approval gate is never offered, and
+  `mcpToolProfile(tool)` derives the scope a call needs (`mcp:read`, or `mcp:write` for
+  `sideEffects`) and the annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint` from
+  `sideEffects` and `durable`, `openWorldHint` false), each overridable in `Tool.mcp`. **Long threads are compacted**: a
   character-budget window (`CHAT_HISTORY_MAX_CHARS`), with the dropped prefix folded into
   `conversations.summary` by the `chat.compact` job (compare-and-set). Document cards come from
   `kit.document` events produced by a pure mapper, so nothing about a card is stored. The admin
@@ -1691,10 +1698,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI
   (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
   compiles and passes the tests and only breaks at the next upgrade, where the check stops it first.
-- **Agent tools**: `agentTools(ctx)` may be async and may return `[]`. That is how a tool reaches
+- **Tools**: `tools(ctx)` (renamed from `agentTools`, which is still read when `tools` is absent
+  and draws a `pnpm plugin check` warning) may be async and may return `[]`. That is how a tool reaches
   only the tenants that turned it on: the plugin reads its own settings row for `ctx.scope.tenantId`,
   or its flag through `ToolCtx.features()` (`example-feature` does — a dark feature then costs no
   prompt tokens). A builder that throws is logged and skipped. `buildAgentTools` is therefore async.
+  Each tool picks where it is offered with `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all)
+  and shapes how an MCP client sees it with `mcp: { title?, annotations?, outputSchema?, scope? }`
+  (§9 "Chat": the defaults come from `sideEffects`). A terminal tool or one with an approval gate is
+  never offered on `mcp`.
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.

@@ -81,7 +81,7 @@ than restating it here, so there is one source of truth. **Its table has two col
 and "The plugin slot", one row per layer — read the row for the answer from step 0 and quote that
 column.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
 `config` / `realtimeRoots` / `agentKeys`, `ServerPlugin.mounts` / `jobHandlers` / `agents` /
-`agentTools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
+`tools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
 `visibilityResources` / `hooks` / `knowledgeEntityTypes`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
 `agentForms`, and `CliPlugin.register` — each reached through one of the four published entry files
 (`apps/web/src/plugins/<id>/index.ts`, `.../ui/index.ts`,

@@ -25,7 +25,7 @@ import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { ConversationRow, MessageRow } from '../../../db/schema'
 import { fullAccessScope } from '../access'
-import { buildAgentTools } from '../agents/tools'
+import { toolsFor } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
 import { toToolDefinition } from './agent-loop'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
@@ -129,7 +129,7 @@ export async function buildConversationStats(
   // Only their SCHEMAS are measured here, so a full-access scope is right: the panel reports what
   // the next turn will send, and the tool definitions do not vary by reader.
   const tools = cfg.CHAT_KNOWLEDGE_TOOLS
-    ? await buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId), can: () => true })
+    ? await toolsFor('chat', { db, cfg, env, scope: fullAccessScope(tenantId), can: () => true })
     : []
   const knowledgeTools = tools.map(t => t.name)
   const toolSchemaChars = tools.reduce(

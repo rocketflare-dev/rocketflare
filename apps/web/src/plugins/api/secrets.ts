@@ -9,7 +9,7 @@
  * - **Never return it.** A route answers `hasCredential: row.keyEnc !== null`, and the browser
  *   learns nothing more; to change a key the reader supplies a new one.
  * - **Open it at the last moment**, where the outbound call is made — a tool's handler, not the
- *   `agentTools` builder that runs on every turn whether or not the tool is called.
+ *   `tools` builder that runs on every turn whether or not the tool is called.
  *
  * No `OAUTH_ENCRYPTION_KEY` → 503 `encryption_key_missing`, on both sides. There is no plaintext
  * fallback, deliberately.

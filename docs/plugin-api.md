@@ -324,6 +324,10 @@ The server surface: the context family, and the types a plugin must be able to n
 - `async function listBindableAgents(event: EventName \| string): Promise<BindableAgent[]>`
   The agents that opt in (`bindable`) to being started by `event` — what an editor's agent picker lists. The same list for every tenant: agents are code. A browser reads it through…
 - `type Logger = pino.Logger`
+- `interface McpToolAnnotations`
+  MCP's tool annotations — hints a client shows its person; never a security boundary.
+- `type McpToolScope = 'mcp:read' \| 'mcp:write'`
+  The OAuth scope an MCP call needs: `mcp:read` for a read, `mcp:write` for a side effect.
 - `async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>`
   Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing something a signed state started — an OAuth connection, a consent — where the state…
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
@@ -557,8 +561,10 @@ The server surface: the context family, and the types a plugin must be able to n
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
+  - `tools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added beside the built-in knowledge tools, on every surface each tool names (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`). Bound…
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
-    Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+    DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is absent, and `pnpm plugin check` warns on it. A later kit release removes it.
   - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
     PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `knowledgeEntityTypes?: readonly EntityTypeRegistration[]`
@@ -663,7 +669,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function toolCtx(ctx: AgentToolContext): ToolCtx`
   Adapt the runtime's tool context. The only place a plugin's tools name a core internal.
 - `interface ToolCtx`
-  What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the runtime's internal shape.
+  What `ServerPlugin.tools(ctx)` is handed, spelled as the plugin surface rather than as the runtime's internal shape.
   - `db: Database`
   - `config: PluginConfig`
   - `env: PluginBindings`
@@ -685,6 +691,9 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ToolLoopCheckpoint`
   Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric: what {@link RunToolLoopOptions.onCheckpoint} hands you is exactly what {@link…
 - `interface ToolLoopResult`
+- `interface ToolMcpOptions`
+  A tool's MCP presentation; see {@link Tool.mcp}.
+- `type ToolSurface = (typeof TOOL_SURFACES)[number]`
 - `function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient`
   Wrap a client so each call emits a `chat <model>` child of `trace`. Unchanged when tracing is off.
 - `interface TraceHandle`
@@ -983,8 +992,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
+  - `tools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added beside the built-in knowledge tools, on every surface each tool names (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`). Bound…
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
-    Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more.…
+    DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is absent, and `pnpm plugin check` warns on it. A later kit release removes it.
   - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
     PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
   - `knowledgeEntityTypes?: readonly EntityTypeRegistration[]`
@@ -1318,7 +1329,7 @@ Builders for the context family, for tests that never touch data.
 - `function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx`
   A `RequestCtx` with no request behind it.
 - `function makeToolCtx(options: ToolCtxOptions): ToolCtx`
-  What `ServerPlugin.agentTools(ctx)` is handed, through the kit's own `toolCtx` adapter.
+  What `ServerPlugin.tools(ctx)` is handed, through the kit's own `toolCtx` adapter.
 - `function makeWorkflowCtx(options: WorkflowCtxOptions): FakeWorkflowCtx`
   A `WorkflowCtx` over a recording step.
 - `interface RecordedAgentRun`
@@ -1498,6 +1509,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: listAgents :: async function listAgents(): Promise<readonly AgentSummary[]>
 @/plugins/api :: function :: listBindableAgents :: async function listBindableAgents(event: EventName | string): Promise<BindableAgent[]>
 @/plugins/api :: type :: Logger :: type Logger = pino.Logger
+@/plugins/api :: interface :: McpToolAnnotations :: interface McpToolAnnotations
+@/plugins/api :: type :: McpToolScope :: type McpToolScope = 'mcp:read' | 'mcp:write'
 @/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
 @/plugins/api :: const :: noopTracer :: const noopTracer: Tracer
@@ -1639,6 +1652,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/api :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
+@/plugins/api :: member :: ServerPlugin.tools :: tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/api :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/api :: member :: ServerPlugin.knowledgeEntityTypes :: knowledgeEntityTypes?: readonly EntityTypeRegistration[]
@@ -1718,6 +1732,8 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: toolInputSchema :: function toolInputSchema(schema: ZodType): JsonSchema
 @/plugins/api :: interface :: ToolLoopCheckpoint :: interface ToolLoopCheckpoint
 @/plugins/api :: interface :: ToolLoopResult :: interface ToolLoopResult
+@/plugins/api :: interface :: ToolMcpOptions :: interface ToolMcpOptions
+@/plugins/api :: type :: ToolSurface :: type ToolSurface = (typeof TOOL_SURFACES)[number]
 @/plugins/api :: function :: traceChatClient :: function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient
 @/plugins/api :: interface :: TraceHandle :: interface TraceHandle
 @/plugins/api :: interface :: Tracer :: interface Tracer
@@ -1884,6 +1900,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/types :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
+@/plugins/types :: member :: ServerPlugin.tools :: tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/types :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
 @/plugins/types :: member :: ServerPlugin.knowledgeEntityTypes :: knowledgeEntityTypes?: readonly EntityTypeRegistration[]

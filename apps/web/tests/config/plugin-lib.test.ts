@@ -47,6 +47,7 @@ import {
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
+  deprecatedServerMembers,
   describeClash,
   eventClashes,
   hasBarrelLine,
@@ -1323,6 +1324,16 @@ describe('the audit', () => {
     expect(
       declaresProperty("const u = 'https://x.test'\nonTenantDeleted: 1", 'onTenantDeleted')
     ).toBe(true)
+  })
+
+  it('names a deprecated ServerPlugin member a plugin declares, with its replacement', () => {
+    const names = (src: string) => deprecatedServerMembers(src).map(m => m.replacement)
+    expect(names('export const server = { agentTools: ctx => [] }')).toEqual(['tools'])
+    expect(names('const p = { agentTools(ctx) { return [] } }')).toEqual(['tools'])
+    // The new name, a comment, and a CALL through the old name are none of them declarations.
+    expect(names('export const server = { tools: ctx => [] }')).toEqual([])
+    expect(names('// agentTools: was the old name')).toEqual([])
+    expect(names('await plugin.agentTools(ctx)')).toEqual([])
   })
 
   /**

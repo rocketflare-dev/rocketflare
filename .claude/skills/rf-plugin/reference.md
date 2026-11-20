@@ -264,7 +264,11 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
 `requires.pluginApi` are gone with it, because nothing left is a rule a RELEASED plugin cannot
 retroactively satisfy: `uses` is a measurement of the plugin's own code, which anybody holding it
 can re-derive with `pnpm plugin export`. `warn:` and `note:` survive for findings that are not
-faults in a plugin at all — a plugin declaring no `minKit`, or a vendored one.
+faults in a plugin at all — a plugin declaring no `minKit`, or a vendored one — and for a
+**deprecated member the kit still reads**: `agentTools` warns with its replacement (`tools:`, same
+signature; each tool then picks `surfaces` and an optional `mcp` block — see
+`apps/web/src/plugins/CLAUDE.md`). A later kit release removes the old name with a porting-note
+step, and only then does it fail.
 
 `pnpm plugin check --json` prints the same audit as data: `{ ok, plugins, failures, warnings,
 notes }`. `failures` and `warnings` are separate lists so `ok` keeps meaning "this exits 0", and

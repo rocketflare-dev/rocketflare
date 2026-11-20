@@ -103,7 +103,7 @@ import { attemptKeys, effectKey } from './keys'
 import type { AgentContext, AgentEvent, AgentInterruptAnswer, AnyAgentDefinition } from './registry'
 import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
-import { buildAgentTools } from './tools'
+import { toolsFor } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
 import { groupRunTurns, type LoopRows } from './turns'
 
@@ -379,7 +379,7 @@ async function replayInside(
   // up (`ctx.tools.find(...)`), and only the handlers become misses.
   const scope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
   const can = await requesterCan(db, cfg, tenantId, run.requestedByUserId)
-  const builtTools = await buildAgentTools({
+  const builtTools = await toolsFor('agents', {
     db,
     cfg,
     env,

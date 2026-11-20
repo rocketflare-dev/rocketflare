@@ -413,6 +413,13 @@ export function isolationEvidence(source: string): IsolationEvidence
  * stripped first — a doc comment saying a hook is absent otherwise satisfies a substring search.
  */
 export function declaresProperty(source: string, name: string): boolean
+export interface DeprecatedServerMember {
+  name: string
+  replacement: string
+  fix: string
+}
+export const DEPRECATED_SERVER_MEMBERS: readonly DeprecatedServerMember[]
+export function deprecatedServerMembers(source: string): DeprecatedServerMember[]
 
 export function resolveSubdir(input: {
   flag?: string | null

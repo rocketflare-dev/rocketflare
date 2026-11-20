@@ -180,13 +180,17 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   retry). A job whose payload carries a `tenantId` is acked unrun while that tenant is not
   `active` (suspended or deleted), so work that must happen on suspension belongs in
   `onTenantStatusChanged`, not in a job (`src/api/queues/CLAUDE.md`).
-- **`agentTools(ctx)`** is bound to the run's `AgentToolContext` (its `AccessScope`: read what the
+- **`tools(ctx)`** (the old name `agentTools` still works and draws a `plugin check` warning) is
+  bound to the caller's `AgentToolContext` (its `AccessScope`: read what the
   REQUESTER may read, never a `tenantId` it chose). A tool that writes is offered on
   `ToolCtx.can('manage', YOUR_SUBJECT)`, never on `scope.bypass`, which is row visibility. A tool
   that fetches a URL reads only one in `ToolCtx.requesterUrls` (what the person typed) or one its
   own search returned — never a URL the model, a page or a document supplied. Appended after the kit's three knowledge tools;
   `[]` for a tenant without it; a throw is logged and skipped. A test pinning the tool list must be
-  a prefix assertion.
+  a prefix assertion. Each tool says where it is offered — `surfaces: ['chat' | 'agents' | 'mcp']`,
+  absent = all, filtered by `toolsFor(surface, ctx)` — and how an MCP client sees it in `mcp: {
+  title?, annotations?, outputSchema?, scope? }` (defaults from `sideEffects`: `mcp:read` and
+  read-only, or `mcp:write` and destructive). Terminal and approval-gated tools never reach `mcp`.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied
   after the kit's matrix; never `cannot` — that would change what every role may do.
 - **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seedDemo` are post-commit, idempotent,

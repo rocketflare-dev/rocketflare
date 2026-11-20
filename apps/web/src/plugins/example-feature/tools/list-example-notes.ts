@@ -38,7 +38,7 @@ export const listExampleNotesInputSchema = z.object({
 export type ListExampleNotesInput = z.infer<typeof listExampleNotesInputSchema>
 
 /**
- * What `agentTools` contributes: the tool while the organisation has the flag, nothing otherwise.
+ * What `tools` contributes: the tool while the organisation has the flag, nothing otherwise.
  * The flag gates the mount and the nav; without this it would not gate the prompt, and every chat
  * turn and agent run of a deployment that never turned the feature on would carry the tool.
  */

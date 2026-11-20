@@ -47,8 +47,8 @@ vi.mock('@/api/services/agents/tools', async importOriginal => {
   ]
   return {
     ...actual,
-    buildAgentTools: async (ctx: Parameters<typeof actual.buildAgentTools>[0]) => [
-      ...(await actual.buildAgentTools(ctx)),
+    toolsFor: async (...args: Parameters<typeof actual.toolsFor>) => [
+      ...(await actual.toolsFor(...args)),
       ...(extra as Tool[]),
     ],
   }

@@ -145,6 +145,47 @@ export interface Tool<Input = unknown> {
   allowEdits?: boolean
   /** What a rejection does. Defaults to `INTERRUPT_REJECTION.approval` (`cancel_run`). */
   onReject?: 'cancel_run' | 'tell_model'
+  /**
+   * Where the tool is offered: `chat` (the chat panel), `agents` (every agent run's `ctx.tools`)
+   * and `mcp` (the app's MCP server). Absent = all three. `toolsFor(surface, ctx)` is the one
+   * filter; a tool that should reach an MCP client but never spend chat's prompt tokens says
+   * `['mcp', 'agents']`.
+   */
+  surfaces?: readonly ToolSurface[]
+  /**
+   * How the tool reads to an MCP client. Everything is optional and defaults from the tool
+   * itself (`mcpToolProfile`): the scope and annotations from {@link Tool.sideEffects}. A tool
+   * with no handler, or with an approval gate, is never offered on `mcp` whatever this says — an
+   * MCP client has no way to ask a person.
+   */
+  mcp?: ToolMcpOptions
+}
+
+/** The surfaces a tool can be offered on. */
+export const TOOL_SURFACES = ['chat', 'agents', 'mcp'] as const
+export type ToolSurface = (typeof TOOL_SURFACES)[number]
+
+/** The OAuth scope an MCP call needs: `mcp:read` for a read, `mcp:write` for a side effect. */
+export type McpToolScope = 'mcp:read' | 'mcp:write'
+
+/** MCP's tool annotations — hints a client shows its person; never a security boundary. */
+export interface McpToolAnnotations {
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
+  idempotentHint?: boolean
+  openWorldHint?: boolean
+}
+
+/** A tool's MCP presentation; see {@link Tool.mcp}. */
+export interface ToolMcpOptions {
+  /** A human title for the client's tool list. Absent: the client shows the name. */
+  title?: string
+  /** Merged over the defaults derived from `sideEffects`. */
+  annotations?: McpToolAnnotations
+  /** The shape of the JSON the handler answers, when it is stable enough to promise. */
+  outputSchema?: ZodType<unknown>
+  /** Overrides the scope derived from `sideEffects`. */
+  scope?: McpToolScope
 }
 
 /** What a handler is told about the call it is answering. */

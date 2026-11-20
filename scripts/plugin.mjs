@@ -79,6 +79,7 @@ import {
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
+  deprecatedServerMembers,
   describeClash,
   describeClaudeHook,
   eventClashes,
@@ -2422,6 +2423,25 @@ function cmdCheck(args, host) {
             'the instances of a namespace, so only derived keys are reachable',
         })
       }
+    }
+
+    // A member the kit renamed still works — the host reads the old name when the new one is
+    // absent — so this is a warning, never a failure: a released plugin keeps passing until the
+    // kit release that removes the old name, whose porting note says so.
+    const serverTree = `apps/web/src/plugins/${id}`
+    if (existsSync(abs(serverTree))) {
+      const seen = new Map()
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const m of deprecatedServerMembers(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          if (!seen.has(m.name)) seen.set(m.name, { ...m, file: `${serverTree}/${f}` })
+      }
+      for (const m of seen.values())
+        add('warn', `${id}:deprecated:${m.name}`, {
+          file: m.file,
+          problem: `declares \`${m.name}\`, which the kit renamed \`${m.replacement}\``,
+          fix: m.fix,
+        })
     }
 
     // Two separate things a plugin with tables owes, and neither is visible from the other side.

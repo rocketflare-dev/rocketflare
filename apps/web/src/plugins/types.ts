@@ -228,11 +228,19 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Prompt registry entries, one per key in `shared.promptKeys`. */
   prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
   /**
-   * Tools added to every agent run, beside the three built-in knowledge tools. Bound to the run's
-   * access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May be
-   * async, and may return `[]` — that is how a tool is offered only to the tenants that turned it
-   * on (read the plugin's own settings row for `ctx.scope.tenantId`). A builder that throws is
-   * logged and skipped, never fatal to the run.
+   * Tools added beside the built-in knowledge tools, on every surface each tool names
+   * (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`).
+   * Bound to the caller's access scope, so a plugin tool reads what its REQUESTER may read and
+   * nothing more. May be async, and may return `[]` — that is how a tool is offered only to the
+   * tenants that turned it on (read the plugin's own settings row for `ctx.scope.tenantId`). A
+   * builder that throws is logged and skipped, never fatal to the run.
+   */
+  tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+  /**
+   * DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is
+   * absent, and `pnpm plugin check` warns on it. A later kit release removes it.
+   *
+   * @deprecated Use `tools`.
    */
   agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
   /**

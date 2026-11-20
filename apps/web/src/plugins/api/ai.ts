@@ -68,10 +68,14 @@ export type {
 } from '../../api/services/agents/registry'
 export type { AgentToolContext } from '../../api/services/agents/tools'
 export type {
+  McpToolAnnotations,
+  McpToolScope,
   Tool,
   ToolApproval,
   ToolLoopCheckpoint,
   ToolLoopResult,
+  ToolMcpOptions,
+  ToolSurface,
 } from '../../api/services/ai/agent-loop'
 /**
  * The retrieval primitives, for a plugin that searches a corpus of its own the way the kit
@@ -86,7 +90,7 @@ export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/service
 export { AiNotConfiguredError, recordUsage, toolInputSchema }
 
 /**
- * What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the
+ * What `ServerPlugin.tools(ctx)` is handed, spelled as the plugin surface rather than as the
  * runtime's internal shape.
  *
  * `scope` and not `tenantId`: the scope carries the tenant AND what this particular requester may
@@ -154,6 +158,11 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
  *
  * A tool with **no handler is TERMINAL**: its validated input is the agent's answer, and the loop
  * stops when the model calls it.
+ *
+ * **Where it is offered**: `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all). On the MCP
+ * server a tool needs a handler and no approval gate, and `mcp` shapes how a client sees it:
+ * `scope` (`mcp:read`, or `mcp:write` for a `sideEffects` tool), `annotations` (defaulted from
+ * `sideEffects`/`durable`), `title`, `outputSchema`. Whether a tenant exposes it is the tenant's.
  */
 export function defineTool<Input>(tool: Tool<Input>): Tool<Input> {
   return tool

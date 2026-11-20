@@ -2565,6 +2565,33 @@ export function declaresProperty(source, name) {
 }
 
 /**
+ * `ServerPlugin` members a plugin should stop declaring, each with the member that replaced it.
+ * The kit still reads every one of them, so `pnpm plugin check` WARNS rather than fails; a later
+ * kit release removes the old name with a porting-note step.
+ */
+export const DEPRECATED_SERVER_MEMBERS = [
+  {
+    name: 'agentTools',
+    replacement: 'tools',
+    fix:
+      'rename `agentTools:` to `tools:` in the ServerPlugin — same signature; a tool picks its ' +
+      "surfaces with `surfaces: ['chat' | 'agents' | 'mcp']` (absent = all)",
+  },
+]
+
+/**
+ * The deprecated members a source declares as a property or method (`agentTools: …`,
+ * `agentTools(ctx) {…}`) — never a mention in a comment, and never a property ACCESS
+ * (`plugin.agentTools(ctx)`), which is a caller rather than a declaration.
+ */
+export function deprecatedServerMembers(source) {
+  const text = stripComments(source)
+  return DEPRECATED_SERVER_MEMBERS.filter(m =>
+    new RegExp(`(?<![.\\w$])${escapeRe(m.name)}\\s*[:(]`).test(text)
+  )
+}
+
+/**
  * Where an install's `subdir` comes from, in precedence order: the flag somebody typed, then the
  * manifest, then where the source was opened.
  *

@@ -358,7 +358,7 @@ describe('the public ping link', () => {
   })
 })
 
-describe('agentTools', () => {
+describe('tools', () => {
   it('offers the tool only to an organisation with the flag', async () => {
     const dark = await createTestTenant(db)
     const names = async (tenant: string) =>

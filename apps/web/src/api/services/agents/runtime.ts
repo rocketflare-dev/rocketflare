@@ -90,7 +90,7 @@ import {
   runOnce,
   saveCheckpoint,
 } from './runs'
-import { buildAgentTools } from './tools'
+import { toolsFor } from './tools'
 import { requesterUrlsForRun } from './tools/requester-urls'
 import { createTurnJournal } from './turns'
 import { checkRunVersion } from './versions'
@@ -406,7 +406,7 @@ export async function executeRun(
           // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: await buildAgentTools({
+          tools: await toolsFor('agents', {
             db,
             cfg,
             env,
