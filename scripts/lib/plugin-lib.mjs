@@ -2717,6 +2717,13 @@ export function declaredTools(source, constants = new Map()) {
 }
 
 /**
+ * The kit's own name in a plugin tool's title or description. Built from parts so the rename
+ * leaves it alone: in a copy too, a plugin's tool text must not carry the kit's name (a client
+ * shows it under the deployment's own name).
+ */
+const KIT_NAME_IN_TEXT = new RegExp(['rocket', 'flare'].join(''), 'i')
+
+/**
  * What is wrong with the tools every installed plugin declares, across all of them at once:
  * a name outside {@link TOOL_NAME_RE} or one of {@link CORE_TOOL_NAMES} or another plugin's
  * (`fail`), and the product's own name in a title or description (`warn` — a client shows that
@@ -2755,7 +2762,7 @@ export function toolProblems(declarations) {
         ['title', t.title],
         ['description', t.description],
       ]) {
-        if (value && /rocketflare/i.test(value)) {
+        if (value && KIT_NAME_IN_TEXT.test(value)) {
           out.push({
             severity: 'warn',
             pluginId,

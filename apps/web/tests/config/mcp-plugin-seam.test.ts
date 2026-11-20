@@ -129,6 +129,9 @@ describe('plugin check — tools', () => {
     ).toEqual([])
   })
 
+  // The kit's name built from parts, as the check builds it: the rename leaves both alone.
+  const KIT_NAME = ['Rocket', 'flare'].join('')
+
   it('fails a bad or colliding name and warns on the kit’s name in tool text', () => {
     const problems = toolProblems([
       {
@@ -138,7 +141,11 @@ describe('plugin check — tools', () => {
           { name: 'gamma_notes', title: null, description: null },
           { name: 'get_document', title: null, description: null },
           { name: 'gamma.dots', title: null, description: null },
-          { name: 'gamma_brand', title: 'Rocketflare helper', description: 'about ROCKETFLARE' },
+          {
+            name: 'gamma_brand',
+            title: `${KIT_NAME} helper`,
+            description: `about ${KIT_NAME.toUpperCase()}`,
+          },
         ],
       },
       {
