@@ -2220,6 +2220,16 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   instructions, the notice, every error. `mcp-server.test.ts` sets `APP_NAME="Acme Tools"` and bans
   `/rocketflare/i` from every response.
 
+- **Settings → MCP** (`ui/pages/settings/Mcp.tsx`, the tab guarded by the `mcp` flag AND
+  `manage McpSettings`): the switch; the server URL to paste — the organisation's
+  `/mcp/t/<slug>` under multi-tenancy, `/mcp` under single — with setup snippets for Claude
+  (claude.ai/Desktop connector, `claude mcp add --transport http <name> <url>`, the name slugified
+  from `APP_NAME`) and ChatGPT; who can connect (everyone, admins, chosen groups); exposure (All
+  read-only, Enable all after a confirmation, Selected with ticks); and the tools grouped Knowledge
+  first then per plugin, each with its read-only/writes badge, annotations and 30-day call count,
+  approval-gated and terminal tools greyed with the reason. The switch and the modes save at once;
+  the group and tool ticks save as one list.
+
 **Known gaps:** the OAuth authorization server (metadata documents, authorize, consent, token,
 refresh, revoke, CIMD) and the connected-clients lists are not built yet, so no client can obtain a
 token outside tests; a call's own model spend is not attributed to it (`cost_microcents` stays

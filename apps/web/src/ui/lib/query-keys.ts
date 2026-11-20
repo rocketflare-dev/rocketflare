@@ -73,6 +73,12 @@ const CORE_QUERY_KEYS = {
     all: ['activity'] as const,
     list: (filters: object = {}) => ['activity', 'list', filters] as const,
   },
+  /** `/api/mcp/*` — the organisation's MCP server settings, its tool list and call log */
+  mcp: {
+    all: ['mcp'] as const,
+    settings: ['mcp', 'settings'] as const,
+    tools: ['mcp', 'tools'] as const,
+  },
   /** `/api/ai/*` — providers, readiness, prompt registry and usage */
   ai: {
     all: ['ai'] as const,

@@ -18,6 +18,7 @@ import AiSettings from './AI'
 import ApiKeys from './ApiKeys'
 import General from './General'
 import GroupsSettings from './Groups'
+import McpSettings from './Mcp'
 import People from './People'
 import PromptsSettings from './Prompts'
 import { CORE_SETTINGS_TABS, type CoreSettingsTabId } from './tabs'
@@ -32,6 +33,7 @@ const CONTENT: Record<CoreSettingsTabId, () => ReactElement> = {
   prompts: () => <PromptsSettings />,
   'agent-models': () => <AgentModelsSettings />,
   usage: () => <UsageSettings />,
+  mcp: () => <McpSettings />,
 }
 
 export default function SettingsLayout() {

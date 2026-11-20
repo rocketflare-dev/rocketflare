@@ -1,9 +1,9 @@
 # Settings UI (`/settings`)
 
 One page, `SettingsLayout` with `URLTabs`
-(`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage`), behind
+(`?tab=general|people|groups|api-keys|ai|prompts|agent-models|usage|mcp`), behind
 `RequireGuard guard="admin"`. `groups` renders only for `manage Group`, `agent-models` and
-`usage` only for `manage AiConfig` — a tab you cannot save from is worse than no tab. `ai` and
+`usage` only for `manage AiConfig`, `mcp` only with the `mcp` flag AND `manage McpSettings` — a tab you cannot save from is worse than no tab. `ai` and
 `prompts` degrade to read-only inside; owner-only content (slug, delete org) gates inside its tab.
 Installed plugins append tabs LAST via `settingsTabs(ctx)`.
 
@@ -45,8 +45,18 @@ Installed plugins append tabs LAST via `settingsTabs(ctx)`.
   `['auth'] ['documents'] ['groups']` plus every installed plugin's `realtimeRoots`. No hook here
   touches the socket.
 
+## MCP (`Mcp.tsx`, `hooks/useMcp.ts`)
+
+- The server decides what is exposed (`exposed` on each `/api/mcp/tools` row); the page never
+  re-derives it. The switch and the two radio groups PUT at once; the chosen groups and the
+  selected tools keep a draft and PUT the whole list on Save. "Enable all" confirms first.
+- The URL shown is `organisationServerUrl` (`/mcp/t/<slug>`) under multi-tenancy — claude.ai keeps
+  one connector per URL — and `serverUrl` under single. Every name comes from `serverName`
+  (`APP_NAME`); `mcp-settings.test.tsx` bans `/rocketflare/i` from the rendered page.
+- Copy shows "Copied" on the button, never a toast (toasts are for errors).
+
 ## Tests
 
-`tests/ui/`: `ai-settings`, `prompts-settings`, `agent-models-settings`, `usage-settings`, `people`,
+`tests/ui/`: `ai-settings`, `prompts-settings`, `agent-models-settings`, `usage-settings`, `mcp-settings`, `people`,
 `api-keys`, `groups` (list/create flows, the 409 confirm, the `AccessPicker` empty-selection
 warning).
