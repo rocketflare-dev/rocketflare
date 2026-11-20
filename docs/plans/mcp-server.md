@@ -1,7 +1,7 @@
 # MCP server in core
 
-Status: **grilled and agreed** (2026-11-20). Issue #165. The phase 0 spike settles the few items
-marked *spike*; everything else is decided. This is the build plan; the CONCEPTS section, SETUP,
+Status: **grilled and agreed** (2026-11-20); the spike has settled the items it owned (marked
+**Spike result**). Issue #165. This is the build plan; the CONCEPTS section, SETUP,
 DEPLOY and the threat model describe the shipped behaviour once it lands.
 
 ## Goal
@@ -40,14 +40,14 @@ The last four are deliberate. See the decisions and "Later".
   - Callback: `https://claude.ai/api/mcp/auth_callback`. Claude Code uses a loopback redirect on any port.
   - Claude wants refresh rotation, `invalid_grant` on an expired token, and a 10 s budget for every endpoint.
   - ChatGPT prefers CIMD and requires S256 and `resource`.
-  - Cursor (CIMD unknown) and VS Code (partial) are not v1 clients unless the spike shows CIMD works.
+  - Cursor (DCR only, no CIMD) and VS Code (partial CIMD, untested) are not v1 clients.
 
 ## Decisions
 
 | # | Decision |
 |---|---|
 | D1 | **The app is its own OAuth 2.1 authorization server, in Postgres**, not `@cloudflare/workers-oauth-provider` (KV only). Revocation is immediate and transactional, admins can list connections, grants are tenant-isolated, and Rocketpod shares the code |
-| D2 | **A connection is one person in one organisation.** The organisation is chosen on the consent screen. There is one `/mcp` URL, and the grant is bound to (user, tenant, client). *Spike*: can a client hold two connections to one URL? If not, add an alias, `/mcp/t/<slug>` |
+| D2 | **A connection is one person in one organisation.** The organisation is chosen on the consent screen. There is one `/mcp` URL, and the grant is bound to (user, tenant, client). **Spike result:** claude.ai refuses a second connector with the same URL, so the alias `/mcp/t/<slug>` is required. The alias fixes the tenant, and a token's `resource` must equal the URL it is presented on |
 | D3 | **Who may connect**: any member, acting with their own permissions, once an admin turns MCP on. The tenant setting "who can connect" is everyone (default), admins, or chosen groups. **Support users are refused at consent** |
 | D4 | **Scopes**: `mcp:read` (read-only tools) and `mcp:write` (side effects). The baseline challenge is `mcp:read`; a write tool returns 403 `insufficient_scope` naming both. A tool's scope comes from `sideEffects`, and a plugin can override it. A call needs all four of: the scope, the tenant exposure, the person's role and CASL, and the tool's own checks. A scope only narrows, never grants |
 | D5 | **Tool seam**: one tool list for chat, agents and MCP. `Tool` and `defineTool` gain `surfaces?: ('chat'\|'agents'\|'mcp')[]` (default all) and `mcp?: { title?, annotations?, outputSchema?, scope? }`. Annotations default from `sideEffects`. One `toolsFor(surface, ctx)` filters for every surface. Terminal tools (no handler) are never exposed. `plugin check` refuses colliding or non-conforming names |
@@ -59,10 +59,10 @@ The last four are deliberate. See the decisions and "Later".
 | D11 | **`ServerPlugin.agentTools` is renamed `ServerPlugin.tools`.** `agentTools` stays as a deprecated alias (`tools ?? agentTools`, a `plugin check` warning naming the replacement) until a later kit release removes it with a porting-note step |
 | D12 | **Client identification: CIMD only.** No DCR and no static clients in v1 |
 | D13 | **`/mcp` accepts OAuth access tokens only.** API keys and CLI keys are refused there; they stay the HTTP API's and the CLI's |
-| D14 | **Lifetimes**: access token 60 min (opaque, stored as a hash); refresh token rotates on every use, and reusing one revokes the grant. A grant lapses after 30 days idle (`MCP_GRANT_IDLE_DAYS`) or 90 days in total (`MCP_GRANT_MAX_DAYS`), capped by `OIDC_SESSION_MAX_AGE_DAYS` under IdP-managed tenancy. A grant is **independent of the browser session**. It ends on revocation by the person or an admin, or on member removal or block. Turning MCP off for the tenant suspends grants (403) without revoking them |
+| D14 | **Lifetimes**: access token 60 min (opaque, stored as a hash); refresh token rotates on every use, and reusing one revokes the grant, except within a 30 s grace window for a retry of the token just rotated, which answers with the same successor pair. A grant lapses after 30 days idle (`MCP_GRANT_IDLE_DAYS`) or 90 days in total (`MCP_GRANT_MAX_DAYS`), capped by `OIDC_SESSION_MAX_AGE_DAYS` under IdP-managed tenancy. A grant is **independent of the browser session**. It ends on revocation by the person or an admin, or on member removal or block. Turning MCP off for the tenant suspends grants (403) without revoking them |
 | D15 | **Audit**: `mcp_tool_calls`, one row per call (tenant, user, grant, client, tool, outcome and code, duration, cost), with **no arguments or results** stored. Kept 90 days (`MCP_CALL_RETENTION_DAYS`). Activity rows are for lifecycle events only. Each call gets a span named for its tool, and `/mcp` gains tracer coverage |
-| D16 | **Limits**: 60 calls per grant per minute and 600 per tenant per minute (`MCP_CALLS_PER_GRANT_PER_MINUTE`, `MCP_CALLS_PER_TENANT_PER_MINUTE`) on the KV window, returned as **tool errors**, not 429. Cost goes through `ai_usage` tagged `surface: mcp`, under the existing tenant caps; there is no MCP-specific spend cap. `/oauth/*` uses `authRateLimit`. *Spike*: check that limit against Claude's refresh pattern |
-| D17 | **SDK**: the official `@modelcontextprotocol/server` 2.x with `@modelcontextprotocol/hono`, confirmed by the spike. Fallback: `agents` `createMcpHandler`, used for the transport only. Not `McpAgent` |
+| D16 | **Limits**: 60 calls per grant per minute and 600 per tenant per minute (`MCP_CALLS_PER_GRANT_PER_MINUTE`, `MCP_CALLS_PER_TENANT_PER_MINUTE`) on the KV window, returned as **tool errors**, not 429. Cost goes through `ai_usage` tagged `surface: mcp`, under the existing tenant caps; there is no MCP-specific spend cap. **Spike result:** `authRateLimit` (10/min per IP) is too tight for `/oauth/token` and `/oauth/revoke`, which claude.ai and ChatGPT call from shared server IPs. Those two get a per-grant limit (30/min) plus a per-IP backstop (600/min). Authorize and consent keep `authRateLimit` |
+| D17 | **SDK**: the official `@modelcontextprotocol/server` 2.x and its own `createMcpHandler` (`responseMode: 'json'`), confirmed by the spike (+91 KiB gzip, `build:api` clean, both protocol eras, Claude Code connects). `@modelcontextprotocol/hono` is not needed. The tool list is built per request outside the server factory, and `capabilities.tools.listChanged` is false, or Claude Code holds a `subscriptions/listen` stream open |
 | D18 | **Branding**: everything a client or person sees comes from `cfg.APP_NAME` and the organisation's name, never "Rocketflare". That covers `serverInfo`, `resource_name`, instructions, the consent page, snippets and error text. Identifiers are neutral: scopes `mcp:*`, token prefix `mcpat_` / `mcprt_`. A test sets `APP_NAME` to "Acme Tools" and bans `/rocketflare/i` from every MCP and OAuth response. `plugin check` warns on the literal in a tool's `title` or `description` |
 | D19 | **Delivery**: one kit release built as stacked PRs (spike → A tools and server → B authorization server → C plugins). `/rf-security` standard runs over the diff before the tag, with fixes in the same release. Analytics ships in a plugins release after it. Rocketpod ports it **after** its 0.40 catch-up (`~/work/rocketpod/docs/PORT-ROCKETFLARE-0.40.md`), and its current resource-server `/mcp` becomes the later outside-authorization-server mode |
 
@@ -85,8 +85,10 @@ The last four are deliberate. See the decisions and "Later".
 | `MCP_CALLS_PER_GRANT_PER_MINUTE` | 60 |
 | `MCP_CALLS_PER_TENANT_PER_MINUTE` | 600 |
 
-The *spike* checks whether `global_fetch_strictly_public` goes in both tomls; that depends on it
-breaking nothing else. If it can't, CIMD fetches go through our own public-address guard.
+**Spike result:** `global_fetch_strictly_public` is not an SSRF guard (wrangler dev still reaches
+localhost with it on), so it is not added. The CIMD fetch has its own guard: https only, the default
+port, no IP literals, no `localhost`, `.local`, `.internal` or single-label hosts, redirects refused,
+a 10 s timeout, a streamed 5 KB cap, a JSON content type, and `client_id` equal to the URL.
 
 **Tables** (Drizzle; the host generates the DDL; every tenant table calls `tenantIsolation()`):
 
@@ -143,7 +145,8 @@ need no hook, because every call re-reads them.
 - **Mount and transport-level checks:**
   - before the mount table, under `jsonBodyLimit`;
   - its own CORS: any origin, no credentials, `WWW-Authenticate` exposed;
-  - Origin: absent is allowed; when present, it must be ours or allow-listed (*spike*: which origins the browser-based clients send);
+  - Origin: absent is allowed (Claude Code and the hosted clients send none); when present, it must be ours;
+  - kept out of the global CORS middleware, which sets `allow-credentials`;
   - `/mcp` and `/oauth` are added to the API prefixes.
 - **`serverInfo` and instructions** use `APP_NAME` and the organisation name. The instructions say that tool results are data from the organisation's documents, not instructions.
 - **`tools/list`:**
