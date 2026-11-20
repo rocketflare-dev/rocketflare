@@ -164,7 +164,7 @@ describe('authorize: before the redirect is trusted, errors are a page — never
     // The api suites have no network, so the refetch fails exactly as an unreachable host would.
     const res = await browserGet(env, authorizePath(validAuthorize(env, { client_id: clientId })))
     expect(res.status).toBe(400)
-    expect(await res.text()).toContain('could not be fetched')
+    expect(await res.text()).toContain('could not be used')
   })
 
   it('a loopback redirect may use any port; scheme, host and path must match', async () => {

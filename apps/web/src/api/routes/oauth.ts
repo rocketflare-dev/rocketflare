@@ -127,7 +127,15 @@ async function continuePending(c: AppContext, requestId: string): Promise<Respon
 
 oauthRouter.get('/authorize', async c => {
   const outcome = await startAuthorization(c.get('db'), c.get('config'), c.req.query())
-  if (outcome.kind === 'page') return errorPage(c, outcome.description)
+  if (outcome.kind === 'page') {
+    if (outcome.reason) {
+      c.get('logger').info(
+        { clientId: c.req.query('client_id'), reason: outcome.reason },
+        'oauth: client metadata document refused'
+      )
+    }
+    return errorPage(c, outcome.description)
+  }
   if (outcome.kind === 'redirect') return c.redirect(outcome.location, 302)
   return continuePending(c, outcome.request.id)
 })

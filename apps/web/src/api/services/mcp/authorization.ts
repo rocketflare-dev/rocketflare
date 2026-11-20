@@ -50,6 +50,7 @@ import { resolveMcpMember } from './caller'
 import {
   isLoopbackRedirect,
   OAuthClientError,
+  REDIRECT_NOT_REGISTERED,
   redirectUriAllowed,
   resolveOAuthClient,
 } from './cimd'
@@ -134,7 +135,12 @@ export async function resourceTarget(
   if (resource === mcpResourceUrl(cfg)) return { resource }
   const prefix = `${mcpResourceUrl(cfg)}/t/`
   if (!resource.startsWith(prefix)) return null
-  const slug = decodeURIComponent(resource.slice(prefix.length))
+  let slug: string
+  try {
+    slug = decodeURIComponent(resource.slice(prefix.length))
+  } catch {
+    return null // a malformed `%` sequence names no organisation
+  }
   if (!slug || slug.includes('/')) return null
   const [tenant] = await db.select({ id: tenants.id }).from(tenants).where(eq(tenants.slug, slug))
   if (!tenant || resource !== mcpResourceUrl(cfg, slug)) return null
@@ -150,8 +156,11 @@ async function pkceS256(verifier: string): Promise<string> {
 }
 
 export type AuthorizeOutcome =
-  /** Rendered on our own origin — the client or its redirect could not be trusted. */
-  | { kind: 'page'; description: string }
+  /**
+   * Rendered on our own origin — the client or its redirect could not be trusted. `reason` is
+   * the specific cause behind a uniform description, for the server log only.
+   */
+  | { kind: 'page'; description: string; reason?: string }
   /** Back to the client with an error. */
   | { kind: 'redirect'; location: string }
   /** A pending request, waiting for sign-in and consent. */
@@ -166,17 +175,23 @@ export async function startAuthorization(
 ): Promise<AuthorizeOutcome> {
   let client: OAuthClientRow
   try {
-    client = await resolveOAuthClient(db, query.client_id, { now })
+    client = await resolveOAuthClient(db, query.client_id, {
+      now,
+      forRedirect: { uri: query.redirect_uri },
+    })
   } catch (err) {
-    if (err instanceof OAuthClientError) return { kind: 'page', description: err.description }
+    if (err instanceof OAuthClientError) {
+      return {
+        kind: 'page',
+        description: err.description,
+        ...(err.reason && { reason: err.reason }),
+      }
+    }
     throw err
   }
   const redirectUri = query.redirect_uri
   if (!redirectUri || !redirectUriAllowed(client, redirectUri)) {
-    return {
-      kind: 'page',
-      description: 'redirect_uri is not one the client registered in its metadata document',
-    }
+    return { kind: 'page', description: REDIRECT_NOT_REGISTERED }
   }
   const state = query.state
   const fail = (error: string, description: string): AuthorizeOutcome => ({

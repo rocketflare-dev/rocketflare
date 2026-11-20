@@ -5,11 +5,12 @@
  * authorization server's requests and codes past their deadline. Grants are kept,
  * revoked or lapsed, so the admin's list still says who connected what and when it ended — except
  * a grant whose code was never redeemed, which never became a connection and goes once its code
- * can no longer be exchanged.
+ * can no longer be exchanged. A cached client metadata document goes once it has not been fetched
+ * for `CLIENT_CACHE_DAYS` and no grant or pending request names its client.
  */
-import { and, isNotNull, isNull, lt } from 'drizzle-orm'
+import { and, isNotNull, isNull, lt, notExists, sql } from 'drizzle-orm'
 import { affected, type Database } from '../../../db/client'
-import { mcpGrants, mcpTokens, mcpToolCalls } from '../../../db/schema'
+import { mcpGrants, mcpTokens, mcpToolCalls, oauthClients, oauthRequests } from '../../../db/schema'
 import { MCP_REFRESH_RETRY_GRACE_MS, pruneOAuthRequests } from './authorization'
 
 /**
@@ -17,6 +18,13 @@ import { MCP_REFRESH_RETRY_GRACE_MS, pruneOAuthRequests } from './authorization'
  * past the code's own sixty seconds, so a sweep can never race a live exchange.
  */
 const UNREDEEMED_GRANT_MS = 60 * 60 * 1000
+
+/**
+ * How long an unreferenced client metadata document stays cached. A client in use is refetched
+ * daily, so a row this stale belongs to a client nobody has authorized with for a month; it is a
+ * cache, and the next authorization fetches it again.
+ */
+const CLIENT_CACHE_DAYS = 30
 
 export async function runPruneMcp(db: Database, retentionDays: number, now = new Date()) {
   const cutoff = new Date(now.getTime() - retentionDays * 24 * 60 * 60 * 1000)
@@ -46,5 +54,33 @@ export async function runPruneMcp(db: Database, retentionDays: number, now = new
         )
       )
   )
-  return { calls, tokens, sealed, requests, unredeemed, cutoff: cutoff.toISOString() }
+  const clients = affected(
+    await db.delete(oauthClients).where(
+      and(
+        lt(oauthClients.fetchedAt, new Date(now.getTime() - CLIENT_CACHE_DAYS * 86_400_000)),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(mcpGrants)
+            .where(sql`${mcpGrants.clientId} = ${oauthClients.clientId}`)
+        ),
+        // What survives `pruneOAuthRequests` above is at most a day past its deadline.
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(oauthRequests)
+            .where(sql`${oauthRequests.clientId} = ${oauthClients.clientId}`)
+        )
+      )
+    )
+  )
+  return {
+    calls,
+    tokens,
+    sealed,
+    requests,
+    unredeemed,
+    clients,
+    cutoff: cutoff.toISOString(),
+  }
 }

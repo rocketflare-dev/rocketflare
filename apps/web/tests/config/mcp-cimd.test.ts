@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { parseScopes } from '@/api/services/mcp/authorization'
 import {
   CIMD_MAX_BYTES,
+  CIMD_UNUSABLE,
   canActAsPublicClient,
   clientIdUrl,
   fetchClientDocument,
@@ -31,10 +32,15 @@ const answer = (body: unknown, init: ResponseInit = {}) =>
     ...init,
   })
 
+/**
+ * A refused document: the page always says the same sentence, whatever the cause, and the cause
+ * — what this returns — goes only to the server log.
+ */
 async function refusal(fetcher: () => Promise<Response>) {
   const err = await fetchClientDocument(new URL(ID), fetcher).catch(e => e)
   expect(err).toBeInstanceOf(OAuthClientError)
-  return (err as OAuthClientError).description
+  expect((err as OAuthClientError).description).toBe(CIMD_UNUSABLE)
+  return (err as OAuthClientError).reason
 }
 
 describe('which hosts a client_id may name', () => {
@@ -97,7 +103,7 @@ describe('the document fetch', () => {
     expect(await refusal(async () => answer(doc(), { status: 404 }))).toMatch(/404/)
     expect(
       await refusal(async () => answer(doc(), { headers: { 'Content-Type': 'text/html' } }))
-    ).toMatch(/not JSON/)
+    ).toMatch(/content type is not JSON/)
     const huge = JSON.stringify(doc({ client_name: 'x'.repeat(CIMD_MAX_BYTES) }))
     expect(await refusal(async () => answer(huge))).toMatch(/too large/)
     expect(
@@ -138,7 +144,7 @@ describe('the document fetch', () => {
       await refusal(async () => {
         throw new DOMException('timed out', 'TimeoutError')
       })
-    ).toMatch(/could not be fetched/)
+    ).toMatch(/fetch failed or timed out/)
   })
 })
 

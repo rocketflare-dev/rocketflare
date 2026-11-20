@@ -26,12 +26,34 @@ export const CIMD_MAX_BYTES = 5 * 1024
 export const CIMD_TIMEOUT_MS = 10_000
 export const CIMD_REFRESH_MS = 24 * 60 * 60 * 1000
 
-/** Why a client could not be accepted — shown on the error page, never redirected. */
+/**
+ * What the error page says about ANY document that was fetched and could not be used. One
+ * sentence for every outcome: the fetch goes to a URL an anonymous party chose, and a page that
+ * told a refused redirect from a 404 from a timeout would report on whatever that URL reaches.
+ */
+export const CIMD_UNUSABLE = 'The client metadata document could not be used'
+
+/** The page for a `redirect_uri` the client's document does not register. */
+export const REDIRECT_NOT_REGISTERED =
+  'redirect_uri is not one the client registered in its metadata document'
+
+/**
+ * Why a client could not be accepted. `description` is shown on the error page, never
+ * redirected; `reason`, when set, is the specific cause, for the server log only.
+ */
 export class OAuthClientError extends Error {
-  constructor(readonly description: string) {
-    super(description)
+  constructor(
+    readonly description: string,
+    readonly reason?: string
+  ) {
+    super(reason ?? description)
     this.name = 'OAuthClientError'
   }
+}
+
+/** A fetched document that cannot be used: the uniform page, the specific `reason` logged. */
+function unusable(reason: string): OAuthClientError {
+  return new OAuthClientError(CIMD_UNUSABLE, reason)
 }
 
 const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/
@@ -149,7 +171,7 @@ export function canActAsPublicClient(doc: {
 
 /**
  * Fetch and validate the document at `url`. `fetcher` defaults to the global `fetch`, read at
- * call time (tests replace it).
+ * call time (tests replace it). Every refusal is `CIMD_UNUSABLE`, its cause in `reason`.
  */
 export async function fetchClientDocument(
   url: URL,
@@ -164,50 +186,46 @@ export async function fetchClientDocument(
       signal: AbortSignal.timeout(CIMD_TIMEOUT_MS),
     })
   } catch {
-    throw new OAuthClientError('The client metadata document could not be fetched')
+    throw unusable('the fetch failed or timed out')
   }
   if (res.status !== 200) {
     await res.body?.cancel().catch(() => {})
-    throw new OAuthClientError(
+    throw unusable(
       res.status >= 300 && res.status < 400
-        ? 'The client metadata document redirects, which is not allowed'
-        : `The client metadata document answered ${res.status}`
+        ? 'it redirects, which is not allowed'
+        : `it answered ${res.status}`
     )
   }
   const type = (res.headers.get('Content-Type') ?? '').toLowerCase()
   if (!/^application\/([a-z0-9.+-]*\+)?json\b/.test(type)) {
     await res.body?.cancel().catch(() => {})
-    throw new OAuthClientError('The client metadata document is not JSON')
+    throw unusable('its content type is not JSON')
   }
   const text = await readCapped(res.body, CIMD_MAX_BYTES)
-  if (text === null) throw new OAuthClientError('The client metadata document is too large')
+  if (text === null) throw unusable('it is too large')
   let json: unknown
   try {
     json = JSON.parse(text)
   } catch {
-    throw new OAuthClientError('The client metadata document is not valid JSON')
+    throw unusable('it is not valid JSON')
   }
   const parsed = cimdDocumentSchema.safeParse(json)
-  if (!parsed.success) throw new OAuthClientError('The client metadata document is malformed')
+  if (!parsed.success) throw unusable('it is malformed')
   const doc = parsed.data
   if (doc.client_id !== url.toString()) {
-    throw new OAuthClientError('The client metadata document names a different client_id')
+    throw unusable('it names a different client_id')
   }
   if (!canActAsPublicClient(doc)) {
-    throw new OAuthClientError(
-      'Only public clients (token_endpoint_auth_method "none") are supported'
-    )
+    throw unusable('only public clients (token_endpoint_auth_method "none") are supported')
   }
   if (doc.grant_types && !doc.grant_types.includes('authorization_code')) {
-    throw new OAuthClientError('The client does not use the authorization_code grant')
+    throw unusable('the client does not use the authorization_code grant')
   }
   if (doc.response_types && !doc.response_types.includes('code')) {
-    throw new OAuthClientError('The client does not use the code response type')
+    throw unusable('the client does not use the code response type')
   }
   if (!doc.redirect_uris.every(registrableRedirect)) {
-    throw new OAuthClientError(
-      'The client metadata document registers a redirect URI that is not allowed'
-    )
+    throw unusable('it registers a redirect URI that is not allowed')
   }
   return doc
 }
@@ -215,11 +233,13 @@ export async function fetchClientDocument(
 /**
  * The client behind `clientId`, from the cache when it is under a day old, else freshly fetched
  * (and the cache rewritten). Throws `OAuthClientError` for anything that is not a usable client.
+ * With `forRedirect`, a freshly fetched document that does not register that redirect URI is
+ * refused BEFORE it is cached, so a request that cannot go on leaves no row behind.
  */
 export async function resolveOAuthClient(
   db: Database,
   clientId: string | undefined,
-  options: { now?: Date; fetcher?: Fetcher } = {}
+  options: { now?: Date; fetcher?: Fetcher; forRedirect?: { uri: string | undefined } } = {}
 ): Promise<OAuthClientRow> {
   const now = options.now ?? new Date()
   const url = clientIdUrl(clientId)
@@ -235,6 +255,12 @@ export async function resolveOAuthClient(
   if (cached && now.getTime() - cached.fetchedAt.getTime() < CIMD_REFRESH_MS) return cached
 
   const doc = await fetchClientDocument(url, options.fetcher)
+  if (
+    options.forRedirect &&
+    !redirectUriAllowed({ redirectUris: doc.redirect_uris }, options.forRedirect.uri)
+  ) {
+    throw new OAuthClientError(REDIRECT_NOT_REGISTERED)
+  }
   const values = {
     clientName: doc.client_name ?? url.hostname,
     redirectUris: doc.redirect_uris,
