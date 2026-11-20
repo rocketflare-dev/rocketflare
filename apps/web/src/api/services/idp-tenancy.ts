@@ -63,6 +63,7 @@ import { createTenantForUser, uniqueSlug } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
 import { findUserByEmail } from './auth'
 import { revokeInvitationsIssuedBy } from './invitations'
+import { revokeMcpGrantsOf } from './mcp/connections'
 import { endSupportMemberships } from './members'
 import { closeUserSockets, type Realtime } from './realtime'
 
@@ -434,10 +435,14 @@ export async function blockDeprovisioned(
   input: { userId: string; source: `plugin:${string}` },
   realtime?: Realtime
 ): Promise<number> {
-  await db
-    .update(users)
-    .set({ blockedAt: new Date(), blockedSource: input.source, updatedAt: new Date() })
-    .where(and(eq(users.id, input.userId), isNull(users.blockedAt)))
+  await db.transaction(async tx => {
+    await tx
+      .update(users)
+      .set({ blockedAt: new Date(), blockedSource: input.source, updatedAt: new Date() })
+      .where(and(eq(users.id, input.userId), isNull(users.blockedAt)))
+    // A blocked person's AI-client connections end with the block, everywhere.
+    await revokeMcpGrantsOf(tx as unknown as Database, { userId: input.userId, reason: 'blocked' })
+  })
   const ended = await deleteUserSessions(db, input.userId)
   closeUserSockets(realtime, await userTenantIds(db, input.userId), input.userId)
   return ended
@@ -506,6 +511,11 @@ async function removeIdpMemberships(
         .set({ selectedTenantId: null })
         .where(and(eq(userSessions.userId, userId), eq(userSessions.selectedTenantId, tenantId)))
       await revokeInvitationsIssuedBy(tx as unknown as Database, { tenantId, userId })
+      await revokeMcpGrantsOf(tx as unknown as Database, {
+        userId,
+        tenantId,
+        reason: 'member_removed',
+      })
     }
   })
   for (const { tenantId, userId } of removed) {

@@ -44,11 +44,13 @@ import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
 import { keysRouter } from './routes/keys'
 import { knowledgeRouter } from './routes/knowledge'
-import { mcpRouter } from './routes/mcp'
+import { mcpDeploymentGate, mcpRouter } from './routes/mcp'
+import { mcpConnectionsRouter } from './routes/mcp-connections'
 import { mcpSettingsRouter } from './routes/mcp-settings'
 import { meRouter } from './routes/me'
 import { membersRouter } from './routes/members'
 import { notificationsRouter } from './routes/notifications'
+import { oauthRouter, wellKnownRouter } from './routes/oauth'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
 import { tracesRouter } from './routes/traces'
@@ -102,6 +104,7 @@ for (const prefix of serverPlugins.flatMap(p => p.apiPrefixes ?? [])) {
 }
 app.use('/auth/*', jsonBodyLimit)
 app.use('/mcp', jsonBodyLimit)
+app.use('/oauth/*', jsonBodyLimit)
 app.use('/mcp/*', jsonBodyLimit)
 
 // 6–7. CORS answers preflights before CSRF can reject them; CSRF is cookie-only, no DB.
@@ -135,6 +138,10 @@ app.route('/api/invite', inviteRouter)
 // (never `authMiddleware`, which takes cookies and API keys). Its own CORS, deployment gate and
 // Origin rule are in `routes/mcp.ts`; the global CORS skips it (`middleware/cors.ts`).
 app.route('/mcp', mcpRouter)
+// Its authorization server and discovery documents — public by nature (a client has no
+// credential yet), each step checking what it needs itself; `routes/oauth.ts`.
+app.route('/oauth', oauthRouter)
+app.route('/.well-known', wellKnownRouter)
 app.use('/api/admin/*', globalAdminMiddleware)
 app.route('/api/admin', adminRouter)
 // WebSocket upgrade resolves the cookie itself (no authMiddleware: browsers can't set headers here).
@@ -174,6 +181,8 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/knowledge', knowledgeRouter, requireFeature('knowledge-facts')],
   // The MCP server's settings (admin+), dark unless the deployment ships `mcp`.
   ['/api/mcp', mcpSettingsRouter, requireFeature('mcp')],
+  // A person's own AI-client connections across organisations — the deployment gate only.
+  ['/api/mcp-connections', mcpConnectionsRouter, mcpDeploymentGate],
   ['/api/chat', chatRouter],
   // A protocol surface with its own auth story, mounted beside chat rather than under it: this
   // list is the enumerable auth surface.

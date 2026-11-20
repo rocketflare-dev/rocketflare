@@ -7,7 +7,8 @@
  *   the URL it was made for (`resource`: `/mcp` or `/mcp/t/<slug>`). Revocation is a column, so a
  *   revoked connection keeps its history.
  * - `mcp_tokens` — the access and refresh tokens of a grant, stored as SHA-256 hashes. A refresh
- *   rotates (`rotatedFrom` points at the token it replaced, `usedAt` marks it spent).
+ *   rotates (`rotatedFrom` points at the token it replaced, `usedAt` marks it spent, and
+ *   `successorSealed` lets a retry inside the grace get the same pair back).
  * - `mcp_tool_calls` — the call log: who called which tool through which connection, how it ended
  *   and how long it took. **Never the arguments or the result**: those are the organisation's data
  *   and the client's prompt, and a log is the wrong place to keep either.
@@ -101,6 +102,13 @@ export const mcpTokens = pgTable(
     rotatedFrom: uuid('rotated_from'),
     /** A refresh token is spent once it has been exchanged. */
     usedAt: timestamp('used_at', { withTimezone: true }),
+    /**
+     * On a SPENT refresh token: the pair it was exchanged for, sealed with a key derived from this
+     * token's own plaintext (which is never stored). Only a client presenting the spent token again
+     * can open it, and only inside the retry grace — so a network retry of a refresh gets the same
+     * answer instead of killing the connection. Cleared once the grace has passed.
+     */
+    successorSealed: text('successor_sealed'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   table => [

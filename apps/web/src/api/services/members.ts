@@ -19,6 +19,7 @@ import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { groupsForMembers } from './groups'
 import { revokeInvitationsIssuedBy, rolesNotIssuableBy } from './invitations'
+import { revokeMcpGrantsOf } from './mcp/connections'
 import { closeUserSockets, nudge, type Realtime, realtimeEvent } from './realtime'
 
 export async function listMembers(db: Database, tenantId: string, query: PaginationQuery) {
@@ -228,6 +229,13 @@ export async function removeMember(
           eq(userSessions.selectedTenantId, input.tenantId)
         )
       )
+    // Their AI-client connections here end with the membership, in the same transaction.
+    await revokeMcpGrantsOf(tx as unknown as Database, {
+      userId: input.targetUserId,
+      tenantId: input.tenantId,
+      reason: 'member_removed',
+      actorUserId: input.actor.user.id,
+    })
     return revokeInvitationsIssuedBy(tx as unknown as Database, {
       tenantId: input.tenantId,
       userId: input.targetUserId,

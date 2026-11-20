@@ -71,9 +71,19 @@ export function isWebSocketUpgrade(c: { req: { header(name: string): string | un
   return c.req.header('Upgrade')?.toLowerCase() === 'websocket'
 }
 
-/** `/mcp` answers CORS itself — any origin, never credentials (`routes/mcp.ts`). */
+/**
+ * `/mcp`, the token and revocation endpoints and the OAuth discovery documents answer CORS
+ * themselves — any origin, never credentials (`routes/mcp.ts`, `routes/oauth.ts`).
+ */
 export function isMcpPath(pathname: string): boolean {
-  return pathname === '/mcp' || pathname.startsWith('/mcp/')
+  return (
+    pathname === '/mcp' ||
+    pathname.startsWith('/mcp/') ||
+    pathname === '/oauth/token' ||
+    pathname === '/oauth/revoke' ||
+    pathname.startsWith('/.well-known/oauth-') ||
+    pathname === '/.well-known/openid-configuration'
+  )
 }
 
 export const corsMiddleware = createMiddleware<AppEnv>((c, next) =>

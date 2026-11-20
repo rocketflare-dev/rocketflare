@@ -18,6 +18,7 @@
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type { McpScope, McpSettings } from '@rocketflare/shared/mcp'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
@@ -78,17 +79,48 @@ export async function resolveMcpCaller(input: ResolveMcpCallerInput): Promise<Mc
     throw new McpChallengeError(resource, 'The access token was issued for another server URL')
   }
 
+  const member = await resolveMcpMember(db, cfg, {
+    userId: grant.userId,
+    tenantId: grant.tenantId,
+    sessionId: `mcp:${grant.id}`,
+  })
+  if (!member) throw new McpChallengeError(resource, 'The access token is invalid or expired')
+  const { auth, settings } = member
+  return {
+    grant,
+    scopes: grant.scopes.filter((s): s is McpScope => s === 'mcp:read' || s === 'mcp:write'),
+    auth,
+    settings,
+  }
+}
+
+export interface McpMember {
+  auth: McpCaller['auth']
+  settings: McpSettings
+  role: MembershipRole
+}
+
+/**
+ * The person as a member who may use an AI client in this organisation RIGHT NOW, or a 403 naming
+ * why not — the one admission rule, shared by `/mcp` (every call) and the consent screen (which
+ * organisations it offers, and again when it approves). `null` only when the user row is gone.
+ */
+export async function resolveMcpMember(
+  db: Database,
+  cfg: AppConfig,
+  input: { userId: string; tenantId: string; sessionId: string }
+): Promise<McpMember | null> {
   const [row] = await db
     .select({ user: users, role: tenantUsers.role, tenant: tenants })
     .from(users)
     .leftJoin(
       tenantUsers,
-      and(eq(tenantUsers.userId, users.id), eq(tenantUsers.tenantId, grant.tenantId))
+      and(eq(tenantUsers.userId, users.id), eq(tenantUsers.tenantId, input.tenantId))
     )
-    .leftJoin(tenants, eq(tenants.id, grant.tenantId))
-    .where(eq(users.id, grant.userId))
+    .leftJoin(tenants, eq(tenants.id, input.tenantId))
+    .where(eq(users.id, input.userId))
     .limit(1)
-  if (!row) throw new McpChallengeError(resource, 'The access token is invalid or expired')
+  if (!row) return null
   if (row.user.blockedAt) throw new ForbiddenError('Account is blocked', ERROR_CODES.blocked)
   if (!row.role || !row.tenant) {
     throw new ForbiddenError(
@@ -107,9 +139,9 @@ export async function resolveMcpCaller(input: ResolveMcpCallerInput): Promise<Mc
   }
 
   const [groups, flagRows, settings] = await Promise.all([
-    listUserGroups(db, grant.tenantId, grant.userId),
-    listFeatureFlagRows(db, grant.tenantId),
-    getMcpSettings(db, grant.tenantId),
+    listUserGroups(db, input.tenantId, input.userId),
+    listFeatureFlagRows(db, input.tenantId),
+    getMcpSettings(db, input.tenantId),
   ])
   const tenant = { id: row.tenant.id, name: row.tenant.name, slug: row.tenant.slug }
   const auth = await tenantAuthContext(cfg, {
@@ -118,7 +150,7 @@ export async function resolveMcpCaller(input: ResolveMcpCallerInput): Promise<Mc
     role: row.role,
     groups,
     flagRows,
-    sessionId: `mcp:${grant.id}`,
+    sessionId: input.sessionId,
     isGlobalAdmin: false,
   })
   if (!auth.features.includes('mcp') || !settings.enabled) {
@@ -139,10 +171,5 @@ export async function resolveMcpCaller(input: ResolveMcpCallerInput): Promise<Mc
       ERROR_CODES.mcpNotAllowed
     )
   }
-  return {
-    grant,
-    scopes: grant.scopes.filter((s): s is McpScope => s === 'mcp:read' || s === 'mcp:write'),
-    auth: { ...auth, tenantId: tenant.id, tenant },
-    settings,
-  }
+  return { auth: { ...auth, tenantId: tenant.id, tenant }, settings, role: row.role }
 }

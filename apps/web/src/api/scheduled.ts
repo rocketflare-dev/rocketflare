@@ -276,7 +276,7 @@ export const pruneEvents: ScheduledTask = {
   },
 }
 
-/** Nightly retention for the MCP server: the call log, and tokens past their expiry. */
+/** Nightly retention for the MCP server: the call log, expired tokens, spent OAuth requests. */
 export const pruneMcp: ScheduledTask = {
   name: 'pruneMcp',
   async run({ db, config, logger }) {

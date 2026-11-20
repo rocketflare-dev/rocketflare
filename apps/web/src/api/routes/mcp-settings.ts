@@ -28,6 +28,7 @@ import { mcpResourceUrl } from '../services/mcp/tokens'
 import { withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
+import { mcpTenantConnectionsRouter } from './mcp-connections'
 
 export const mcpSettingsRouter = createRouter()
 
@@ -150,3 +151,6 @@ mcpSettingsRouter.get('/calls', validate('query', mcpToolCallListQuerySchema), a
   }
   return c.json(body)
 })
+
+// Every connection in this organisation, and revoking them (`routes/mcp-connections.ts`).
+mcpSettingsRouter.route('/connections', mcpTenantConnectionsRouter)

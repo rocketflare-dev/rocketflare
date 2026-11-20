@@ -75,20 +75,33 @@ export interface McpTokenPair {
   refreshToken: string
   /** Seconds until the access token expires. */
   expiresIn: number
+  accessExpiresAt: Date
+}
+
+/** Two new plaintexts — generated before anything is written, so a rotation can seal them. */
+export function generateMcpTokenPair(): { accessToken: string; refreshToken: string } {
+  return {
+    accessToken: `${MCP_ACCESS_TOKEN_PREFIX}${randomToken(32)}`,
+    refreshToken: `${MCP_REFRESH_TOKEN_PREFIX}${randomToken(32)}`,
+  }
 }
 
 /**
- * A fresh access + refresh pair for `grant`. The refresh token expires with the grant itself.
- * `rotatedFrom` is the refresh token this pair replaces, when it is a refresh.
+ * A fresh access + refresh pair for `grant` (or the `pair` given). The refresh token expires with
+ * the grant itself. `rotatedFrom` is the id of the refresh token this pair replaces, when it is a
+ * refresh.
  */
 export async function issueMcpTokenPair(
   db: Database,
   grant: Pick<McpGrantRow, 'id' | 'tenantId' | 'expiresAt'>,
-  options: { rotatedFrom?: string; now?: Date } = {}
+  options: {
+    rotatedFrom?: string
+    now?: Date
+    pair?: { accessToken: string; refreshToken: string }
+  } = {}
 ): Promise<McpTokenPair> {
   const now = options.now ?? new Date()
-  const accessToken = `${MCP_ACCESS_TOKEN_PREFIX}${randomToken(32)}`
-  const refreshToken = `${MCP_REFRESH_TOKEN_PREFIX}${randomToken(32)}`
+  const { accessToken, refreshToken } = options.pair ?? generateMcpTokenPair()
   const accessExpires = new Date(
     Math.min(now.getTime() + MCP_ACCESS_TOKEN_TTL_SECONDS * 1000, grant.expiresAt.getTime())
   )
@@ -114,6 +127,7 @@ export async function issueMcpTokenPair(
     accessToken,
     refreshToken,
     expiresIn: Math.max(0, Math.floor((accessExpires.getTime() - now.getTime()) / 1000)),
+    accessExpiresAt: accessExpires,
   }
 }
 

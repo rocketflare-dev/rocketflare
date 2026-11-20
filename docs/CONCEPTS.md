@@ -2181,7 +2181,8 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
 `docs/plans/mcp-server.md` (kit repository).
 
 - **Deployment gate**: the environment-gated `mcp` flag (§15). Without `mcp` in `FEATURES_ENABLED`,
-  `/mcp` and `/api/mcp/*` answer 404 `feature_disabled`. Each organisation's owners and admins then
+  `/mcp`, `/oauth/*`, the OAuth `.well-known` documents, `/api/mcp/*` and `/api/mcp-connections`
+  answer 404. Each organisation's owners and admins then
   turn it on at Settings → MCP (`mcp_settings.enabled`, off by default).
 - **Transport** (`routes/mcp.ts`, the official SDK's `createMcpHandler`): stateless Streamable
   HTTP, POST only (405 otherwise), both protocol eras (2026-07-28 and the 2025-11-25 `initialize`
@@ -2193,6 +2194,44 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   live grant (`mcp_grants`: user, tenant, client, scopes, the exact URL it is for). Never a cookie,
   an API key or a CLI key. `/mcp/t/<slug>` is the same server pinned to one organisation, for a
   client that keys connectors by URL; a token is refused on any URL but its grant's.
+- **The authorization server** (`services/mcp/authorization.ts`, `routes/oauth.ts`): the app is its
+  own OAuth 2.1 server, in Postgres. Discovery: RFC 9728 protected-resource metadata for `/mcp` and
+  every `/mcp/t/<slug>`, RFC 8414 metadata (also at `openid-configuration`) — S256 only, public
+  clients only (`none`), `client_id_metadata_document_supported`, `iss` on every authorization
+  response (RFC 9207), and no `registration_endpoint`. **Clients are their metadata document**
+  (`services/mcp/cimd.ts`): `client_id` is an https URL on a public host and the default port; the
+  fetch refuses redirects, takes ten seconds and 5 KB at most, needs a JSON type and a document
+  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. No DCR,
+  no static clients. `GET /oauth/authorize` resolves the client and checks `redirect_uri` (exact;
+  loopback any port) BEFORE anything is redirected — until then an error is a page on our origin;
+  after it, the error goes back with `state` and `iss`. PKCE S256 is mandatory, `resource` must be
+  one of our MCP URLs (`invalid_target`), and the request waits ten minutes in `oauth_requests`.
+  **Sign-in is the app's own `/login`** (a `returnUrl` to `/oauth/continue`), so every sign-in
+  method, the single-sign-on policy, `SIGNUP_MODE` and blocking apply unchanged. **Consent** is the
+  SPA page `/consent` (kit chrome, `frame-ancestors 'none'`): "<client> wants to use <APP_NAME> as
+  you", the client's name and logo as CLAIMS beside the verified host of its `client_id` and the
+  redirect host, a warning when it registers only loopback redirects, the organisations where
+  `resolveMcpMember` admits the person (an `/mcp/t/<slug>` request offers only that one), the
+  scopes and the tools. `POST /oauth/consent` (cookie + CSRF) re-checks it all, writes the grant
+  (absolute end `MCP_GRANT_MAX_DAYS`, capped by `OIDC_SESSION_MAX_AGE_DAYS` under IdP-managed
+  tenancy) and a code: SHA-256 at rest, sixty seconds, single-use — a second exchange revokes the
+  grant. A live grant for the same client, organisation and URL that covers the asked scopes is
+  remembered consent: no click. `POST /oauth/token` (form): `authorization_code` (PKCE verifier,
+  client, redirect and resource must match) and `refresh_token`, which rotates every time; a spent
+  refresh token presented again revokes the grant, **except** a retry within 30 seconds while its
+  successor is unused, which gets the same pair back — sealed (AES-GCM) under a key derived from
+  the spent token's own plaintext, so the database never holds an openable successor
+  (`services/mcp/seal.ts`). `POST /oauth/revoke` (RFC 7009): a refresh token ends the connection,
+  an access token itself; anything unknown is a silent 200. Rate limits: authorize, continue and
+  consent take `authRateLimit`; token and revoke — called from the hosted clients' shared server
+  IPs — take 600/min per IP plus 30/min per connection.
+- **Lifecycle**: removing a member (by an admin or the IdP) revokes their grants there, and blocking
+  someone (manually or by IdP deprovisioning) revokes all of theirs, in the same transaction
+  (`revokeMcpGrantsOf`). Role, group and policy changes need nothing: every call re-reads them.
+  Turning MCP off suspends connections (403) without revoking them.
+- **Connections**: `/api/mcp/connections` lists the organisation's (`manage McpSettings`) with
+  revoke and `POST /revoke-all`; `/api/mcp-connections` lists a person's own across organisations
+  with revoke. Activity: `mcp.client_connected`, `mcp.client_revoked` (who, and why).
 - **Who is calling** (`services/mcp/caller.ts`), re-read on every call, nothing cached on the grant:
   401 `invalid_token` with the RFC 9728 challenge when the TOKEN is the problem (unknown, expired,
   revoked, idle past `MCP_GRANT_IDLE_DAYS`, past `MCP_GRANT_MAX_DAYS`, another URL); 403 with a
@@ -2230,10 +2269,13 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   approval-gated and terminal tools greyed with the reason. The switch and the modes save at once;
   the group and tool ticks save as one list.
 
-**Known gaps:** the OAuth authorization server (metadata documents, authorize, consent, token,
-refresh, revoke, CIMD) and the connected-clients lists are not built yet, so no client can obtain a
-token outside tests; a call's own model spend is not attributed to it (`cost_microcents` stays
-null; embeddings for search are unmetered as everywhere else); a renamed organisation slug breaks
-grants made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the
-handler (bad arguments, an unknown tool) are not in the call log; no resources, prompts, approval
-tools or agents.
+**Known gaps:** only clients with a Client ID Metadata Document can connect (Claude, ChatGPT;
+Cursor has DCR only, VS Code is untested) — no DCR, no static clients; a Worker cannot resolve DNS,
+so a public name pointing at a private address is caught by the platform's egress, not by the
+fetch guard; a consent whose code is never exchanged leaves a grant with no tokens (it lapses
+idle); the Settings → MCP connected-clients list and Profile → Connected apps pages are API-only
+until the UI lands; a call's own model spend is not attributed to it (`cost_microcents` stays null;
+embeddings for search are unmetered as everywhere else); a renamed organisation slug breaks grants
+made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the handler (bad
+arguments, an unknown tool) are not in the call log; no resources, prompts, approval tools or
+agents.

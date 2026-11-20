@@ -28,12 +28,10 @@ import { allowedOrigins } from '../middleware/cors'
 import { isAllowedOrigin } from '../middleware/csrf'
 import type { RateLimitKv } from '../middleware/rate-limit'
 import { noopTracer } from '../observability/tracer'
-import { accessScopeOf } from '../services/access'
-import { toolsFor } from '../services/agents/tools'
 import { McpChallengeError, resolveMcpCaller } from '../services/mcp/caller'
-import { buildMcpServer, MCP_GET_DOCUMENT_MAX_CHARS } from '../services/mcp/server'
-import { exposedOverMcp } from '../services/mcp/settings'
+import { buildMcpServer } from '../services/mcp/server'
 import { mcpResourceMetadataUrl, mcpResourceUrl, touchMcpGrant } from '../services/mcp/tokens'
+import { mcpToolsFor } from '../services/mcp/tools'
 import type { AppContext, AppEnv } from '../types'
 import { NotFoundError } from '../utils/core/errors'
 import { makeDefer } from '../utils/routes/route-helpers'
@@ -73,8 +71,11 @@ function refuse(c: AppContext, status: 403 | 405, code: string, error: string) {
   return c.json({ error, statusCode: status, code }, status)
 }
 
-/** 404 on a deployment that does not ship the server — the surface does not exist there. */
-const deploymentGate = createMiddleware<AppEnv>(async (c, next) => {
+/**
+ * 404 on a deployment that does not ship the server — the surface does not exist there. The
+ * authorization server's routes and documents sit behind the same gate.
+ */
+export const mcpDeploymentGate = createMiddleware<AppEnv>(async (c, next) => {
   const deployed = await deploymentFeatures(c.get('config'))
   if (!deployed.includes('mcp')) {
     throw new NotFoundError(`Not found: ${c.req.path}`, ERROR_CODES.featureDisabled)
@@ -94,7 +95,7 @@ const originRule = createMiddleware<AppEnv>(async (c, next) => {
   await next()
 })
 
-mcpRouter.use('*', mcpCors, deploymentGate, originRule)
+mcpRouter.use('*', mcpCors, mcpDeploymentGate, originRule)
 
 async function serve(c: AppContext, slug: string | undefined): Promise<Response> {
   if (c.req.method !== 'POST') {
@@ -134,19 +135,13 @@ async function serve(c: AppContext, slug: string | undefined): Promise<Response>
   })()
 
   return withTenantScope(db, auth.tenantId, cfg.TENANT_SCOPE_MODE, async sdb => {
-    const tools = (
-      await toolsFor('mcp', {
-        db: sdb,
-        cfg,
-        env: c.env,
-        scope: accessScopeOf(auth),
-        can: (action, subject) => auth.ability.can(action, subject),
-        features: auth.features,
-        maxDocumentChars: MCP_GET_DOCUMENT_MAX_CHARS,
-        // The client's model typed every argument; no URL here was written by a person in our UI.
-        requesterUrls: new Set(),
-      })
-    ).filter(tool => exposedOverMcp(tool, caller.settings))
+    const tools = await mcpToolsFor({
+      db: sdb,
+      cfg,
+      env: c.env,
+      auth,
+      settings: caller.settings,
+    })
 
     const handler = createMcpHandler(
       () =>

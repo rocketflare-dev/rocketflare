@@ -730,16 +730,24 @@ The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships 
    for a deployed environment (comma-separated with any other key).
 2. As an owner or admin, open **Settings → MCP**, turn it on, and choose what is exposed (all
    read-only tools by default) and who may connect (everyone by default).
-3. Paste the server URL into the client. `<APP_URL>/mcp/t/<slug>` is the same server pinned to one
-   organisation — use it to connect a second organisation from a client that allows one connector
-   per URL (claude.ai).
+3. Paste the server URL into the client (Claude: Settings → Connectors → Add custom connector;
+   Claude Code: `claude mcp add --transport http <name> <APP_URL>/mcp`; ChatGPT: a custom
+   connector). The client finds the app's authorization server itself, opens the app's own sign-in
+   page, and shows a consent screen where the person picks the organisation. `<APP_URL>/mcp/t/<slug>`
+   is the same server pinned to one organisation — use it to connect a second organisation from a
+   client that allows one connector per URL (claude.ai).
+4. A client must reach the app on a public https URL to sign in (`APP_URL`); locally that means a
+   tunnel. Clients identify themselves with a metadata document (CIMD) — Claude and ChatGPT do;
+   clients that only support dynamic registration (Cursor) cannot connect.
 
 Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
 `MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),
 `MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
 
 Verify: `curl -si -X POST <APP_URL>/mcp` answers 401 with a `WWW-Authenticate: Bearer
-resource_metadata="…"` header (404 means `mcp` is not in `FEATURES_ENABLED`).
+resource_metadata="…"` header, and `curl -s <APP_URL>/.well-known/oauth-authorization-server`
+answers the metadata with `"client_id_metadata_document_supported": true` (404 for either means
+`mcp` is not in `FEATURES_ENABLED`).
 
 ---
 

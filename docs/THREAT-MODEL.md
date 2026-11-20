@@ -23,6 +23,9 @@ development; a default that makes a deployment unsafe counts as deployed.
   `ai_spans`, OTLP exports, logs).
 - Credentials: sessions, API keys, magic-link and invitation tokens, tenant AI provider keys, OAuth
   tokens, plugin secrets, `OAUTH_ENCRYPTION_KEY` and everything derived from it.
+- The MCP authorization server's: authorization codes, MCP access and refresh tokens
+  (`mcpat_` / `mcprt_`), the sealed successor of a spent refresh token, and grants (connections) —
+  one person in one organisation through one client.
 - Authority: tenant roles, global admin, IdP-derived membership.
 - Money: model spend against platform keys.
 
@@ -39,6 +42,8 @@ development; a default that makes a deployment unsafe counts as deployed.
 | Support, global admin | Cross-tenant work through `/api/admin/*` and the audited entry path | Keep elevated access after losing the role |
 | Document author (including a colleague or an uploaded file's source) | Supply text that the model reads | Steer another user's model turn into disclosure or an action |
 | The model | Call tools bound to the requester's scope | Choose a tenant, or exceed the requester |
+| OAuth client (an AI app connected over `/mcp`) | Act as the one person who consented, in the one organisation of the grant, within its scopes, the organisation's exposure and that person's own permissions, until the grant ends | Choose or change the organisation; act as anyone else; exceed the person, the scopes or the exposure; keep access after revocation, removal or a block; be believed about its own name or logo (only its `client_id` host is verified) |
+| The client's model | Call the exposed tools through the client | Be trusted: any tool result (a document's text) can steer it, so a result must not widen its scope or change its organisation |
 | Identity provider, inbound webhook sender | Assert what their configuration trusts | Be believed about anything else; replay beyond the accepted window |
 | Plugin | Use the declared entries and injected context | Reach core outside them. Plugins run in-process with no sandbox, so an installed plugin is trusted like a dependency |
 | Operator, developer | Control tomls, secrets, deploys | Out of scope as attackers |
@@ -59,6 +64,34 @@ is a promise to check in every path that admits someone.
 - Server-side fetches of a configured URL (`baseUrl`) are attacker-influenced: stored credentials must
   go only where the credential's owner intended.
 - OIDC claims, identity webhooks, `install.sh` and a plugin's git source cross a boundary inward.
+- The MCP authorization server's inputs: every `/oauth/authorize` parameter (`client_id`,
+  `redirect_uri`, `resource`, `scope`, `state`, the PKCE challenge), the token endpoint's form, and
+  the client metadata document fetched from the URL the client chose — a server-side fetch an
+  anonymous party aims.
+
+### MCP promises
+
+What `/mcp` and `/oauth/*` must hold (`docs/CONCEPTS.md` §19); each is a finding if broken:
+
+- The organisation comes from the grant only — never a tool argument, a header or a result.
+- Every admission rule applies at `/oauth/authorize`, because sign-in is the app's own `/login`
+  (single-sign-on policy, `SIGNUP_MODE`, blocking, IdP-managed tenancy), and `/mcp` re-checks the
+  membership, role, block, suspension, MCP switch and connect policy on every call.
+- Support users cannot connect; a client never carries global-admin reach.
+- Revocation (by the person, an admin, member removal or a block) takes effect on the next call.
+- The metadata-document fetch never reaches a private address, follows no redirect, and cannot be
+  made to buffer more than 5 KB.
+- There is no open redirect: before `redirect_uri` is validated against the client's own document,
+  every error is a page on our origin.
+- PKCE S256 is mandatory; a code is single-use, sixty seconds, bound to its client, redirect URI,
+  resource and challenge; a replayed code revokes its grant.
+- A refresh token rotates; reusing a spent one revokes the grant, except an immediate retry inside
+  the 30-second grace while its successor is unused.
+- A token is accepted only on the URL its grant was made for (`/mcp` or `/mcp/t/<slug>`).
+- Visibility (groups) and CASL are identical to the HTTP routes'; an unexposed tool cannot be
+  called; a write tool needs `mcp:write` as well as the person's own permission.
+- Rate limits (per connection and per organisation) and the organisation's cost caps hold over MCP.
+- Nothing a client or person sees names the product: `APP_NAME` and the organisation only.
 
 ## Out of scope
 

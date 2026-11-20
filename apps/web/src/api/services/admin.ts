@@ -45,6 +45,7 @@ import { accessRequestDecidedEmail } from './email'
 import { platformFeatures } from './features'
 import { revokeEveryInvitationIssuedBy } from './invitations'
 import { enqueueJob, type JobsQueue } from './jobs'
+import { revokeMcpGrantsOf } from './mcp/connections'
 import { endSupportMemberships } from './members'
 import { notify } from './notifications'
 import {
@@ -614,6 +615,13 @@ export async function setUserBlocked(
     const revoked = input.blocked
       ? await revokeEveryInvitationIssuedBy(tx as unknown as Database, input.userId)
       : []
+    // ...and so do their AI-client connections, in every organisation. Unblocking restores none.
+    if (input.blocked) {
+      await revokeMcpGrantsOf(tx as unknown as Database, {
+        userId: input.userId,
+        reason: 'blocked',
+      })
+    }
     return { updated: row, revoked }
   })
   for (const tenantId of new Set(revoked.map(r => r.tenantId))) {

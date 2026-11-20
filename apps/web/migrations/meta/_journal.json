@@ -239,6 +239,13 @@
       "when": 1795158150699,
       "tag": "0033_kit-mcp-server",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795159676558,
+      "tag": "0034_kit-mcp-oauth",
+      "breakpoints": true
     }
   ]
 }
