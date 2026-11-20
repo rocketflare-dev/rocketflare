@@ -373,7 +373,10 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   override, no PATH binary and no managed copy. `pnpm install` never builds the package.
   `SETUP.md` 1.10.
 
-**Known gaps:** `pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
+**Known gaps:** while `pnpm dev:tunnel` runs, the development instance is public, and its
+password-less dev sign-in (`POST /auth/dev-login`, any email in development) with it: anyone who
+learns the hostname can sign in as any user (`SETUP.md` 1.10 — dummy data, stop it when done);
+`pnpm dev:tunnel` always targets :3000 (cfld reads `package.json`); `pnpm dev:api`
 alone reads `DEV_API_PORT` from the shell only, not `.dev.vars`; no `/api/ready` smoke step against a preview; no OpenAPI (`@hono/zod-openapi` is the
 path); no per-PR previews.
 
@@ -978,7 +981,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   "same as …?" item and its `reviewer_user_id`), a GIN trigram index on `name` and a
   `(tenant_id, type, lower(name))` lookup; `knowledge_facts` — identity (`entity_kind`
   `domain|staging`, `entity_type`, `entity_id` text, no FK), content (`key`, `value` jsonb,
-  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts;
+  `value_text`), source (`document_id` **cascade** — deleting a document removes its facts, and
+  the delete — `DELETE /api/ai/documents/:id` or a connector's `deleteExternalDocument` — first
+  runs the same repair as re-extraction, in one transaction (`deleteDocumentsWithFacts`, `knowledge/remove.ts`), so a
+  fact one of them superseded or conflicted with alone is current again;
   `chunk_id` **set null** — a re-index replaces chunks and the fact keeps its span and quote),
   trust (`source_kind`, `confidence` 0..1), state (`state`, `superseded_by_id`, `conflicts_with
   uuid[]`), time (`valid_from`/`valid_to`, `observed_at`, `confirmed_by`/`confirmed_at`) and access
@@ -1018,7 +1024,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   absolute `char_start`/`char_end` and the quote — its value parses against the key's schema
   (`values.ts`: "£1,140" → 1140, "yes" → true, a case-blind enum), and every date resolves in CODE
   against `documents.created_at` (`dates.ts`: ISO, UK numeric day-first, "next Monday", "the first
-  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact.
+  of next month", "start of next quarter", "until 10 July"…); anything unreadable drops the fact,
+  and so does a value, its wording or a date longer than 2,000 characters, before anything parses
+  it.
   **Trust** (`source_kind`): `integration` for a plugin's `ingestDocument` (`documents.origin`),
   `agent` for an `agent:` source, else `upload`; the reviewer is the ingest's `reviewerUserId`
   (`documents.reviewer_user_id`), else the document's owner, else none. **Resolution**
@@ -2215,7 +2223,9 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   path), header/body agreement (-32020) from the SDK. Mounted before the mount table, outside the
   global CORS (its own: any origin, no credentials, `WWW-Authenticate` exposed) and outside
   `authMiddleware`. A browser `Origin` must be ours; none is fine. `capabilities.tools.listChanged`
-  is false and a `subscriptions/listen` request is refused, so no request is held open.
+  is false and a `subscriptions/listen` request is refused, so no request is held open. A JSON-RPC
+  batch is refused (400, -32600) in both eras before the SDK sees it, so every call meets the
+  limits one at a time. The global CORS skips these paths with or without one trailing slash.
 - **Credential**: an OAuth access token (`mcpat_…`, one hour, SHA-256 at rest in `mcp_tokens`) of a
   live grant (`mcp_grants`: user, tenant, client, scopes, the exact URL it is for). Never a cookie,
   an API key or a CLI key. `/mcp/t/<slug>` is the same server pinned to one organisation, for a
@@ -2227,7 +2237,11 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   response (RFC 9207), and no `registration_endpoint`. **Clients are their metadata document**
   (`services/mcp/cimd.ts`): `client_id` is an https URL on a public host and the default port; the
   fetch refuses redirects, takes ten seconds and 5 KB at most, needs a JSON type and a document
-  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. A
+  naming its own URL; it is cached in `oauth_clients` for a day and a failed refetch fails. Every
+  refusal of a fetched document reads the same on the page ("could not be used"), the specific
+  cause only in the server log, so the page says nothing about what the URL reached. A document
+  is cached only once it registers the request's `redirect_uri`, and the nightly `pruneMcp` drops a
+  row unfetched for 30 days that no grant and no pending request names. A
   document must be usable as a public client: its `token_endpoint_auth_method` absent or `none`, or
   `none` among its `token_endpoint_auth_methods_supported` (ChatGPT prefers `private_key_jwt` and
   lists `none`, and falls back to it because our metadata offers nothing else); its `grant_types`
@@ -2236,7 +2250,7 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   clients. `GET /oauth/authorize` resolves the client and checks `redirect_uri` (exact;
   loopback any port) BEFORE anything is redirected — until then an error is a page on our origin;
   after it, the error goes back with `state` and `iss`. PKCE S256 is mandatory, `resource` must be
-  one of our MCP URLs (`invalid_target`), and the request waits ten minutes in `oauth_requests`.
+  one of our MCP URLs (`invalid_target`, also for a slug that does not decode), and the request waits ten minutes in `oauth_requests`.
   **Sign-in is the app's own `/login`** (a `returnUrl` to `/oauth/continue`), so every sign-in
   method, the single-sign-on policy, `SIGNUP_MODE` and blocking apply unchanged. **Consent** is the
   SPA page `/consent` (kit chrome, `frame-ancestors 'none'`): "<client> wants to use <APP_NAME> as
@@ -2262,7 +2276,7 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   Turning MCP off suspends connections (403) without revoking them.
 - **Connections**: `/api/mcp/connections` lists the organisation's (`manage McpSettings`) with
   revoke and `POST /revoke-all`; `/api/mcp-connections` lists a person's own across organisations
-  with revoke. Activity: `mcp.client_connected`, `mcp.client_revoked` (who, and why).
+  with revoke — account-wide, so a session only: an API key gets 403 `insufficient_scope`. Activity: `mcp.client_connected`, `mcp.client_revoked` (who, and why).
 - **Who is calling** (`services/mcp/caller.ts`), re-read on every call, nothing cached on the grant:
   401 `invalid_token` with the RFC 9728 challenge when the TOKEN is the problem (unknown, expired,
   revoked, idle past `MCP_GRANT_IDLE_DAYS`, past `MCP_GRANT_MAX_DAYS`, another URL); 403 with a
@@ -2275,10 +2289,18 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
   exposure: `read_only` (default — tools with no `sideEffects` and the read scope), `all`, or
   `selected`. A write tool is listed to a read-only token and answers 403 `insufficient_scope`
   naming `mcp:read mcp:write` (the step-up). An unexposed tool is "not found". Every result opens
-  with a line saying it is data, not instructions, and is capped at 60 000 characters;
-  `get_document` windows are 20 000.
-- **Limits and audit**: `MCP_CALLS_PER_GRANT_PER_MINUTE` (60) and `MCP_CALLS_PER_TENANT_PER_MINUTE`
-  (600) on the KV window, answered as tool errors (`rate_limited`), never 429. `mcp_tool_calls`
+  with a line saying it is data, not instructions, and is capped at 60 000 characters (a tool with
+  an `outputSchema` whose answer is over the cap sends no `structuredContent` — it would carry the
+  whole answer — and answers an error result with the capped text); `get_document` windows are
+  20 000.
+- **Limits and audit**: `MCP_CALLS_PER_GRANT_PER_MINUTE` (60), `MCP_CALLS_PER_USER_PER_MINUTE`
+  (120 — one person across all their connections in the organisation, so no member can spend the
+  organisation's minute alone) and `MCP_CALLS_PER_TENANT_PER_MINUTE` (600), checked in that order
+  on the KV window, answered as tool errors (`rate_limited`), never 429. A limiter that cannot be
+  read fails the call closed, as every limiter in the app does, but as a logged tool error
+  (`tool_failed`) rather than a thrown request. Model spend is not MCP's: a tool that calls a
+  model records it in `ai_usage` under that tool's own feature, as it does from chat, with nothing
+  marking it as an MCP call, under the same tenant caps. `mcp_tool_calls`
   records each call — who, which connection, which tool, outcome, duration — never its arguments or
   result; kept `MCP_CALL_RETENTION_DAYS` (90) by the nightly `pruneMcp`, which also drops expired
   tokens. Each call is a `mcp <tool>` span with an `execute_tool` child.
@@ -2313,8 +2335,9 @@ Client ID Metadata Document — Claude (claude.ai, Desktop, Code) and ChatGPT. P
 **Known gaps:** only clients with a Client ID Metadata Document can connect (Claude, ChatGPT;
 Cursor has DCR only, VS Code is untested) — no DCR, no static clients; a Worker cannot resolve DNS,
 so a public name pointing at a private address is caught by the platform's egress, not by the
-fetch guard; a call's own model spend is not attributed to it (`cost_microcents` stays null;
-embeddings for search are unmetered as everywhere else); a renamed organisation slug breaks grants
+fetch guard; a call's own model spend is not attributed to it (`mcp_tool_calls.cost_microcents`
+is always null, and its `ai_usage` rows carry no MCP tag; embeddings for search are unmetered as
+everywhere else); a renamed organisation slug breaks grants
 made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses before the handler (bad
 arguments, an unknown tool) are not in the call log; ChatGPT cannot connect to local `wrangler dev`
 (chatgpt.com answers workerd's metadata fetch with 403; deployed Workers are not refused); no

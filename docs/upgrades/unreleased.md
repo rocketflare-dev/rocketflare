@@ -30,7 +30,11 @@ The MCP server itself, at `/mcp` and `/mcp/t/<slug>` (`docs/CONCEPTS.md` §19), 
 - `apps/web/src/api/routes/mcp.ts` serves stateless Streamable HTTP through `@modelcontextprotocol/server` (a new dependency), mounted before the mount table with its own CORS, outside the global one. A request needs an MCP access token; `services/mcp/caller.ts` resolves it to the person's membership (`isGlobalAdmin` always false) and answers 401 with a `WWW-Authenticate` challenge or 403 `blocked`, `tenant_suspended`, `mcp_disabled` or `mcp_not_allowed`.
 - `/api/mcp/settings|tools|calls` (`manage McpSettings`, owners and admins) hold an organisation's switch (off by default), exposure (`read_only` by default) and who may connect.
 - Four tenant tables in `apps/web/src/db/schema/mcp.ts`: `mcp_settings`, `mcp_grants`, `mcp_tokens` and `mcp_tool_calls` (pruned nightly after `MCP_CALL_RETENTION_DAYS`).
-- New optional vars: `MCP_GRANT_IDLE_DAYS`, `MCP_GRANT_MAX_DAYS`, `MCP_CALL_RETENTION_DAYS`, `MCP_CALLS_PER_GRANT_PER_MINUTE`, `MCP_CALLS_PER_TENANT_PER_MINUTE`.
+- New optional vars: `MCP_GRANT_IDLE_DAYS`, `MCP_GRANT_MAX_DAYS`, `MCP_CALL_RETENTION_DAYS`, `MCP_CALLS_PER_GRANT_PER_MINUTE`, `MCP_CALLS_PER_USER_PER_MINUTE`, `MCP_CALLS_PER_TENANT_PER_MINUTE`.
+- Calls are capped per connection (60/min), per person across their connections in an organisation (120/min) and per organisation (600/min), in that order; a limiter that cannot be read fails the call closed as a logged `tool_failed` tool error.
+- A JSON-RPC batch on `/mcp` is refused (400, `-32600`) in both protocol eras, before the SDK dispatches any call in it.
+- A tool with an `outputSchema` whose answer is over the 60 000-character cap sends no `structuredContent` and answers an error result carrying the capped text.
+- The global CORS skips `/mcp`, the token and revocation endpoints and the discovery documents with or without one trailing slash (`isMcpPath`).
 - `CORE_FEATURES` gains `mcp`, `CORE_SUBJECTS` gains `McpSettings`, and `ERROR_CODES` gains `invalid_token`, `mcp_disabled` and `mcp_not_allowed`.
 - `/mcp`, `/mcp/*`, `/oauth`, `/oauth/*` and `/.well-known/oauth-*` are reserved for core: a plugin declaring one as a mount, an `apiPrefixes` entry or a public mount stops the app at load, naming the plugin.
 - `tenantAuthContext(cfg, input)` is extracted from `middleware/auth.ts` and exported; the API-key path uses it.
@@ -42,10 +46,14 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - `GET /oauth/authorize` → the app's own `/login` → `/oauth/continue` → the consent page `/consent` (a new SPA route) → `POST /oauth/consent` → a code → `POST /oauth/token` (`authorization_code`, `refresh_token` with rotation, reuse detection and a 30-second retry grace) and `POST /oauth/revoke`. PKCE S256 is mandatory.
 - Two platform tables, `oauth_clients` and `oauth_requests`, both in `RLS_REVOKED_TABLES`; `mcp_tokens` gains `successor_sealed`, and `mcp_grants` gains `activated_at` — a consent's grant is a connection (listed, counted, `mcp.client_connected`) only once its code is redeemed, and the nightly retention deletes one never redeemed.
 - A client metadata document is accepted when the client can act as a public client: `token_endpoint_auth_method` absent or `none`, or `none` among `token_endpoint_auth_methods_supported` (ChatGPT's document prefers `private_key_jwt` and lists `none`). Its `grant_types` and `response_types`, when present, must include `authorization_code` and `code`.
+- A refused client metadata document reads the same on the error page whatever the cause (`CIMD_UNUSABLE`, the cause in the server log); a document is cached only once it registers the request's `redirect_uri`; `pruneMcp` drops an `oauth_clients` row unfetched for 30 days that no grant and no pending request names; a `resource` whose slug does not decode answers `invalid_target`.
 - Removing a member or blocking a person revokes their connections in the same transaction (`revokeMcpGrantsOf` in `members.ts`, `idp-tenancy.ts`, `admin.ts`).
-- `/api/mcp/connections` (admins: list, revoke, `POST /revoke-all`) and `/api/mcp-connections` (a person's own, across organisations), shown as **Connected clients** in Settings → MCP and **Connected apps** in Profile (`ui/components/mcp/McpConnectionsTable.tsx`).
+- `/api/mcp/connections` (admins: list, revoke, `POST /revoke-all`) and `/api/mcp-connections` (a person's own, across organisations — session only, an API key gets 403 `insufficient_scope`), shown as **Connected clients** in Settings → MCP and **Connected apps** in Profile (`ui/components/mcp/McpConnectionsTable.tsx`).
 - Settings → MCP renders a tool description's `inline code` as code instead of showing the backticks.
 - Fix, not MCP-specific: `pnpm dev:tunnel` never gave the Worker the tunnel's public URL. `scripts/tunnel-dev.mjs` passed `pnpm dev:api -- --var APP_URL:…`; pnpm 10 forwards the `--` literally and wrangler drops what follows, so the Worker kept `.dev.vars`'s localhost `APP_URL` for its redirects. It now passes `--var` with no `--` (`scripts/lib/tunnel-dev.mjs`).
+- Fix, not MCP-specific: deleting a document (`DELETE /api/ai/documents/:id`, `deleteExternalDocument`) first repairs the facts it superseded or conflicted with, in the same transaction (`deleteDocumentsWithFacts` in the new `services/knowledge/remove.ts`, where `removeDocumentFacts` moved from `extract.ts`), instead of leaving them superseded by nothing or conflicting with a deleted fact.
+- Fix, not MCP-specific: knowledge extraction drops a submitted value, value wording or validity date over 2,000 characters (`MAX_CANDIDATE_TEXT_CHARS`) as `bad_value` / `bad_date` before parsing it.
+- `SETUP.md` §1.10 and §2.10 warn that while `pnpm dev:tunnel` runs, the development instance and its password-less dev sign-in are public; §1.6 says `POST /auth/dev-login` signs in any email in development.
 - `docs/THREAT-MODEL.md` gains the OAuth client and its model as actors, the codes, tokens and grants as assets, and an "MCP promises" list.
 
 ## How to apply
@@ -62,6 +70,8 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 10. To ship the server, add `mcp` to `FEATURES_ENABLED` in both tomls (and `.dev.vars` locally), then turn it on per organisation at Settings → MCP (`SETUP.md` §2.10).
 11. Rename any tool of yours whose name has a `.`, is over 64 characters, or repeats a core or another plugin's tool name — `pnpm plugin check` names a plugin's; an app tool appended in `buildAgentTools` is not checked, so check those by hand. In a plugin with a tool, add an "over MCP" case with `callMcpTool` from `@testkit/integration` (copy `example-feature`'s).
 12. If an app role of yours should manage MCP settings, grant it `manage McpSettings` in `permissions/abilities.ts`; the kit grants owners and admins only, never support.
+13. Wherever your own code deletes a `documents` row, call `deleteDocumentsWithFacts(db, tenantId, ...conditions)` from `apps/web/src/api/services/knowledge/remove.ts` instead of a bare `db.delete(documents)`, so the facts a deleted document superseded or conflicted with become current again.
+14. To change the per-person MCP call cap from its default of 120 a minute, add `MCP_CALLS_PER_USER_PER_MINUTE` to the `[vars]` of BOTH tomls (the parity test compares `[vars]` keys).
 
 ## Conflicts to expect
 
@@ -73,6 +83,8 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 - `apps/web/src/api/services/members.ts`, `idp-tenancy.ts`, `admin.ts` → a `revokeMcpGrantsOf` call inside the removal and block transactions (`blockDeprovisioned` now runs in a transaction) → keep yours and add the kit's call.
 - `apps/web/src/ui/App.tsx` → a `/consent` route → take the kit's line.
 - `apps/web/scripts/tunnel-dev.mjs` → its children now come from `scripts/lib/tunnel-dev.mjs`, with no `--` before `--var` → take the kit's version.
+- `apps/web/src/api/routes/ai-documents.ts`, `apps/web/src/api/services/ai/ingest.ts` → the document delete goes through `deleteDocumentsWithFacts` → take the kit's lines and keep any side effect of yours after them.
+- `apps/web/src/api/services/knowledge/extract.ts` → `removeFacts` and `removeDocumentFacts` moved out to `knowledge/remove.ts` → take the kit's version and import them from `remove.ts`.
 - `apps/web/src/ui/pages/Profile.tsx` → a `ConnectedApps` panel after the sign-in methods → keep your own panels and add the kit's.
 - `apps/web/src/api/services/ai/chat-turn.ts`, `ai/chat-stats.ts`, `agents/runtime.ts`, `agents/replay.ts` → `buildAgentTools(` became `toolsFor('chat' | 'agents', ` → take the kit's line.
 
@@ -81,4 +93,5 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 1. `pnpm plugin check` prints no `declares \`agentTools\`` warning for a plugin you renamed.
 2. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/tool-surfaces.test.ts tests/config/mcp-plugin-seam.test.ts` passes.
 3. With `mcp` in `FEATURES_ENABLED`, `curl -si -X POST http://localhost:3001/mcp` answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`, and `curl -s http://localhost:3001/.well-known/oauth-authorization-server` answers `"client_id_metadata_document_supported": true`; without it, both 404.
-4. `pnpm gate` passes.
+4. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/mcp-cimd.test.ts` passes, and every refusal case in it reads `The client metadata document could not be used`.
+5. `pnpm gate` passes.

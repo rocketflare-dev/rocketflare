@@ -220,7 +220,10 @@ http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, 
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
-(`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
+(`APP_ENV=development`). The page's shortcut acts only for the four seeded accounts, but the
+endpoint itself has no such list: in development, `POST /auth/dev-login` signs in ANY email
+address, with no password or link, and creates the user if it does not exist. It answers 404
+everywhere `APP_ENV` is not `development`.
 
 **Analytics check** (still in 1.6 — same terminal pair). Analytics is an opt-in PLUGIN
 (`docs/CONCEPTS.md` §8, §16) that the bootstrap does not install, so this applies only once you
@@ -303,7 +306,15 @@ adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm 
 `@duckdb/node-api` peer warning; neither is a problem.
 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
-For OAuth callbacks, emailed magic links or webhooks against your laptop:
+For OAuth callbacks, emailed magic links or webhooks against your laptop.
+
+> **While the tunnel runs, your development instance is on the public internet, dev sign-in
+> included.** `POST /auth/dev-login` takes no password and accepts any email (§1.6), so anyone who
+> learns the tunnel's hostname can sign in as any user — the owner, a global admin — read
+> everything in the local database, mint API keys and spend whatever AI and email keys
+> `.dev.vars` holds. Use dummy data only, keep real provider keys out of `.dev.vars` while it is
+> up, and stop the tunnel (Ctrl-C) as soon as you are done.
+
 ```bash
 pnpm web cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
 pnpm dev:tunnel       # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
@@ -742,10 +753,14 @@ The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships 
    `pnpm dev:tunnel` gives a persistent public URL. Claude and Claude Code connect to it;
    ChatGPT does not, because chatgpt.com refuses the metadata fetch from local `wrangler dev`
    (workerd) with a 403 — a deployed Worker fetches it fine, so test ChatGPT on staging.
+   **The tunnel makes the whole development instance public, its password-less dev sign-in
+   included** (§1.10): anyone with the URL can sign in as any user. Connect a client with dummy
+   data only and stop the tunnel when you are done; test with real data on staging.
 
 Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
 `MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),
-`MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
+`MCP_CALLS_PER_USER_PER_MINUTE` (120 — one person across all their connections in an
+organisation), `MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
 
 Verify: `curl -si -X POST <APP_URL>/mcp` answers 401 with a `WWW-Authenticate: Bearer
 resource_metadata="…"` header, and `curl -s <APP_URL>/.well-known/oauth-authorization-server`

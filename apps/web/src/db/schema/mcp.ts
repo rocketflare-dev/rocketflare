@@ -139,7 +139,7 @@ export const mcpToolCalls = pgTable(
     outcome: text('outcome').$type<McpCallOutcome>().notNull(),
     code: text('code'),
     durationMs: integer('duration_ms').notNull(),
-    /** What the call's own model work cost, when it was metered; null when it spent nothing known. */
+    /** Reserved for the call's own model spend; nothing attributes it yet, so it is always null. */
     costMicrocents: bigint('cost_microcents', { mode: 'number' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
