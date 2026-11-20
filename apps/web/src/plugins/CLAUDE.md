@@ -191,6 +191,14 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   absent = all, filtered by `toolsFor(surface, ctx)` — and how an MCP client sees it in `mcp: {
   title?, annotations?, outputSchema?, scope? }` (defaults from `sideEffects`: `mcp:read` and
   read-only, or `mcp:write` and destructive). Terminal and approval-gated tools never reach `mcp`.
+  **Name it `<namespace>_<verb>`**: 1–64 of `A–Z a–z 0–9 _ -` (no `.` — the chat models refuse it),
+  never a core tool's or another plugin's name — the builder drops such a tool and `plugin check`
+  fails it. Never "Rocketflare" in its `title`/`description` (a client shows the deployment's name).
+- **MCP needs nothing else**: no mount, no auth, no token check — `/mcp` resolves the person and
+  hands the tool the same `ToolCtx`. Never mount on `/mcp`, `/oauth/*` or `/.well-known/oauth-*`
+  (refused at load and by `plugin check`). **Prove it scopes over MCP** with `callMcpTool(db, tool,
+  { as, tenant })` from `@testkit/integration` as a member of a second organisation (and outside
+  a group, for group-visible rows) — `example-feature`'s "over MCP" cases are the template.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied
   after the kit's matrix; never `cannot` — that would change what every role may do.
 - **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seedDemo` are post-commit, idempotent,

@@ -1223,8 +1223,12 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `function aguiTypes(events: KitAguiEvent[]): string[]`
   The event types of a run, in order — what a sequence assertion actually cares about.
 - `function bearerHeader(key: string): Record<string, string>`
+- `async function callMcpTool( db: Database, toolName: string, options: { as: string tenant: string args?: Record<string, unknown> scopes?: McpScope[] exposure?: UpdateMcpSettingsRequest['exposure'] exposedTools?: string[] env?: TestEnv } ): Promise<McpToolCallResult>`
+  Call one tool over the REAL `/mcp` as `as` in `tenant`, the way a connected client would: the organisation's MCP switch is turned on (with `exposure`, default `all`, so the tool…
 - `async function cleanDatabase(db: Database): Promise<void>`
   TRUNCATE every table in `public` (drizzle's bookkeeping lives in schema `drizzle`).
+- `async function connectMcp( db: Database, env: TestEnv, input: { tenantId: string userId: string scopes?: McpScope[] slug?: string clientId?: string expiresAt?: Date } ): Promise<TestMcpConnection>`
+  A live connection for `userId` in `tenantId` — what a completed consent leaves behind.
 - `function createExecutionContext(): TestExecutionContext`
 - `async function createTestApiKey( db: Database, tenantId: string, userId: string, overrides: Partial<Omit<NewApiKey, 'keyHash' \| 'keyPrefix'>> = {} )`
   A tenant API key created by `userId` (who must be a member). Returns the plaintext `key` for an `Authorization: Bearer` header plus the stored row.
@@ -1245,6 +1249,8 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>`
 - `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
   Runs every task registered for `cron` and returns a per-task report (used by tests).
+- `async function enableMcp( db: Database, tenantId: string, userId: string, patch: UpdateMcpSettingsRequest = {} )`
+  Turn MCP on for a tenant (plus any other settings), as an admin's PUT would.
 - `function errorResponse(status: number, error = 'Error', code?: string)`
 - `interface EventDelivery`
 - `const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }`
@@ -1257,6 +1263,12 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
   A signed-in owner of Acme by default. Pass `tenant: null` for the "no active tenant" states; `permissions` follows `tenant.role`/`user.isGlobalAdmin` unless given explicitly.
 - `function makeTenant(overrides: Partial<TenantSummary> = {}): TenantSummary`
 - `function makeUser(overrides: Partial<User> = {}): User`
+- `async function mcpClient( env: TestEnv, token: string, options: { path?: string; mode?: 'legacy' \| 'auto' \| { pin: string } } = {} ): Promise<Client>`
+  The SDK client over `request()` — the real app, a real JSON-RPC exchange in either era.
+- `function mcpTestEnv(overrides: Record<string, unknown> = {}): TestEnv`
+  A test env whose deployment ships the MCP server.
+- `interface McpToolCallResult`
+  What `callMcpTool` saw: whether the client was offered the tool, and what calling it answered.
 - `const notFoundResponse: () => Response`
 - `function paged<T>(items: T[], pageSize = 25)`
   `{ items, pagination }` for a one-page list response.
@@ -1297,8 +1309,11 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `function testDatabaseUrl(): string`
 - `type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }`
   Structurally `Cloudflare.Env` so it can be passed straight to `app.request`, `queue()` and `scheduled()`. The bindings are in-memory stubs cast to the platform types; reach the…
+- `interface TestMcpConnection`
 - `interface TestSeed`
   Plain, JSON-serialisable — vitest's `provide()` requires it.
+- `function toolJson<T = unknown>(result: unknown): T`
+  The text of a tool result with the untrusted-data notice line removed, parsed as JSON.
 - `const unauthorizedResponse: () => Response`
 - `function uniqueId(): string`
   Unique suffix for parallel-safe fixtures.
@@ -2026,7 +2041,9 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: aguiFrames :: async function aguiFrames(res: Response): Promise<KitAguiEvent[]>
 @testkit/integration :: function :: aguiTypes :: function aguiTypes(events: KitAguiEvent[]): string[]
 @testkit/integration :: function :: bearerHeader :: function bearerHeader(key: string): Record<string, string>
+@testkit/integration :: function :: callMcpTool :: async function callMcpTool( db: Database, toolName: string, options: { as: string tenant: string args?: Record<string, unknown> scopes?: McpScope[] exposure?: UpdateMcpSettingsRequest['exposure'] exposedTools?: string[] env?: TestEnv } ): Promise<McpToolCallResult>
 @testkit/integration :: function :: cleanDatabase :: async function cleanDatabase(db: Database): Promise<void>
+@testkit/integration :: function :: connectMcp :: async function connectMcp( db: Database, env: TestEnv, input: { tenantId: string userId: string scopes?: McpScope[] slug?: string clientId?: string expiresAt?: Date } ): Promise<TestMcpConnection>
 @testkit/integration :: function :: createExecutionContext :: function createExecutionContext(): TestExecutionContext
 @testkit/integration :: function :: createTestApiKey :: async function createTestApiKey( db: Database, tenantId: string, userId: string, overrides: Partial<Omit<NewApiKey, 'keyHash' | 'keyPrefix'>> = {} )
 @testkit/integration :: function :: createTestEnv :: function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv
@@ -2039,6 +2056,7 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: customEvents :: function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]
 @testkit/integration :: function :: deliverEvents :: async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>
 @testkit/integration :: function :: dispatchScheduled :: async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>
+@testkit/integration :: function :: enableMcp :: async function enableMcp( db: Database, tenantId: string, userId: string, patch: UpdateMcpSettingsRequest = {} )
 @testkit/integration :: function :: errorResponse :: function errorResponse(status: number, error = 'Error', code?: string)
 @testkit/integration :: interface :: EventDelivery :: interface EventDelivery
 @testkit/integration :: const :: IDS :: const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }
@@ -2048,6 +2066,9 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: makeSession :: function makeSession(overrides: Partial<SessionResponse> = {}): SessionResponse
 @testkit/integration :: function :: makeTenant :: function makeTenant(overrides: Partial<TenantSummary> = {}): TenantSummary
 @testkit/integration :: function :: makeUser :: function makeUser(overrides: Partial<User> = {}): User
+@testkit/integration :: function :: mcpClient :: async function mcpClient( env: TestEnv, token: string, options: { path?: string; mode?: 'legacy' | 'auto' | { pin: string } } = {} ): Promise<Client>
+@testkit/integration :: function :: mcpTestEnv :: function mcpTestEnv(overrides: Record<string, unknown> = {}): TestEnv
+@testkit/integration :: interface :: McpToolCallResult :: interface McpToolCallResult
 @testkit/integration :: const :: notFoundResponse :: const notFoundResponse: () => Response
 @testkit/integration :: function :: paged :: function paged<T>(items: T[], pageSize = 25)
 @testkit/integration :: interface :: PlatformChatCall :: interface PlatformChatCall
@@ -2072,7 +2093,9 @@ nothing in the comparison that can throw.
 @testkit/integration :: interface :: TaskReport :: interface TaskReport
 @testkit/integration :: function :: testDatabaseUrl :: function testDatabaseUrl(): string
 @testkit/integration :: type :: TestEnv :: type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }
+@testkit/integration :: interface :: TestMcpConnection :: interface TestMcpConnection
 @testkit/integration :: interface :: TestSeed :: interface TestSeed
+@testkit/integration :: function :: toolJson :: function toolJson<T = unknown>(result: unknown): T
 @testkit/integration :: const :: unauthorizedResponse :: const unauthorizedResponse: () => Response
 @testkit/integration :: function :: uniqueId :: function uniqueId(): string
 @testkit/integration :: function :: waitOnExecutionContext :: async function waitOnExecutionContext(ctx: TestExecutionContext): Promise<void>

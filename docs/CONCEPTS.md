@@ -1708,7 +1708,23 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   Each tool picks where it is offered with `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all)
   and shapes how an MCP client sees it with `mcp: { title?, annotations?, outputSchema?, scope? }`
   (§9 "Chat": the defaults come from `sideEffects`). A terminal tool or one with an approval gate is
-  never offered on `mcp`.
+  never offered on `mcp`. **Names**: one list goes to chat, agents and every MCP client, so a name is
+  1–64 of `A–Z a–z 0–9 _ -` (`MCP_TOOL_NAME_PATTERN` — MCP allows `.`, the chat models do not) and
+  unique across core and every plugin. The builder (`admittedPluginTools`) leaves out, and logs, a
+  plugin tool that breaks either rule — the core name or the first plugin keeps it — and
+  `pnpm plugin check` fails the same names statically (best effort: a name it cannot resolve from a
+  literal or a `const` is left to the runtime). It also WARNS on "Rocketflare" in a tool's `title` or
+  `description`, which a client shows under the deployment's own name.
+- **MCP**: a plugin's tool reaches MCP clients through `tools` and nothing else — no mount, no auth,
+  no token check of its own. `/mcp` resolves the person, their organisation, groups and CASL from
+  the connection, lists the tool under the organisation's exposure mode (§19), and calls it with the
+  same `ToolCtx` chat would (`requesterUrls: []`). `example-feature`'s `list_example_notes` carries
+  the reference `mcp` block. **A plugin proves its tool scopes over MCP** with `callMcpTool(db, tool,
+  { as, tenant, args?, scopes?, exposure? })` from `@testkit/integration`: it turns MCP on, writes a
+  real connection, lists and calls over the real `/mcp`, and answers `{ listed, listing, isError,
+  text, json, structured }` — call it as a member of another organisation, or outside a group, and
+  assert the rows are absent (`connectMcp` / `enableMcp` / `mcpClient` for a case that breaks the
+  connection afterwards).
   `ToolCtx.can(action, subject)` is the requester's CASL grant, read at build time from their
   current membership (false for a run with no requester): gate a tool that writes on your own
   subject's `manage`, not on `scope.bypass`, which is row visibility and true for `support` too.
@@ -1737,8 +1753,11 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   is unset. Store the sealed value in a `*_enc` column and answer `hasCredential`.
 - **Reserved paths**: `/mcp`, `/oauth` and the OAuth `.well-known` documents belong to core's MCP
   server (§19). A plugin claiming one as a mount, an `apiPrefixes` entry or a public mount stops
-  the app at load (`assertNoReservedPluginPaths`), naming the plugin — a plugin's MCP tools need
-  no route of their own, only `tools`.
+  the app at load (`assertNoReservedPluginPaths`), naming the plugin, and `pnpm plugin check` fails
+  it first (an `apiPrefixes` entry in the manifest, a `['/mcp', …]` mount tuple in the source) — a
+  plugin's MCP tools need no route of their own, only `tools`. The opt-in analytics plugin's own
+  `/mcp` (drizzle-cube, API-key auth) is refused by this; its plugins release moves its cube tools
+  onto `tools` and drops the mount and its vite `/mcp` proxy edit.
 - **Public mounts (D34)**: `publicMounts` are routes a third party calls with no session — an
   admin-consent callback, a webhook. Only under `/api/hooks/<id>` (so no toml edit and one
   enumerable prefix per plugin), mounted before the authed table with no `authMiddleware` and no

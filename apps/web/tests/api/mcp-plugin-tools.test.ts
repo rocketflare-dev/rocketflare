@@ -9,6 +9,9 @@
  *   `insufficient_scope` naming both scopes (the step-up), with `mcp:write` it runs;
  * - `selected` lists a NEW plugin tool only once it is ticked;
  * - in no mode is an approval-gated, a terminal or a chat-only tool listed;
+ * - a plugin still on the deprecated `agentTools` is listed like one on `tools`;
+ * - a plugin tool shadowing a core or an earlier plugin's name, or with a name a chat model
+ *   refuses, is left out — the real owner keeps the name;
  * - the settings page lists every tool with its provider and why one is unavailable.
  */
 import { describe, expect, it, vi } from 'vitest'
@@ -47,6 +50,13 @@ vi.mock('@/plugins/server', () => {
         ],
       },
       { shared: { id: 'late-plugin', label: 'Late' }, tools: () => [tool('late_read')] },
+      // Still on the deprecated name: it must keep reaching clients until the kit removes it.
+      { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_read')] },
+      // Names the builder refuses: a core tool's, another plugin's, one a chat model rejects.
+      {
+        shared: { id: 'shadow-plugin', label: 'Shadow' },
+        tools: () => [tool('search_knowledge'), tool('fixture_read'), tool('shadow.dotted')],
+      },
     ],
   }
 })
@@ -78,7 +88,10 @@ describe('a plugin tool over MCP', () => {
     const { conn } = await setup()
     const tools = await listed(conn.accessToken)
     const names = tools.map(t => t.name)
-    expect(names).toEqual(expect.arrayContaining(['fixture_read', 'late_read']))
+    expect(names).toEqual(expect.arrayContaining(['fixture_read', 'late_read', 'legacy_read']))
+    // One of each name, the core and first-come one; never a name a surface refuses.
+    expect(names.filter(n => n === 'search_knowledge' || n === 'fixture_read')).toHaveLength(2)
+    expect(names).not.toContain('shadow.dotted')
     expect(names).not.toContain('fixture_write')
     for (const never of NEVER) expect(names).not.toContain(never)
     const read = tools.find(t => t.name === 'fixture_read')
@@ -151,5 +164,10 @@ describe('a plugin tool over MCP', () => {
     expect(byName.fixture_terminal).toMatchObject({ unavailableReason: 'terminal' })
     expect(byName.fixture_chat_only).toMatchObject({ unavailableReason: 'not_on_mcp' })
     expect(byName.late_read).toMatchObject({ provider: 'late-plugin' })
+    expect(byName.legacy_read).toMatchObject({ provider: 'legacy-plugin' })
+    // The shadowing plugin's copies were left out, so the names keep their real owners.
+    expect(byName.search_knowledge).toMatchObject({ provider: 'core' })
+    expect(byName.fixture_read).toMatchObject({ provider: 'fixture-plugin' })
+    expect(byName['shadow.dotted']).toBeUndefined()
   })
 })

@@ -106,6 +106,34 @@ export {
  */
 export { deliverEvents, type EventDelivery } from '../helpers/events'
 
+// ---- the MCP server ----------------------------------------------------------------------------
+
+/**
+ * A plugin's tool over the REAL `/mcp`, as a connected client would call it.
+ *
+ * `callMcpTool(db, tool, { as, tenant, args?, scopes?, exposure? })` turns the organisation's MCP
+ * switch on, writes a connection for `as` exactly as the consent screen would, lists the tools and —
+ * only when this one is listed — calls it. `listed: false` is the answer for a tool the client is
+ * never offered (unexposed, approval-gated, chat-only, its flag off); a listed one carries its
+ * `listing` (title, annotations) and answers
+ * `{ isError, text, json, structured }`. **A plugin proves its tool's scoping here**: call it as a
+ * member of a second organisation, or as somebody outside a group, and assert the rows are absent —
+ * the same proof the tenant-isolation case gives the mount.
+ *
+ * `connectMcp` / `enableMcp` / `mcpClient` / `mcpTestEnv` are the pieces, for a case that needs a
+ * connection it then breaks (revoke the member, turn MCP off) or a raw JSON-RPC exchange.
+ */
+export {
+  callMcpTool,
+  connectMcp,
+  enableMcp,
+  type McpToolCallResult,
+  mcpClient,
+  mcpTestEnv,
+  type TestMcpConnection,
+  toolJson,
+} from '../helpers/mcp'
+
 // ---- fixtures ----------------------------------------------------------------------------------
 
 /**

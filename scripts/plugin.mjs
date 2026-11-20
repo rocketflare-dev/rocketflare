@@ -74,6 +74,7 @@ import {
   classifyPluginFile,
   claudeHookProblems,
   coreEditsByFile,
+  declaredTools,
   declaresProperty,
   declaresPublicSites,
   dependenciesToInstall,
@@ -120,6 +121,7 @@ import {
   renderList,
   renderSteps,
   reprovisionStep,
+  reservedMountPaths,
   resolveSubdir,
   restoreWorkerFirst,
   revertCoreEdits,
@@ -129,8 +131,10 @@ import {
   skillDirProblem,
   skillFileProblems,
   skillTarget,
+  stringConstants,
   surfaceDirectories,
   tableClashes,
+  toolProblems,
   undeclaredManifestEvents,
   undeclaredSkillDirs,
   withoutDependencies,
@@ -2444,6 +2448,23 @@ function cmdCheck(args, host) {
         })
     }
 
+    // **The MCP server's paths are core's.** The host refuses a plugin mounted there at load, but
+    // that is a crash on boot; this says the same thing before anything runs. A plugin's tools
+    // reach MCP clients through `ServerPlugin.tools` — it never needs a mount or auth of its own.
+    if (existsSync(abs(serverTree))) {
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const path of reservedMountPaths(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          add('fail', `${id}:reserved-path:${path}`, {
+            file: `${serverTree}/${f}`,
+            problem: `mounts ${path}, which core reserves for the MCP server and its authorization server`,
+            fix:
+              'move the mount under /api/<plugin id>, and give an MCP client this data as a tool ' +
+              "in ServerPlugin.tools (surfaces: ['mcp', …]) — the host's /mcp lists it for you",
+          })
+      }
+    }
+
     // Two separate things a plugin with tables owes, and neither is visible from the other side.
     const tables = (anchor.schema?.tables ?? []).filter(
       t => !(anchor.schema?.rlsExcluded ?? []).includes(t)
@@ -2513,6 +2534,37 @@ function cmdCheck(args, host) {
         })
       }
     }
+  }
+  // **Tool names (MCP).** One list goes to chat, agents and every MCP client, so a name is unique
+  // across core and every plugin and is one every surface accepts. The tool builder keeps the first
+  // and drops the rest at runtime; this names them before that silently happens. Best effort: a
+  // name a static read cannot resolve is left to the runtime check.
+  const toolDeclarations = []
+  for (const { manifest } of anchors) {
+    const tree = `apps/web/src/plugins/${manifest.id}`
+    if (!existsSync(abs(tree))) continue
+    const sources = walk(abs(tree))
+      .filter(f => /\.tsx?$/.test(f) && !/(^|\/)tests?\//.test(f))
+      .map(f => ({ file: `${tree}/${f}`, text: readFileSync(abs(`${tree}/${f}`), 'utf8') }))
+    const sharedDir = `packages/shared/src/plugins/${manifest.id}`
+    const sharedText = existsSync(abs(sharedDir))
+      ? walk(abs(sharedDir))
+          .filter(f => /\.ts$/.test(f))
+          .map(f => readFileSync(abs(`${sharedDir}/${f}`), 'utf8'))
+          .join('\n')
+      : ''
+    const constants = stringConstants([sharedText, ...sources.map(x => x.text)].join('\n'))
+    for (const { file, text } of sources) {
+      const tools = declaredTools(text, constants)
+      if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+    }
+  }
+  for (const p of toolProblems(toolDeclarations)) {
+    add(p.severity, `${p.pluginId}:tool-${p.kind}:${p.tool}`, {
+      file: p.file,
+      problem: p.problem,
+      fix: p.fix,
+    })
   }
   // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
   // nothing enforces it, because nothing derives a table name from an id — so the collision is the

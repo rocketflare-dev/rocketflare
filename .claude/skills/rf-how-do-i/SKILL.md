@@ -178,6 +178,26 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
     example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
     `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
 
+- **"Let Claude / ChatGPT use our app" / "expose this to MCP"** — do not coach a new route, an API
+  key for the client, or a tool that takes a `tenantId`. The kit's MCP server (`docs/CONCEPTS.md`
+  §19) already signs the person in with the app's own login and acts as them in one organisation.
+  - **Connecting a client** is configuration, not code: `mcp` in `FEATURES_ENABLED` (both tomls),
+    then an owner turns it on at Settings → MCP, picks who may connect and what is exposed (all
+    read-only tools by default), and pastes the URL shown there (`/mcp/t/<slug>`) into claude.ai,
+    Claude Code (`claude mcp add --transport http <name> <url>`) or ChatGPT. v1 clients are the
+    ones with Client ID Metadata Documents; Cursor is not one yet.
+  - **Exposing their own data** is a TOOL, declared once for chat, agents and MCP: in a plugin,
+    `ServerPlugin.tools` (copy `apps/web/src/plugins/example-feature/tools/list-example-notes.ts`);
+    in the app, appended in `buildAgentTools`. Settle: a snake_case name prefixed with the
+    namespace (`orders_find`), unique, no `.`; whether it changes anything (`sideEffects: true` →
+    `mcp:write`, listed only under "Enable all" or when ticked); `surfaces` if it must stay off a
+    surface; an `mcp: { title, annotations }` block for how a client shows it. It reads through
+    `ToolCtx` — the caller's tenant, groups and CASL — never an id the model chose, and it never
+    says "Rocketflare" (a client shows it under the app's name).
+  - **The test they owe**: `callMcpTool(db, '<tool>', { as, tenant })` from `@testkit/integration`
+    as a member of a SECOND organisation (and outside a group, if rows are group-visible), asserting
+    the rows are absent. A tool needing approval is never offered over MCP in this release.
+
 - **"The knowledge base should know facts about my customers / orders / suppliers"** (D43) — do
   not coach a new extraction job, a prompt or a column the model fills in. **Register an entity
   type** and the kit's `knowledge.extract` job does the rest: in the app, an entry in

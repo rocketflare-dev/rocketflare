@@ -79,6 +79,7 @@
     ],
     "@testkit/integration": [
       "bearerHeader",
+      "callMcpTool",
       "createTestApiKey",
       "createTestEnv",
       "createTestSession",

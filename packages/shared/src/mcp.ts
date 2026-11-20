@@ -12,10 +12,12 @@ export const mcpScopeSchema = z.enum(MCP_SCOPES)
 export type McpScope = z.infer<typeof mcpScopeSchema>
 
 /**
- * A tool name MCP accepts: 1–64 of `A–Z a–z 0–9 _ - .`. The spec allows 128; 64 is what every
- * current client renders without truncating, and a kit or plugin tool is snake_case anyway.
+ * A tool name every surface accepts: 1–64 of `A–Z a–z 0–9 _ -`. MCP allows 128 characters and `.`,
+ * but the same tool goes to the chat models, whose APIs refuse a dot and anything past 64 — so the
+ * name is the intersection. A kit or plugin tool is snake_case anyway. `pnpm plugin check` and the
+ * tool builder both enforce it (`scripts/lib/plugin-lib.mjs` keeps a copy, pinned equal by a test).
  */
-export const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_.-]{1,64}$/
+export const MCP_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
 
 /**
  * What the organisation exposes:

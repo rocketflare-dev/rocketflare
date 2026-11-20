@@ -252,6 +252,17 @@ where the complaint is AT a place in a file, never fabricated. Per installed plu
 - when it declares a `durable_object` binding, **`hooks.onTenantDeleted` is declared somewhere in
   its tree** — a Durable Object is state the FK cascade cannot reach, so a deleted tenant's DO
   state outlives it, and no other check can see that because its tables are gone;
+- **its tool names are ones every surface accepts and nobody else's** — 1–64 of `A–Z a–z 0–9 _ -`
+  (MCP allows `.`, the chat models refuse it), never a core tool's name (`search_knowledge`,
+  `get_document`, `list_documents`, `lookup_facts`) and never another installed plugin's. Read from
+  each `defineTool({ name })` written as a literal or a `const`; a name it cannot resolve is left
+  to the tool builder, which drops (and logs) a bad one at runtime anyway. "Rocketflare" in a tool's
+  `title` or `description` is a WARNING — an MCP client shows that text under the deployment's own
+  name;
+- **no mount on core's MCP paths** — an `apiPrefixes` entry or a `['/mcp' | '/oauth/…' |
+  '/.well-known/oauth-…', …]` mount tuple fails (the host also refuses it at load). A plugin's
+  tools reach MCP clients through `tools` alone; it proves they scope with `callMcpTool` from
+  `@testkit/integration` (`apps/web/src/plugins/CLAUDE.md`);
 - **no two installed plugins declare the same table name.** The prefix convention is what keeps
   them apart and nothing derives a table name from an id, so the collision is the checkable half —
   and nothing else in the kit sees it. TS2308 catches a duplicated EXPORT symbol, not a duplicated

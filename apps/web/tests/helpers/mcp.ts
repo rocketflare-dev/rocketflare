@@ -121,7 +121,89 @@ export function mcpPost(
 /** The text of a tool result with the untrusted-data notice line removed, parsed as JSON. */
 export function toolJson<T = unknown>(result: unknown): T {
   const content = (result as { content?: { type: string; text?: string }[] }).content ?? []
-  const text = content.find(c => c.type === 'text')?.text ?? ''
-  const body = text.startsWith('[Data returned') ? text.slice(text.indexOf('\n') + 1) : text
-  return JSON.parse(body) as T
+  return JSON.parse(withoutNotice(content.find(c => c.type === 'text')?.text ?? '')) as T
+}
+
+/** A tool answer's text without the untrusted-data notice `/mcp` puts on its first line. */
+function withoutNotice(text: string): string {
+  return text.startsWith('[Data returned') ? text.slice(text.indexOf('\n') + 1) : text
+}
+
+/** What `callMcpTool` saw: whether the client was offered the tool, and what calling it answered. */
+export interface McpToolCallResult {
+  /** The tool was in `tools/list` for this connection. A tool that was not is never called. */
+  listed: boolean
+  /** Its `tools/list` entry — name, title, annotations, schemas — when listed. */
+  listing: Awaited<ReturnType<Client['listTools']>>['tools'][number] | null
+  /** The call answered `isError` (a tool error — a limit, a refusal, an `ApiError`). */
+  isError: boolean
+  /** The answer's text with the untrusted-data notice removed, or `null` when it was not listed. */
+  text: string | null
+  /** `text` parsed as JSON when it is JSON, else `null`. */
+  json: unknown
+  /** `structuredContent`, when the tool declares an `outputSchema`. */
+  structured: unknown
+}
+
+/**
+ * Call one tool over the REAL `/mcp` as `as` in `tenant`, the way a connected client would: the
+ * organisation's MCP switch is turned on (with `exposure`, default `all`, so the tool under test is
+ * reachable unless the case is about exposure), a connection with `scopes` is written as consent
+ * would write it, and the SDK client lists the tools and — only if this one is listed — calls it.
+ *
+ * This is how a plugin proves its tool scopes over MCP exactly as it does in chat: call it as a
+ * member of tenant B and assert A's rows are absent, call it as somebody outside a group and assert
+ * the group's rows are absent. `listed: false` is itself an answer — an unexposed, approval-gated,
+ * chat-only or flag-gated tool is unknown to the client, never an error it could probe.
+ */
+export async function callMcpTool(
+  db: Database,
+  toolName: string,
+  options: {
+    as: string
+    tenant: string
+    args?: Record<string, unknown>
+    scopes?: McpScope[]
+    exposure?: UpdateMcpSettingsRequest['exposure']
+    exposedTools?: string[]
+    env?: TestEnv
+  }
+): Promise<McpToolCallResult> {
+  const env = options.env ?? mcpTestEnv()
+  await enableMcp(db, options.tenant, options.as, {
+    exposure: options.exposure ?? 'all',
+    ...(options.exposedTools && { exposedTools: options.exposedTools }),
+  })
+  const conn = await connectMcp(db, env, {
+    tenantId: options.tenant,
+    userId: options.as,
+    scopes: options.scopes ?? ['mcp:read', 'mcp:write'],
+  })
+  const client = await mcpClient(env, conn.accessToken, { path: conn.path })
+  try {
+    const { tools } = await client.listTools()
+    const listing = tools.find(t => t.name === toolName) ?? null
+    if (!listing) {
+      return { listed: false, listing, isError: false, text: null, json: null, structured: null }
+    }
+    const result = await client.callTool({ name: toolName, arguments: options.args ?? {} })
+    const content = (result.content ?? []) as { type: string; text?: string }[]
+    const text = withoutNotice(content.find(c => c.type === 'text')?.text ?? '')
+    let parsed: unknown = null
+    try {
+      parsed = JSON.parse(text)
+    } catch {
+      parsed = null
+    }
+    return {
+      listed: true,
+      listing,
+      isError: result.isError === true,
+      text,
+      json: parsed,
+      structured: result.structuredContent ?? null,
+    }
+  } finally {
+    await client.close()
+  }
 }

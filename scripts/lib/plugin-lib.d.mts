@@ -421,6 +421,30 @@ export interface DeprecatedServerMember {
 export const DEPRECATED_SERVER_MEMBERS: readonly DeprecatedServerMember[]
 export function deprecatedServerMembers(source: string): DeprecatedServerMember[]
 
+export const TOOL_NAME_RE: RegExp
+export const CORE_TOOL_NAMES: readonly string[]
+export function isReservedPluginPath(path: string): boolean
+export function reservedMountPaths(source: string): string[]
+export function stringConstants(source: string): Map<string, string>
+export interface DeclaredTool {
+  name: string | null
+  title: string | null
+  description: string | null
+}
+export function declaredTools(source: string, constants?: Map<string, string>): DeclaredTool[]
+export interface ToolProblem {
+  severity: 'fail' | 'warn'
+  pluginId: string
+  file: string
+  tool: string
+  kind: string
+  problem: string
+  fix: string
+}
+export function toolProblems(
+  declarations: readonly { pluginId: string; file: string; tools: readonly DeclaredTool[] }[]
+): ToolProblem[]
+
 export function resolveSubdir(input: {
   flag?: string | null
   manifest?: string | null

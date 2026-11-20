@@ -18,7 +18,12 @@ The MCP server's tool seam: one tool list for chat, agent runs and MCP, filtered
 - `toolsFor(surface, ctx)` in `services/agents/tools` is the one filter; chat, the chat inspector, agent runs and replay call it. `buildAgentTools(ctx)` still builds the unfiltered list and is still where an app appends a kit-wide tool.
 - On `mcp`, a terminal tool (no handler) and an approval-gated tool (`requiresApproval[When]`) are never offered; `mcpToolProfile(tool)` derives a tool's MCP scope (`mcp:read`, or `mcp:write` for `sideEffects`) and annotations (`docs/CONCEPTS.md` §9 "Chat").
 - `ServerPlugin.agentTools` is renamed `ServerPlugin.tools`, same signature. `agentTools` is still read when `tools` is absent and is marked deprecated; `pnpm plugin check` warns on it, naming the replacement.
-- `example-feature` declares `tools`.
+- `example-feature` declares `tools`, and `list_example_notes` carries the reference `mcp` block (a title, `openWorldHint: false`).
+- Tool names are one rule for every surface, `MCP_TOOL_NAME_PATTERN` in `@rocketflare/shared/mcp`: 1–64 of `A–Z a–z 0–9 _ -` (no `.`, which the chat models refuse). `admittedPluginTools` in `services/agents/tools` drops and logs a plugin tool whose name breaks it, is a core tool's (`CORE_TOOL_NAMES`) or an earlier plugin's.
+- `pnpm plugin check` fails a plugin tool name that breaks the rule or collides (read from `defineTool({ name })` literals and `const`s), fails a reserved-path `apiPrefixes` entry or `['/mcp', …]` mount tuple, and warns on "Rocketflare" in a tool's `title` or `description`.
+- `@testkit/integration` exports `callMcpTool(db, tool, { as, tenant, args?, scopes?, exposure?, exposedTools? })` — turn MCP on, connect as `as`, list and call over the real `/mcp`, answering `{ listed, listing, isError, text, json, structured }` — plus `connectMcp`, `enableMcp`, `mcpClient`, `mcpTestEnv` and `toolJson`.
+
+For plugin authors: a tool reaches MCP clients through `ServerPlugin.tools` alone — no mount, no auth of its own — and a plugin proves it scopes there with `callMcpTool` as a member of a second organisation. The opt-in analytics plugin's own `/mcp` (drizzle-cube, API-key auth) is now refused at load; its next plugins release moves its cube tools onto `tools` with `surfaces: ['mcp', 'agents']`, drops the mount and drops its vite `coreEdits` `/mcp` proxy line, which the kit's own proxy replaces.
 
 The MCP server itself, at `/mcp` and `/mcp/t/<slug>` (`docs/CONCEPTS.md` §19), shipped dark behind the environment-gated `mcp` flag:
 
@@ -52,11 +57,12 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 8. If your app already has a client route at `/consent`, or serves anything at `/oauth` or `/.well-known/openid-configuration`, move it: core owns them now.
 9. If an installed plugin of yours mounts `/mcp` (the analytics plugin's drizzle-cube endpoint did), upgrade it to a release that offers its tools through `tools` instead before upgrading the kit; the app refuses to start while a plugin claims a reserved path.
 10. To ship the server, add `mcp` to `FEATURES_ENABLED` in both tomls (and `.dev.vars` locally), then turn it on per organisation at Settings → MCP (`SETUP.md` §2.10).
-11. If an app role of yours should manage MCP settings, grant it `manage McpSettings` in `permissions/abilities.ts`; the kit grants owners and admins only, never support.
+11. Rename any tool of yours whose name has a `.`, is over 64 characters, or repeats a core or another plugin's tool name — `pnpm plugin check` names a plugin's; an app tool appended in `buildAgentTools` is not checked, so check those by hand. In a plugin with a tool, add an "over MCP" case with `callMcpTool` from `@testkit/integration` (copy `example-feature`'s).
+12. If an app role of yours should manage MCP settings, grant it `manage McpSettings` in `permissions/abilities.ts`; the kit grants owners and admins only, never support.
 
 ## Conflicts to expect
 
-- `apps/web/src/api/services/agents/tools/index.ts` → `toolsFor` and `pluginTools` added, plugin builders read through `pluginTools` → keep your own tools in `buildAgentTools` and take the kit's additions.
+- `apps/web/src/api/services/agents/tools/index.ts` → `toolsFor`, `pluginTools`, `CORE_TOOL_NAMES` and `admittedPluginTools` added, plugin builders read through `pluginTools` and admitted through `admittedPluginTools` → keep your own tools in `buildAgentTools` and take the kit's additions.
 - `apps/web/src/api/middleware/auth.ts` → the API-key branch now builds its context through `tenantAuthContext` → take the kit's version and re-apply any change of yours to that branch inside `tenantAuthContext`.
 - `apps/web/src/ui/pages/settings/tabs.ts`, `SettingsLayout.tsx`, `ui/lib/query-keys.ts` → an `mcp` tab, its content entry and an `mcp` key family → keep your own tabs and keys alongside.
 - `apps/web/src/api/index.ts` → `/mcp` mounted after `/api/invite`, `/api/mcp` added to the mount table, `assertNoReservedPluginPaths` after the public mounts → take the kit's lines.
@@ -69,6 +75,6 @@ The app is its own OAuth 2.1 authorization server for `/mcp`, in Postgres (`serv
 ## Verify
 
 1. `pnpm plugin check` prints no `declares \`agentTools\`` warning for a plugin you renamed.
-2. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/tool-surfaces.test.ts` passes.
+2. `pnpm --filter @rocketflare/web exec vitest run --project config tests/config/tool-surfaces.test.ts tests/config/mcp-plugin-seam.test.ts` passes.
 3. With `mcp` in `FEATURES_ENABLED`, `curl -si -X POST http://localhost:3001/mcp` answers 401 with `WWW-Authenticate: Bearer resource_metadata="…"`, and `curl -s http://localhost:3001/.well-known/oauth-authorization-server` answers `"client_id_metadata_document_supported": true`; without it, both 404.
 4. `pnpm gate` passes.

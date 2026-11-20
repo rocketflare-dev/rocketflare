@@ -9,7 +9,7 @@ import { and, count, eq, gte } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { mcpToolCalls } from '../../../db/schema'
 import { serverPlugins } from '../../../plugins/server'
-import { buildAgentTools, pluginTools } from '../agents/tools'
+import { buildAgentTools, CORE_TOOL_NAMES, pluginTools } from '../agents/tools'
 import type { AgentToolContext } from '../agents/tools/search-knowledge'
 import { mcpToolProfile, mcpUnavailableReason } from '../agents/tools/surfaces'
 import type { Tool } from '../ai/agent-loop'
@@ -26,7 +26,10 @@ async function pluginOfTool(ctx: AgentToolContext): Promise<Map<string, string>>
   built.forEach((result, i) => {
     const id = serverPlugins[i]?.shared.id
     if (result.status !== 'fulfilled' || !id) return
-    for (const tool of result.value) owners.set(tool.name, id)
+    // First come, and never a core name — the same rule the tool builder admits by, so a plugin
+    // shadowing a name is not credited with the tool that actually answers to it.
+    for (const tool of result.value)
+      if (!owners.has(tool.name) && !CORE_TOOL_NAMES.includes(tool.name)) owners.set(tool.name, id)
   })
   return owners
 }

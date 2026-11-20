@@ -15,6 +15,8 @@
  * a turn on a validation error the model often cannot diagnose. Coerce what is unambiguous; keep
  * the bounds.
  */
+import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
+import { MCP_TOOL_NAME_PATTERN } from '@rocketflare/shared/mcp'
 import type { AnyServerPlugin } from '../../../../plugins/server'
 import { serverPlugins } from '../../../../plugins/server'
 import { loggerFor } from '../../../utils/core/logger'
@@ -56,14 +58,19 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
   const contributed = await Promise.allSettled(
     serverPlugins.map(async p => (await pluginTools(p, ctx)) ?? [])
   )
-  const fromPlugins = contributed.flatMap((result, i) => {
-    if (result.status === 'fulfilled') return result.value
-    loggerFor(ctx.cfg, { pluginId: serverPlugins[i]?.shared.id }).warn(
-      { err: result.reason },
-      'plugin tools failed; its tools are left out of this run'
-    )
-    return []
-  })
+  const fromPlugins = admittedPluginTools(
+    contributed.map((result, i) => {
+      const pluginId = serverPlugins[i]?.shared.id ?? 'unknown'
+      if (result.status === 'fulfilled') return { pluginId, tools: result.value }
+      loggerFor(ctx.cfg, { pluginId }).warn(
+        { err: result.reason },
+        'plugin tools failed; its tools are left out of this run'
+      )
+      return { pluginId, tools: [] }
+    }),
+    (pluginId, tool, problem) =>
+      loggerFor(ctx.cfg, { pluginId }).warn({ tool }, `plugin tool left out: ${problem}`)
+  )
   // Knowledge facts (D43) ride on the tenant's flag: `lookup_facts` and search's facts block.
   const features = ctx.features ?? (await tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId))
   const facts = features.includes('knowledge-facts')
@@ -74,6 +81,43 @@ export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
     ...(facts ? [lookupFactsTool(ctx) as Tool] : []),
     ...fromPlugins,
   ]
+}
+
+/** Every name a core tool answers to, whether or not this tenant is offered it right now. */
+export const CORE_TOOL_NAMES: readonly string[] = Object.values(KNOWLEDGE_TOOLS)
+
+/**
+ * The plugin tools that may join the list, in plugin order. A tool is left out — reported through
+ * `onDrop`, never thrown, because one bad plugin must not take chat, agents or `/mcp` down — when
+ * its name is not one every surface accepts (`MCP_TOOL_NAME_PATTERN`), when it is a core tool's
+ * name (a plugin must never shadow `search_knowledge`, whose visibility rules it does not share),
+ * or when an earlier plugin already took it. `pnpm plugin check` refuses the same names statically;
+ * this is the runtime half, for names a static read cannot see.
+ */
+export function admittedPluginTools(
+  contributions: readonly { pluginId: string; tools: readonly Tool[] }[],
+  onDrop: (pluginId: string, tool: string, problem: string) => void
+): Tool[] {
+  const taken = new Map<string, string>(CORE_TOOL_NAMES.map(name => [name, 'core']))
+  const out: Tool[] = []
+  for (const { pluginId, tools } of contributions) {
+    for (const tool of tools) {
+      const owner = taken.get(tool.name)
+      if (!MCP_TOOL_NAME_PATTERN.test(tool.name)) {
+        onDrop(pluginId, tool.name, 'the name is not 1–64 of A–Z a–z 0–9 _ -')
+      } else if (owner) {
+        onDrop(
+          pluginId,
+          tool.name,
+          `the name is already ${owner === 'core' ? "a core tool's" : `'${owner}'s`}`
+        )
+      } else {
+        taken.set(tool.name, pluginId)
+        out.push(tool)
+      }
+    }
+  }
+  return out
 }
 
 /**
