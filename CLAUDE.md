@@ -116,7 +116,7 @@ scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrad
                    release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
                    kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/;
-                   kit repo only (`kitOnly`, deleted by the rename): install.sh, detach.sh, release.mjs,
+                   kit repo only (`kitOnly`, deleted by the rename): install.sh, release.mjs,
                    changelog-nudge.mjs + release-site-nudge.mjs (maintainer PreToolUse hooks)
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a

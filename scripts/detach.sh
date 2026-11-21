@@ -12,9 +12,9 @@
 # (an `origin` naming rocketflare-dev/rocketflare, or `--force` for a mirror) and clean, and it
 # refuses when the history already starts with "Start from Rocketflare".
 #
-# Node may not be installed yet, so this is bash and sed on one known line. The literal kit name
-# is safe: this runs before any rename, `.rocketflare.json` is on the rename's preserved list, and
-# the file is kit-only, so a copy never carries it.
+# Node may not be installed yet, so this is bash and awk on one known line. It stays in a copy
+# after the rename, harmlessly: it refuses once the history starts with "Start from Rocketflare",
+# and `.rocketflare.json` is on the rename's preserved list.
 set -euo pipefail
 
 FORCE=0

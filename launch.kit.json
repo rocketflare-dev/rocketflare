@@ -29,8 +29,6 @@
       "scripts/default-plugins.d.mts",
       ".github/ci-plugins.json",
       "scripts/install.sh",
-      "scripts/detach.sh",
-      ".claude/skills/rf-start/**",
       "CONTRIBUTING.md",
       "CODE_OF_CONDUCT.md",
       "docs/upgrades/unreleased.md"

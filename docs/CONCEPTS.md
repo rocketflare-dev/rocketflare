@@ -1600,7 +1600,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 - **A copy starts with a design**:
   - `/rf-start` is the one entry point the website's prompt names. It runs, in order:
     1. `scripts/detach.sh`, which records the kit commit in `.rocketflare.json` and replaces the
-       history. `install.sh` and `/rf-setup` §0 run the same script, and all three are `kitOnly`.
+       history. `install.sh` and `/rf-setup` §0 run the same script. It refuses a copy that is already detached, so it and `/rf-start` stay in copies harmlessly, as `/rf-adapt` does.
     2. setup (`/rf-setup`);
     3. `/rf-design`;
     4. `/rf-adapt`.

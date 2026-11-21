@@ -118,6 +118,11 @@ settings load only in a session started there, and the build needs them.
 In that new session, Stage 1 starts from its issue: "build Stage 1 of docs/design". `/rf-how-do-i`
 turns each slice into a plan before any code. End the turn here: there is nothing to ask.
 
+## In an app that already exists
+
+This skill stays in every copy, like `/rf-adapt`. In a renamed app with a signed-off design, every
+step below is already done: say so in one line and point at `/rf-design` to revisit the design.
+
 ## Re-running
 
 `/rf-start` again in the same folder picks up where it stopped:
