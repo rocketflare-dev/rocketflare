@@ -23,7 +23,9 @@ It proves existence, not truth: a backticked path, a `pnpm` script, a `/rf-*` sk
 rule's `paths:` glob still names something; no on-demand file is over the 40,000-char cap (the
 tail of a longer one is not read on a 200K-context model); skill frontmatter is valid. `✖` is a
 defect. `!` needs your judgement — a negation (`there is no X`), a file a plugin installs, or a
-worked example is not stale. Mark a file of hypothetical paths with
+worked example is not stale. In a copy, a `pnpm` script the rename removed with the kit-only
+files (`kitOnlyScripts` in `.rocketflare.json` — `kit:release`, `test:kit-only`) is expected to be
+missing: kit text names it for the kit, so leave that sentence alone. Mark a file of hypothetical paths with
 `<!-- agent-docs-check: hypothetical -->` (comments are stripped before injection, so it is free).
 
 ## 2. Judge what the script cannot

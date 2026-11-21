@@ -1519,7 +1519,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   `docs/upgrades/unreleased.md`). `scripts/rename.mjs` deletes them when a
   copy is born, and with them every package.json script (`kit:release`) and `.claude/settings.json`
   hook that names one (`stripKitOnlyWiring`, `stripKitOnlyHooks`); it also writes the app its own
-  `SECURITY.md` and drops `retiredSurfaces`. `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
+  `SECURITY.md`, drops `retiredSurfaces` and records the scripts it removed as `kitOnlyScripts`,
+  which `/rf-agent-docs`'s check reads so kit text naming them ("in the kit repository only") is
+  not a failure in a copy. `classifyPath` never ports one (the TARGET kit's list too, and `KIT_ONLY_PATHS` is the
   floor for a pre-0.15.8 manifest); `tests/config/kit-manifest.test.ts` fails a copy that carries
   one or a script or hook that calls one, and `kit.yml`'s renamed-copy gate asserts none survive
   and passes at an app version (`1.2.3`).

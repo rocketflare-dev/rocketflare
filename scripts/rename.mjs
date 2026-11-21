@@ -22,7 +22,9 @@
  * (the kit's own tests, workflows and maintainer scripts) — unwires their vitest project, and drops
  * every package.json script and `.claude/settings.json` hook that names one (`docs/CONCEPTS.md` §13).
  * `SECURITY.md` becomes the app's own (the kit's points reporters at the kit's advisories), and
- * `.rocketflare.json` loses `retiredSurfaces` (only the kit's own note checks read it).
+ * `.rocketflare.json` loses `retiredSurfaces` (only the kit's own note checks read it) and gains
+ * `kitOnlyScripts`, the script names it removed (kit text still names them; `/rf-agent-docs`
+ * reads the list so a copy's docs check expects them to be missing).
  *
  * It also detaches the copy's version: the root `package.json` restarts at 0.1.0 and `CHANGELOG.md`
  * starts empty, while the root version is still the kit's (`restartAppVersion`). The kit version the
@@ -266,9 +268,14 @@ function main(argv) {
   const current = rel => edits.get(rel) ?? readFileSync(path.join(REPO_ROOT, rel), 'utf8')
 
   const unwired = []
+  // Recorded in `.rocketflare.json` (`kitOnlyScripts`): kit text that stays true of the kit still
+  // names them ("in the kit repository only"), and `/rf-agent-docs` reads the list so a copy's
+  // docs check does not fail on a script the rename removed on purpose.
+  const removedScripts = new Set()
   for (const rel of PACKAGE_JSONS) {
     if (!existsSync(path.join(REPO_ROOT, rel))) continue
     const { text, removed, edited } = stripKitOnlyWiring(current(rel), kitOnlyGlobList)
+    for (const name of removed) removedScripts.add(name)
     if (removed.length === 0 && edited.length === 0) continue
     edits.set(rel, text)
     unwired.push(
@@ -508,7 +515,7 @@ function main(argv) {
     written += 1
   }
   for (const rel of kitOnly) removeWithEmptyParents(rel)
-  stampManifest(names)
+  stampManifest(names, [...removedScripts].sort())
   out(`wrote ${written} files, deleted ${kitOnly.length} kit-only file(s).`, '')
 
   if (args.skipInstall) {
@@ -593,7 +600,7 @@ costs and how to read it are in \`docs/SECURITY-AUDIT.md\`.
  * this app's names — and a non-null `app` is also what tells the kit's own release checks that
  * this is a copy, not the kit.
  */
-function stampManifest(names) {
+function stampManifest(names, kitOnlyScripts = []) {
   // The one literal spelling left in the toolchain, on purpose: this file is on `EXCLUDED_PATHS`
   // (the tool must keep working after it has run) and the name is in `KIT.preserved` besides, so
   // it is safe twice over — and the rename must not grow a dependency on `manifest.mjs`, which is
@@ -607,6 +614,8 @@ function stampManifest(names) {
   }
   const manifest = JSON.parse(readFileSync(file, 'utf8'))
   manifest.app = { slug: names.slug, display: names.display, domain: names.domain }
+  // The package.json scripts deleted with the kit-only files — see `removedScripts` in main.
+  if (kitOnlyScripts.length > 0) manifest.kitOnlyScripts = kitOnlyScripts
   // Ids older kit notes still name — read only by the kit's own note checks, never by a copy.
   delete manifest.$retiredSurfaces
   delete manifest.retiredSurfaces
