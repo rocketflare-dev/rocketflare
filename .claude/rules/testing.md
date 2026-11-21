@@ -96,7 +96,9 @@ behaviour rather than the attack.
 ## Database discipline
 
 - `apps/web/tests/setup.ts` (globalSetup, memoised on `globalThis` because two projects share it): roles →
-  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`
+  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`.
+  A failure there (no `.env.test` loaded, a migration Postgres refuses) is printed as itself by
+  `tests/helpers/startup-error.ts`, not as Vite's `code.charCodeAt is not a function`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
 - A cross-tenant cron task under test (a prune, a sweep) also acts on OTHER files' rows. Assert only
