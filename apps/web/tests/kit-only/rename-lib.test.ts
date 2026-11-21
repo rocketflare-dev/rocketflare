@@ -228,6 +228,13 @@ describe('applyReplacements', () => {
     expect(preserved).toBe(4)
   })
 
+  it('never rewrites the published plugin catalogue page, while the app domain still moves', () => {
+    const input = 'Browse https://rocketflare.dev/plugins; the app is https://app.rocketflare.dev'
+    const { text } = applyReplacements(input, deriveNames('acme', 'Acme'))
+    expect(text).toContain('https://rocketflare.dev/plugins;')
+    expect(text).not.toContain('https://app.rocketflare.dev')
+  })
+
   it('applies the classes longest-first: the env class takes the bare ENV_PREFIX too', () => {
     const { text, counts } = applyReplacements("'ROCKETFLARE' ROCKETFLARE_X", deriveNames('a-b'))
     expect(text).toBe("'A_B' A_B_X")

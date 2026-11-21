@@ -47,7 +47,7 @@ The script walks every text file git knows about (tracked and untracked, `.gitig
 `pnpm-lock.yaml`, `LICENSE`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, the two svgs,
 the tool itself, its test and the adapt skill are skipped; the `rocketflare-dev` org and every
 `rocketflare-dev/<repo>` — the kit's origin, its plugins, the neon-proxy image, the reusable plugin
-CI — is preserved as upstream) plus `apps/web/.dev.vars` when it exists (git-ignored, but its
+CI — is preserved as upstream, as is the plugin catalogue page `rocketflare.dev/plugins`) plus `apps/web/.dev.vars` when it exists (git-ignored, but its
 `DATABASE_URL` must follow the compose file), applies nine ordered token classes — `@rocketflare/`
 → `@<slug>/`, `ROCKETFLARE` → `<UPPER>`, `rocketflare.dev|.local` → `<domain>` (default
 `<slug>.example.com`), `.rocketflare` → `.<slug>`, the Postgres owner `rocketflare` → `<snake>`,

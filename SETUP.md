@@ -160,6 +160,7 @@ included, lands in your shell history.
 ### 1.4b Plugins `[ready]`
 ```bash
 pnpm plugin list                  # what is installed (id, version, repo, when)
+pnpm plugin list --available      # what could be: every published plugin, read live
 pnpm plugin check                 # audit them: exit 1 with one line per failure
 ```
 A **plugin** is a git repository copied into this app — never an npm package — that contributes
@@ -694,14 +695,25 @@ turns a bad answer into a case. Everything else — suites, judges, baselines, C
 
 ### 2.7 Plugins `[ready]` (D31)
 
-Analytics is not part of the kit; it is the opt-in `analytics` PLUGIN (dashboards, cubes, the
-drizzle-cube API). `.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing
-and a fresh clone has no dashboards until you add it — `/rf-plugin add analytics`, or by hand:
+**What exists:** `pnpm plugin list --available` prints every published plugin — id, version,
+whether it is installed here, and its one-line description — read live from
+`rocketflare-dev/rocketflare-plugins` at its newest release tag (exit 3 if it cannot be reached;
+there is no cached list). When your git credentials can read
+`rocketflare-dev/rocketflare-commercial-plugins`, its plugins follow under a separate
+`Commercial plugins` heading with a `licence:` line: they are licensed separately. To browse rather
+than install, see https://rocketflare.dev/plugins. Check it before building a feature: the order is
+an existing plugin, else build it in the app, and write a plugin only for something meant to be
+installed in another app too.
+
+`.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing and a fresh clone
+has none — not even analytics (dashboards, cubes, the drizzle-cube API), which is an opt-in plugin
+like the rest. Add one with `/rf-plugin add <id>` (`/rf-plugin add` alone shows the list), or by
+hand — with no `@ref`, a repository is read at its newest release tag:
 
 ```bash
-pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git@3.8.2 \
+pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git \
   --subdir plugins/analytics                       # read the plan; re-run with --apply
-pnpm db:generate --name plugin-analytics-3.8.2 && pnpm db:migrate   # the host's migration
+pnpm db:generate --name plugin-analytics-<version> && pnpm db:migrate   # the host's migration
 ```
 
 Then run the plan's numbered steps (below). An app that wants it on every fresh clone lists it in

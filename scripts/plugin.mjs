@@ -5,7 +5,7 @@
  *   node scripts/plugin.mjs add <repo|path>[@ref] [--subdir <dir>] [--apply] [--local]
  *   node scripts/plugin.mjs upgrade <id> [--to <ref>] [--from <ref>] [--apply]
  *   node scripts/plugin.mjs remove <id> [--apply] [--archive]
- *   node scripts/plugin.mjs list | check | export <id> <dir>
+ *   node scripts/plugin.mjs list [--available] [--json] | check | export <id> <dir>
  *
  * A plugin is a separate git repository COPIED into an app — never installed from npm, exactly
  * like the kit itself — so this script is the kit-upgrade machine pointed at a second kind of
@@ -70,6 +70,9 @@ import {
   barrelLines,
   buildPluginSurface,
   CLAUDE_SETTINGS_FILE,
+  catalogueEntries,
+  catalogueJson,
+  catalogueReads,
   checkRequirements,
   classifyPluginFile,
   claudeHookProblems,
@@ -92,6 +95,7 @@ import {
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  licenceTerms,
   manifestPathProblems,
   missingDependencies,
   missingWorkerFirstPatterns,
@@ -99,6 +103,7 @@ import {
   nextAddedDependencies,
   nextPluginMigrationTag,
   ownedClaudeHooks,
+  PLUGIN_CATALOGUES,
   PLUGIN_MANIFEST_FILE,
   parseClaudeHookCommand,
   parsePluginRequirement,
@@ -116,10 +121,12 @@ import {
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderCatalogue,
   renderDependencyDelta,
   renderDiagnostic,
   renderList,
   renderSteps,
+  repoDisplayName,
   reprovisionStep,
   reservedMountPaths,
   resolveSubdir,
@@ -216,12 +223,16 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
                           you changed or added; without it such a removal stops
 
   list                    the installed plugins, one line each
+    --available           instead, every plugin the published repositories hold at their newest
+                          tag (id, version, installed here or not, description) — read live,
+                          never cached; exit 3 when they cannot be reached. A commercial
+                          repository is listed only when your git credentials can read it
   check                   audit every installed plugin; one line per failure, exit 1 on any.
                           add --apply and upgrade --apply run it last, over the tree they wrote
 
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
 
-  --json                  on add, upgrade, remove and check: the same facts as DATA rather than prose.
+  --json                  on add, upgrade, remove, check and list --available: the same facts as DATA rather than prose.
                           Every step carries its kind — agent (a command plus the assertion that
                           proves it) or human (a decision the tooling stops for) — so a human step
                           is a field rather than a sentence somebody has to notice.
@@ -247,6 +258,7 @@ export function parseArgs(argv) {
     allowDirty: false,
     json: false,
     continue: false,
+    available: false,
   }
   const takesValue = { '--subdir': 'subdir', '--to': 'to', '--from': 'from' }
   for (let i = 0; i < argv.length; i++) {
@@ -266,6 +278,7 @@ export function parseArgs(argv) {
     else if (a === '--allow-dirty') args.allowDirty = true
     else if (a === '--continue') args.continue = true
     else if (a === '--json') args.json = true
+    else if (a === '--available') args.available = true
     else if (a.startsWith('-')) return { error: `unknown option '${a}'` }
     else if (!args.command) args.command = a
     else args.positional.push(a)
@@ -2072,8 +2085,81 @@ function tomlMigrationTags() {
 
 // ---------------------------------------------------------------- list / check
 
-function cmdList(_args, host) {
+function cmdList(args, host) {
+  if (args.available) return cmdListAvailable(args, host)
   out(...renderList(host.plugins, { sidecarIds: host.sidecarIds }))
+  return 0
+}
+
+/**
+ * The repositories to read. `PLUGIN_CATALOGUES` (a JSON array of `{ repo, commercial }`) replaces
+ * the published ones — the test seam, and a way to point at a private mirror; unset, it is the
+ * published list.
+ */
+function catalogueSources() {
+  const override = process.env.PLUGIN_CATALOGUES
+  if (!override) return PLUGIN_CATALOGUES
+  try {
+    const parsed = JSON.parse(override)
+    if (Array.isArray(parsed) && parsed.every(s => typeof s?.repo === 'string')) return parsed
+  } catch {}
+  stop(2, 'error: PLUGIN_CATALOGUES must be a JSON array of { "repo", "commercial" }')
+}
+
+/**
+ * One repository read at its newest release tag through the same mirror `add` uses, or null when
+ * it cannot be read. Always fetched (`fresh`): a cached mirror would be a stale list.
+ */
+function readCatalogue(source) {
+  let m
+  try {
+    m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
+      fresh: true,
+      quiet: true,
+      cwd: REPO_ROOT,
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+  const tag = m.latestTag()
+  if (!tag) return { error: `${source.repo} has no release tag` }
+  const files = m.listFiles(tag)
+  m.prefetch(tag, catalogueReads(files))
+  const read = rel => {
+    const r = m.tryShow(tag, rel)
+    return r.ok ? r.out : null
+  }
+  return {
+    repo: source.repo,
+    tag,
+    commercial: Boolean(source.commercial),
+    licence: source.commercial ? licenceTerms(files, read, { repo: source.repo, ref: tag }) : null,
+    plugins: catalogueEntries(files, read),
+  }
+}
+
+/**
+ * `list --available`: every plugin the published repositories hold at their newest tag. The
+ * open repository failing is an error (exit 3, one line); a commercial one failing is silence —
+ * the person is simply not licensed to read it.
+ */
+function cmdListAvailable(args, host) {
+  if (!args.fetch) stop(2, 'error: list --available always reads the repositories; drop --no-fetch')
+  process.env.GIT_TERMINAL_PROMPT = '0'
+  const catalogues = []
+  for (const source of catalogueSources()) {
+    const c = readCatalogue(source)
+    if (c.error) {
+      if (source.commercial) continue
+      stop(
+        3,
+        `error: cannot read the plugin catalogue (${c.error}) — check the network and your git access to ${repoDisplayName(source.repo)}`
+      )
+    }
+    catalogues.push(c)
+  }
+  if (args.json) out(JSON.stringify(catalogueJson(catalogues, host.plugins), null, 2))
+  else out(...renderCatalogue(catalogues, host.plugins))
   return 0
 }
 

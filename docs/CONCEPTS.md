@@ -610,7 +610,9 @@ the CLI prints raw role values, not `ROLE_LABELS`.
 
 **The `analytics` PLUGIN, opt-in (D31).** `plugins/analytics` in
 `rocketflare-dev/rocketflare-plugins`; `defaultPlugins` is empty, so a fresh clone has no
-dashboards until `/rf-plugin add analytics` (SETUP.md §2.7). Once installed, its docs are its own
+dashboards until `/rf-plugin add analytics` (SETUP.md §2.7). It is one of several published
+plugins: `pnpm plugin list --available` lists them all, live (§16), and
+https://rocketflare.dev/plugins is the page for browsing. Once installed, its docs are its own
 `CLAUDE.md` files. drizzle-cube cubes scope every `sql()` by tenant, dashboards are jsonb `DashboardConfig`s
 restrictable to groups, fact tables rebuild on the `:15` cron, and its cube-isolation test is
 mandatory. The kit core knows nothing about drizzle-cube, and other plugins extend it through
@@ -1716,8 +1718,19 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   and plugin repos call `plugin-ci.yml` (floor + newest kit), which installs a plugin's
   `requires.plugins` from the same checkout first and takes the highest `minKit` across the set
   as the floor.
+- **Discovery**: `pnpm plugin list --available [--json]` is the catalogue — every
+  `rocketflare-plugin.json` in `rocketflare-dev/rocketflare-plugins` at its newest release tag, one
+  line each (id, version, installed here or not, description: the manifest's `description`, else
+  its README's lede, else its `label`), read through the same mirror `add` uses with the fetch made
+  mandatory. Nothing is copied into the kit, so it cannot go stale; unreachable is one line and
+  exit 3, never a cached list. `rocketflare-dev/rocketflare-commercial-plugins` follows under its own
+  `Commercial plugins` heading with a `licence:` pointer, only when the person's git credentials can
+  read it, and is otherwise not mentioned. `/rf-plugin add` with no id shows it, and
+  `/rf-how-do-i` asks "does a plugin already do this?" first: the order is an existing plugin, else
+  the app itself, and a plugin only for what another app will install too.
+  https://rocketflare.dev/plugins is the browsing page.
 - **Lifecycle** (`scripts/plugin.mjs`): `add` (plan, then `--apply`), `upgrade`, `remove`
-  (`--archive`), `list`, `check`, `export`. Every plan step is **declarative, agent (with its
+  (`--archive`), `list` (`--available`), `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the
   migration (`db:generate --name plugin-<id>-<version>`). `pnpm provision cloudflare <env>` writes
   a plugin's bindings (`kv|queue|r2|workflow|durable_object|images`), crons, prefixes and vars into BOTH
@@ -2155,6 +2168,11 @@ upsert reads the previous row before writing, so two racing re-ingests of a FILE
 replaced original behind in R2; a plugin skill edited in place is overwritten by the next
 `plugin upgrade` (copy it to a skill of your own first), and `check` validates a skill's name and
 description, not what it says — a stale command in a SKILL.md is caught only by reading it.
+The catalogue reads only the two published repositories (a third-party plugin is installed by URL
+and listed nowhere; `PLUGIN_CATALOGUES` replaces the list but does not extend it), describes a
+plugin from its README until manifests carry a `description`, lists only each repository's newest
+tag (not what a given `minKit` can install), and judges commercial access by whether git can read
+the repository, not by any licence record.
 `startAgentRun`'s `idempotencyKey` is forever per (tenant, agent, key) — there is no expiry, so a
 plugin that wants to re-run the same work later must vary the key; `RequestCtx` has no
 `startAgentRun` (a route calls `POST /api/agents/runs`, or enqueues a job that does). `streamChat` stores no turn (the plugin owns
