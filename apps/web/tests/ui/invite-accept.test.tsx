@@ -72,7 +72,7 @@ describe('InviteAccept', () => {
       [`POST /api/invite/${TOKEN}/accept`]: makeSession({ tenant: beta, tenants: [beta] }),
     })
     expect(await screen.findByText('Beta Corp')).toBeInTheDocument()
-    expect(screen.getByText('admin')).toBeInTheDocument()
+    expect(screen.getByText('Admin')).toBeInTheDocument()
     expect(screen.getByText('Bea Boss')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept invitation' }))

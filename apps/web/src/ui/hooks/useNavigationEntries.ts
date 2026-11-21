@@ -107,6 +107,7 @@ export function navigationEntries(
     }
     for (const p of plugins) {
       for (const tab of p.settingsTabs?.({ can }) ?? []) {
+        if (!canAccess(tab.guard)) continue
         add({
           id: `settings:${tab.id}`,
           label: tab.label,

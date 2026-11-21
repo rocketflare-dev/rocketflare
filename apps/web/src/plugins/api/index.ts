@@ -51,6 +51,7 @@ export type {
   PluginRoute,
   PluginRouteTier,
   PluginSeedContext,
+  PluginSettingsTab,
   ServerPlugin,
   UiPlugin,
 } from '../types'

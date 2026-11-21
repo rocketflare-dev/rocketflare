@@ -82,7 +82,7 @@ or nothing resolves.
 | `noreply@rocketflare.dev`, `app.rocketflare.dev`, `staging.rocketflare.dev` | `[vars] EMAIL_FROM`, `APP_URL`, commented `routes` in both tomls | your domains | automatic (`domain`, from `--domain`) |
 | `rocketflare-light` / `rocketflare-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/theme-toggle.test.tsx` | `myapp-light` / `myapp-dark` (or keep) | automatic (`kebab`) |
 | `rocketflare-dev-postgres` / `rocketflare-test-postgres` | `container_name` in `apps/web/docker-compose.dev.yml` / `docker-compose.test.yml` | `myapp-dev-postgres` / `myapp-test-postgres` — pinned names mean a SECOND checkout of the same kit on one machine shares ONE database (Compose derives the project name `web` from the directory, so `pnpm dev:db:up` attaches to the running container instead of failing; `pnpm bootstrap` detects it and stops unless `--share-db`) until renamed | automatic (`bare`; the `-dev-data` volume too); reported as (c) with the `docker rm` / `volume rm` for the OLD names |
-| `admin@rocketflare.local` | `apps/web/scripts/seed.ts` (the seeded global admin), the dev quick-login list in `apps/web/src/ui/pages/Login.tsx`, `SETUP.md` | `admin@myapp.local` | automatic (`domain`) |
+| `admin@rocketflare.local` | `apps/web/scripts/seed.ts` (the seeded global admin), `DEV_ACCOUNTS` in `apps/web/src/ui/lib/dev-accounts.ts` (the seed and the dev quick-login list both read it), `SETUP.md` | `admin@myapp.local` | automatic (`domain`) |
 | brand colour variables | the header block of `apps/web/src/ui/index.css` (the only place hex values live) | your palette — then `pnpm web test:ui` (contrast gate) | `--colour` rewrites the LIGHT theme's primary hex only (`--color-primary`, `--surface-active`, `--focus-ring`, `--dc-primary-rgb`, `<meta name="theme-color">`); the dark primary, `-content` colours and `--tone-primary-*` tints reported as (e) |
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark | not touched — reported as (f) |
 | `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after | not touched — the decision is flagged in (b) |
@@ -194,10 +194,10 @@ first and lives in the shared package, so the API, the UI and the CLI parse one 
 | RLS exclusion / allow-list | `RLS_EXCLUDED_TABLES` / `CORE_UNSCOPED_ALLOWLIST` | `ServerPlugin.rlsExcludedTables` / `unscopedAllowlist` |
 | D29 visibility | `VISIBILITY_RESOURCES` (`services/access.ts`) | `ServerPlugin.visibilityResources` |
 | knowledge entity type (facts read from documents attach to its rows) | `APP_ENTITY_TYPES` (`api/services/knowledge/entity-types.ts`) | `ServerPlugin.knowledgeEntityTypes` (type `<id>.<name>`) |
-| new-tenant / demo data | `onTenantCreated` (`utils/db/tenant-helpers.ts`), `scripts/seed.ts` | `ServerPlugin.hooks.onTenantCreated` / `hooks.seedDemo` |
+| new-tenant / demo data | `onTenantCreated` (`utils/db/tenant-helpers.ts`), `scripts/seed.ts` | `ServerPlugin.hooks.onTenantCreated` / `hooks.seed` (every `pnpm seed`) / `hooks.seedDemo` |
 | page + route | `App.tsx` (lazy) | `UiPlugin.routes` (always `lazy()`) |
 | nav item | `CORE_NAVIGATION` (`SideNav.tsx`) | `UiPlugin.nav` (a group placed `before` a core one) |
-| settings tab | `SettingsLayout.tsx` | `UiPlugin.settingsTabs(ctx)` |
+| settings tab | `SettingsLayout.tsx` | `UiPlugin.settingsTabs(ctx)` (a tab's `guard` gates it on a feature) |
 | query keys | `CORE_QUERY_KEYS` (`lib/query-keys.ts`) | `UiPlugin.queryKeys` (roots `<id>:…`) |
 | agent form | `CORE_AGENT_FORMS` (`pages/agents/forms/index.ts`) | `UiPlugin.agentForms` |
 | CLI command | `apps/cli/src/commands/<feature>.ts` + `cli.ts` | `CliPlugin.register(program, action)` |
@@ -403,6 +403,14 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 - **Turning chat's knowledge tools off**: `CHAT_KNOWLEDGE_TOOLS = "false"` in BOTH wrangler tomls
   (the parity test compares `[vars]` keys, so it has to be in both either way). Tool-free chat is
   cheaper per turn and streams token by token on every provider.
+- **Your roles' names and your dev accounts**: the roles are stored as `owner` / `admin` /
+  `member` / `support` and stay so (permissions, the API, the CLI); what people SEE is
+  `ROLE_LABELS` in `packages/shared/src/tenants.ts` — set `admin: 'Manager'`, `member: 'Staff'`
+  and every badge, picker, menu and quick-login button follows. The seeded accounts are
+  `DEV_ACCOUNTS` in `apps/web/src/ui/lib/dev-accounts.ts`, one list read by `pnpm seed` and by the
+  login page's quick-login buttons and `?as=` allow-list: add or rename one there, never in two
+  places. A plugin behind its own flag turns it on for its organisation from `hooks.seed`
+  (`ctx.setFeature`), or `pnpm seed --feature <key>[@<slug>]` does it from the command line.
 - **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
   Settings → API keys (or `POST /api/keys` with a session cookie) and export `ROCKETFLARE_API_KEY` +
   `ROCKETFLARE_URL`. `pnpm cli whoami` confirms.

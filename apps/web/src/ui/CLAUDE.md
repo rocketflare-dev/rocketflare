@@ -78,7 +78,10 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   `methods.oidcOnly` shows the one SSO button and never redirects to `/auth/oidc` on its own —
   signing in is always a click. `?as=<email>` (what `pnpm bootstrap` opens) calls
   `POST /auth/dev-login` once on mount, ONLY when `methods.devLogin` is true AND the email is in
-  `DEV_ACCOUNTS`; never widen the allow-list.
+  `DEV_ACCOUNTS` (`lib/dev-accounts.ts` — also what `scripts/seed.ts` creates and the quick-login
+  buttons show); never widen the allow-list beyond the seeded accounts.
+- Roles render through `roleLabel(role)` (`@rocketflare/shared/tenants` `ROLE_LABELS`), never the
+  raw value with `capitalize`: an app relabels them in one place.
 - No active tenant → `noTenantRoute(session)`: access request → `/pending`; memberships →
   `/select-tenant`; `signupMode === 'approval'` → `/pending`; else `/no-access`. Exception: a
   global admin opens `/admin/*` with no membership (`isAdminPath`; the bootstrap admin must approve

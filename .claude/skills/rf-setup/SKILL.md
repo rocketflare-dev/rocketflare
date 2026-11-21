@@ -27,6 +27,12 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
   list its own. `--no-plugins` skips the step and gives a working app without them; `/rf-plugin` is the
   skill for installing one afterwards, where the plan is read before anything is written.
 
+- **Windows (WSL2).** A `✖` from the shell prerequisites (`running as root in WSL`, `docker not
+  found inside WSL`, `node … not found, and no fnm or nvm`) comes with the exact fix lines above
+  it: quote them and walk the person through them one at a time (`SETUP.md` "Windows (WSL2) —
+  before you start"). The Docker one needs Docker Desktop QUIT and restarted, which only they can
+  do; wait for `docker version` to answer before re-running.
+
 ## 0. Is this a copy, or the kit itself?
 
 The kit is a template, not an upstream (`docs/ADAPTING.md` §0). A copy that still carries the kit's
@@ -137,8 +143,10 @@ or stay offline?
    plugin the `plugins` step installed and the page it adds** (`pnpm plugin list` names them; say
    "no plugins installed" rather than nothing when there are none), and any note the script printed
    (an orphaned volume, `--offline`). Do not restate the ten ✔ lines
-   they just watched, and **do not echo the seeded API key** — it was printed once by the seed and
-   is in their scrollback; say that `pnpm cli login` mints another whenever they want one.
+   they just watched, and **do not echo the seeded API key** (the seed's `api key:` line, labelled
+   a local demo key) or the invite link — it was printed once by the seed and is in their
+   scrollback; say that both are throwaway values for this machine's database, and that
+   `pnpm cli login` mints another key whenever they want one.
 
 ## 4. Then ask what they want to do next — do not guess
 
@@ -171,7 +179,7 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 | 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`); the `Connected to … (<driver> driver)` part names the local driver. Under `neon` the Neon proxy container is up too (`local driver neon: Neon proxy at http://localhost:<port>`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated. The kit declares none, so in the kit the line reads `no defaultPlugins declared — nothing to install` and there is no **Analytics** nav item — dashboards, cubes and fact tables are the opt-in `analytics` plugin (`docs/CONCEPTS.md` §8, `/rf-plugin add analytics`). Skipped with `--no-plugins` |
-| 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
+| 7 | `seed` | demo tenant, the `DEV_ACCOUNTS` users, one API key (printed once on a line labelled `api key:`, a local demo value), each plugin's `hooks.seed`, plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
 | 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen (`[ai] off (--offline; wrangler login not checked)`) |
 | 9 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
 | 10 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |

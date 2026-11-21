@@ -30,6 +30,7 @@ import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { PaginationMeta, PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import { apiKeyIdOf } from '../../api/auth/api-key-session'
 import { can as canDo, guardPermission } from '../../api/middleware/permissions'
 import type { SetResourceGroupsInput } from '../../api/services/access'
 import type { AccessScope } from '../../api/services/access-sql'
@@ -270,6 +271,7 @@ export function requestCtx(c: AppContext): RequestCtx {
 
     user: route.user,
     userId: route.user.id,
+    apiKeyId: apiKeyIdOf(auth),
     tenantId: route.tenantId,
     role: auth.tenantUser?.role ?? null,
     isAdmin: isAdminLevel(auth),
