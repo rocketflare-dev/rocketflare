@@ -16,7 +16,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
-> plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
+> plan before `--apply`. `pnpm plugin list --available` lists what is published: check it before building. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
 > generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
 > `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the

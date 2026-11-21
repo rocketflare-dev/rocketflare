@@ -23,7 +23,8 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
   verification line. Do not summarise a failure away — quote it.
 - The `plugins` step (6) installs code from other repositories into this one. **Name them before
   you run the bootstrap**, the same way you name the Postgres container — the kit's own
-  `defaultPlugins` is empty (analytics is opt-in: `/rf-plugin add analytics`), and an app's copy may
+  `defaultPlugins` is empty (every plugin is opt-in, analytics included — `pnpm plugin list
+  --available` lists what exists, https://rocketflare.dev/plugins to browse), and an app's copy may
   list its own. `--no-plugins` skips the step and gives a working app without them; `/rf-plugin` is the
   skill for installing one afterwards, where the plan is read before anything is written.
 
@@ -151,7 +152,7 @@ open "want me to do anything else?". Offer these, in this order, with the first 
 | **Show me around** | Walk the seeded app: **Chat** (streams a reply — Workers AI needs the `wrangler login`, else a key), **Agents** (`summarize-text`, watch the timeline fill), **Knowledge → Search** (the demo documents are indexed), **Analytics** (the seeded Organisation Overview — only once the analytics plugin is added). Drive it with them; one screen at a time |
 | **Check it really works** | `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433) — which runs every installed plugin's own tests too (with analytics added, the two-tenant cube isolation one, then the SETUP.md 1.6 analytics check, `pnpm cli analytics check-facts`) |
 | **Make it mine** | `/rf-adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
-| **Add a capability** | Want dashboards? `/rf-plugin add analytics`. Otherwise `/rf-plugin` — install a plugin (a git repository copied in, with a plan you read first), or audit what is installed with `pnpm plugin list` / `pnpm plugin check` |
+| **Add a capability** | First see what already exists: `pnpm plugin list --available` (every published plugin — analytics, search, inbox, the user guide and more — with a one-line description each). `/rf-plugin add` with no id shows that list and installs the one they pick (a git repository copied in, with a plan you read first); `pnpm plugin list` / `pnpm plugin check` audit what is installed |
 | **Deploy it** | `/rf-provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
 
 Leave the dev stack running unless they ask you to stop it (`pnpm dev:stop`). If they pick

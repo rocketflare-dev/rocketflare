@@ -24,9 +24,25 @@ harness (D33). Hand over to the `rf-evals` skill rather than planning a slice. A
 you're planning adds an AI surface (a new agent, a new prompt), put "a suite in `apps/evals`" in the
 plan's test section so its quality is measured from day one.
 
-## 0. First question: app, or plugin?
+## 0. First question: does a plugin already do this?
 
-Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
+Before planning anything, check whether it already exists. Run
+
+```
+pnpm plugin list --available
+```
+
+and read the descriptions against what they asked for: one line per published plugin (id, version,
+whether it is installed, what it does), read live from the plugin repositories at their newest
+release, plus a separately licensed `Commercial plugins` block when their credentials can read it.
+Exit 3 means the repositories could not be reached: say so, and do not guess from memory. If one
+fits — or fits with a small addition in the app — say which, and hand over to `/rf-plugin add <id>`
+instead of planning a slice. Builders who skip this step build what already exists.
+
+**Done when** they have agreed that no published plugin does the job (or have installed the one
+that does).
+
+**Then: app, or plugin?** Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
 §16). A **plugin** is a separate git repository copied into this app — never npm — that contributes
 contracts, schema, routes, jobs, agents, UI and CLI commands through six barrels it is the only
 thing allowed to write a line into — importing the kit only through the declared entries

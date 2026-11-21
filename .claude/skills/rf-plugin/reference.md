@@ -5,6 +5,7 @@ reasons are `docs/CONCEPTS.md` §16; the seam is `apps/web/src/plugins/CLAUDE.md
 looking things up mid-run.
 
 **Contents:** [Exit codes](#exit-codes-pnpm-plugin---help-is-authoritative) ·
+[The catalogue](#the-catalogue--plugin-list---available) ·
 [The manifest](#the-manifest--rocketflare-pluginjson-in-the-repo-pluginjson-in-the-host) ·
 [How `add` classifies each file](#how-add-classifies-each-file-of-the-source-repo) ·
 [What `check` verifies](#what-check-verifies) ·
@@ -22,11 +23,32 @@ looking things up mid-run.
 | 0 | ok | a plan printed, or an apply that landed |
 | 1 | error | anything the script names and stops on |
 | 2 | usage | a missing or unknown argument |
-| 3 | unreachable with no cached mirror | a bad repo URL, or offline with nothing under `.upgrade/plugins/` — `--no-fetch` reuses the cache |
+| 3 | unreachable with no cached mirror | a bad repo URL, or offline with nothing under `.upgrade/plugins/` — `--no-fetch` reuses the cache. For `list --available`, unreachable at all: it never answers from the cache |
 | 4 | applied with rejects (`upgrade`) | work remains; the version stamp is deliberately withheld until the `*.rej` files are gone |
 | 5 | no `rocketflare-plugin.json` at the SOURCE | the path or repo is not a plugin. That is the filename at a plugin REPOSITORY's root; the copy inside a host is `plugin.json` |
 | 6 | a requirement is unmet | the `minKit` floor, `requires.surfaces`, `requires.plugins`, or a symbol its `uses` names that this kit's ledger does not carry. **Nothing is written** |
 | 7 | the target path exists | most often "plugin '<id>' is already installed — `pnpm plugin upgrade <id>` moves it forward" |
+
+## The catalogue — `plugin list --available`
+
+What can be installed, read live: `pnpm plugin list --available [--json]` mirrors each published
+repository (`PLUGIN_CATALOGUES` in `scripts/lib/plugin-lib.mjs` — the first-party
+`rocketflare-dev/rocketflare-plugins`, then `rocketflare-dev/rocketflare-commercial-plugins`)
+through the same `.upgrade/plugins/` mirror `add` uses, ALWAYS fetching, and reads it at its newest
+`X.Y.Z` tag. Every `rocketflare-plugin.json` up to three directories deep is one plugin (never one
+inside another). Its line is id, version, `installed` (or `installed <older version>`) and a
+description: the manifest's own `"description"` when it has one, else the opening `>` blockquote of
+the `README.md` beside it (else that README's first sentence), else its `label`. The kit holds no
+copy of any of it, so the list cannot go stale.
+
+- **The first-party repository unreachable** — offline, no git access to github.com — is one
+  `error:` line and exit 3. A cached mirror is never read instead.
+- **The commercial repository** appears only when the person's git credentials can read it (git
+  runs with `GIT_TERMINAL_PROMPT=0`, so it never prompts), under its own `Commercial plugins`
+  heading with a `licence:` line — the repository's LICENSE, else a Licence section of its README,
+  else "ask the maintainers". Unreadable, it prints nothing at all.
+- `PLUGIN_CATALOGUES` in the environment (a JSON array of `{ "repo", "commercial" }`) replaces the
+  list — the test seam, and a way to point at a private mirror.
 
 ## The manifest — `rocketflare-plugin.json` in the repo, `plugin.json` in the host
 

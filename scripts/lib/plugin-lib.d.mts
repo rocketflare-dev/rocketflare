@@ -365,6 +365,51 @@ export function renderList(
   options?: { sidecarIds?: readonly string[] }
 ): string[]
 
+// ---------------------------------------------------------------- the catalogue
+
+/** The repositories `plugin list --available` reads, at their newest tag. */
+export const PLUGIN_CATALOGUES: readonly { repo: string; commercial: boolean }[]
+export const PLUGIN_CATALOGUE_URL: string
+export function repoDisplayName(repo: string): string
+export function readmeLede(text: string | null | undefined): string | null
+export interface CatalogueEntry {
+  id: string
+  label: string
+  version: string | null
+  subdir: string
+  description: string
+}
+export function catalogueEntries(
+  files: readonly string[],
+  read: (rel: string) => string | null
+): CatalogueEntry[]
+/** The files the catalogue reads, so a mirror can fetch them in one round trip. */
+export function catalogueReads(files: readonly string[]): string[]
+export interface LicenceTerms {
+  file: string
+  url: string | null
+}
+export function licenceTerms(
+  files: readonly string[],
+  read: (rel: string) => string | null,
+  where: { repo: string; ref: string }
+): LicenceTerms | null
+export interface Catalogue {
+  repo: string
+  tag: string
+  commercial: boolean
+  licence?: LicenceTerms | null
+  plugins: CatalogueEntry[]
+}
+export function renderCatalogue(
+  catalogues: readonly Catalogue[],
+  installed?: readonly Surface[]
+): string[]
+export function catalogueJson(
+  catalogues: readonly Catalogue[],
+  installed?: readonly Surface[]
+): Record<string, unknown>
+
 // ---------------------------------------------------------------- the audit
 
 /** One finding, in the shape an agent can act on: file, where in it, what, and the exact edit. */
