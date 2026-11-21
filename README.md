@@ -125,7 +125,9 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Evals and feedback** — `pnpm eval` runs vitest-evals suites against the real chat route and agent runtime in-process, with deterministic judges (tool trajectory, schema, contains, budget) and LLM judges (rubric, faithfulness to what was retrieved, reference answer) that go through the kit's own model resolver; runs are JSON with committed baselines and `--compare` regression checks, plus a local report UI. Thumbs on chat replies and run output feed `rocketflare evals promote`, which turns a bad real answer into a draft case. The `/rf-evals` skill drives all of it.
 
 ### Analytics
-An opt-in plugin, not part of the kit: `/rf-plugin add analytics` installs it.
+An opt-in plugin, not part of the kit: `/rf-plugin add analytics` installs it. It is one of several
+published plugins; `pnpm plugin list --available` lists them all, and https://rocketflare.dev/plugins
+is the page for browsing them.
 
 - **Semantic layer** — drizzle-cube mounted at `/cubejs-api` and `/mcp` behind the app's auth; every cube scopes its SQL to the current tenant, and a mandatory isolation test queries every cube as two tenants and asserts disjoint rows.
 - **Fact tables** — plain tables rebuilt per tenant in one transaction by the hourly cron, with a freshness endpoint and `rocketflare analytics check-facts` for ops.

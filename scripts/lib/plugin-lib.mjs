@@ -2061,6 +2061,200 @@ export function renderList(surfaces, { sidecarIds = [] } = {}) {
   })
 }
 
+// ---------------------------------------------------------------- the catalogue
+
+/**
+ * Where `pnpm plugin list --available` looks: the published plugin repositories, read at their
+ * newest release tag every time. Nothing about their contents is copied into the kit, so the list
+ * cannot go stale; a repository the person's git credentials cannot read is left out without a
+ * word, which is how the commercial one appears only to the people licensed to see it.
+ *
+ * The `rocketflare-dev` org is upstream and survives the rename (`KIT.preservedPattern`).
+ */
+export const PLUGIN_CATALOGUES = [
+  { repo: 'https://github.com/rocketflare-dev/rocketflare-plugins.git', commercial: false },
+  {
+    repo: 'https://github.com/rocketflare-dev/rocketflare-commercial-plugins.git',
+    commercial: true,
+  },
+]
+
+/** Where a person browsing, rather than installing, should look. */
+export const PLUGIN_CATALOGUE_URL = 'https://rocketflare.dev/plugins'
+
+/** `https://github.com/org/repo.git` → `github.com/org/repo`; anything else as it is. */
+export function repoDisplayName(repo) {
+  return String(repo)
+    .replace(/^https?:\/\//, '')
+    .replace(/^git@([^:]+):/, '$1/')
+    .replace(/\.git$/, '')
+}
+
+/** `https://github.com/org/repo/blob/<ref>/<file>` for a GitHub repository, otherwise null. */
+function blobUrl(repo, ref, file) {
+  const name = repoDisplayName(repo)
+  return name.startsWith('github.com/') ? `https://${name}/blob/${ref}/${file}` : null
+}
+
+/**
+ * The lede of a plugin README, on one line with link targets and code ticks dropped: its first
+ * paragraph after the title — whole when it is a `>` blockquote (every first-party README opens
+ * `# <id>` then that one sentence), else only its first sentence.
+ */
+export function readmeLede(text) {
+  if (typeof text !== 'string') return null
+  const lines = text.split('\n')
+  const start = lines.findIndex(l => l.trim() !== '' && !/^\s*(#|!\[|\[!\[|<)/.test(l))
+  if (start === -1) return null
+  const quote = lines[start].startsWith('>')
+  const para = []
+  for (const l of lines.slice(start)) {
+    if (l.trim() === '' || (quote && !l.startsWith('>'))) break
+    para.push(quote ? l.replace(/^>\s?/, '') : l)
+  }
+  const flat = para
+    .join(' ')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/[`*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const lede = quote ? flat : flat.split(/(?<=[.!?])\s+(?=[A-Z])/)[0]
+  return lede === '' ? null : lede
+}
+
+/**
+ * Every plugin in one repository tree: each `<dir>/rocketflare-plugin.json` (or one at the root),
+ * at most three directories deep and never inside another plugin, as
+ * `{ id, label, version, subdir, description }` sorted by id.
+ *
+ * The description is the manifest's own `description` when it carries one, else the lede of the
+ * README beside it, else its `label` — never text the kit holds. `read(rel)` answers the file's
+ * text or null; a manifest that does not parse, or names no valid id, is left out.
+ */
+export function catalogueEntries(files, read) {
+  const dirs = files
+    .filter(f => f === PLUGIN_MANIFEST_FILE || f.endsWith(`/${PLUGIN_MANIFEST_FILE}`))
+    .map(f => (f === PLUGIN_MANIFEST_FILE ? '' : f.slice(0, -PLUGIN_MANIFEST_FILE.length - 1)))
+    .filter(d => d === '' || d.split('/').length <= 3)
+    .sort((a, b) => a.length - b.length)
+  const kept = []
+  for (const d of dirs) {
+    if (kept.some(k => k === '' || d.startsWith(`${k}/`))) continue
+    kept.push(d)
+  }
+  const entries = []
+  for (const subdir of kept) {
+    const at = rel => (subdir === '' ? rel : `${subdir}/${rel}`)
+    let m
+    try {
+      m = JSON.parse(read(at(PLUGIN_MANIFEST_FILE)) ?? '')
+    } catch {
+      continue
+    }
+    if (!m || pluginIdProblem(m.id)) continue
+    const own = typeof m.description === 'string' && m.description.trim() !== ''
+    entries.push({
+      id: m.id,
+      label: typeof m.label === 'string' ? m.label : m.id,
+      version: typeof m.version === 'string' ? m.version : null,
+      subdir,
+      description: own
+        ? m.description.trim()
+        : (readmeLede(read(at('README.md'))) ?? (typeof m.label === 'string' ? m.label : '')),
+    })
+  }
+  return entries.sort((a, b) => a.id.localeCompare(b.id))
+}
+
+/** The files `catalogueEntries` and `licenceTerms` may read, so a mirror can fetch them at once. */
+export function catalogueReads(files) {
+  const plugins = files
+    .filter(f => f === PLUGIN_MANIFEST_FILE || f.endsWith(`/${PLUGIN_MANIFEST_FILE}`))
+    .map(f => f.slice(0, -PLUGIN_MANIFEST_FILE.length))
+  const wanted = new Set([
+    ...LICENCE_FILES,
+    'README.md',
+    ...plugins.flatMap(dir => [`${dir}${PLUGIN_MANIFEST_FILE}`, `${dir}README.md`]),
+  ])
+  return files.filter(f => wanted.has(f))
+}
+
+const LICENCE_FILES = ['LICENSE', 'LICENSE.md', 'LICENCE', 'LICENCE.md']
+
+/**
+ * Where a commercial repository states its terms: its LICENSE file, else a "Licence"/"License"
+ * section of its README, else nothing (and the heading says to ask the maintainers).
+ */
+export function licenceTerms(files, read, { repo, ref }) {
+  const licence = LICENCE_FILES.find(f => files.includes(f) && (read(f) ?? '').trim() !== '')
+  if (licence) return { file: licence, url: blobUrl(repo, ref, licence) }
+  if (files.includes('README.md') && /^#+\s+Licen[cs]e\b/im.test(read('README.md') ?? '')) {
+    return { file: 'README.md', url: blobUrl(repo, ref, 'README.md') }
+  }
+  return null
+}
+
+/**
+ * `pnpm plugin list --available`: one block per readable repository, one line per plugin — id,
+ * version, whether it is installed here, and its description. `catalogues` is
+ * `[{ repo, tag, commercial, licence, plugins }]`; `installed` is the host's surfaces.
+ */
+export function renderCatalogue(catalogues, installed = []) {
+  const lines = []
+  for (const c of catalogues) {
+    if (lines.length > 0) lines.push('')
+    const where = `${repoDisplayName(c.repo)} at ${c.tag}`
+    if (c.commercial) {
+      lines.push(
+        `Commercial plugins (${where}) — licensed separately, not under the kit's licence.`
+      )
+      lines.push(
+        c.licence
+          ? `  licence: ${c.licence.url ?? `${c.licence.file} in ${repoDisplayName(c.repo)}`}`
+          : '  licence: ask the maintainers'
+      )
+    } else {
+      lines.push(`Plugins (${where})`)
+    }
+    if (c.plugins.length === 0) lines.push('  (none at this tag)')
+    for (const p of c.plugins) {
+      const surface = installed.find(s => s.id === p.id)
+      const have = surface?.source?.version
+      const mark = surface ? (have && have !== p.version ? `installed ${have}` : 'installed') : ''
+      lines.push(
+        `  ${pad(p.id, 16)}${pad(p.version ?? '?', 10)}${pad(mark, 18)}${p.description}`.trimEnd()
+      )
+    }
+  }
+  lines.push(
+    '',
+    'Install one with `/rf-plugin add <id>` (or `pnpm plugin add <repo> --subdir <dir>`, which',
+    `prints the plan; --apply installs). Browse them at ${PLUGIN_CATALOGUE_URL}.`
+  )
+  return lines
+}
+
+/** The same facts as `renderCatalogue`, as one JSON document. */
+export function catalogueJson(catalogues, installed = []) {
+  return {
+    catalogues: catalogues.map(c => ({
+      repo: c.repo,
+      tag: c.tag,
+      commercial: c.commercial,
+      licence: c.commercial ? (c.licence ?? null) : undefined,
+      plugins: c.plugins.map(p => {
+        const surface = installed.find(s => s.id === p.id)
+        return {
+          ...p,
+          repo: c.repo,
+          installed: Boolean(surface),
+          installedVersion: surface?.source?.version ?? null,
+        }
+      }),
+    })),
+  }
+}
+
 // ---------------------------------------------------------------- the audit
 
 /**
