@@ -22,7 +22,7 @@ The conversation moves in this order:
 4. brand (§4, using `brand.md`);
 5. writing it down (§5);
 6. an independent review (§6);
-7. the site (§7);
+7. the rendered design (§7);
 8. sign-off and the repository (§8).
 
 ## How to hold the conversation
@@ -142,7 +142,7 @@ brand yet is fine: skip the step and say `/rf-design --brand <file>` adds one la
 
 ## 5. Write it down
 
-Write these files. Number prefixes set the order of the design site's pages:
+Write these files. Number prefixes set the order of the rendered pages:
 
 | File | Holds |
 |---|---|
@@ -199,13 +199,13 @@ with the line it rests on:
 Fix what is clearly a slip. Bring everything else to the owner as a question. Tell them how many
 findings there were and what changed.
 
-## 7. The site
+## 7. The rendered design
 
 ```
-pnpm design:site --open
+pnpm design:docs --open
 ```
 
-This renders `docs/design/*.md`, the diagrams and the brand into `docs/design/site/`, and opens it
+This renders `docs/design/*.md`, the diagrams and the brand into `docs/design/html/`, and opens it
 in their browser. It runs locally and nothing is uploaded. Walk them through it page by page:
 reading the design in their own colours is the point where they notice what is missing. Edit the
 markdown and re-run it as they comment.
@@ -213,8 +213,8 @@ markdown and re-run it as they comment.
 ## 8. Sign-off, then the repository
 
 Ask for sign-off explicitly: "Is this the design you want built, with the fog as listed?" On yes,
-set `status` to `signed-off` and `signedOffAt` to today. Run `pnpm design:site` once more, and
-commit `docs/design/` (including `site/`) as "Design signed off".
+set `status` to `signed-off` and `signedOffAt` to today. Run `pnpm design:docs` once more, and
+commit `docs/design/` (including `html/`) as "Design signed off".
 
 Then offer the GitHub repository. Don't create it unasked: it's an outward-facing step.
 
@@ -227,7 +227,7 @@ Then offer the GitHub repository. Don't create it unasked: it's an outward-facin
 - **One issue per stage:** the goal, "Done when" as a checklist, and the decisions and fog it
   depends on.
 - **One issue per fog item:** who answers it, and the stage it blocks.
-- Write the stage issue numbers and `repo` back into `design.json`, re-render the site, and commit.
+- Write the stage issue numbers and `repo` back into `design.json`, re-render the pages, and commit.
 
 If they say no, everything still works from `docs/design/`, and the issues can be made later by
 asking for `/rf-design` with "open the issues".

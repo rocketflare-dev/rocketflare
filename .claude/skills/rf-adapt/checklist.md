@@ -111,7 +111,7 @@ Expect the new hex where the script said, and `tests/ui/contrast.test.ts` green 
 4.5:1, controls and focus ring 3:1).
 
 **From the design.** If `docs/design/brand.css` exists (the `rf-design` brand step, signed off),
-apply it instead of asking: `pnpm design:site --apply-brand` writes each property into whichever of
+apply it instead of asking: `pnpm design:docs --apply-brand` writes each property into whichever of
 `theme-tokens.css` and `index.css` defines it, plus `<meta name="theme-color">`. Then run
 `pnpm web test:ui`. Show the user `git diff --stat` and the swatches from
 `docs/design/06-brand.md`. Skip `--colour` on the rename in that case, because the brand already

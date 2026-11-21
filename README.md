@@ -38,7 +38,7 @@ design until it asks.
 **`/rf-start`** detaches the clone, gets it running one prerequisite at a time, holds the design
 conversation with you (**`/rf-design`**: who it's for, how many organisations, roles and words, AI
 on or off, money, licence, the plugins that already do what you need, the stages, your brand), and
-renames it to your app. The design is written to `docs/design/` and opens as a local site in your
+renames it to your app. The design is written to `docs/design/` and opens as local pages in your
 colours.
 
 **Ask your coding agent.** Open the copy in Claude Code and type **`/rf-setup`** — it checks the

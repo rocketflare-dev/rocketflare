@@ -89,7 +89,7 @@ written spec, brief or notes:
   it leaves open or settles without saying why. This is the common case.
 - **No:** `/rf-design` from a blank page.
 
-It ends with a design signed off by them in `docs/design/`, a local design site in their brand,
+It ends with a design signed off by them in `docs/design/`, the design rendered as local pages in their brand,
 and, if they said yes, a GitHub repository with the stages as issues. Don't move on until they
 have signed it off. The rename reads its names, brand and licence from that design.
 
@@ -107,7 +107,7 @@ as `rf-adapt` §1 says. The rename changes the container's name.
 The app now has its own name, brand, licence and design. Say what is true, in at most six lines:
 - the folder;
 - the app's name;
-- where the design lives (`docs/design/`, and the site's `index.html`);
+- where the design lives (`docs/design/`, and `docs/design/html/index.html`);
 - the repository and its Stage 1 issue, if one was made;
 - that `pnpm dev` starts it again.
 

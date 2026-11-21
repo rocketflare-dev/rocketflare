@@ -1607,8 +1607,8 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   - `/rf-design` asks the shape questions the kit makes expensive later: organisations, roles and
     words, AI, money, non-functional needs, hosting, licence, and integrations, matched against
     `pnpm plugin list --available`. Each decision records the options weighed. It writes
-    `docs/design/*.md` and `docs/design/design.json`, runs an independent reviewer, and renders a
-    local site in the app's brand (`pnpm design:site`).
+    `docs/design/*.md` and `docs/design/design.json`, runs an independent reviewer, and renders it
+    as local pages in the app's brand (`pnpm design:docs`, into `docs/design/html/`).
   - `/rf-adapt` then reads the names, `docs/design/brand.css` and the licence answer from the
     design. The app's `LICENSE` becomes its owner's, and the kit's MIT notice stays in
     `LICENSES/kit-MIT.txt`. Both paths are `neverPort`.

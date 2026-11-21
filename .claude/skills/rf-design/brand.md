@@ -35,7 +35,7 @@ as a lighter tone of the same hue, the way the kit pairs blue-600 with blue-400.
 ## Nudge until it passes
 
 ```
-pnpm design:site --contrast
+pnpm design:docs --contrast
 ```
 
 This checks the kit's tokens with `brand.css` layered on, using the same pairs and floors as
@@ -48,7 +48,7 @@ Show them a before and after for every tone you moved:
 | Token | Their colour | Adjusted | Why |
 |---|---|---|---|
 
-Re-run until it exits 0, then render the site (`rf-design` §7). They judge the result in their own
+Re-run until it exits 0, then render the pages (`rf-design` §7). They judge the result in their own
 brand, and that, not the table, is when they say yes.
 
 ## Record it
@@ -61,5 +61,5 @@ Write `docs/design/06-brand.md`:
 
 The brand reaches the app only at the rename (`rf-adapt` checklist row (e)), after sign-off.
 Re-running this step when a real brand guide arrives replaces `brand.css`. After the rename,
-`pnpm design:site --apply-brand` writes it into the two kit files, and `pnpm web test:ui` confirms
+`pnpm design:docs --apply-brand` writes it into the two kit files, and `pnpm web test:ui` confirms
 it.
