@@ -17,6 +17,7 @@ import {
   safetyCheck,
   setupTestDatabase,
 } from './helpers/db'
+import { plainStartupError } from './helpers/startup-error'
 
 const MEMO = Symbol.for('rocketflare.tests.globalSetup')
 type MemoHost = typeof globalThis & { [MEMO]?: Promise<TestSeed> }
@@ -25,7 +26,7 @@ export default async function setup(context: {
   provide: <K extends 'seed'>(key: K, value: TestSeed) => void
 }) {
   const host = globalThis as MemoHost
-  host[MEMO] ??= prepareTestDatabase()
+  host[MEMO] ??= prepareTestDatabase().catch(plainStartupError)
   const seed = await host[MEMO]
   context.provide('seed', seed)
 

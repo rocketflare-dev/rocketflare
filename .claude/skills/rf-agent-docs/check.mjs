@@ -292,11 +292,27 @@ function checkReferences(skillDirs) {
   }
 }
 
+/**
+ * In a copy (`app` set in `.rocketflare.json`), the package.json scripts the rename removed with
+ * the kit-only files (`kitOnlyScripts`, recorded by `scripts/rename.mjs`): `pnpm kit:release` and
+ * `pnpm web test:kit-only` are named by kit text that stays true of the kit ("in the kit repository
+ * only"), so a missing one is expected there, not a stale reference. In the kit, an empty set.
+ */
+const kitOnlyScripts = (() => {
+  try {
+    const m = JSON.parse(read('.rocketflare.json'))
+    return new Set(m.app && Array.isArray(m.kitOnlyScripts) ? m.kitOnlyScripts : [])
+  } catch {
+    return new Set()
+  }
+})()
+
 const webDir = () => byName.get('@rocketflare/web') ?? 'apps/web'
 function checkScript(f, at, own, flags, script, rest) {
   if (PNPM_BUILTINS.has(script) || /^(-|\d)/.test(script) || /[*]|:$/.test(script)) return
   if (script === 'web' || /^web\s/.test(rest.replace(/^\S*pnpm\s+/, ''))) {
     const sub = rest.match(/pnpm\s+web\s+([\w:.-]+)/)?.[1]
+    if (sub && kitOnlyScripts.has(sub)) return
     if (sub && !PNPM_BUILTINS.has(sub) && !scriptsOf(webDir()).scripts.includes(sub))
       fail(f, at, `\`pnpm web ${sub}\` — no such script in ${webDir()}`)
     return
@@ -310,6 +326,7 @@ function checkScript(f, at, own, flags, script, rest) {
     return
   }
   if (scriptsOf('.').scripts.includes(script) || scriptsOf(own).scripts.includes(script)) return
+  if (kitOnlyScripts.has(script)) return
   const elsewhere = [...byName.values()].filter((d) => scriptsOf(d).scripts.includes(script))
   if (elsewhere.length)
     warn(f, at, `\`pnpm ${script}\` is a ${elsewhere.join(', ')} script, not a root one — from the root it fails; write \`pnpm --filter ${scriptsOf(elsewhere[0]).name} ${script}\` or say where to run it`)

@@ -15,7 +15,8 @@ describe('wrangler dev launches', () => {
   it('every package script running wrangler dev keeps the real local origin', () => {
     const launches = ['package.json', 'apps/web/package.json'].flatMap(rel =>
       Object.values(JSON.parse(read(rel)).scripts as Record<string, string>).filter(script =>
-        script.includes('wrangler dev')
+        // `scripts/wrangler-dev.mjs` is `wrangler dev` behind the local Workers AI switch.
+        /wrangler dev|wrangler-dev\.mjs/.test(script)
       )
     )
     expect(launches.length).toBeGreaterThan(0)

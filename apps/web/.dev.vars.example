@@ -15,6 +15,11 @@ APP_URL=http://localhost:3000
 # DEV_API_PORT=3001
 # Extra hostnames Vite answers for, comma-separated (a sandbox preview URL's host).
 # DEV_ALLOWED_HOSTS=
+# Workers AI locally (scripts/lib/dev-ai.mjs): `wrangler dev` proxies the [ai] binding to Cloudflare,
+# which needs `wrangler login`. `off` runs every local wrangler dev from a generated, git-ignored
+# copy of wrangler.toml without [ai] — the tracked tomls never change. The shell wins over this
+# file. `pnpm bootstrap --offline` writes it, `--online` sets it back to `on`.
+# DEV_WORKERS_AI=off
 # Database driver: overrides the toml's DATABASE_DRIVER (the DEPLOYED driver, "neon" in a
 # fresh copy) for wrangler dev, the db:*/seed scripts and drizzle-kit. `postgres` = postgres.js over
 # TCP to the compose Postgres, no proxy. `pnpm dev:db:up --neon` switches to `neon` through the local

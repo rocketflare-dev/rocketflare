@@ -18,7 +18,10 @@
  *   4. translate the survivors through `scripts/lib/rename-lib.mjs` — the same token map the
  *      rename used — and write a patch, the whole text of every added file, and a plan;
  *   5. with `--apply`, write the added files and `git apply` the patch, falling back to per-file
- *      `--reject` so one stale file cannot block the rest.
+ *      `--reject` so one stale file cannot block the rest; with `--apply-deletes` also `git rm` the
+ *      files the kit deleted; then `git add` exactly what it wrote, so the gate run next (whose
+ *      source scanners read `git ls-files`) sees the new files and `git diff --cached` is the
+ *      upgrade. Only `--apply` needs a clean tree; a plan run works on a dirty one.
  *
  * It never applies a kit migration (port the schema, then `pnpm db:generate` — the kit's snapshot
  * chain would tell drizzle your own tables do not exist), never writes a resource id into a
@@ -27,7 +30,9 @@
  *
  * Installed plugins (D31) are reported but never touched: `classifyPath` drops every file a
  * `kind: 'plugin'` surface owns as `skipped-plugin-owned`, because the plugin has its own
- * repository and its own release chain (`pnpm plugin upgrade <id>`, run AFTER this). Two things it
+ * repository and its own release chain (`pnpm plugin upgrade <id>`, run AFTER this). A VENDORED
+ * plugin (the kit's own repository, no subdirectory — `example-feature`) is the exception: it has no
+ * chain of its own, so its files are ported here as core, and `plugin upgrade` points here. Two things it
  * does say out loud: a kit change to a file listed in a plugin's `registries[]` — the five barrels
  * are shared, so the kit CAN move ground under a plugin — and a target kit version that leaves an
  * installed plugin's `minKit` floor, which is exit 6.
@@ -50,7 +55,7 @@ import {
 } from './lib/git-lib.mjs'
 import { formatJson } from './lib/json-format.mjs'
 import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
-import { unsupportedForKit } from './lib/plugin-lib.mjs'
+import { isVendored, unsupportedForKit } from './lib/plugin-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-paths.mjs'
 import {
@@ -89,15 +94,16 @@ export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>
   --to <ref>             kit tag or commit to move to (default: newest release tag in the mirror)
   --from <ref>           override the adopted ref (default: kit.commit, else the kit.version tag)
   --no-fetch             use the cached mirror as-is (offline)
-  --apply                write the added files and apply the patch; without it the run is a plan
-  --apply-deletes        also delete the files the kit deleted (off by default — you may have
-                         built on one)
+  --apply                write the added files, apply the patch and stage what it wrote (needs a
+                         clean tree); without it the run is a plan, which a dirty tree allows
+  --apply-deletes        with --apply, also \`git rm\` the files the kit deleted (off by default
+                         — you may have built on one)
   --include-kit-tooling  port scripts/rename.mjs and its lib, untranslated
   --adopt <ref>          one-off: stamp this ref into .rocketflare.json and exit (for a copy made
                          before the manifest existed)
   --dry-run              resolve and classify, write nothing at all
-  --force                run on a dirty git tree, and past an installed plugin that does not
-                         support the target kit version
+  --force                --apply on a dirty git tree, and run past an installed plugin that does
+                         not support the target kit version
   --json                 print the plan as JSON on stdout (what /rf-upgrade reads)
   --continue             after an --apply that left rejects: once every *.rej is resolved and
                          deleted, record the upgrade (version, commit, history) that apply held back
@@ -218,10 +224,12 @@ function continueUpgrade(manifest, args) {
     return 4
   }
   stampUpgrade(manifest, plan)
+  gitQuiet(['add', '--', MANIFEST])
   out(
     `✔ kit ${plan.to.version ?? plan.to.ref} recorded in ${MANIFEST} (${plan.to.commit.slice(0, 12)})`,
     '',
     'Verify (the gate):',
+    '  git add <each file you resolved>   the gate reads `git ls-files`',
     '  pnpm install && pnpm gate'
   )
   return 0
@@ -273,16 +281,23 @@ function main(argv) {
   // Before the clean-tree check: the tree a continue finishes is dirty by definition.
   if (args.continue) return continueUpgrade(manifest, args)
 
-  if (!args.dryRun && !args.force) {
+  // Only `--apply` needs a clean tree: it stages exactly what it writes, which is one reviewable
+  // diff only if nothing else was there. A plan run writes nothing outside the git-ignored
+  // `.upgrade/`, so refusing it made every copy with a local edit pass `--force` just to look.
+  if (args.apply && !args.dryRun && !args.force) {
     const dirty = dirtyTree(REPO_ROOT)
     if (dirty !== '') {
       warn(
         'error: the git tree is not clean — commit or stash first so the upgrade is one reviewable',
-        'diff (or pass --force). `git status --short` shows:',
+        'diff (or pass --force). A plan run (no --apply) works on a dirty tree. `git status --short`',
+        'shows:',
         dirty
       )
       return 1
     }
+  }
+  if (args.applyDeletes && !args.apply) {
+    warn('note: --apply-deletes only acts with --apply; this run deletes nothing')
   }
 
   const names = deriveNames(manifest.app.slug, manifest.app.display, {
@@ -347,10 +362,21 @@ function main(argv) {
   // installed" changes what this run may write (their files are skipped wholesale) and what has to
   // happen after it (one `pnpm plugin upgrade` each).
   const plugins = pluginSurfaces(manifest).filter(p => !absent.includes(p.id))
-  if (plugins.length > 0) {
+  // A vendored plugin (the kit's own repository, no subdirectory — `example-feature`) has no
+  // release chain of its own: `classifyPath` ports its files as core, here, and `pnpm plugin
+  // upgrade` refuses it. Only the others are owned by their own repositories.
+  const ownRepoPlugins = plugins.filter(p => !isVendored(p.source, manifest.kit.repo))
+  const vendoredPlugins = plugins.filter(p => !ownRepoPlugins.includes(p))
+  if (ownRepoPlugins.length > 0) {
     out(
-      `  plugins     ${plugins.map(p => `${p.id}@${p.source?.version ?? '?'}`).join(', ')}` +
+      `  plugins     ${ownRepoPlugins.map(p => `${p.id}@${p.source?.version ?? '?'}`).join(', ')}` +
         ` — owned by their own repos; upgrade each with \`pnpm plugin upgrade <id>\` after this`
+    )
+  }
+  if (vendoredPlugins.length > 0) {
+    out(
+      `  vendored    ${vendoredPlugins.map(p => p.id).join(', ')} — shipped inside the kit, so this` +
+        ' upgrade ports it like core'
     )
   }
   // A vendored plugin is exempt, for the reason `plugin check` gives: the kit release that moves
@@ -570,6 +596,12 @@ function main(argv) {
 
   // 6/6 — apply
   let rejected = 0
+  // What this run wrote, so it can stage exactly that (the source scanners list files with
+  // `git ls-files`, and the gate run straight after an apply must see the new files).
+  const toStage = []
+  const rejectedFiles = []
+  const removed = []
+  const keptDeletes = []
   if (args.apply && !args.dryRun) {
     for (const rel of addedFiles) {
       const abs = containedPath(REPO_ROOT, rel)
@@ -589,6 +621,10 @@ function main(argv) {
       ])
       if (check.ok) {
         git(['-c', 'core.autocrlf=false', 'apply', '--whitespace=nowarn', '-p1', combined])
+        for (const f of files) {
+          if (f.class !== 'modified' && f.class !== 'verbatim') continue
+          if (existsSync(path.join(workRoot, 'files', `${f.path}.patch`))) toStage.push(f.path)
+        }
       } else {
         for (const f of files.filter(x => x.class === 'modified' || x.class === 'verbatim')) {
           const one = path.join(workRoot, 'files', `${f.path}.patch`)
@@ -602,16 +638,45 @@ function main(argv) {
             '-p1',
             one,
           ])
-          if (!r.ok) rejected += 1
+          if (r.ok) toStage.push(f.path)
+          else {
+            rejected += 1
+            rejectedFiles.push(f.path)
+          }
         }
+      }
+    }
+    toStage.push(...addedFiles)
+    // `--apply-deletes`: after the patch, before the stamp. `git rm` — never a plain unlink — so a
+    // file with local edits (possible only under --force) is refused and kept, not lost.
+    if (args.applyDeletes) {
+      for (const f of files.filter(x => x.class === 'deleted' && localSet.has(x.path))) {
+        if (gitQuiet(['rm', '-q', '--', f.path]).ok) removed.push(f.path)
+        else keptDeletes.push(f.path)
       }
     }
     out(
       `✔ 6/6 apply     ${addedFiles.length} added, ${patches.length - rejected} patched` +
         (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
     )
-    if (rejected === 0) stampUpgrade(manifest, plan)
-    else {
+    if (rejected === 0) {
+      stampUpgrade(manifest, plan)
+      toStage.push(MANIFEST)
+    }
+    if (toStage.length > 0) git(['add', '--', ...toStage])
+    out(
+      `  staged      ${toStage.length} file(s)${removed.length > 0 ? ` and ${removed.length} deletion(s)` : ''}` +
+        ' — `git diff --cached` is the upgrade' +
+        (rejectedFiles.length > 0
+          ? `; ${rejectedFiles.length} file(s) with rejects left unstaged until you resolve them`
+          : '')
+    )
+    for (const k of keptDeletes) {
+      warn(
+        `warning: ${k} — the kit deleted it, but \`git rm\` refused (local edits?); left in place`
+      )
+    }
+    if (rejected > 0) {
       warn(
         `note: ${MANIFEST} is not stamped while rejects remain. Resolve each *.rej by hand, delete`,
         `it, then run \`pnpm kit:upgrade --to ${plan.to.ref} --continue\`.`
@@ -622,10 +687,19 @@ function main(argv) {
   }
 
   if (args.json) out(JSON.stringify(plan, null, 2))
-  else out('', ...report(plan, notes, applicableNotes, { dryRun: args.dryRun }), '')
+  else {
+    const flags = {
+      dryRun: args.dryRun,
+      applied: args.apply && !args.dryRun,
+      applyDeletes: args.applyDeletes,
+      removed,
+    }
+    out('', ...report(plan, notes, applicableNotes, flags), '')
+  }
 
   out(
     'Verify (the gate):',
+    ...(rejected > 0 ? ['  git add <each file you resolved>'] : []),
     '  pnpm install && pnpm gate',
     ...(files.some(f => f.class === 'migration-derived')
       ? ["  pnpm db:generate   your OWN migration for the kit schema change — never copy the kit's"]
@@ -640,7 +714,7 @@ function applyNames(text, names) {
   return applyReplacements(text, names).text
 }
 
-function report(plan, notes, applicable, { dryRun }) {
+function report(plan, notes, applicable, { dryRun, applied, applyDeletes, removed }) {
   const lines = []
   const bucket = cls => plan.files.filter(f => f.class === cls)
   const skippedSurface = bucket('skipped-surface-absent').length
@@ -696,13 +770,27 @@ function report(plan, notes, applicable, { dryRun }) {
       'derive from schema (data backfills, CREATE EXTENSION, triggers).'
     )
   }
+  // Worded from the flags this run was given: telling someone who passed --apply-deletes to pass
+  // --apply-deletes is how a deleted test stayed behind unnoticed.
   const deletes = bucket('deleted')
   if (deletes.length > 0) {
-    lines.push(
-      '',
-      `The kit deleted ${deletes.length} file(s); left in place (pass --apply-deletes to remove them):`
-    )
-    for (const f of deletes.slice(0, 10)) lines.push(`  ${f.path}`)
+    const left = deletes.filter(f => !removed.includes(f.path))
+    if (removed.length > 0) {
+      lines.push(
+        '',
+        `The kit deleted ${deletes.length} file(s); removed and staged ${removed.length}:`
+      )
+      for (const p of removed.slice(0, 10)) lines.push(`  ${p}`)
+    }
+    if (left.length > 0) {
+      const why = !applied
+        ? 'left in place — re-run with --apply --apply-deletes to remove them'
+        : applyDeletes
+          ? 'left in place — not in this app, or `git rm` refused (see the warnings above)'
+          : 'left in place — `git rm <path>` each one you have not built on'
+      lines.push('', `The kit deleted ${left.length} file(s) still listed here; ${why}:`)
+      for (const f of left.slice(0, 10)) lines.push(`  ${f.path}`)
+    }
   }
   if (plan.renames.length > 0) {
     lines.push('', 'Moved in the kit — carry your local edits across:')

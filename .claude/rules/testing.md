@@ -88,7 +88,8 @@ behaviour rather than the attack.
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
   per-file random client IP (rate-limit isolation); `apps/web/tests/helpers/auth.ts` factories
   (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
-  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes;
+  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes —
+  slug-safe (`[a-z0-9]+-[a-z0-9]+`), so a factory tenant's slug passes `SLUG_RE` in a request;
   `inject('seed')` gives the run's seeded owner/tenant/API key/session (`TestSeed`)
 - No `@cloudflare/vitest-pool-workers` in the default suite (D15). It cannot reach a real Postgres
   through Hyperdrive locally; the value here is integration tests against real Postgres
@@ -96,7 +97,9 @@ behaviour rather than the attack.
 ## Database discipline
 
 - `apps/web/tests/setup.ts` (globalSetup, memoised on `globalThis` because two projects share it): roles →
-  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`
+  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`.
+  A failure there (no `.env.test` loaded, a migration Postgres refuses) is printed as itself by
+  `tests/helpers/startup-error.ts`, not as Vite's `code.charCodeAt is not a function`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
 - A cross-tenant cron task under test (a prune, a sweep) also acts on OTHER files' rows. Assert only

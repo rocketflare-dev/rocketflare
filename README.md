@@ -51,7 +51,7 @@ git remote add origin git@github.com:<you>/myapp.git                            
 bash scripts/bootstrap.sh          # checks Node 26 / pnpm 10 / Docker, generates the local secret, starts
                                    # Postgres, migrates, seeds demo data, starts the app and opens the
                                    # browser signed in as the demo owner. Re-runnable.
-                                   #   --offline  skip the Cloudflare login by disabling Workers AI ([ai] off in both tomls)
+                                   #   --offline  skip the Cloudflare login: local Workers AI off (DEV_WORKERS_AI=off in .dev.vars)
                                    #   --no-demo  seed the bare tenant and users only (plain `pnpm seed`)
                                    #   --db-url <url>  no Docker: use an existing Postgres (a Neon branch)
                                    #   --driver neon|postgres  the LOCAL database driver (default postgres)
@@ -159,7 +159,7 @@ rocketflare/          workspace root: package.json (scripts delegate via pnpm -r
 ```
 
 Everything runs from the root: `pnpm bootstrap` (= `bash scripts/bootstrap.sh` once Node and pnpm
-exist; `--offline` / `--online` toggle the `[ai]` block), `pnpm preflight` (the read-only check),
+exist; `--offline` / `--online` switch local Workers AI through `.dev.vars`), `pnpm preflight` (the read-only check),
 `pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
 `apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision tokens` (hidden prompts → `apps/web/.provision.env`)
 then `pnpm provision all` (the deploy orchestrator: Neon, Cloudflare, GitHub, secrets, Resend —

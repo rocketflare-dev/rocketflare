@@ -118,6 +118,54 @@ describe('classifyPath', () => {
     expect(c.reason).toMatch(/pnpm plugin upgrade approvals/)
   })
 
+  it('ports a VENDORED plugin (the kit repo, no subdirectory) as core', () => {
+    // `pnpm plugin upgrade` refuses a vendored plugin and points at `kit:upgrade`; if this skipped
+    // it too, the reference plugin would never move. Its files are the kit's, translated as core.
+    const withVendored = {
+      ...manifest,
+      kit: { ...manifest.kit, repo: 'https://github.com/acme/kit.git' },
+      surfaces: [
+        ...manifest.surfaces.filter(s => s.kind !== 'plugin'),
+        {
+          id: 'example-feature',
+          kind: 'plugin' as const,
+          label: 'Example',
+          anchor: 'apps/web/src/plugins/example-feature/plugin.json',
+          paths: ['apps/web/src/plugins/example-feature/**'],
+          registries: [],
+          source: { repo: 'https://github.com/acme/kit/', subdir: '', version: '0.1.0' },
+        },
+      ],
+    }
+    const c = classifyPath('apps/web/src/plugins/example-feature/server.ts', {
+      ...base,
+      manifest: withVendored,
+      existsLocally: true,
+    })
+    expect(c.class).toBe('modified')
+    expect(c.translate).toBe(true)
+    const added = classifyPath('apps/web/src/plugins/example-feature/tests/api/mcp.test.ts', {
+      ...base,
+      manifest: withVendored,
+      existsLocally: false,
+      change: 'added',
+    })
+    expect(added.class).toBe('added')
+    // The same repository with a subdirectory is a third-party plugin and stays skipped.
+    const sub = {
+      ...withVendored,
+      surfaces: withVendored.surfaces.map(s =>
+        s.id === 'example-feature'
+          ? { ...s, source: { repo: 'https://github.com/acme/kit.git', subdir: 'plugins/x' } }
+          : s
+      ),
+    }
+    expect(
+      classifyPath('apps/web/src/plugins/example-feature/server.ts', { ...base, manifest: sub })
+        .class
+    ).toBe('skipped-plugin-owned')
+  })
+
   it('still drops a plugin whose anchor is gone as absent, not as plugin-owned', () => {
     // Order matters: "the adopter removed it" is the stronger statement, and an uninstalled
     // plugin's leftovers must not be recreated by an upgrade any more than a deleted example is.

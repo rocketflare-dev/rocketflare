@@ -53,6 +53,7 @@ import {
   upsertDevVar,
   versionAtLeast,
 } from './lib/bootstrap-lib.mjs'
+import { DEV_WORKERS_AI, devWorkersAiMode } from './lib/dev-ai.mjs'
 import { devPorts } from './lib/dev-ports.mjs'
 import { pluginSurfaces, readManifest } from './lib/manifest.mjs'
 
@@ -84,10 +85,12 @@ const USAGE = `Usage: pnpm bootstrap [options]        (or: bash scripts/bootstra
 Take a fresh clone to a running, signed-in dev stack in one command. Re-runnable.
 
   --yes         never prompt; a missing Cloudflare login is exit 5 instead of a question
-  --offline     comment the [ai] block out of both wrangler tomls (no Cloudflare account needed;
-                chat/agents/embeddings then need a key or a tenant provider); never runs
-                \`wrangler whoami\`, so step 8 makes no network call
-  --online      keep/restore the [ai] block; exit 5 if wrangler is not logged in
+  --offline     run local wrangler dev without Workers AI: DEV_WORKERS_AI=off in .dev.vars, no
+                tracked file changes (no Cloudflare account needed; chat/agents/embeddings then
+                need a key or a tenant provider); never runs \`wrangler whoami\`, so step 8
+                makes no network call
+  --online      DEV_WORKERS_AI=on; exit 5 if wrangler is not logged in. Any run restores an
+                [ai] block an older bootstrap commented out of the tomls
   --no-dev      stop after step 8 and print the commands to run next
   --no-demo     seed without the demo data (plain \`pnpm seed\`)
   --no-plugins  skip the plugins step (do not install .rocketflare.json's defaultPlugins)
@@ -583,15 +586,38 @@ const AI_COST_NOTE =
   'Workers AI is the zero-key floor for chat, agents and embeddings: 10 000 free neurons a day, ' +
   'then metered, billed to that Cloudflare account. `pnpm bootstrap --offline` turns it off.'
 
-function setAiBlocks(mode) {
+/**
+ * The tomls are never the offline switch any more (`scripts/lib/dev-ai.mjs`): a copy whose `[ai]`
+ * block an older bootstrap commented out gets it back, in BOTH files, on any run. Answers whether
+ * anything was restored, so the caller can carry that copy's offline choice into `.dev.vars`.
+ */
+function restoreAiBlocks() {
+  let restored = false
   for (const file of TOMLS) {
     const text = readFileSync(file, 'utf8')
-    const next = toggleAiBlock(text, mode)
-    if (next !== text) writeFileSync(file, next)
+    const next = toggleAiBlock(text, 'on')
+    if (next !== text) {
+      writeFileSync(file, next)
+      restored = true
+    }
   }
+  return restored
 }
 
-const aiState = () => aiBlockState(readFileSync(TOMLS[0], 'utf8'))
+const tomlsCommentedOut = () => TOMLS.some(f => aiBlockState(readFileSync(f, 'utf8')) === 'off')
+
+const devVarsValues = () =>
+  existsSync(DEV_VARS) ? readDevVars(readFileSync(DEV_VARS, 'utf8')) : {}
+
+/** `'on'` / `'off'` for local `wrangler dev`: `DEV_WORKERS_AI` in the shell, then `.dev.vars`. */
+const aiState = () => (tomlsCommentedOut() ? 'off' : devWorkersAiMode(process.env, devVarsValues()))
+
+/** Write `DEV_WORKERS_AI=<mode>` into `.dev.vars` (step 3 created it, so it exists here). */
+function setDevWorkersAi(mode) {
+  const text = existsSync(DEV_VARS) ? readFileSync(DEV_VARS, 'utf8') : ''
+  const next = upsertDevVar(text, DEV_WORKERS_AI, mode)
+  if (next !== text) writeFileSync(DEV_VARS, next)
+}
 
 async function ask(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout })
@@ -603,33 +629,51 @@ async function ask(question) {
 }
 
 /**
- * `--offline` → the block is commented out of both tomls and wrangler is never asked anything:
- * the result is the same logged in or not, so `wrangler whoami` (a network call) is skipped.
- * Logged in → `[ai]` stays (or comes back with `--online`).
+ * The offline switch is `DEV_WORKERS_AI=off` in `.dev.vars` (git-ignored): every local
+ * `wrangler dev` then runs from a generated copy of the toml without `[ai]`, and no tracked file
+ * changes — not the tomls, not `worker-configuration.d.ts` (`scripts/lib/dev-ai.mjs`).
+ *
+ * First, on every run: a toml an older bootstrap commented out is restored in both files, and
+ * that copy's offline choice moves to `.dev.vars` (unless `--online` says otherwise).
+ * `--offline`, or `.dev.vars` already off without `--online` → off, and wrangler is never asked
+ * anything: the result is the same logged in or not, so `wrangler whoami` (a network call) is
+ * skipped.
+ * Logged in → on (`--online` writes `DEV_WORKERS_AI=on` over an `off`).
  * Not logged in → `--online` / `--yes` / a non-TTY stdin exit 5 with the login command; a
  * terminal is asked once.
  */
 async function stepCloudflare(opts) {
+  const notes = []
+  if (restoreAiBlocks()) {
+    notes.push('[ai] restored in both wrangler tomls: the offline switch is .dev.vars now, not git')
+    if (!opts.online) setDevWorkersAi('off')
+  }
   const offlineNotes = () => [
-    '[ai] commented out in both wrangler tomls — chat, agents and embeddings need an API key or',
-    'a tenant provider (SETUP.md §2.5); `pnpm typecheck` regenerates worker-configuration.d.ts',
-    'without `AI` — do not commit that diff. `pnpm bootstrap --online` restores the block.',
+    ...notes,
+    `${DEV_WORKERS_AI}=off in apps/web/.dev.vars: local wrangler dev runs without Workers AI from a`,
+    'generated, git-ignored config, and no tracked file changes. Chat, agents and embeddings need',
+    'an API key or a tenant provider (SETUP.md §2.5). `pnpm bootstrap --online` turns it back on.',
   ]
   if (opts.offline) {
-    setAiBlocks('off')
+    setDevWorkersAi('off')
     return { verify: '[ai] off (--offline; wrangler login not checked)', notes: offlineNotes() }
   }
+  if (!opts.online && aiState() === 'off') {
+    return {
+      verify: `[ai] off (${DEV_WORKERS_AI}=off; wrangler login not checked)`,
+      notes: offlineNotes(),
+    }
+  }
   let who = await wranglerWhoami()
-  const notes = []
   if (who.loggedIn) {
     const identity = [who.email, who.account].filter(Boolean).join(' · ')
-    if (aiState() === 'off' && opts.online) {
-      setAiBlocks('on')
-      notes.push('[ai] restored in both wrangler tomls (--online)')
+    if (opts.online && devWorkersAiMode({}, devVarsValues()) === 'off') {
+      setDevWorkersAi('on')
+      notes.push(`${DEV_WORKERS_AI}=on in apps/web/.dev.vars (--online)`)
     }
     const state = aiState()
     if (state === 'on') notes.push(AI_COST_NOTE)
-    else notes.push('[ai] is commented out; `pnpm bootstrap --online` restores it')
+    else notes.push(`[ai] is off: ${DEV_WORKERS_AI}=off in the shell — unset it for Workers AI`)
     return { verify: `logged in as ${identity}; [ai] ${state}`, notes }
   }
 
@@ -643,17 +687,20 @@ async function stepCloudflare(opts) {
   say(
     `${yellow('?')} Cloudflare: \`wrangler dev\` calls Workers AI through the [ai] binding, which needs`
   )
-  say('  a logged-in account (free is enough). Offline comments the block out of both tomls.')
+  say(`  a logged-in account (free is enough). Offline sets ${DEV_WORKERS_AI}=off in .dev.vars.`)
   const answer = (await ask('  [l]ogin now (recommended) / [o]ffline: ')).trim().toLowerCase()
   if (answer.startsWith('o')) {
-    setAiBlocks('off')
+    setDevWorkersAi('off')
     return { verify: 'not logged in; [ai] off (chosen)', notes: offlineNotes() }
   }
   const code = await runInherit('pnpm', ['web', 'exec', 'wrangler', 'login'])
   who = await wranglerWhoami()
   if (code !== 0 || !who.loggedIn) throw loginRequired()
   const identity = [who.email, who.account].filter(Boolean).join(' · ')
-  return { verify: `logged in as ${identity}; [ai] ${aiState()}`, notes: [AI_COST_NOTE] }
+  return {
+    verify: `logged in as ${identity}; [ai] ${aiState()}`,
+    notes: [...notes, AI_COST_NOTE],
+  }
 }
 
 /** Step 8, run after the server answers: the CLI against the seed key, env of the child only. */
@@ -737,6 +784,12 @@ async function check() {
     if (!existsSync(path.join(WEB_DIR, 'node_modules/.bin/wrangler'))) {
       throw new StepError('wrangler not installed yet', {
         hint: 'pnpm bootstrap (step 2 installs it), then pnpm preflight again',
+        exitCode: EXIT.prerequisite,
+      })
+    }
+    if (tomlsCommentedOut()) {
+      throw new StepError('[ai] is commented out of the tracked wrangler tomls', {
+        hint: 'pnpm bootstrap --offline (or --online): restores both tomls, keeps the switch in .dev.vars',
         exitCode: EXIT.prerequisite,
       })
     }

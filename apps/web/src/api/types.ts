@@ -17,11 +17,12 @@ declare global {
   namespace Cloudflare {
     /**
      * `AI` is declared here as well as by `wrangler types` so that the type exists in BOTH toml
-     * states: `pnpm bootstrap --offline` comments the `[ai]` block out of both tomls (no Cloudflare
-     * login needed), the regenerated `worker-configuration.d.ts` then has no `AI`, and every
-     * `c.env` handed to an `AiEnv` slice would fail TypeScript's weak-type check (TS2559). With
-     * `[ai]` present the two declarations are identical and merge. The runtime value is still
-     * absent offline — read it only through `AiEnv` (`AI?`) and `services/ai/resolve.ts`.
+     * states: a copy that removes `[ai]` from both tomls (the zero-spend switch) regenerates a
+     * `worker-configuration.d.ts` with no `AI`, and every `c.env` handed to an `AiEnv` slice would
+     * then fail TypeScript's weak-type check (TS2559). With `[ai]` present the two declarations are
+     * identical and merge. The runtime value is absent there, and locally under
+     * `DEV_WORKERS_AI=off` (`scripts/lib/dev-ai.mjs`) — read it only through `AiEnv` (`AI?`) and
+     * `services/ai/resolve.ts`.
      */
     interface Env {
       AI: Ai

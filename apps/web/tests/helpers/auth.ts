@@ -23,9 +23,17 @@ import {
 /** The session cookie's name — the auth module's export, re-exported for test convenience. */
 export { SESSION_COOKIE_NAME }
 
-/** Unique suffix for parallel-safe fixtures. */
+/**
+ * Unique suffix for parallel-safe fixtures, and SLUG-SAFE: lower-case letters and digits around one
+ * hyphen, so `test-org-${uniqueId()}` passes the kit's own `SLUG_RE` (and `slugify` leaves it as
+ * it is). It used to join with `_` and keep base64url's `_`, so a factory tenant's slug failed a
+ * validated request for a reason that had nothing to do with the test.
+ */
 export function uniqueId(): string {
-  return `${Date.now().toString(36)}_${randomToken(4)}`.replace(/[^a-z0-9_]/gi, 'x')
+  const random = randomToken(5)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, 'x')
+  return `${Date.now().toString(36)}-${random}`
 }
 
 export async function createTestUser(db: Database, overrides: Partial<NewUser> = {}) {
@@ -50,11 +58,14 @@ export function createTestGlobalAdmin(db: Database, overrides: Partial<NewUser> 
   return createTestUser(db, { ...overrides, isGlobalAdmin: true })
 }
 
+/** The slug `createTestTenant` gives a tenant: valid under `SLUG_RE`, so it survives a request. */
+export const testTenantSlug = (id: string = uniqueId()) => `test-org-${id}`
+
 export async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {}) {
   const id = uniqueId().toLowerCase()
   const [tenant] = await db
     .insert(tenants)
-    .values({ name: `Test Org ${id}`, slug: `test-org-${id}`, ...overrides })
+    .values({ name: `Test Org ${id}`, slug: testTenantSlug(id), ...overrides })
     .returning()
   if (!tenant) throw new Error('createTestTenant: insert returned no row')
   return tenant

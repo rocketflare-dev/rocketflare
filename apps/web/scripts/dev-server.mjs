@@ -27,6 +27,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { readDevVars } from '../../../scripts/lib/bootstrap-lib.mjs'
+import { wranglerDevConfigArgs } from '../../../scripts/lib/dev-ai.mjs'
 import { devPorts } from '../../../scripts/lib/dev-ports.mjs'
 
 const WEB_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -425,10 +426,15 @@ async function start({ verbose }) {
   process.on('SIGINT', () => void shutdown(0))
   process.on('SIGTERM', () => void shutdown(0))
 
+  // DEV_WORKERS_AI=off runs wrangler from the generated, git-ignored offline config
+  // (scripts/lib/dev-ai.mjs); the tracked tomls are never edited for it.
+  const aiConfig = wranglerDevConfigArgs({ webDir: WEB_DIR })
+  if (aiConfig.note) write(`${COLOR.dim}${aiConfig.note}${COLOR.reset}`)
   phase()
   // Without the flag, a toml with `routes` makes every local request look like its first route.
   launch('api', 'wrangler', [
     'dev',
+    ...aiConfig.args,
     '--port',
     String(DEV_PORTS.api),
     '--infer-origin-from-routes=false',

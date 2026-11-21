@@ -18,7 +18,7 @@ steps to work top to bottom, `## Conflicts to expect` is `path → what changed 
 | `added` | a new kit file, already written and translated | nothing; review it |
 | `added-collides` | the kit added a path you already have | compare with `reference/<path>`, merge by hand |
 | `modified` | in `apply.patch` | nothing, unless it rejected |
-| `deleted` | the kit removed it | decide. It stays unless they say otherwise |
+| `deleted` | the kit removed it | decide. It stays unless they say otherwise — then `--apply --apply-deletes` `git rm`s every one |
 | `skipped-surface-absent` | belongs to a surface this app deleted | **nothing. Ever.** |
 | `skipped-locally-deleted` | the adopter deleted this file | nothing |
 | `skipped-kit-only` | the kit's own identity (LICENSE, SECURITY.md, install.sh, the rename tool) and the kit's own tests (`kitOnly`: `apps/web/tests/kit-only/**`) | nothing — and delete a kit-only test if one is already here |
@@ -40,7 +40,9 @@ example agents, cubes and CLI commands; those deletions are what the skipped cou
 A plugin (D31, `docs/CONCEPTS.md` §16) is a separate git repository copied into this app, with its
 own version, its own release notes and its own upgrade command. So **a kit diff never touches a byte
 a plugin owns** — `classifyPath` drops every file under an installed plugin's surface as
-`skipped-plugin-owned` and names the plugins in the report. That count is reported rather than
+`skipped-plugin-owned` and names the plugins in the report. The one exception is a **vendored**
+plugin (`example-feature`), which has no repository of its own: its files are classified, translated
+and applied like core. That count is reported rather than
 silently dropped because *"the kit changed nothing here"* and *"the kit is not allowed to change
 anything here"* are different answers, and only the second one means "go and run
 `pnpm plugin upgrade <id>`".
@@ -96,8 +98,9 @@ regenerate — that is a new table and a re-embed (`docs/ADAPTING.md` §3).
 ## The wrangler tomls
 
 `apps/web/wrangler.toml` and `wrangler.staging.toml` carry the adopter's real Hyperdrive and KV ids,
-a live `routes` line, their `APP_URL`, and an `[ai]` block whose comment state
-`pnpm bootstrap --offline` toggles. Never apply a textual patch to them.
+a live `routes` line and their `APP_URL`. Never apply a textual patch to them. (An `[ai]` block
+commented out is a copy from before the offline switch moved to `DEV_WORKERS_AI` in `.dev.vars`:
+`pnpm bootstrap --offline` restores it in both files — do that before upgrading, never port it.)
 
 Read `reference/apps/web/wrangler*.toml` and carry across **only** what code can observe:
 `compatibility_date`, `compatibility_flags`, `[limits]`, `[triggers].crons`, `[[migrations]]`,

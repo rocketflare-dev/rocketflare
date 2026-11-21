@@ -1329,7 +1329,7 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
   The text of a tool result with the untrusted-data notice line removed, parsed as JSON.
 - `const unauthorizedResponse: () => Response`
 - `function uniqueId(): string`
-  Unique suffix for parallel-safe fixtures.
+  Unique suffix for parallel-safe fixtures, and SLUG-SAFE: lower-case letters and digits around one hyphen, so `test-org-${uniqueId()}` passes the kit's own `SLUG_RE` (and `slugify`…
 - `async function waitOnExecutionContext(ctx: TestExecutionContext): Promise<void>`
   Await everything passed to `waitUntil`, including promises enqueued while draining.
 

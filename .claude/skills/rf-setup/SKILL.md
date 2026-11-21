@@ -72,7 +72,9 @@ bash scripts/bootstrap.sh --no-dev $ARGUMENTS
 ```
 
 `--no-dev` means the script does NOT start the servers (you will, in step 3). `--offline` skips
-the Cloudflare login / Workers AI probe (no `wrangler whoami` at all); `--no-demo` runs plain `pnpm seed` (tenant, users and key,
+the Cloudflare login / Workers AI probe (no `wrangler whoami` at all) and writes
+`DEV_WORKERS_AI=off` to `apps/web/.dev.vars` — no tracked file changes, so there is nothing to keep
+out of a commit; `--no-demo` runs plain `pnpm seed` (tenant, users and key,
 but no populated workspace); `--no-plugins` skips the `plugins` step, which installs the plugins
 `.rocketflare.json` lists in `defaultPlugins` (step 6 below) — use it when the machine is offline or
 when somebody wants the app bare first. `--db-url <postgres-url>` uses a database that already

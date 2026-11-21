@@ -21,11 +21,11 @@ import { createTestEnv } from '../mocks/bindings'
 const db = setupTestDatabase()
 
 /**
- * A test slug must be SLUG-STABLE (`slugify(slug) === slug`), not merely valid: `uniqueId()` is
- * base64url, so it can carry `_` from a `/` alongside its own `_` separator, and naively swapping
- * both for `-` yields `--` — which `slugify` then collapses. A test that derives a slug from such a
- * name gets a DIFFERENT root, so it is free and never de-duplicated. That was a 1-in-60 flake.
- * Running the value through the real `slugify` is what makes it stable by construction.
+ * A test slug must be SLUG-STABLE (`slugify(slug) === slug`), not merely valid. `uniqueId()` once
+ * carried base64url's `_` beside its own `_` separator, and swapping both for `-` yielded `--` —
+ * which `slugify` collapses, so a slug derived from such a name got a DIFFERENT root (a 1-in-60
+ * flake). `uniqueId()` is slug-safe now; running the value through the real `slugify` keeps a
+ * prefix of any spelling stable by construction too.
  */
 const testSlug = (prefix: string) => slugify(`${prefix}-${uniqueId()}`)
 
