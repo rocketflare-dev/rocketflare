@@ -5,17 +5,21 @@ delete; no design decisions are needed to get to a running app.
 
 ## 0. Copy — decouple from the kit
 
-The kit is a template, not an upstream. Clone it, delete its history, and start your own:
+The kit is a template, not an upstream. Clone it, delete its history, and start your own. The
+guided way is `/rf-start` in Claude Code: it does this, the first run, the design conversation
+(`/rf-design`) and the rename (§1), in that order. By hand:
 
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
-rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"
+bash scripts/detach.sh
 git remote add origin git@github.com:<you>/myapp.git
 ```
 
-Or the one-liner — `curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp` (read
-`scripts/install.sh` first: it clones, detaches exactly as above with the kit commit recorded in the
-first message, then execs `scripts/bootstrap.sh`). Either way, `bash scripts/bootstrap.sh` (or
+`scripts/detach.sh` records the kit commit in `.rocketflare.json` (what `pnpm kit:upgrade` diffs
+against) and in the first commit's message, then replaces the history with one commit, "Start from
+Rocketflare". Or the one-liner: `curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp`
+(read `scripts/install.sh` first: it clones, runs the same detach, then execs
+`scripts/bootstrap.sh`). Either way, `bash scripts/bootstrap.sh` (or
 `/rf-setup`) is the first run — `SETUP.md` Part 1 as one command.
 
 Why: you are about to rename packages, delete examples and rewrite docs; a fork or a shared history

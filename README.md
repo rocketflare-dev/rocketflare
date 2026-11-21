@@ -25,6 +25,22 @@ history, and make it your own — you will rename, delete and rewrite freely, an
 here. Cut loose is not cut off: your copy keeps a `.rocketflare.json` saying where it came from, and
 `/rf-upgrade` ports later kit releases into it without recreating anything you deleted.
 
+**Starting a new app? Paste this into Claude Code** in the folder where you keep your projects:
+
+```
+I want to build an app with Rocketflare.
+Clone https://github.com/rocketflare-dev/rocketflare into a folder I name
+(default my-app), read its CLAUDE.md, then run the rf-start skill with me.
+Follow its steps in order, and don't settle anything about the app's
+design until it asks.
+```
+
+**`/rf-start`** detaches the clone, gets it running one prerequisite at a time, holds the design
+conversation with you (**`/rf-design`**: who it's for, how many organisations, roles and words, AI
+on or off, money, licence, the plugins that already do what you need, the stages, your brand), and
+renames it to your app. The design is written to `docs/design/` and opens as local pages in your
+colours.
+
 **Ask your coding agent.** Open the copy in Claude Code and type **`/rf-setup`** — it checks the
 toolchain, starts Postgres, migrates, seeds the demo workspace and leaves you signed in, showing one
 verification line per step. Then **`/rf-adapt <slug> "Your App"`** renames the kit to your app, and
@@ -45,7 +61,7 @@ curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → d
 
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
-rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
+bash scripts/detach.sh                                                            # your history starts here
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
 
 bash scripts/bootstrap.sh          # checks Node 26 / pnpm 10 / Docker, generates the local secret, starts
