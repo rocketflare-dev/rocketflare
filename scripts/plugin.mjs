@@ -147,7 +147,7 @@ import {
   withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
-import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
+import { applyReplacements, deriveNames, isBinary, isLicenceFile } from './lib/rename-lib.mjs'
 import { containedPath, writePathProblem } from './lib/repo-paths.mjs'
 import { missingFrom, readLedger, usesOf } from './lib/surface.mjs'
 import {
@@ -643,9 +643,14 @@ function openSource(spec, args) {
   }
 }
 
-/** Bytes → the text that lands in the host, translated when the host has been renamed. */
-function materialise(buffer, names) {
+/**
+ * Bytes → the text that lands in the host, translated when the host has been renamed. A licence
+ * file (`rel`, the path inside the plugin) is never translated: it is legal text naming its
+ * licensor, and the rename would put the app's name on it.
+ */
+function materialise(buffer, names, rel) {
   if (isBinary(buffer)) return buffer
+  if (rel && isLicenceFile(rel)) return buffer
   const text = buffer.toString('utf8')
   return names ? applyReplacements(text, names).text : text
 }
@@ -918,7 +923,7 @@ function cmdAdd(args, host) {
   const targets = []
   for (const f of files) {
     if (f.role !== 'copy' && f.role !== 'note') continue
-    writeInto(f.target, materialise(source.read(f.path), host.names))
+    writeInto(f.target, materialise(source.read(f.path), host.names, f.path))
     targets.push(f.target)
     written += 1
   }
@@ -927,7 +932,7 @@ function cmdAdd(args, host) {
   const seededTargets = []
   for (const f of files) {
     if (f.role !== 'seed' || existsSync(abs(f.target))) continue
-    writeInto(f.target, materialise(source.read(f.path), host.names))
+    writeInto(f.target, materialise(source.read(f.path), host.names, f.path))
     seededTargets.push(f.target)
   }
   writeClaudeSettings(settings)
@@ -1376,7 +1381,11 @@ function cmdUpgrade(args, host) {
       else {
         artifacts.write(
           path.join('added', f.target),
-          materialise(m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`), host.names)
+          materialise(
+            m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`),
+            host.names,
+            f.path
+          )
         )
         added.push(f.target)
       }
@@ -1403,7 +1412,8 @@ function cmdUpgrade(args, host) {
     if (f.change === 'added' || !local.has(f.target)) {
       const body = materialise(
         m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`),
-        host.names
+        host.names,
+        f.path
       )
       artifacts.write(path.join('added', f.target), body)
       added.push(f.target)
@@ -1609,7 +1619,7 @@ function cmdUpgrade(args, host) {
   for (const s of args.continue ? [] : newSeeds) {
     writeInto(
       s.target,
-      materialise(m.showRaw(to, subdir === '' ? s.path : `${subdir}/${s.path}`), host.names)
+      materialise(m.showRaw(to, subdir === '' ? s.path : `${subdir}/${s.path}`), host.names, s.path)
     )
   }
   writeClaudeSettings(settings)
@@ -1867,7 +1877,9 @@ function changedAppOwnedFiles(manifest, surface, host, args) {
     const disk = lstatSync(abs(rel)).isSymbolicLink()
       ? Buffer.from(readlinkSync(abs(rel)))
       : readFileSync(abs(rel))
-    const pristine = Buffer.from(materialise(m.showRaw(source.commit, inRepo(rel)), host.names))
+    const pristine = Buffer.from(
+      materialise(m.showRaw(source.commit, inRepo(rel)), host.names, rel)
+    )
     return disk.equals(pristine) || disk.equals(Buffer.from(formattedLikeAdd(rel, pristine)))
       ? []
       : [{ path: rel, reason: 'changed' }]
