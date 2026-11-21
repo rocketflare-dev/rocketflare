@@ -18,7 +18,7 @@ steps to work top to bottom, `## Conflicts to expect` is `path → what changed 
 | `added` | a new kit file, already written and translated | nothing; review it |
 | `added-collides` | the kit added a path you already have | compare with `reference/<path>`, merge by hand |
 | `modified` | in `apply.patch` | nothing, unless it rejected |
-| `deleted` | the kit removed it | decide. It stays unless they say otherwise |
+| `deleted` | the kit removed it | decide. It stays unless they say otherwise — then `--apply --apply-deletes` `git rm`s every one |
 | `skipped-surface-absent` | belongs to a surface this app deleted | **nothing. Ever.** |
 | `skipped-locally-deleted` | the adopter deleted this file | nothing |
 | `skipped-kit-only` | the kit's own identity (LICENSE, SECURITY.md, install.sh, the rename tool) and the kit's own tests (`kitOnly`: `apps/web/tests/kit-only/**`) | nothing — and delete a kit-only test if one is already here |
@@ -40,7 +40,9 @@ example agents, cubes and CLI commands; those deletions are what the skipped cou
 A plugin (D31, `docs/CONCEPTS.md` §16) is a separate git repository copied into this app, with its
 own version, its own release notes and its own upgrade command. So **a kit diff never touches a byte
 a plugin owns** — `classifyPath` drops every file under an installed plugin's surface as
-`skipped-plugin-owned` and names the plugins in the report. That count is reported rather than
+`skipped-plugin-owned` and names the plugins in the report. The one exception is a **vendored**
+plugin (`example-feature`), which has no repository of its own: its files are classified, translated
+and applied like core. That count is reported rather than
 silently dropped because *"the kit changed nothing here"* and *"the kit is not allowed to change
 anything here"* are different answers, and only the second one means "go and run
 `pnpm plugin upgrade <id>`".

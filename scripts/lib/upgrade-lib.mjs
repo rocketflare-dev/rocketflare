@@ -274,7 +274,13 @@ export function classifyPath(relPath, ctx) {
   // know what version of the plugin is installed, and the two histories would fight. This sits
   // second, right after "the adopter deleted it", because both are about not writing where the kit
   // has no say.
-  if (surface && surface.kind === 'plugin') {
+  //
+  // A VENDORED plugin is the exception (`isVendored`: the kit's own repository, no subdirectory —
+  // `example-feature`): it has no release chain of its own, so `pnpm plugin upgrade` refuses it and
+  // points here. Skipping it here too left it stranded on the version the copy was made from, the
+  // reference plugin teaching an API the kit had since replaced. Its files are the kit's, so they
+  // fall through and are classified, translated and applied exactly like core.
+  if (surface && surface.kind === 'plugin' && !isVendored(surface.source, manifest.kit?.repo)) {
     return {
       class: 'skipped-plugin-owned',
       translate: false,

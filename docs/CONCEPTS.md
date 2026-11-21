@@ -1559,8 +1559,12 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   kit's mirror, not from the copy's `docs/upgrades/`, and the copy releases by bumping its root
   version and tagging.
 - **`scripts/upgrade.mjs`**: a blobless mirror in `.upgrade/`. It classifies paths, drops absent
-  surfaces and plugin-owned files, translates through the same `applyReplacements()` as the rename,
-  then patches with `--reject` as a fallback. It **never** applies kit migrations (snapshots are
+  surfaces and plugin-owned files (a vendored plugin's are ported as core — it has no release chain
+  of its own), translates through the same `applyReplacements()` as the rename,
+  then patches with `--reject` as a fallback. A plan run works on a dirty tree; `--apply` needs a
+  clean one, `git rm`s the kit's deletions only with `--apply-deletes`, and `git add`s exactly
+  what it wrote (rejected files stay unstaged), so the gate's `git ls-files` scanners see the new
+  files. It **never** applies kit migrations (snapshots are
   cumulative), writes resource ids into tomls, applies deletions unasked, or ports the root
   version. The version stamp is written last, only on a clean apply — or by `--continue`, once
   every `*.rej` an apply left is resolved and deleted; `pnpm plugin upgrade <id> --continue` is the
@@ -1687,7 +1691,8 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   convention; **two plugins declaring the same table is a `plugin check` failure**.
 - **Record**: a `kind: 'plugin'` surface (`source: {repo, subdir, version, commit}`). In the kit or
   with `--local` it goes in the git-ignored `.rocketflare.local.json`. A kit diff never touches
-  plugin-owned files. A vendored plugin (`example-feature`) upgrades with the kit.
+  plugin-owned files. A vendored plugin (`example-feature`) upgrades with the kit: `kit:upgrade`
+  ports its files as core, and `plugin upgrade` refuses it and points there.
 - **Compatibility is OBSERVED (decision 5c)**: the kit emits a `## Surface ledger` in
   `docs/plugin-api.md` (generated, diff-checked). A plugin's `uses` is **derived** from its imports
   by `pnpm plugin export`, and compatibility is the set difference `uses \ ledger`, checked before
