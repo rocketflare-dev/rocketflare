@@ -110,6 +110,13 @@ pnpm web test:ui
 Expect the new hex where the script said, and `tests/ui/contrast.test.ts` green (WCAG AA: text
 4.5:1, controls and focus ring 3:1).
 
+**From the design.** If `docs/design/brand.css` exists (the `rf-design` brand step, signed off),
+apply it instead of asking: `pnpm design:docs --apply-brand` writes each property into whichever of
+`theme-tokens.css` and `index.css` defines it, plus `<meta name="theme-color">`. Then run
+`pnpm web test:ui`. Show the user `git diff --stat` and the swatches from
+`docs/design/06-brand.md`. Skip `--colour` on the rename in that case, because the brand already
+sets the primary.
+
 **What to change.** Ask the user for their palette. Change the values in `index.css` only (the
 `/* blue-600 */`-style comments beside them are now stale — update or drop them). Re-run
 `pnpm web test:ui` after every change; a failing contrast test names the token and the ratio.
@@ -162,7 +169,33 @@ not see that file: fix it by hand, then `pnpm typecheck`. Never edit the six bar
 migration for a plugin's tables, that is (b)'s fresh database, not a rename problem: `pnpm
 db:generate --name plugin-<id>-<version>` then `pnpm db:migrate`.
 
+## (h) Licence — whose app this is
+
+**What to check.** The root `LICENSE` is still the kit's MIT notice, and every `package.json` says
+`"license": "MIT"`. Left alone, the app's own code reads as MIT-licensed, with copyright in the kit
+author's name. `LICENSES/kit-MIT.txt` holds the kit's notice, which the MIT licence requires the
+app to keep.
+
+**How to check.**
+```
+head -3 LICENSE; grep -n '"license"' package.json apps/*/package.json packages/*/package.json
+cat docs/design/design.json 2>/dev/null | grep -A2 '"owner"'
+```
+
+**What to change.** Take the owner and licence from `design.json` `owner`, or ask: "Who owns this
+app, by legal name, and may anyone else use its code?" Recommend all rights reserved.
+- **All rights reserved:** write `LICENSE` as
+  `Copyright (c) <year> <legal name>. All rights reserved.`, then a blank line, then
+  `This app includes the Rocketflare starter kit, used under the MIT licence. Its notice is in
+  LICENSES/kit-MIT.txt.`. Set every `package.json` `"license"` to `"UNLICENSED"` (npm's word for
+  "not licensed to others").
+- **An open licence:** write that licence's text with their name, add the same sentence about the
+  kit, and set `"license"` to its SPDX id.
+
+Never edit or delete `LICENSES/kit-MIT.txt`. `LICENSE` and `LICENSES/**` are on `neverPort`, so a
+later `kit:upgrade` leaves both alone.
+
 ---
 
-When all six — seven with a plugin installed — are done: `pnpm gate`, commit, then update `docs/ADAPTING.md` §1 (or delete the table) so the next reader
+When all of them (seven, or eight with a plugin installed) are done: `pnpm gate`, commit, then update `docs/ADAPTING.md` §1 (or delete the table) so the next reader
 knows the rename happened.

@@ -151,7 +151,10 @@ suites on vitest 4, §9 — never part of the gate).
 
 **Known gaps:** no IdP group sync (SCIM/SAML claims); no group hierarchy or per-group roles;
 conversations, runs, prompts and non-Knowledge files have no visibility; agent-written documents
-are always `tenant`; no audit log beyond `activity_events`; no personal API keys (tenant keys only).
+are always `tenant`; no audit log beyond `activity_events`; no personal API keys (tenant keys only);
+no supported pattern for organisations that must share some facts (partners, franchises, shared
+venues), so an app builds its own copy-and-consent exchange; no identity for people outside every
+organisation (guests, customers of a member business) other than a link or a tenant API key.
 `AGENT_TENANT_DAILY_COST_USD` is per organisation, not per person — the creation limit above is
 what bounds one account. A deleted organisation's `ai_usage` rows go with it (the FK cascade), so
 the operator's record of what it spent is lost with the organisation.
@@ -587,7 +590,23 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
 - **Design tokens (D20)**: two DaisyUI themes in `shared/theme-tokens.css` (read by `ui/index.css` and by public-site stylesheets), where the brand hexes are the only
   hex values; `contrast.test.ts` gates them. Tailwind scanning is `source(none)` + explicit
   `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line, and precompiled dependency
-  CSS gets none.
+  CSS gets none. The floors and pairs live in `scripts/lib/contrast.mjs`, which the test and the
+  design pages share.
+- **Design pages** (`pnpm design:docs`, `scripts/design-docs.mjs`): renders `docs/design/*.md` (a
+  numeric prefix orders them; the first is `index.html`) and inlines `docs/design/diagrams/*.svg`
+  into `docs/design/html/`: static HTML pages in the app's own tokens, light and dark, committed
+  with the design. `/rf-design` writes the markdown and runs it. The markdown is untrusted: the
+  renderer (`scripts/lib/markdown-lite.mjs`) knows a fixed subset and escapes everything else, and an
+  SVG is re-serialised through an allowlist (`scripts/lib/svg-sanitize.mjs`). A brand being tried
+  goes in `docs/design/brand.css`, written in the token files' own block shapes (`@theme`,
+  `@plugin "daisyui/theme"`, `[data-theme]`, matched by the `-light`/`-dark` suffix) and holding
+  only what it changes. `scripts/lib/brand.mjs` layers it per property over `theme-tokens.css`
+  and `index.css`: the pages' stylesheet, `--contrast` (the gate's floors, failing pairs printed per
+  theme) and `--apply-brand` (writes each property into whichever file defines it, plus
+  `<meta name="theme-color">`) all read that one result, and each warns about a derived tone
+  (`--focus-ring`, `--surface-active`, `--tone-*`) that a changed colour left at the kit's value.
+  `--check` exits 1 when the pages are stale. The output is deterministic, and a rebuild deletes only
+  pages carrying the generator's meta tag. The script is not kit-only, so it ships in every copy.
 - **Providers**: ErrorBoundary → QueryClient → Auth → Ability → WebSocket → Router. A global 401
   clears the cache and redirects to `/login?returnUrl=`.
 - **Guards**: one `RequireGuard` primitive; nav items use the same guard as their page.
@@ -604,7 +623,10 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
 
 **Known gaps:** no route preloading; no "system" theme or cross-tab sync; every dev account is
 seeded into the one main tenant (an app wanting a second tenant's owner seeds that tenant itself);
-the CLI prints raw role values, not `ROLE_LABELS`.
+the CLI prints raw role values, not `ROLE_LABELS`. The rendered design's markdown has no raw HTML,
+footnotes, task lists or reference-style links. It inlines only SVGs under `docs/design/diagrams/`,
+and a brand font is linked from Google Fonts whenever it is not a known system font, without
+checking that Google serves it.
 
 ## 8. Analytics
 
@@ -1585,6 +1607,23 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   before anything is written, a plan run included: one that is not a plain path inside the
   repository (`scripts/lib/repo-paths.mjs`), is under `.git/`, or reaches an added file through a
   symlink stops the run.
+- **A copy starts with a design**:
+  - `/rf-start` is the one entry point the website's prompt names. It runs, in order:
+    1. `scripts/detach.sh`, which records the kit commit in `.rocketflare.json` and replaces the
+       history. `install.sh` and `/rf-setup` §0 run the same script. It refuses a copy that is already detached, so it and `/rf-start` stay in copies harmlessly, as `/rf-adapt` does.
+    2. setup (`/rf-setup`);
+    3. `/rf-design`;
+    4. `/rf-adapt`.
+  - `/rf-design` asks the shape questions the kit makes expensive later: organisations, roles and
+    words, AI, money, non-functional needs, hosting, licence, and integrations, matched against
+    `pnpm plugin list --available`. Each decision records the options weighed. It writes
+    `docs/design/*.md` and `docs/design/design.json`, runs an independent reviewer, and renders it
+    as local pages in the app's brand (`pnpm design:docs`, into `docs/design/html/`).
+  - `/rf-adapt` then reads the names, `docs/design/brand.css` and the licence answer from the
+    design. The app's `LICENSE` becomes its owner's, and the kit's MIT notice stays in
+    `LICENSES/kit-MIT.txt`. Both paths are `neverPort`.
+  - Known gaps: the shape questions are a conversation, so nothing checks that a later stage
+    stayed inside the design. That is the end-of-stage review's job, which doesn't exist yet.
 - **A copy hears about releases on its own**: a Claude Code `SessionStart` hook
   (`scripts/kit-update-check.mjs`, in `.claude/settings.json`) compares `kit.version` with the
   newest tag at `kit.repo` (`git ls-remote`, cached a day in the git-ignored

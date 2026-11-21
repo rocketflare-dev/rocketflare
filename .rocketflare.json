@@ -243,6 +243,7 @@
   ],
   "neverPort": [
     "LICENSE",
+    "LICENSES/**",
     "SECURITY.md",
     "pnpm-lock.yaml",
     "CHANGELOG.md",

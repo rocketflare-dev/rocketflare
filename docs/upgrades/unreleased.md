@@ -12,7 +12,7 @@ manual: false
 
 ## What changed
 
-A second batch of field-report fixes: a WSL-aware `bootstrap.sh`, seed credentials labelled as local demo values, one shared dev-account list with relabelable roles, and four plugin-seam gaps (`apiKeyId`, guarded settings tabs, `hooks.seed`, `seed --feature`).
+Field-report fixes: new apps start with `/rf-start` and a design conversation (`/rf-design`, rendered by `pnpm design:docs`), `pnpm plugin list --available` shows what already exists, setup handles WSL, and plugins gain four missing seams.
 
 - `bash scripts/bootstrap.sh` knows WSL2 (`scripts/lib/prereqs.sh`). Run as root in WSL, it prints the `adduser` and `wsl -d <distro> -u <name>` steps. With `docker` missing inside WSL, it says to turn on Docker Desktop's WSL integration, then quit and restart Docker Desktop. With no fnm or nvm, it prints the documented nvm install. A `node`, `corepack`, `pnpm` or `docker` that resolves under `/mnt/<drive>/` (Windows' PATH leaking in) is ignored. pnpm is installed with the active Node's own corepack if it ships one, else with its `npm` (Node 26 ships no corepack). `SETUP.md` has a "Windows (WSL2) — before you start" block.
 - `pnpm seed` labels its credentials as local demo values. The API key prints on one line labelled `api key:` with a "local demo key … safe to discard" note under it. The invite URL prints as a `local demo link (this machine only)`. `extractSeedKey` (`scripts/lib/bootstrap-lib.mjs`) reads the labelled line and still accepts the old banner.
@@ -27,6 +27,13 @@ A second batch of field-report fixes: a WSL-aware `bootstrap.sh`, seed credentia
 - `/rf-plugin add` with no id shows the catalogue instead of asking for a repository; `/rf-how-do-i` §0 first asks "does a plugin already do this?".
 - The rename preserves `rocketflare.dev/plugins` (`KIT.preserved` in `scripts/lib/rename-lib.mjs`), so a renamed copy still points at the published catalogue page; an existing copy has already been renamed and needs nothing.
 - `SETUP.md` §2.7 no longer pins a plugin release in its example (no `@ref` reads the newest tag), and SETUP, CONCEPTS §8/§16 and `/rf-setup` point at `pnpm plugin list --available` and https://rocketflare.dev/plugins.
+- `/rf-design` (new, `.claude/skills/rf-design/`): the shape questions (organisations, roles and words, AI, money, non-functional needs, hosting, licence, integrations and existing plugins), stages with "Done when", the brand step, and an independent review. It writes `docs/design/`. Rationale: `docs/CONCEPTS.md` §13 "A copy starts with a design".
+- `/rf-start` (new): detach, setup, `/rf-design`, `/rf-adapt`, in that order; the website's prompt names it.
+- `scripts/detach.sh` (new): the one detach. It stamps only the kit block's `commit` in `.rocketflare.json`. `install.sh` used to stamp the vendored example plugin's `source.commit` too, and `/rf-setup` §0 and the README's by-hand path stamped nothing.
+- `/rf-adapt` checklist row (e) applies `docs/design/brand.css` when there is one, and the new row (h) writes the app's own `LICENSE`. The kit's MIT notice moves into `LICENSES/kit-MIT.txt`, a new `neverPort` path.
+- `scripts/design-docs.mjs` builds `docs/design/html/` from `docs/design/*.md` and inlines a sanitised `docs/design/diagrams/*.svg`; `--open`, `--check`, `--contrast`, `--apply-brand` (`docs/CONCEPTS.md` §7).
+- The contrast floors and pairs moved from `apps/web/tests/ui/contrast.test.ts` into `scripts/lib/contrast.mjs`, which the test and `--contrast` share.
+- New libraries: `scripts/lib/brand.mjs`, `scripts/lib/markdown-lite.mjs`, `scripts/lib/svg-sanitize.mjs`, `scripts/lib/design-docs-lib.mjs`, each with a `.d.mts`.
 
 ## How to apply
 
@@ -42,6 +49,14 @@ A second batch of field-report fixes: a WSL-aware `bootstrap.sh`, seed credentia
 10. Port the text changes to `.claude/skills/rf-plugin/SKILL.md`, `.claude/skills/rf-plugin/reference.md`, `.claude/skills/rf-how-do-i/SKILL.md` §0 and `.claude/skills/rf-setup/SKILL.md`, keeping any wording the app has changed in those files.
 11. Port the `SETUP.md` §1.4b and §2.7 and `docs/CONCEPTS.md` §8 and §16 text if the app still carries those sections.
 12. Search the ported files for the app's own domain followed by `/plugins` and change each occurrence back to `https://rocketflare.dev/plugins`: an upgrade run before `scripts/lib/rename-lib.mjs` was ported translates that URL like any other kit domain.
+13. Add `scripts/design-docs.mjs` and ten library files from the kit release: `scripts/lib/contrast`, `scripts/lib/brand`, `scripts/lib/markdown-lite`, `scripts/lib/svg-sanitize` and `scripts/lib/design-docs-lib`, each as `.mjs` and `.d.mts`.
+14. Add `"design:docs": "node scripts/design-docs.mjs"` to the root `package.json` `scripts`.
+15. Replace `apps/web/tests/ui/contrast.test.ts` with the kit's version, which imports its pairs from `scripts/lib/contrast.mjs`. A copy that added its own pairs to the test adds them to `contrastPairs()` in `scripts/lib/contrast.mjs` instead.
+16. Add `apps/web/tests/config/design-docs.test.ts` from the kit release.
+17. Copy three things from the kit release into the app, translated as usual: the `.claude/skills/rf-design/` folder (`SKILL.md`, `shape.md`, `brand.md`), the `.claude/skills/rf-start/` folder, and `scripts/detach.sh`. In an app that is already renamed, `/rf-start` only reports that every step is done.
+18. Add the `rf-adapt` checklist's new row (h), "Licence", from the kit's `.claude/skills/rf-adapt/checklist.md`. `rf-adapt` is `neverPort`, so the patch does not carry it. Copy it by hand, along with the "From the design" paragraph of row (e).
+19. If the app's root `LICENSE` is still the kit's MIT notice, copy it to `LICENSES/kit-MIT.txt` before changing anything, then walk checklist row (h) to write the app's own `LICENSE` and `package.json` `license` fields.
+20. Add `"LICENSES/**"` to `neverPort` in `.rocketflare.json`, beside `"LICENSE"`.
 
 ## Conflicts to expect
 
@@ -50,14 +65,20 @@ A second batch of field-report fixes: a WSL-aware `bootstrap.sh`, seed credentia
 - `scripts/bootstrap.sh` → the OS, root, docker, node and pnpm checks changed → keep any check you added and take the kit's version of the rest.
 - `.claude/skills/rf-how-do-i/SKILL.md` → §0 gains a new first question above "app, or plugin?" → keep the app's own §0 text below the new question.
 - `SETUP.md` §2.7 → the analytics example lost its `@3.8.2` pin → keep the app's own example if it was rewritten.
+- `apps/web/tests/ui/contrast.test.ts` → its pairs and arithmetic moved into `scripts/lib/contrast.mjs` → take the kit's file and move any pair you added into `contrastPairs()`.
 
 ## Verify
 
 1. `bash scripts/bootstrap.sh --help` prints `✔ os`, `✔ git`, `✔ docker`, `✔ node` and `✔ pnpm` before the usage text.
 2. On a fresh dev database, `pnpm seed` prints `api key: …` with the local-demo note under it, and `pnpm seed --feature knowledge-facts` ends with `feature knowledge-facts … on for acme`.
 3. `/login` in development shows quick-login buttons named from `ROLE_LABELS`, and Settings → People shows `Owner`, not `owner`.
-4. `pnpm gate` passes.
-5. `pnpm plugin list --available` exits 0 and prints `Plugins (github.com/rocketflare-dev/rocketflare-plugins at <tag>)` followed by one line per plugin, `analytics` among them.
-6. `pnpm plugin list --available --json` prints one JSON document whose `catalogues[0].plugins` carries `id`, `version`, `description` and `installed` for each plugin.
-7. `pnpm web exec vitest run --project config tests/config/plugin-catalogue.test.ts` passes.
-8. `grep -rn 'rocketflare.dev/plugins' scripts/lib/plugin-lib.mjs` prints the `PLUGIN_CATALOGUE_URL` line.
+4. `pnpm plugin list --available` exits 0 and prints `Plugins (github.com/rocketflare-dev/rocketflare-plugins at <tag>)` followed by one line per plugin, `analytics` among them.
+5. `pnpm plugin list --available --json` prints one JSON document whose `catalogues[0].plugins` carries `id`, `version`, `description` and `installed` for each plugin.
+6. `pnpm web exec vitest run --project config tests/config/plugin-catalogue.test.ts` passes.
+7. `grep -rn 'rocketflare.dev/plugins' scripts/lib/plugin-lib.mjs` prints the `PLUGIN_CATALOGUE_URL` line.
+8. `pnpm web test:ui -- contrast` passes.
+9. `pnpm web test:config -- design-docs` passes.
+10. `pnpm design:docs --contrast` prints `all … pairs pass` for light and dark and exits 0.
+11. `ls .claude/skills/rf-design` lists `SKILL.md`, `shape.md` and `brand.md`.
+12. `head -1 LICENSE` names the app's owner, not the kit's author, and `LICENSES/kit-MIT.txt` exists.
+13. `pnpm gate` passes.

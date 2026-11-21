@@ -60,14 +60,18 @@ signature is identical for both:
   → say no. Deleting the history of the kit's own checkout is the one truly unrecoverable thing in
   this skill.
 
-On yes, record the commit first so the copy remembers where it came from — that id is the only way
-to diff against the kit later:
+On yes, run the kit's detach script. It records the kit commit in `.rocketflare.json` (the only
+way `pnpm kit:upgrade` can diff against the kit later) and in the first commit's message, then
+replaces the history:
 
 ```
-KIT_COMMIT=$(git rev-parse --short HEAD)
-rm -rf .git && git init -q && git add -A
-git commit -q -m "Start from Rocketflare" -m "Kit commit: $KIT_COMMIT"
+bash scripts/detach.sh
 ```
+
+It refuses a dirty tree, and an `origin` that isn't the kit's repository (`--force` for a mirror the
+user confirmed). If the script is missing, the copy was already renamed, and so was detached.
+Someone starting a new app from nothing is better served by `/rf-start`, which runs this, setup,
+the design and the rename in order.
 
 Then tell them to add their own `origin`. On no, or on any doubt, carry on to step 1 unchanged —
 setup works either way, and they can detach later by hand.
