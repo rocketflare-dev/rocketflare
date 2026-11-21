@@ -37,7 +37,10 @@ host ever names a plugin.
   `@testkit/{integration,unit}` is for its tests; `@/host/<id>/…` (its OWN id) for the host files it
   seeded. `tests/helpers/plugins.ts` enforces it. **Annotate
   the context explicitly**: `ctx.notFound()` narrows (`never`) only on an explicitly typed target,
-  so `const ctx = requestCtx(c)` leaves the row possibly undefined.
+  so `const ctx = requestCtx(c)` leaves the row possibly undefined. `ctx.apiKeyId` names the API
+  key a Bearer request came in on (`null` for a browser session; never the secret) — key a
+  per-client limit or audit line on it, because `ctx.userId` is the key's CREATOR and every key
+  one person made shares it.
 - **Module-evaluation order is the one trap the type system cannot see.** `queues/jobs.ts`,
   `agents/registry.ts`, `prompts.ts`, `scheduled.ts`, `api-prefixes.ts` and `access.ts` read the
   barrels at MODULE SCOPE; a plugin module reading one of their values at its own module scope
@@ -205,9 +208,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   full safe-tool checklist is `.claude/rules/tools.md`.
 - **`grants` are ADDITIVE over its OWN subjects** (declared in `SharedPlugin.subjects`), applied
   after the kit's matrix; never `cannot` — that would change what every role may do.
-- **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seedDemo` are post-commit, idempotent,
+- **`hooks.onTenantCreated` / `onTenantDeleted` / `onTenantStatusChanged` / `seed` / `seedDemo` are post-commit, idempotent,
   best-effort**, try/caught after the kit's own — nothing a tenant NEEDS may arrive only that way.
-  `seedDemo` gets a namespaced `demoId`; fixed ids + `onConflictDoNothing`.
+  `seed` runs on every `pnpm seed` (reference data the plugin needs), `seedDemo` only with
+  `--demo`; both get a namespaced `demoId` (fixed ids + `onConflictDoNothing`) and
+  `setFeature(key, enabled?, tenantId?)` — the per-organisation override that shows a plugin
+  behind its own flag after a plain seed.
 - **`onTenantStatusChanged(db, tenantId, status, env)`** runs after a suspend / reactivate
   (`setTenantSuspended`), each failure logged and swallowed — invalidate anything the plugin
   serves or caches for the tenant outside the auth middleware (public pages, KV, edge caches).
@@ -241,7 +247,10 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   lazy PAGE.
 - **`nav` is a list of GROUPS** spliced by `composeNav(CORE_NAVIGATION, …)`: `before: '<label>'`
   inserts before that core group, no `before` lands above "Organisation", an unknown label appends;
-  `filterNavConfig` applies the same guards. `settingsTabs(ctx)` append after the kit's.
+  `filterNavConfig` applies the same guards. `settingsTabs(ctx)` append after the kit's; a tab
+  (`PluginSettingsTab`) may carry a `guard` — the same `NavGuard`, checked by the host — so
+  `{ feature: '<id>' }` hides it in an organisation without the feature, which `can` cannot
+  (a plugin's grants hold in every organisation).
 - **`header` items** (`{ id, Component: lazy(...), guard?, order?, placement?: 'center' | 'end' }`)
   go in the top bar via `PluginHeaderSlot` — `center` for a search box, `end` (default) before the
   kit's widgets; sorted by `order`, plugin id, item id; each in its own `Suspense` + error

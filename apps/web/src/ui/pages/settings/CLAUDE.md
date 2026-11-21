@@ -5,7 +5,9 @@ One page, `SettingsLayout` with `URLTabs`
 `RequireGuard guard="admin"`. `groups` renders only for `manage Group`, `agent-models` and
 `usage` only for `manage AiConfig`, `mcp` only with the `mcp` flag AND `manage McpSettings` — a tab you cannot save from is worse than no tab. `ai` and
 `prompts` degrade to read-only inside; owner-only content (slug, delete org) gates inside its tab.
-Installed plugins append tabs LAST via `settingsTabs(ctx)`.
+Installed plugins append tabs LAST via `settingsTabs(ctx)`; a plugin tab's own `guard`
+(`PluginSettingsTab`, a `NavGuard`) is checked with `useNavGuard` like a core tab's, so a
+`{ feature }` tab is absent where the organisation lacks the flag.
 
 ## AI (`AI.tsx`, `AiConfigModal.tsx`, `hooks/useAiConfig.ts`)
 

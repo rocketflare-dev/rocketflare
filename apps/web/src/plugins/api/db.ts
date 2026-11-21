@@ -31,7 +31,7 @@ export type { Tenant } from '../../db/schema'
 export type { Database, DatabaseHandle } from './types'
 
 /**
- * A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seedDemo`.
+ * A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seed`, `seedDemo`.
  *
  * Every one of them is **post-commit, idempotent and best-effort**, each try/caught by the host.
  * Two consequences a plugin author has to hold on to: a hook that throws must never break sign-up,
@@ -55,7 +55,8 @@ export interface HookCtx extends Pick<PluginContext, 'db'> {
 }
 
 /**
- * `pnpm seed --demo`, after the core block.
+ * `pnpm seed` (`hooks.seed`, every run) or `pnpm seed --demo` (`hooks.seedDemo`), after the core
+ * block.
  *
  * `demoId(key)` is already namespaced with the plugin's id, so two plugins that both seed `note:1`
  * cannot collide and re-running the seed adds nothing.
@@ -65,6 +66,12 @@ export interface SeedCtx extends Pick<PluginContext, 'db'> {
   ownerId: string
   demoId: (key: string) => string
   log: (line: string) => void
+  /**
+   * A per-organisation override of a registered feature flag (on by default; `tenantId` defaults
+   * to the seeded tenant). Optional here so a plugin's own test can build a `SeedCtx` without one;
+   * the host always passes it.
+   */
+  setFeature?: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>
 }
 
 /**

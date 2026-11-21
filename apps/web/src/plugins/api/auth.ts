@@ -51,6 +51,12 @@ export { isAdminLevel, isGlobalAdmin, isOwnerLevel, requireFeature }
 export interface PluginAuth {
   user: User
   userId: string
+  /**
+   * The API key that authenticated this request (its `api_keys.id`), or `null` for a browser
+   * session. Never the secret. What a per-client limit or an audit line keys on: `userId` is the
+   * key's CREATOR, so every key one person made shares it.
+   */
+  apiKeyId: string | null
   /** The active organisation — the ONLY tenant id a query may filter by. */
   tenantId: string
   role: MembershipRole | null

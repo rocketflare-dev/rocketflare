@@ -96,6 +96,8 @@ export interface RequestCtxOptions extends BaseOptions {
   /** The active organisation — the only tenant id a query may filter by. */
   tenantId: string
   userId?: string
+  /** The API key the request came in on — `null` (the default) is a browser session. */
+  apiKeyId?: string | null
   /** A real row when the test has one; otherwise a plausible one is built from `userId`. */
   user?: User
   role?: MembershipRole | null
@@ -201,6 +203,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
 
     user,
     userId,
+    apiKeyId: options.apiKeyId ?? null,
     tenantId: options.tenantId,
     role,
     isAdmin,

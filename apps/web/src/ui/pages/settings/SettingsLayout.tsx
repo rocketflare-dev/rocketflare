@@ -52,12 +52,16 @@ export default function SettingsLayout() {
   // Each is handed `can` and decides for itself — a tab that would 403 on save is worse than none.
   // `can` is widened to strings on the way out, the same way a `NavGuard` pair is: a plugin's
   // subjects are not in the core union until it is installed, and the ability takes them anyway.
-  const pluginTabs: TabConfig[] = uiPlugins.flatMap(
-    p =>
-      p.settingsTabs?.({
-        can: (action, subject) => can(action as Actions, subject as Subjects),
-      }) ?? []
-  )
+  // A tab's own `guard` (a feature, say) goes through the same `useNavGuard` as a core tab's.
+  const pluginTabs: TabConfig[] = uiPlugins
+    .flatMap(
+      p =>
+        p.settingsTabs?.({
+          can: (action, subject) => can(action as Actions, subject as Subjects),
+        }) ?? []
+    )
+    .filter(t => canAccess(t.guard))
+    .map(({ guard: _guard, ...tab }) => tab)
   return (
     <div className="max-w-5xl">
       <PageHeader

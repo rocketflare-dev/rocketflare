@@ -1,7 +1,8 @@
 /**
  * Development seed — idempotent, run as `pnpm seed` (loads .dev.vars). Multi-tenant:
  * tenant `Acme` (`acme`) with owner/admin/member `*@example.test` (verified), a pending invitation
- * for `invited@example.test`, one API key printed ONCE (only its hash is stored) and a global
+ * for `invited@example.test`, one API key printed ONCE on a line labelled `api key:` (only its hash
+ * is stored; both it and the invite link are labelled as local demo values) and a global
  * admin `admin@rocketflare.local`. `TENANCY_MODE=single`: the single tenant is named after `APP_NAME`
  * with slug `default` instead. Node-only script; the Worker never imports it.
  *
@@ -68,6 +69,13 @@ import {
   users,
 } from '../src/db/schema'
 import { serverPlugins } from '../src/plugins/server'
+import { DEV_ACCOUNTS } from '../src/ui/lib/dev-accounts'
+import {
+  applySeedFeatures,
+  parseSeedFeatureArgs,
+  runPluginSeedHooks,
+  seedFeatureSetter,
+} from './lib/seed-features'
 
 const DATABASE_URL = process.env.DATABASE_URL
 const TENANCY_MODE = process.env.TENANCY_MODE === 'single' ? 'single' : 'multi'
@@ -81,15 +89,24 @@ function apiUrl(appUrl: string): string {
   return url.origin
 }
 const DEMO = process.argv.includes('--demo') || process.env.SEED_DEMO === '1'
+// Parsed up front so a malformed `--feature` fails before anything is written.
+const FEATURE_REQUESTS = parseSeedFeatureArgs(process.argv.slice(2))
 
-const SEED_USERS = [
-  { email: 'owner@example.test', name: 'Olivia Owner', role: 'owner' },
-  { email: 'admin@example.test', name: 'Adam Admin', role: 'admin' },
-  { email: 'member@example.test', name: 'Mia Member', role: 'member' },
-] as const
-const GLOBAL_ADMIN = { email: 'admin@rocketflare.local', name: 'Platform Admin' }
+// The accounts come from the ONE list the login page's quick-login buttons also read.
+const SEED_USERS = DEV_ACCOUNTS.flatMap(a =>
+  a.role ? [{ email: a.email, name: a.name, role: a.role }] : []
+)
+function seedOwner() {
+  const owner = SEED_USERS.find(u => u.role === 'owner')
+  if (!owner) throw new Error('seed: DEV_ACCOUNTS (src/ui/lib/dev-accounts.ts) needs an owner')
+  return owner
+}
+const SEED_OWNER = seedOwner()
+const GLOBAL_ADMIN = DEV_ACCOUNTS.find(a => a.isGlobalAdmin)
 const INVITED_EMAIL = 'invited@example.test'
 const SEED_KEY_NAME = 'Seed key'
+/** The label on the key's line — `extractSeedKey` (scripts/lib/bootstrap-lib.mjs) reads it back. */
+const SEED_KEY_LINE_LABEL = 'api key:'
 
 async function upsertUser(
   db: Database,
@@ -138,7 +155,7 @@ async function main() {
   const log = (s: string) => console.log(s)
 
   log(`Seeding (${TENANCY_MODE}-tenant mode)…`)
-  const owner = await upsertUser(db, SEED_USERS[0])
+  const owner = await upsertUser(db, SEED_OWNER)
 
   let tenant: typeof tenants.$inferSelect
   if (TENANCY_MODE === 'single') {
@@ -170,9 +187,11 @@ async function main() {
     log(`  user    ${seedUser.email.padEnd(24)} ${seedUser.role}`)
   }
 
-  const globalAdmin = await upsertUser(db, { ...GLOBAL_ADMIN, isGlobalAdmin: true })
-  if (TENANCY_MODE === 'single') await ensureMembership(db, tenant.id, globalAdmin.id, 'member')
-  log(`  user    ${GLOBAL_ADMIN.email.padEnd(24)} global admin`)
+  if (GLOBAL_ADMIN) {
+    const globalAdmin = await upsertUser(db, { ...GLOBAL_ADMIN, isGlobalAdmin: true })
+    if (TENANCY_MODE === 'single') await ensureMembership(db, tenant.id, globalAdmin.id, 'member')
+    log(`  user    ${GLOBAL_ADMIN.email.padEnd(24)} global admin`)
+  }
 
   const pendingInvite = await db.query.teamInvitations.findFirst({
     where: and(
@@ -192,7 +211,9 @@ async function main() {
       invitedByUserId: owner.id,
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
     })
-    log(`  invite  ${INVITED_EMAIL.padEnd(24)} pending → ${APP_URL}/invite/${token}`)
+    log(
+      `  invite  ${INVITED_EMAIL.padEnd(24)} pending → local demo link (this machine only): ${APP_URL}/invite/${token}`
+    )
   } else {
     log(`  invite  ${INVITED_EMAIL.padEnd(24)} pending (existing)`)
   }
@@ -212,8 +233,9 @@ async function main() {
       scopes: ['read', 'write'],
     })
     log('')
-    log('  API key (shown ONCE — only its hash is stored):')
-    log(`    ${plaintext}`)
+    log(`  ${SEED_KEY_LINE_LABEL} ${plaintext}`)
+    log('           local demo key for this machine only, safe to discard; shown ONCE (only its')
+    log('           hash is stored). Keep it out of chats, tickets and screenshots all the same.')
   } else {
     log(
       `  API key ${existingKey.keyPrefix}… already exists (revoke it and re-seed to mint a new one)`
@@ -223,15 +245,46 @@ async function main() {
   log('')
   log('Sign in locally (APP_ENV=development) without email:')
   log(`  curl -sS -X POST ${apiUrl(APP_URL)}/auth/dev-login \\`)
-  log(
-    `    -H 'Content-Type: application/json' -d '{"email":"${SEED_USERS[0].email}"}' -c cookies.txt`
-  )
+  log(`    -H 'Content-Type: application/json' -d '{"email":"${SEED_OWNER.email}"}' -c cookies.txt`)
   log(
     `  or open ${APP_URL}/login and use the dev-login form with any *@example.test address above.`
   )
   log(`  Magic links are logged by wrangler dev when RESEND_API_KEY is unset.`)
 
+  // Installed plugins' `hooks.seed` (every run, demo or not), then the demo, then the command
+  // line's `--feature` overrides — last, so `--feature x=off` beats any hook that turned x on.
+  if (serverPlugins.some(p => p.hooks?.seed)) log('')
+  await runPluginSeedHooks(
+    serverPlugins,
+    'seed',
+    db,
+    plugin => pluginSeedContext(db, plugin, tenant.id, owner.id, log),
+    log
+  )
+
   if (DEMO) await seedDemo(db, tenant, owner, log)
+
+  if (FEATURE_REQUESTS.length > 0) {
+    log('')
+    for (const line of await applySeedFeatures(db, FEATURE_REQUESTS, tenant, owner.id)) log(line)
+  }
+}
+
+/** What a plugin's `seed` / `seedDemo` hook is handed: ids namespaced with its id, a log prefix. */
+function pluginSeedContext(
+  db: Database,
+  plugin: (typeof serverPlugins)[number],
+  tenantId: string,
+  ownerId: string,
+  log: (s: string) => void
+) {
+  return {
+    tenantId,
+    ownerId,
+    demoId: (key: string) => demoId(`${plugin.shared.id}:${key}`),
+    log: (line: string) => log(`  ${plugin.shared.id.padEnd(7)} ${line}`),
+    setFeature: seedFeatureSetter(db, tenantId, ownerId),
+  }
 }
 
 // =================================================================================================
@@ -256,7 +309,8 @@ function demoId(key: string): string {
 }
 
 const DEMO_TENANT_NAME = 'Acme Logistics'
-const DEMO_SEED_USER_NAMES: Record<(typeof SEED_USERS)[number]['email'], string> = {
+/** The demo's fuller names for the seeded accounts; an account not listed keeps its own. */
+const DEMO_SEED_USER_NAMES: Record<string, string> = {
   'owner@example.test': 'Olivia Bennett',
   'admin@example.test': 'Marcus Adeyemi',
   'member@example.test': 'Priya Raman',
@@ -1027,15 +1081,20 @@ async function seedDemo(
   for (const seedUser of SEED_USERS) {
     await db
       .update(users)
-      .set({ name: DEMO_SEED_USER_NAMES[seedUser.email], lastLoginAt: ago(0, 2) })
+      .set({ name: DEMO_SEED_USER_NAMES[seedUser.email] ?? seedUser.name, lastLoginAt: ago(0, 2) })
       .where(and(sql`lower(${users.email}) = ${seedUser.email}`, isNull(users.lastLoginAt)))
     await db
       .update(users)
-      .set({ name: DEMO_SEED_USER_NAMES[seedUser.email] })
+      .set({ name: DEMO_SEED_USER_NAMES[seedUser.email] ?? seedUser.name })
       .where(and(sql`lower(${users.email}) = ${seedUser.email}`, eq(users.name, seedUser.name)))
   }
-  const admin = await upsertUser(db, SEED_USERS[1])
-  const member = await upsertUser(db, SEED_USERS[2])
+  const seededAdmin = SEED_USERS.find(u => u.role === 'admin')
+  const seededMember = SEED_USERS.find(u => u.role === 'member')
+  if (!seededAdmin || !seededMember) {
+    throw new Error('seed --demo: DEV_ACCOUNTS needs an admin and a member account')
+  }
+  const admin = await upsertUser(db, seededAdmin)
+  const member = await upsertUser(db, seededMember)
   // The organisation and its founding members predate the two weeks of activity below.
   const founded = ago(14, 2)
   await db
@@ -1800,19 +1859,13 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   // content. Same contract as everything above: fixed ids (`demoId` arrives already namespaced
   // with the plugin's id) and `onConflictDoNothing`, so re-running adds nothing. One plugin's
   // failure is reported and the rest still run — a half-seeded demo beats no demo.
-  for (const plugin of serverPlugins) {
-    if (!plugin.hooks?.seedDemo) continue
-    try {
-      await plugin.hooks.seedDemo(db, {
-        tenantId,
-        ownerId: owner.id,
-        demoId: (key: string) => demoId(`${plugin.shared.id}:${key}`),
-        log: line => log(`  ${plugin.shared.id.padEnd(7)} ${line}`),
-      })
-    } catch (error) {
-      log(`  ${plugin.shared.id.padEnd(7)} FAILED: ${(error as Error).message}`)
-    }
-  }
+  await runPluginSeedHooks(
+    serverPlugins,
+    'seedDemo',
+    db,
+    plugin => pluginSeedContext(db, plugin, tenantId, owner.id, log),
+    log
+  )
 
   // -- Summary: what the database now holds for this tenant -------------------------------------
   const countOf = async (table: any, where: any) => {

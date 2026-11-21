@@ -4,7 +4,7 @@
  * `tenancyMode === 'single'`. Reject = optional reason. Both post `decideAccessRequestSchema`.
  */
 import { type AccessRequest, decideAccessRequestSchema } from '@rocketflare/shared/access-requests'
-import { slugify, type TenantRole, tenantRoleSchema } from '@rocketflare/shared/tenants'
+import { roleLabel, slugify, type TenantRole, tenantRoleSchema } from '@rocketflare/shared/tenants'
 import { useState } from 'react'
 import { FieldError, fieldErrorFor, Modal } from '@/ui/components/shared'
 import { useDecideAccessRequest } from '@/ui/hooks/useAdminAccessRequests'
@@ -124,13 +124,13 @@ export function ApproveRequestModal({
               </label>
               <select
                 id="approve-role"
-                className="select w-full capitalize"
+                className="select w-full"
                 value={role}
                 onChange={e => setRole(e.target.value as TenantRole)}
               >
                 {tenantRoleSchema.options.map(r => (
                   <option key={r} value={r}>
-                    {r}
+                    {roleLabel(r)}
                   </option>
                 ))}
               </select>

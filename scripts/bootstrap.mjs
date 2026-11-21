@@ -573,7 +573,7 @@ async function stepSeed({ demo }, plan) {
   const key = extractSeedKey(result.output)
   return {
     verify: key
-      ? 'demo tenant + users; API key minted (shown once above)'
+      ? 'demo tenant + users; local demo API key minted (shown once above, safe to discard)'
       : 'demo tenant + users; API key already existed',
     key,
   }
