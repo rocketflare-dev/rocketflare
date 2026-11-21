@@ -494,7 +494,9 @@ path); no per-PR previews.
   `ROCKETFLARE_BOOTSTRAP_SKIP=<steps>` (any of steps 1–8 by name) and `ROCKETFLARE_ALLOW_ROOT=1`
   (its commands run as root; the container is the boundary) — `SETUP.md` Part 1.
 - **Migrations**: `db:generate` → read the SQL → `db:migrate` (role → migrations → grants).
-  Migrations are forward-only.
+  Migrations are forward-only. `db:generate` applies every migration to a scratch database on the
+  local dev Postgres whenever it writes one, and names the statement Postgres refused (drizzle-kit
+  can order a composite FK before the UNIQUE it needs); outside the gate, skipped for a non-local URL.
 - **Cross-tenant allow-list**: `tests/config/unscoped-allowlist.test.ts` fails a function that
   queries a `tenant_id` table without naming a tenant. Each exception carries a reason. It does
   not prove `admin.ts` is the only cross-tenant surface.

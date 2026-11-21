@@ -92,6 +92,12 @@ pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phas
 Verify: `db:up` prints the port it chose; `db:check` prints the server version; `db:migrate` ends
 with the applied migration count and no `role "rocketflare_app" does not exist` error.
 
+After a schema change, `pnpm db:generate` writes the migration and then applies every migration to
+a scratch database it creates beside this one and drops: `✔ scratch check` means the new SQL
+applies to an empty database; a `✖` names the statement Postgres refused, in the file not yet
+applied anywhere — fix it by hand (`.claude/rules/database.md`), then `pnpm db:generate --check`.
+A non-local `DATABASE_URL` skips the check with a note.
+
 **The port is chosen, not fixed.** `dev:db:up` runs `apps/web/scripts/dev-db.mjs`, which gives this
 checkout its own compose project, container and port: it keeps the port already in `DATABASE_URL`
 whenever that is still free or still this checkout's, and otherwise takes the next free one from

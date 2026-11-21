@@ -226,6 +226,17 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 
 1. Edit `apps/web/src/db/schema/*` → 2. `pnpm db:generate` → 3. **read the SQL** → 4. `pnpm db:migrate`.
 
+`pnpm db:generate` (`scripts/db-generate.ts`) runs `drizzle-kit generate` and, when that wrote a
+migration, applies EVERY migration to a scratch database it creates beside the local dev one and
+drops — never the dev data, never the test database, never a non-local URL (skipped with a note) —
+and names, in plain words, the statement Postgres refused. Not part of the gate. After a hand fix,
+`pnpm db:generate --check` runs the check alone.
+
+**drizzle-kit gotcha:** in one migration it can emit a composite `FOREIGN KEY … REFERENCES
+t(tenant_id, id)` BEFORE the `UNIQUE (tenant_id, id)` on `t` it depends on ("there is no unique
+constraint matching given keys"); move the FK statement after the UNIQUE by hand, before the file
+is applied (the scratch check is what catches it).
+
 `db:migrate` = `db-roles --phase=role` → `migrate.ts` → `db-roles --phase=grants`. Role first
 because a policy's `TO rocketflare_app` needs the role to exist; grants after because `REVOKE` can only name
 tables that exist. Both halves are idempotent. `db:migrate:ci` is the same without dotenv (env from
