@@ -8,7 +8,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
+> **Starting a new app?** `/rf-start`: detach, setup, the design conversation (`/rf-design`, writes
+> `docs/design/`), then the rename. Settle nothing about the app's design before it asks.
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-start`, `/rf-design`, `/rf-setup`,
+> `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
 > `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs`, `/rf-mcp` and `/rf-plugin`
 > you may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
 > $35–200+; agree the mode and budget first, `docs/SECURITY-AUDIT.md`); **`/rf-provision` is
@@ -113,7 +116,7 @@ scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrad
                    release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
                    kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/;
-                   kit repo only (`kitOnly`, deleted by the rename): install.sh, release.mjs,
+                   kit repo only (`kitOnly`, deleted by the rename): install.sh, detach.sh, release.mjs,
                    changelog-nudge.mjs + release-site-nudge.mjs (maintainer PreToolUse hooks)
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a

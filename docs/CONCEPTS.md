@@ -1594,6 +1594,23 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   before anything is written, a plan run included: one that is not a plain path inside the
   repository (`scripts/lib/repo-paths.mjs`), is under `.git/`, or reaches an added file through a
   symlink stops the run.
+- **A copy starts with a design**:
+  - `/rf-start` is the one entry point the website's prompt names. It runs, in order:
+    1. `scripts/detach.sh`, which records the kit commit in `.rocketflare.json` and replaces the
+       history. `install.sh` and `/rf-setup` §0 run the same script, and all three are `kitOnly`.
+    2. setup (`/rf-setup`);
+    3. `/rf-design`;
+    4. `/rf-adapt`.
+  - `/rf-design` asks the shape questions the kit makes expensive later: organisations, roles and
+    words, AI, money, non-functional needs, hosting, licence, and integrations, matched against
+    `pnpm plugin list --available`. Each decision records the options weighed. It writes
+    `docs/design/*.md` and `docs/design/design.json`, runs an independent reviewer, and renders a
+    local site in the app's brand (`pnpm design:site`).
+  - `/rf-adapt` then reads the names, `docs/design/brand.css` and the licence answer from the
+    design. The app's `LICENSE` becomes its owner's, and the kit's MIT notice stays in
+    `LICENSES/kit-MIT.txt`. Both paths are `neverPort`.
+  - Known gaps: the shape questions are a conversation, so nothing checks that a later stage
+    stayed inside the design. That is the end-of-stage review's job, which doesn't exist yet.
 - **A copy hears about releases on its own**: a Claude Code `SessionStart` hook
   (`scripts/kit-update-check.mjs`, in `.claude/settings.json`) compares `kit.version` with the
   newest tag at `kit.repo` (`git ls-remote`, cached a day in the git-ignored

@@ -12,7 +12,9 @@ those six, plus a seventh — (g) — when a plugin is installed. You drive both
 what the user should see.
 
 Arguments: `$ARGUMENTS` — the slug is required (`my-app`: lowercase, digits, hyphens); the display
-name, `--domain` and `--colour` are optional. No slug → ask for one before doing anything.
+name, `--domain` and `--colour` are optional. No slug: if `docs/design/design.json` exists (written
+by `/rf-design`), take `app.slug`, `app.name` and `app.domain` from it and confirm them in one line;
+otherwise ask for one before doing anything.
 
 ## 1. Confirm this is a fresh copy on a clean tree
 
@@ -66,11 +68,13 @@ lines) at the end. Expect `wrote N files.`, the install and biome output, then t
 ## 4. Walk the checklist
 
 Open `checklist.md` (this directory) and go through rows (a)–(f) **one at a time**, in order —
-then (g) if `pnpm plugin list` printed anything. For each: say what to check, run the "how to check"
+then (g) if `pnpm plugin list` printed anything, then (h), the licence. For each: say what to check, run the "how to check"
 command, show the result, and either confirm "nothing to do" or make the change the row describes —
 with the user's yes for anything that is a design choice (colour, logo, domain). Rows (a), (c), (d)
 are usually already done by the script; (b) is a database decision; (e) and (f) are the user's
-brand; (g) verifies that the rename reached the installed plugins.
+brand (applied from `docs/design/brand.css` when the design has one); (g) verifies that the
+rename reached the installed plugins; (h) makes the app's `LICENSE` its owner's, taken from
+`design.json` `owner` when there is one.
 
 ## 5. Verify
 
