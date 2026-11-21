@@ -21,7 +21,7 @@
     "dev:db:down": "node scripts/dev-db.mjs down",
     "dev:db:status": "node scripts/dev-db.mjs status",
     "types": "wrangler types --strict-vars=false --env-file .dev.vars.example",
-    "typecheck": "pnpm types && tsc --noEmit",
+    "typecheck": "pnpm types && node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit",
     "lint": "biome check . --error-on-warnings",
     "lint:all": "biome check .",
     "lint:fix": "biome check --write .",

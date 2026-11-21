@@ -35,6 +35,7 @@ Field-report fixes: new apps start with `/rf-start` and a design conversation (`
 - The contrast floors and pairs moved from `apps/web/tests/ui/contrast.test.ts` into `scripts/lib/contrast.mjs`, which the test and `--contrast` share.
 - New libraries: `scripts/lib/brand.mjs`, `scripts/lib/markdown-lite.mjs`, `scripts/lib/svg-sanitize.mjs`, `scripts/lib/design-docs-lib.mjs`, each with a `.d.mts`.
 - `docs/DEPLOY.md` "Running somewhere other than Cloudflare": the kit is designed for Cloudflare; to run elsewhere, start from Rocketpod, which often lags behind in features.
+- `apps/web`'s `typecheck` runs tsc with a 4 GB heap (`node --max-old-space-size=4096`). Node's default, about 2 GB on a CI runner, ran out on kit 0.41.1 with the sites plugin installed (2.7 GB measured).
 
 ## How to apply
 
@@ -58,6 +59,7 @@ Field-report fixes: new apps start with `/rf-start` and a design conversation (`
 18. Add the `rf-adapt` checklist's new row (h), "Licence", from the kit's `.claude/skills/rf-adapt/checklist.md`. `rf-adapt` is `neverPort`, so the patch does not carry it. Copy it by hand, along with the "From the design" paragraph of row (e).
 19. If the app's root `LICENSE` is still the kit's MIT notice, copy it to `LICENSES/kit-MIT.txt` before changing anything, then walk checklist row (h) to write the app's own `LICENSE` and `package.json` `license` fields.
 20. Add `"LICENSES/**"` to `neverPort` in `.rocketflare.json`, beside `"LICENSE"`.
+21. In `apps/web/package.json`, make `typecheck` read `pnpm types && node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit`.
 
 ## Conflicts to expect
 

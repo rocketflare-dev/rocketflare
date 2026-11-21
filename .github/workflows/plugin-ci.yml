@@ -384,6 +384,10 @@ jobs:
           # `git rm`, not `rm`: the source scanners read `git ls-files`. Without the directory the
           # vitest config and the test plan drop the `kit-only` project, as in a copy.
           git rm -r -q --ignore-unmatch apps/web/tests/kit-only
+          # A kit's own `typecheck` raises the heap from 0.42.0. Before that, tsc keeps Node's
+          # default (about 2 GB on a runner), which a heavy plugin outgrows: kit 0.41.1 needs
+          # 1.8 GB alone, and with the sites plugin 2.7 GB.
+          export NODE_OPTIONS="--max-old-space-size=4096"
           if node -e "process.exit(require('./package.json').scripts?.gate ? 0 : 1)"; then
             pnpm gate
           else
