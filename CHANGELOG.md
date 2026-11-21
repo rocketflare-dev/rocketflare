@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.41.1 — 2026-11-21
+
+Fixes from a field report on a copy built on 0.40.0: the offline switch leaves tracked files alone, `kit:upgrade` honours `--apply-deletes`, ports the vendored plugin and stages its work, and test, docs and migration failures explain themselves.
+[Porting note](docs/upgrades/0.41.1.md).
+
 ## 0.41.0 — 2026-11-20
 
 The MCP server's tool seam: one tool list for chat, agent runs and MCP, filtered by `toolsFor(surface, ctx)`, with `Tool.surfaces`, a `Tool.mcp` block, and `ServerPlugin.tools` replacing `agentTools` (still read, with a warning).
