@@ -586,7 +586,23 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
 - **Design tokens (D20)**: two DaisyUI themes in `shared/theme-tokens.css` (read by `ui/index.css` and by public-site stylesheets), where the brand hexes are the only
   hex values; `contrast.test.ts` gates them. Tailwind scanning is `source(none)` + explicit
   `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line, and precompiled dependency
-  CSS gets none.
+  CSS gets none. The floors and pairs live in `scripts/lib/contrast.mjs`, which the test and the
+  design site share.
+- **Design site** (`pnpm design:site`, `scripts/design-site.mjs`): renders `docs/design/*.md` (a
+  numeric prefix orders them; the first is `index.html`) and inlines `docs/design/diagrams/*.svg`
+  into `docs/design/site/`, a static site in the app's own tokens, light and dark, which is committed
+  with the design. `/rf-design` writes the markdown and runs it. The markdown is untrusted: the
+  renderer (`scripts/lib/markdown-lite.mjs`) knows a fixed subset and escapes everything else, and an
+  SVG is re-serialised through an allowlist (`scripts/lib/svg-sanitize.mjs`). A brand being tried
+  goes in `docs/design/brand.css`, written in the token files' own block shapes (`@theme`,
+  `@plugin "daisyui/theme"`, `[data-theme]`, matched by the `-light`/`-dark` suffix) and holding
+  only what it changes. `scripts/lib/brand.mjs` layers it per property over `theme-tokens.css`
+  and `index.css`: the site's stylesheet, `--contrast` (the gate's floors, failing pairs printed per
+  theme) and `--apply-brand` (writes each property into whichever file defines it, plus
+  `<meta name="theme-color">`) all read that one result, and each warns about a derived tone
+  (`--focus-ring`, `--surface-active`, `--tone-*`) that a changed colour left at the kit's value.
+  `--check` exits 1 when the site is stale. The output is deterministic, and a rebuild deletes only
+  pages carrying the generator's meta tag. The script is not kit-only, so it ships in every copy.
 - **Providers**: ErrorBoundary → QueryClient → Auth → Ability → WebSocket → Router. A global 401
   clears the cache and redirects to `/login?returnUrl=`.
 - **Guards**: one `RequireGuard` primitive; nav items use the same guard as their page.
@@ -597,7 +613,9 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
   `apps/web/src/ui/CLAUDE.md`.
 
 **Known gaps:** no route preloading; no "system" theme or cross-tab sync; the dev quick-login list
-is hard-coded.
+is hard-coded. The design site's markdown has no raw HTML, footnotes, task lists or reference-style
+links. It inlines only SVGs under `docs/design/diagrams/`, and a brand font is linked from Google
+Fonts whenever it is not a known system font, without checking that Google serves it.
 
 ## 8. Analytics
 

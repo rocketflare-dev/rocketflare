@@ -4,7 +4,7 @@ previous: 0.41.1
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [ui, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,25 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+`pnpm design:site` renders the design documents in `docs/design/` into a static site in the app's own brand, and checks or adopts a palette tried in `docs/design/brand.css` against the kit's contrast floors.
+
+- `scripts/design-site.mjs` builds `docs/design/site/` from `docs/design/*.md` and inlines a sanitised `docs/design/diagrams/*.svg`; `--open`, `--check`, `--contrast`, `--apply-brand` (`docs/CONCEPTS.md` §7).
+- The contrast floors and pairs moved from `apps/web/tests/ui/contrast.test.ts` into `scripts/lib/contrast.mjs`, which the test and `--contrast` share.
+- New libraries: `scripts/lib/brand.mjs`, `scripts/lib/markdown-lite.mjs`, `scripts/lib/svg-sanitize.mjs`, `scripts/lib/design-site-lib.mjs`, each with a `.d.mts`.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Add `scripts/design-site.mjs` and ten library files from the kit release: `scripts/lib/contrast`, `scripts/lib/brand`, `scripts/lib/markdown-lite`, `scripts/lib/svg-sanitize` and `scripts/lib/design-site-lib`, each as `.mjs` and `.d.mts`.
+2. Add `"design:site": "node scripts/design-site.mjs"` to the root `package.json` `scripts`.
+3. Replace `apps/web/tests/ui/contrast.test.ts` with the kit's version, which imports its pairs from `scripts/lib/contrast.mjs`. A copy that added its own pairs to the test adds them to `contrastPairs()` in `scripts/lib/contrast.mjs` instead.
+4. Add `apps/web/tests/config/design-site.test.ts` from the kit release.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+- `apps/web/tests/ui/contrast.test.ts` → its pairs and arithmetic moved into `scripts/lib/contrast.mjs` → take the kit's file and move any pair you added into `contrastPairs()`.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm web test:ui -- contrast` passes.
+2. `pnpm web test:config -- design-site` passes.
+3. `pnpm design:site --contrast` prints `all … pairs pass` for light and dark and exits 0.
