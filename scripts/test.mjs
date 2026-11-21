@@ -10,7 +10,7 @@
  *
  * `--changed=<base>` (what `pnpm gate --changed` runs) narrows the run to the tests the change
  * reaches: vitest's import graph, plus every test that reads the repository through the
- * filesystem unless its `@gate-inputs` say otherwise (`lib/gate-changed.mjs`).
+ * filesystem (`lib/gate-changed.mjs`).
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'

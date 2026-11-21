@@ -146,29 +146,11 @@ function buildInputChanged(dir, changed) {
 
 /**
  * A test file that reads the repository through the filesystem or a child process: what it
- * depends on is invisible to vitest's import graph, so `--changed` runs it every time — unless
- * its header declares those inputs (below) and none of them changed.
+ * depends on is invisible to vitest's import graph, so `--changed` runs it every time.
  */
 export function readsFiles(source, fsHelpers = []) {
   if (/from ['"](node:)?(fs|fs\/promises|child_process)['"]/.test(source)) return true
   return fsHelpers.some(h => source.includes(h))
-}
-
-/**
- * `@gate-inputs <glob> <glob>…` lines in a test file's header: the repository paths it reads
- * outside its imports (more than one line adds up). Null when the file declares none.
- */
-export function declaredInputs(source) {
-  const lines = [...source.slice(0, 4000).matchAll(/@gate-inputs[ \t]+([^\n]+)/g)]
-  if (lines.length === 0) return null
-  return lines
-    .flatMap(m =>
-      m[1]
-        .replace(/\*\/\s*$/, '')
-        .trim()
-        .split(/\s+/)
-    )
-    .filter(Boolean)
 }
 
 /**
@@ -187,11 +169,10 @@ export function selectTests({ all, related, sources, changed, fsHelpers = [] }) 
   const out = {}
   for (const t of all) {
     const source = sources[t.file] ?? ''
-    let run = relatedKeys.has(`${t.project}\0${t.file}`) || changed.includes(t.file)
-    if (!run && readsFiles(source, fsHelpers)) {
-      const inputs = declaredInputs(source)
-      run = inputs === null || changed.some(f => matchesAny(f, inputs))
-    }
+    const run =
+      relatedKeys.has(`${t.project}\0${t.file}`) ||
+      changed.includes(t.file) ||
+      readsFiles(source, fsHelpers)
     if (!run) continue
     out[t.project] = [...(out[t.project] ?? []), t.file]
   }

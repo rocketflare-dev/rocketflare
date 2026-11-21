@@ -39,7 +39,6 @@ export function planChanged(input: {
 }): ChangedPlan
 
 export function readsFiles(source: string, fsHelpers?: string[]): boolean
-export function declaredInputs(source: string): string[] | null
 export function selectTests(input: {
   all: TestFile[]
   related: TestFile[]

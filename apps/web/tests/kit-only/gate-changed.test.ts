@@ -6,7 +6,6 @@
 import { describe, expect, it } from 'vitest'
 import {
   affectedPackages,
-  declaredInputs,
   globToRegExp,
   planChanged,
   readsFiles,
@@ -125,14 +124,12 @@ describe('which web tests run', () => {
     { file: 'apps/web/tests/api/a.test.ts', project: 'api' },
     { file: 'apps/web/tests/api/b.test.ts', project: 'api' },
     { file: 'apps/web/tests/config/guard.test.ts', project: 'config' },
-    { file: 'apps/web/tests/kit-only/tool.test.ts', project: 'kit-only' },
     { file: 'apps/web/tests/config/helper-user.test.ts', project: 'config' },
   ]
   const sources = {
     'apps/web/tests/api/a.test.ts': "import x from '@/a'\n",
     'apps/web/tests/api/b.test.ts': "import y from '@/b'\n",
     'apps/web/tests/config/guard.test.ts': `/** Scans src. */\n${FS}`,
-    'apps/web/tests/kit-only/tool.test.ts': `/**\n * Runs the tool.\n * @gate-inputs scripts/** .rocketflare.json\n */\n${FS}`,
     'apps/web/tests/config/helper-user.test.ts':
       "import { sourceFiles } from '../helpers/source-files'\n",
   }
@@ -152,25 +149,11 @@ describe('which web tests run', () => {
     ])
   })
 
-  it('runs a test with declared inputs only when one of them changed', () => {
-    expect(select(['apps/web/src/a.ts'])['kit-only']).toBeUndefined()
-    expect(select(['scripts/plugin.mjs'])['kit-only']).toEqual([
-      'apps/web/tests/kit-only/tool.test.ts',
-    ])
-    expect(select(['.rocketflare.json'])['kit-only']).toHaveLength(1)
-  })
-
   it('runs a changed test file even when nothing imports it', () => {
     expect(select(['apps/web/tests/api/b.test.ts']).api).toEqual(['apps/web/tests/api/b.test.ts'])
   })
 
-  it('reads the declared inputs across lines and closing comments', () => {
-    expect(declaredInputs('/**\n * @gate-inputs a/** b\n * @gate-inputs c */\n')).toEqual([
-      'a/**',
-      'b',
-      'c',
-    ])
-    expect(declaredInputs('// nothing\n')).toBeNull()
+  it('counts the filesystem and child processes as reading files, and nothing else', () => {
     expect(readsFiles("import { spawnSync } from 'node:child_process'")).toBe(true)
     expect(readsFiles("import path from 'node:path'")).toBe(false)
   })
