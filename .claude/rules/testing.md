@@ -88,7 +88,8 @@ behaviour rather than the attack.
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
   per-file random client IP (rate-limit isolation); `apps/web/tests/helpers/auth.ts` factories
   (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
-  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes;
+  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes —
+  slug-safe (`[a-z0-9]+-[a-z0-9]+`), so a factory tenant's slug passes `SLUG_RE` in a request;
   `inject('seed')` gives the run's seeded owner/tenant/API key/session (`TestSeed`)
 - No `@cloudflare/vitest-pool-workers` in the default suite (D15). It cannot reach a real Postgres
   through Hyperdrive locally; the value here is integration tests against real Postgres

@@ -68,7 +68,9 @@ describe('per-recipient sign-in mail window', () => {
 
   it('dotted spellings of one Gmail mailbox share one window', async () => {
     const env = createTestEnv({ APP_ENV: 'production', APP_URL: 'https://app.example' })
-    const local = `r${uniqueId().toLowerCase().replace(/_/g, '')}`
+    const local = `r${uniqueId()
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, '')}`
     const spellings = Array.from({ length: 12 }, (_, i) => {
       const dotted = `${local.slice(0, 1 + (i % 5))}.${local.slice(1 + (i % 5))}`
       return i % 2 ? `${dotted}@gmail.com` : `${dotted}@googlemail.com`
