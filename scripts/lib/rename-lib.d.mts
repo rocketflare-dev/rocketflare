@@ -76,6 +76,7 @@ export const EXCLUDED_DIRS: readonly string[]
 export const EXCLUDED_PATHS: readonly string[]
 export const EXCLUDED_PREFIXES: readonly string[]
 export const OPT_IN_IGNORED_PATHS: readonly string[]
+export function isLicenceFile(relPath: string): boolean
 export function isExcluded(relPath: string): boolean
 export function isBinary(buffer: Uint8Array): boolean
 

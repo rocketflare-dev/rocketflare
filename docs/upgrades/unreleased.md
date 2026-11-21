@@ -36,6 +36,7 @@ Field-report fixes: new apps start with `/rf-start` and a design conversation (`
 - New libraries: `scripts/lib/brand.mjs`, `scripts/lib/markdown-lite.mjs`, `scripts/lib/svg-sanitize.mjs`, `scripts/lib/design-docs-lib.mjs`, each with a `.d.mts`.
 - `docs/DEPLOY.md` "Running somewhere other than Cloudflare": the kit is designed for Cloudflare; to run elsewhere, start from Rocketpod, which often lags behind in features.
 - `apps/web`'s `typecheck` runs tsc with a 4 GB heap (`node --max-old-space-size=4096`). Node's default, about 2 GB on a CI runner, ran out on kit 0.41.1 with the sites plugin installed (2.7 GB measured).
+- Licence files are never translated, wherever they sit (`isLicenceFile` in `scripts/lib/rename-lib.mjs`: `LICENSE`, `LICENCE.md`, `LICENSE-*`, `COPYING`, `NOTICE`, anything under `LICENSES/`). Neither the rename nor `pnpm plugin add`/`upgrade` rewrites them, so a plugin's own licence keeps its licensor's name inside a renamed app.
 
 ## How to apply
 
@@ -60,6 +61,7 @@ Field-report fixes: new apps start with `/rf-start` and a design conversation (`
 19. If the app's root `LICENSE` is still the kit's MIT notice, copy it to `LICENSES/kit-MIT.txt` before changing anything, then walk checklist row (h) to write the app's own `LICENSE` and `package.json` `license` fields.
 20. Add `"LICENSES/**"` to `neverPort` in `.rocketflare.json`, beside `"LICENSE"`.
 21. In `apps/web/package.json`, make `typecheck` read `pnpm types && node --max-old-space-size=4096 node_modules/typescript/bin/tsc --noEmit`.
+22. Take `isLicenceFile` and its use in `isExcluded` from the kit's `scripts/lib/rename-lib.mjs` (and `.d.mts`), and the `rel` argument to `materialise` in `scripts/plugin.mjs`. Then check that any plugin `LICENSE` already installed still names its licensor; a plugin installed into a renamed app before this release had its licence translated, so restore that file from the plugin's repository.
 
 ## Conflicts to expect
 

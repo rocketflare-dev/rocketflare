@@ -19,6 +19,7 @@ import {
   hexToRgb,
   isBinary,
   isExcluded,
+  isLicenceFile,
   KIT,
   KIT_MANIFEST_FILE,
   parseArgs,
@@ -292,6 +293,18 @@ describe('exclusions', () => {
     }
     // The kit's own tests, this file among them, by prefix — the rename deletes them anyway.
     expect(isExcluded('apps/web/tests/kit-only/rename-lib.test.ts')).toBe(true)
+    // Licence files anywhere: a commercial plugin's own LICENSE travels into the app and must
+    // keep its licensor's name. Source files that merely look similar are still translated.
+    for (const p of [
+      'apps/web/src/plugins/sso/LICENSE',
+      'LICENSES/kit-MIT.txt',
+      'packages/x/LICENCE.md',
+      'NOTICE',
+      'apps/web/LICENSE-MIT',
+    ])
+      expect(isExcluded(p), p).toBe(true)
+    for (const p of ['apps/web/src/ui/components/Notice.tsx', 'apps/web/src/api/license.ts'])
+      expect(isExcluded(p), p).toBe(false)
     for (const d of ['node_modules', 'dist', '.git', '.wrangler'])
       expect(EXCLUDED_DIRS).toContain(d)
     expect(isExcluded('apps/web/node_modules/x/package.json')).toBe(true)
@@ -520,8 +533,10 @@ describe('rf-security after a rename', () => {
     expect(files.length).toBeGreaterThan(5)
     for (const f of files) {
       expect(matchesAny(f, kitOnlyGlobs(manifest)), f).toBe(false)
-      expect(isExcluded(f), f).toBe(false)
+      // The vendored upstream's LICENSE is a third party's legal text: never renamed.
+      expect(isExcluded(f), f).toBe(isLicenceFile(f))
     }
+    expect(files).toContain(`${SKILL}/upstream/LICENSE`)
   })
 
   it('names the renamed config directory for the runs root everywhere', () => {

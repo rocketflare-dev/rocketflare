@@ -269,9 +269,23 @@ export const EXCLUDED_PREFIXES = Object.freeze([
   'apps/web/tests/kit-only/',
 ])
 
+/**
+ * A licence or notice file, anywhere in the tree: `LICENSE`, `LICENCE.md`, `LICENSE-MIT`, `COPYING`,
+ * `NOTICE.txt`, or anything under a `LICENSES/` directory. Upper case only, so a source file such as
+ * `notice.ts` or `License.tsx` is still translated. Its words are legal text naming a licensor, so no pass
+ * may rewrite them: not the rename, and not a plugin install translating a plugin into the app's
+ * names (a commercial plugin carries its licence inside the folder it installs into).
+ */
+export function isLicenceFile(relPath) {
+  const segments = relPath.replaceAll('\\', '/').split('/')
+  if (segments.slice(0, -1).includes('LICENSES')) return true
+  return /^(LICEN[CS]E|COPYING|NOTICE)(\.(md|txt)|-[\w.-]+)?$/.test(segments.at(-1) ?? '')
+}
+
 export function isExcluded(relPath) {
   const p = relPath.replaceAll('\\', '/')
   if (EXCLUDED_PATHS.includes(p)) return true
+  if (isLicenceFile(p)) return true
   if (EXCLUDED_PREFIXES.some(prefix => p.startsWith(prefix))) return true
   return p.split('/').some(seg => EXCLUDED_DIRS.includes(seg))
 }

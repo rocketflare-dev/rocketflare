@@ -43,6 +43,7 @@ import {
   renderAddPlan,
   setClaudeHooks,
 } from '../../../../scripts/lib/plugin-lib.mjs'
+import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 /**
@@ -565,6 +566,31 @@ describe('pnpm plugin with claudeHooks and hostFiles, end to end', () => {
     expect(merged.hooks.Stop).toHaveLength(1)
     expect(run(host, ['remove', 'gdemo', '--apply', '--allow-dirty']).status).toBe(0)
     expect(read(host, '.claude/settings.json')).toBe(KIT_SETTINGS)
+  })
+
+  it("installs a plugin's LICENSE untranslated into a renamed host, and its code translated", () => {
+    // A commercial plugin carries its licence inside the folder it installs into. The host is
+    // renamed to `acme`, so every other file is translated, but legal text must keep its
+    // licensor's name: "Rocketflare Partner Licence" must not become "Acme Partner Licence".
+    // The kit's names come from `KIT`: the rename rewrites this file in a copy, but never
+    // `rename-lib.mjs`, so `KIT` still names what `plugin add` translates from.
+    const host = makeHost()
+    const licence = `${KIT.display} Partner Licence 1.0\n\nCopyright (c) 2026 ${KIT.slug}\n`
+    const plugin = makeGuide({
+      files: {
+        ...GUIDE_FILES,
+        'apps/web/src/plugins/gdemo/LICENSE': licence,
+        'apps/web/src/plugins/gdemo/terms.ts': `export const scope = '@${KIT.slug}/shared'\n`,
+      },
+    })
+    const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
+    expect(added.status, added.out).toBe(0)
+    expect(read(host, 'apps/web/src/plugins/gdemo/LICENSE')).toBe(licence)
+    expect(read(host, 'apps/web/src/plugins/gdemo/terms.ts')).toContain('@acme/shared')
+    // `plugin check` compares the installed bytes with the source through the same function, so
+    // the untranslated licence must not read as a local modification.
+    const check = run(host, ['check'])
+    expect(check.out).not.toMatch(/gdemo\/LICENSE/)
   })
 
   it('keeps a host file the developer already has, byte for byte', () => {
