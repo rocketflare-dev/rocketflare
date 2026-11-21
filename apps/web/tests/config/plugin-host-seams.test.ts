@@ -571,13 +571,16 @@ describe('pnpm plugin with claudeHooks and hostFiles, end to end', () => {
     // A commercial plugin carries its licence inside the folder it installs into. The host is
     // renamed to `acme`, so every other file is translated, but legal text must keep its
     // licensor's name: "Rocketflare Partner Licence" must not become "Acme Partner Licence".
+    // The kit's tokens are assembled from halves: in a renamed copy the rename rewrites this
+    // file too, and whole literals would already read as the copy's names.
+    const kit = ['rocket', 'flare']
     const host = makeHost()
-    const licence = 'Rocketflare Partner Licence 1.0\n\nCopyright (c) 2026 rocketflare\n'
+    const licence = `${kit.join('').replace(/^r/, 'R')} Partner Licence 1.0\n\nCopyright (c) 2026 ${kit.join('')}\n`
     const plugin = makeGuide({
       files: {
         ...GUIDE_FILES,
         'apps/web/src/plugins/gdemo/LICENSE': licence,
-        'apps/web/src/plugins/gdemo/terms.ts': "export const scope = '@rocketflare/shared'\n",
+        'apps/web/src/plugins/gdemo/terms.ts': `export const scope = '@${kit.join('')}/shared'\n`,
       },
     })
     const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
