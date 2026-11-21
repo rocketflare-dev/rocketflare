@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.42.0 — 2026-11-21
+
+Field-report fixes: new apps start with `/rf-start` and a design conversation (`/rf-design`, rendered by `pnpm design:docs`), `pnpm plugin list --available` shows what already exists, setup handles WSL, and plugins gain four missing seams.
+[Porting note](docs/upgrades/0.42.0.md).
+
 ## 0.41.1 — 2026-11-21
 
 Fixes from a field report on a copy built on 0.40.0: the offline switch leaves tracked files alone, `kit:upgrade` honours `--apply-deletes`, ports the vendored plugin and stages its work, and test, docs and migration failures explain themselves.
