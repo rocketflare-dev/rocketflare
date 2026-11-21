@@ -1,5 +1,5 @@
 /**
- * `scripts/design-site.mjs` — `docs/design/*.md` rendered into `docs/design/site/` in the app's
+ * `scripts/design-docs.mjs` — `docs/design/*.md` rendered into `docs/design/html/` in the app's
  * tokens with `docs/design/brand.css` layered on, its `--check`, `--contrast` and `--apply-brand`.
  *
  * The CLI runs as a child process against a throwaway checkout in the OS temp directory holding
@@ -20,12 +20,12 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyBrand } from '../../../../scripts/lib/brand.mjs'
-import { orderPages } from '../../../../scripts/lib/design-site-lib.mjs'
+import { orderPages } from '../../../../scripts/lib/design-docs-lib.mjs'
 import { renderMarkdown } from '../../../../scripts/lib/markdown-lite.mjs'
 import { sanitizeSvg } from '../../../../scripts/lib/svg-sanitize.mjs'
 
 const REPO = path.resolve(__dirname, '../../../..')
-const SCRIPT = path.join(REPO, 'scripts/design-site.mjs')
+const SCRIPT = path.join(REPO, 'scripts/design-docs.mjs')
 const COPIED = [
   'apps/web/src/shared/theme-tokens.css',
   'apps/web/src/ui/index.css',
@@ -35,7 +35,7 @@ const COPIED = [
 
 let root: string
 const design = (rel: string) => path.join(root, 'docs/design', rel)
-const site = (rel: string) => path.join(root, 'docs/design/site', rel)
+const html = (rel: string) => path.join(root, 'docs/design/html', rel)
 const write = (rel: string, text: string) => {
   mkdirSync(path.dirname(design(rel)), { recursive: true })
   writeFileSync(design(rel), text)
@@ -44,7 +44,7 @@ const run = (...args: string[]) =>
   spawnSync(process.execPath, [SCRIPT, '--root', root, ...args], { encoding: 'utf8' })
 
 beforeEach(() => {
-  root = mkdtempSync(path.join(tmpdir(), 'design-site-'))
+  root = mkdtempSync(path.join(tmpdir(), 'design-docs-'))
   for (const rel of COPIED) {
     mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
     copyFileSync(path.join(REPO, rel), path.join(root, rel))
@@ -66,14 +66,14 @@ describe('pages', () => {
     write('notes.md', 'No heading here.\n')
     const r = run()
     expect(r.status, r.stderr).toBe(0)
-    expect(r.stdout.trim()).toBe(site('index.html'))
-    const index = readFileSync(site('index.html'), 'utf8')
+    expect(r.stdout.trim()).toBe(html('index.html'))
+    const index = readFileSync(html('index.html'), 'utf8')
     expect(index).toContain('<h1>Destination</h1>')
     const rail = [...index.matchAll(/<li><a href="([^"]+)"/g)].map(m => m[1])
     expect(rail).toEqual(['index.html', '02-shape.html', 'notes.html'])
-    expect(readFileSync(site('notes.html'), 'utf8')).toContain('<h1>Notes</h1>')
-    expect(existsSync(site('styles.css'))).toBe(true)
-    expect(readFileSync(site('logo.svg'), 'utf8')).toBe(
+    expect(readFileSync(html('notes.html'), 'utf8')).toContain('<h1>Notes</h1>')
+    expect(existsSync(html('styles.css'))).toBe(true)
+    expect(readFileSync(html('logo.svg'), 'utf8')).toBe(
       readFileSync(path.join(REPO, 'apps/web/src/ui/public/logo.svg'), 'utf8')
     )
   })
@@ -82,10 +82,10 @@ describe('pages', () => {
     write('01-a.md', '# A\n\nSee [the shape](./02-shape.md#risks) and [home](01-a.md).\n')
     write('02-shape.md', '# Shape\n\n## Risks\n\nBack [to A](./01-a.md).\n')
     expect(run().status).toBe(0)
-    const a = readFileSync(site('index.html'), 'utf8')
+    const a = readFileSync(html('index.html'), 'utf8')
     expect(a).toContain('<a href="02-shape.html#risks">the shape</a>')
     expect(a).toContain('<a href="index.html">home</a>')
-    const shape = readFileSync(site('02-shape.html'), 'utf8')
+    const shape = readFileSync(html('02-shape.html'), 'utf8')
     expect(shape).toContain('<a href="index.html">to A</a>')
     expect(shape).toContain('<h2 id="risks">Risks</h2>')
   })
@@ -168,7 +168,7 @@ describe('untrusted input', () => {
       '<svg viewBox="0 0 4 4" onload="alert(1)"><script>alert(2)</script><rect class="box"/></svg>'
     )
     expect(run().status).toBe(0)
-    const page = readFileSync(site('index.html'), 'utf8')
+    const page = readFileSync(html('index.html'), 'utf8')
     expect(page).toContain('<figure class="diagram">')
     expect(page).toContain('<rect class="box"/>')
     expect(page).toContain('<figcaption>How it flows</figcaption>')
@@ -177,16 +177,16 @@ describe('untrusted input', () => {
 })
 
 describe('brand.css', () => {
-  it('layers over the tokens in the site stylesheet', () => {
+  it('layers over the tokens in the stylesheet of the pages', () => {
     write('01-a.md', '# A\n')
     expect(run().status).toBe(0)
-    const before = readFileSync(site('styles.css'), 'utf8')
+    const before = readFileSync(html('styles.css'), 'utf8')
     write(
       'brand.css',
       '@plugin "daisyui/theme" {\n  name: "anything-light";\n  --color-accent: #000000;\n}\n'
     )
     expect(run().status).toBe(0)
-    const after = readFileSync(site('styles.css'), 'utf8')
+    const after = readFileSync(html('styles.css'), 'utf8')
     const accent = (css: string) => /\n {2}--color-accent: ([^;]+);/.exec(css)?.[1]
     expect(accent(after)).toMatch(/^light-dark\(oklch\(0% 0 0\), /)
     expect(accent(after)).not.toBe(accent(before))
@@ -259,27 +259,27 @@ describe('output', () => {
     write('01-a.md', '# A\n')
     write('02-b.md', '# B\n')
     expect(run().status).toBe(0)
-    writeFileSync(site('mine.html'), '<p>not generated</p>')
-    writeFileSync(site('notes.txt'), 'keep me')
-    const first = readFileSync(site('02-b.html'), 'utf8')
+    writeFileSync(html('mine.html'), '<p>not generated</p>')
+    writeFileSync(html('notes.txt'), 'keep me')
+    const first = readFileSync(html('02-b.html'), 'utf8')
     expect(run('--check').status).toBe(0)
     expect(run().status).toBe(0)
-    expect(readFileSync(site('02-b.html'), 'utf8')).toBe(first)
+    expect(readFileSync(html('02-b.html'), 'utf8')).toBe(first)
 
     rmSync(design('02-b.md'))
     const check = run('--check')
     expect(check.status).toBe(1)
-    expect(check.stderr).toContain('stale page: docs/design/site/02-b.html')
-    expect(existsSync(site('02-b.html'))).toBe(true) // --check builds nothing
+    expect(check.stderr).toContain('stale page: docs/design/html/02-b.html')
+    expect(existsSync(html('02-b.html'))).toBe(true) // --check builds nothing
 
     expect(run().status).toBe(0)
-    expect(existsSync(site('02-b.html'))).toBe(false)
-    expect(existsSync(site('mine.html'))).toBe(true)
-    expect(existsSync(site('notes.txt'))).toBe(true)
+    expect(existsSync(html('02-b.html'))).toBe(false)
+    expect(existsSync(html('mine.html'))).toBe(true)
+    expect(existsSync(html('notes.txt'))).toBe(true)
     expect(run('--check').status).toBe(0)
 
     write('01-a.md', '# A, edited\n')
-    expect(run('--check').stderr).toContain('out of date: docs/design/site/index.html')
+    expect(run('--check').stderr).toContain('out of date: docs/design/html/index.html')
   })
 
   it('names a missing design folder', () => {
@@ -288,9 +288,9 @@ describe('output', () => {
     expect(r.stderr).toMatch(/no docs\/design\/\*\.md/)
   })
 
-  it('resolves from the workspace root as `pnpm design:site`', () => {
+  it('resolves from the workspace root as `pnpm design:docs`', () => {
     const pkg = JSON.parse(readFileSync(path.join(REPO, 'package.json'), 'utf8'))
-    expect(pkg.scripts['design:site']).toBe('node scripts/design-site.mjs')
+    expect(pkg.scripts['design:docs']).toBe('node scripts/design-docs.mjs')
     expect(execFileSync(process.execPath, [SCRIPT, '--help'], { encoding: 'utf8' })).toMatch(
       /--contrast/
     )

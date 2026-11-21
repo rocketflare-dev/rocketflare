@@ -5,7 +5,7 @@
  * panel and on its own tone surface, `--border-control` and `--focus-ring` ≥ 3:1.
  *
  * The pairs and the arithmetic live in `scripts/lib/contrast.mjs`, which
- * `node scripts/design-site.mjs --contrast` also runs over a brand being tried in
+ * `node scripts/design-docs.mjs --contrast` also runs over a brand being tried in
  * `docs/design/brand.css`: one rule set, so a brand that passes there passes here.
  *
  * Reads the CSS file, so a recolour (`/rf-adapt --colour`, or by hand) fails here naming the

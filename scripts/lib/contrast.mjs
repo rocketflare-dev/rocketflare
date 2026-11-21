@@ -1,7 +1,7 @@
 /**
  * The kit's contrast floors (WCAG 2.x relative luminance), in ONE place: the UI gate
  * (`apps/web/tests/ui/contrast.test.ts`) asserts them over the tokens the app ships, and
- * `node scripts/design-site.mjs --contrast` over the same tokens with `docs/design/brand.css`
+ * `node scripts/design-docs.mjs --contrast` over the same tokens with `docs/design/brand.css`
  * layered on, so the brand step can nudge a palette until it passes before the app adopts it.
  *
  * The floors: text ≥ 4.5:1 on every surface it sits on, each DaisyUI colour ≥ 4.5:1 against its

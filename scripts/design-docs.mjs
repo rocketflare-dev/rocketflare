@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * The design site: `docs/design/*.md` (+ `docs/design/diagrams/*.svg`) rendered into
- * `docs/design/site/` in the app's own tokens, with `docs/design/brand.css` layered over them.
- * `/rf-design` writes the markdown and runs this; the site is committed with the design.
+ * The design pages: `docs/design/*.md` (+ `docs/design/diagrams/*.svg`) rendered into
+ * `docs/design/html/` in the app's own tokens, with `docs/design/brand.css` layered over them.
+ * `/rf-design` writes the markdown and runs this; the pages are committed with the design.
  *
- *   pnpm design:site                  build the site, print the path of its index.html
- *   pnpm design:site --open           …and open it in the default browser
- *   pnpm design:site --check          exit 1 when the site is out of date with its inputs
- *   pnpm design:site --contrast       the kit's contrast floors over the tokens + brand.css
- *   pnpm design:site --apply-brand    write brand.css into theme-tokens.css, index.css, index.html
+ *   pnpm design:docs                  build the pages, print the path of its index.html
+ *   pnpm design:docs --open           …and open it in the default browser
+ *   pnpm design:docs --check          exit 1 when the pages are out of date with its inputs
+ *   pnpm design:docs --contrast       the kit's contrast floors over the tokens + brand.css
+ *   pnpm design:docs --apply-brand    write brand.css into theme-tokens.css, index.css, index.html
  *
  * `--root <dir>` points it at another checkout (the tests use a temporary one).
- * The rendering is `scripts/lib/design-site-lib.mjs`; the contrast rules are
+ * The rendering is `scripts/lib/design-docs-lib.mjs`; the contrast rules are
  * `scripts/lib/contrast.mjs`, shared with `apps/web/tests/ui/contrast.test.ts`.
  */
 import { spawn } from 'node:child_process'
@@ -20,13 +20,13 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { applyBrand } from './lib/brand.mjs'
 import { checkTheme } from './lib/contrast.mjs'
-import { GENERATOR_META, planSite, siteTokens } from './lib/design-site-lib.mjs'
+import { designTokens, GENERATOR_META, planPages } from './lib/design-docs-lib.mjs'
 
-const USAGE = `Usage: node scripts/design-site.mjs [--open | --check | --contrast | --apply-brand] [--root <dir>]
+const USAGE = `Usage: node scripts/design-docs.mjs [--open | --check | --contrast | --apply-brand] [--root <dir>]
 
-  (no flag)       build docs/design/site/ from docs/design/*.md and print its index.html
+  (no flag)       build docs/design/html/ from docs/design/*.md and print its index.html
   --open          build, then open index.html in the default browser
-  --check         exit 1 if docs/design/site/ is out of date with its inputs (builds nothing)
+  --check         exit 1 if docs/design/html/ is out of date with its inputs (builds nothing)
   --contrast      check the tokens with docs/design/brand.css layered on; exit 1 on a failure
   --apply-brand   write docs/design/brand.css into the app's token files, in place
   --root <dir>    the checkout to work in (default: this one)`
@@ -37,7 +37,7 @@ const INDEX_HTML = 'apps/web/src/ui/index.html'
 const LOGO = 'apps/web/src/ui/public/logo.svg'
 const DESIGN = 'docs/design'
 const BRAND = 'docs/design/brand.css'
-const SITE = 'docs/design/site'
+const OUT = 'docs/design/html'
 
 function parseArgs(argv) {
   const opts = { mode: 'build', open: false, root: null }
@@ -103,13 +103,13 @@ function inputs(root) {
   }
 }
 
-/** Pages in the site folder this generator wrote earlier (they carry its meta tag). */
-function generatedPages(siteDir) {
-  if (!existsSync(siteDir)) return []
-  return readdirSync(siteDir, { withFileTypes: true })
+/** Pages in the output folder this generator wrote earlier (they carry its meta tag). */
+function generatedPages(outDir) {
+  if (!existsSync(outDir)) return []
+  return readdirSync(outDir, { withFileTypes: true })
     .filter(e => e.isFile() && e.name.endsWith('.html'))
     .map(e => e.name)
-    .filter(name => readFileSync(path.join(siteDir, name), 'utf8').includes(GENERATOR_META))
+    .filter(name => readFileSync(path.join(outDir, name), 'utf8').includes(GENERATOR_META))
 }
 
 function openInBrowser(file) {
@@ -125,28 +125,28 @@ function openInBrowser(file) {
 }
 
 function build(root, { check, open }) {
-  const plan = planSite(inputs(root))
+  const plan = planPages(inputs(root))
   for (const w of plan.warnings) console.error(`warning: ${w}`)
-  const siteDir = path.join(root, SITE)
-  const stale = generatedPages(siteDir).filter(name => !plan.files.has(name))
-  const index = path.join(siteDir, 'index.html')
+  const outDir = path.join(root, OUT)
+  const stale = generatedPages(outDir).filter(name => !plan.files.has(name))
+  const index = path.join(outDir, 'index.html')
   if (check) {
     const outdated = [...plan.files]
-      .filter(([name, content]) => readIfExists(siteDir, name) !== content)
+      .filter(([name, content]) => readIfExists(outDir, name) !== content)
       .map(([name]) => name)
     if (!outdated.length && !stale.length) {
-      console.log(`${SITE}/ is up to date.`)
+      console.log(`${OUT}/ is up to date.`)
       return 0
     }
-    for (const name of outdated) console.error(`out of date: ${SITE}/${name}`)
-    for (const name of stale) console.error(`stale page: ${SITE}/${name}`)
-    console.error('Run `pnpm design:site` to rebuild it.')
+    for (const name of outdated) console.error(`out of date: ${OUT}/${name}`)
+    for (const name of stale) console.error(`stale page: ${OUT}/${name}`)
+    console.error('Run `pnpm design:docs` to rebuild it.')
     return 1
   }
-  mkdirSync(siteDir, { recursive: true })
+  mkdirSync(outDir, { recursive: true })
   for (const [name, content] of plan.files)
-    if (readIfExists(siteDir, name) !== content) writeFileSync(path.join(siteDir, name), content)
-  for (const name of stale) rmSync(path.join(siteDir, name))
+    if (readIfExists(outDir, name) !== content) writeFileSync(path.join(outDir, name), content)
+  for (const name of stale) rmSync(path.join(outDir, name))
   console.log(index)
   if (open) openInBrowser(index)
   return 0
@@ -154,7 +154,7 @@ function build(root, { check, open }) {
 
 function contrast(root) {
   const brandCss = readIfExists(root, BRAND)
-  const { themes, brand } = siteTokens({
+  const { themes, brand } = designTokens({
     tokensCss: read(root, TOKENS_CSS),
     indexCss: read(root, INDEX_CSS),
     brandCss,
@@ -243,6 +243,6 @@ function main(argv) {
 try {
   process.exitCode = main(process.argv.slice(2))
 } catch (err) {
-  console.error(`design-site: ${err.message}`)
+  console.error(`design-docs: ${err.message}`)
   process.exitCode = 2
 }

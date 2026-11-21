@@ -11,8 +11,8 @@
  * block is matched by its theme name's `-light` / `-dark` suffix, so a renamed app still matches.
  *
  * `applyBrand` writes each property into whichever block DEFINES it, per theme, in place: the
- * same function previews the brand (the design site and `--contrast` read its result in memory)
- * and adopts it (`design-site.mjs --apply-brand` writes the result to disk), so what was checked
+ * same function previews the brand (the design pages and `--contrast` read its result in memory)
+ * and adopts it (`design-docs.mjs --apply-brand` writes the result to disk), so what was checked
  * is what lands. Pure: text in, text out.
  */
 import { declarations, themeKind } from './contrast.mjs'

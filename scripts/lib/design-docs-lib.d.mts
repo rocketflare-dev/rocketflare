@@ -1,4 +1,4 @@
-/** Types for `design-site-lib.mjs` (no `allowJs`); `apps/web/tests/config/design-site.test.ts` typechecks against this. */
+/** Types for `design-docs-lib.mjs` (no `allowJs`); `apps/web/tests/config/design-docs.test.ts` typechecks against this. */
 import type { BrandResult } from './brand.mjs'
 import type { Theme, ThemeKind } from './contrast.mjs'
 
@@ -8,7 +8,7 @@ export function pageNames(ordered: string[]): Map<string, string>
 export function resolveLink(dest: string, names: Map<string, string>): string | null
 export function webFont(stack: string | undefined): string | null
 export function googleFontsHref(fonts: Array<string | null>): string | null
-export function siteTokens(inputs: {
+export function designTokens(inputs: {
   tokensCss: string
   indexCss: string
   brandCss?: string | null
@@ -17,7 +17,7 @@ export function stylesheet(tokens: {
   themes: Record<ThemeKind, Theme>
   fonts: Record<string, string>
 }): string
-export interface SiteInputs {
+export interface PageInputs {
   pages: Array<{ file: string; source: string }>
   diagrams: Map<string, string>
   tokensCss: string
@@ -26,7 +26,7 @@ export interface SiteInputs {
   logo: string
   appName?: string
 }
-export function planSite(inputs: SiteInputs): {
+export function planPages(inputs: PageInputs): {
   files: Map<string, string>
   warnings: string[]
   contrastTokens: Record<ThemeKind, Theme>

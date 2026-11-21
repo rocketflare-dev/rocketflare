@@ -1,5 +1,5 @@
 /**
- * An SVG diagram made safe to inline into a page: the design site inlines
+ * An SVG diagram made safe to inline into a page: the design pages inlines
  * `docs/design/diagrams/*.svg` (rather than linking it) so the drawing can use the page's CSS
  * custom properties and token classes. The file is UNTRUSTED, so it is re-serialised from a
  * parse rather than filtered as text: only allow-listed elements survive (no `<script>`,

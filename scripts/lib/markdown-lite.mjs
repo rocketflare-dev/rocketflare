@@ -1,6 +1,6 @@
 /**
  * A small markdown renderer for UNTRUSTED input: the design documents `/rf-design` writes into
- * `docs/design/` (`scripts/design-site.mjs`). The subset is headings, paragraphs, bold / italic,
+ * `docs/design/` (`scripts/design-docs.mjs`). The subset is headings, paragraphs, bold / italic,
  * inline code, fenced code, links, images, ordered and unordered lists (nested), tables,
  * blockquotes and horizontal rules. Nothing else is recognised, so raw HTML is never passed
  * through: every character of text and every attribute value is escaped on the way out, and a
@@ -8,7 +8,7 @@
  * it is safe.
  *
  * Pure: `renderMarkdown(src, hooks)` returns the top-level blocks as HTML strings, so a caller can
- * group them (the design site puts each `##` section in its own panel).
+ * group them (the design pages puts each `##` section in its own panel).
  */
 
 /** Text for an HTML text node or a double-quoted attribute. */
