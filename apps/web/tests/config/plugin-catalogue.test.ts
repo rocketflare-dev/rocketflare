@@ -129,16 +129,19 @@ describe('catalogueEntries', () => {
 })
 
 describe('licenceTerms', () => {
-  const where = { repo: 'https://github.com/acme-dev/paid.git', ref: '1.2.0' }
+  const where = { repo: 'https://github.com/example-org/paid.git', ref: '1.2.0' }
 
   it('points at the LICENSE, else a Licence section of the README, else nothing', () => {
     expect(licenceTerms(['LICENSE'], reader({ LICENSE: 'Terms.' }), where)).toEqual({
       file: 'LICENSE',
-      url: 'https://github.com/acme-dev/paid/blob/1.2.0/LICENSE',
+      url: 'https://github.com/example-org/paid/blob/1.2.0/LICENSE',
     })
     expect(
       licenceTerms(['README.md'], reader({ 'README.md': '# Paid\n\n## Licence\n\nAsk.' }), where)
-    ).toEqual({ file: 'README.md', url: 'https://github.com/acme-dev/paid/blob/1.2.0/README.md' })
+    ).toEqual({
+      file: 'README.md',
+      url: 'https://github.com/example-org/paid/blob/1.2.0/README.md',
+    })
     expect(licenceTerms(['README.md'], reader({ 'README.md': '# Paid\n' }), where)).toBeNull()
     expect(licenceTerms(['LICENSE'], reader({ LICENSE: '  ' }), where)).toBeNull()
   })
@@ -146,13 +149,13 @@ describe('licenceTerms', () => {
 
 describe('the printed catalogue', () => {
   const open = {
-    repo: 'https://github.com/acme-dev/plugins.git',
+    repo: 'https://github.com/example-org/plugins.git',
     tag: '3.1.0',
     commercial: false,
     plugins: catalogueEntries(files, reader(MONOREPO)),
   }
   const paid = {
-    repo: 'https://github.com/acme-dev/paid.git',
+    repo: 'https://github.com/example-org/paid.git',
     tag: '0.2.0',
     commercial: true,
     licence: null,
@@ -169,7 +172,7 @@ describe('the printed catalogue', () => {
 
   it('is one line per plugin — id, version, installed here or not, description', () => {
     const lines = renderCatalogue([open], [surface('orders', '3.1.0'), surface('bare', '3.0.0')])
-    expect(lines[0]).toBe('Plugins (github.com/acme-dev/plugins at 3.1.0)')
+    expect(lines[0]).toBe('Plugins (github.com/example-org/plugins at 3.1.0)')
     expect(lines.find(l => l.trim().startsWith('orders'))).toMatch(
       /^ {2}orders +3\.1\.0 +installed +Orders for your app, with invoices and refunds\.$/
     )
@@ -181,7 +184,7 @@ describe('the printed catalogue', () => {
 
   it('puts commercial plugins under their own heading, with where their terms are', () => {
     const text = renderCatalogue([open, paid]).join('\n')
-    expect(text).toMatch(/Commercial plugins \(github\.com\/acme-dev\/paid at 0\.2\.0\)/)
+    expect(text).toMatch(/Commercial plugins \(github\.com\/example-org\/paid at 0\.2\.0\)/)
     expect(text).toContain('licence: ask the maintainers')
     const licensed = { ...paid, licence: { file: 'LICENSE', url: 'https://x.test/LICENSE' } }
     expect(renderCatalogue([licensed]).join('\n')).toContain('licence: https://x.test/LICENSE')
@@ -207,8 +210,20 @@ afterEach(() => {
   for (const dir of sandboxes.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
+// An identity of its own: CI runners have none, and an annotated tag needs one as a commit does.
+const IDENTITY = {
+  GIT_AUTHOR_NAME: 'test',
+  GIT_AUTHOR_EMAIL: 'test@example.test',
+  GIT_COMMITTER_NAME: 'test',
+  GIT_COMMITTER_EMAIL: 'test@example.test',
+}
 const git = (cwd: string, args: string[]) =>
-  execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ...IDENTITY },
+  })
 
 function write(root: string, rel: string, text: string) {
   mkdirSync(path.dirname(path.join(root, rel)), { recursive: true })
@@ -235,7 +250,7 @@ function makeHostOnce() {
   write(root, '.gitignore', '.upgrade/\n')
   git(root, ['init', '-q'])
   git(root, ['add', '-A'])
-  git(root, ['-c', 'user.name=t', '-c', 'user.email=t@t.test', 'commit', '-qm', 'host'])
+  git(root, ['commit', '-qm', 'host'])
   return root
 }
 
@@ -245,7 +260,7 @@ function makeRepo(tree: Record<string, string>, tags: string[]) {
   git(root, ['init', '-q'])
   for (const [rel, text] of Object.entries(tree)) write(root, rel, text)
   git(root, ['add', '-A'])
-  git(root, ['-c', 'user.name=t', '-c', 'user.email=t@t.test', 'commit', '-qm', 'release'])
+  git(root, ['commit', '-qm', 'release'])
   for (const t of tags) git(root, ['tag', '-a', '-m', t, t])
   return root
 }
