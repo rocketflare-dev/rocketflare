@@ -147,3 +147,68 @@ export function planTests(env, tree) {
   }
   return { target, suiteDriver, compose: target === 'local', banner, steps, notes }
 }
+
+/** The projects that open the test database (`tests/setup.ts` is their global setup). */
+const DATABASE_PROJECTS = ['api', 'api-isolated', 'driver']
+
+/**
+ * `pnpm test --changed`: the same shape as `planTests`, over the files `selectTests` chose
+ * (scripts/lib/gate-changed.mjs). The database starts only when a chosen file needs it, and the
+ * driver conformance pass runs only when a driver file was chosen — the seam is proven on every
+ * full run, and a change that reaches it reaches the `driver` project's files.
+ * @param {Record<string, string | undefined>} env
+ * @param {{ projects: Record<string, string[]>, packages: string[] }} selection web files are
+ *   paths relative to apps/web; packages are repo-relative dirs
+ */
+export function planSelectedTests(env, selection) {
+  const resolved = resolveTarget(env)
+  if ('error' in resolved) return resolved
+  const { target, suiteDriver } = resolved
+  const otherDriver = suiteDriver === 'postgres' ? 'neon' : 'postgres'
+  const suiteEnv = driverEnv(target, suiteDriver)
+  const files = p => selection.projects[p] ?? []
+  const steps = selection.packages.map(dir => ({
+    label: `${dir} (reached by the change)`,
+    cwd: '.',
+    command: ['pnpm', '--filter', `./${dir}`, 'test'],
+    env: {},
+  }))
+  if (files('api').length) {
+    steps.push({
+      label: `web: api, ${files('api').length} file(s) under ${suiteDriver}`,
+      cwd: WEB_DIR,
+      command: vitest(['api'], ['--no-isolate', ...files('api')]),
+      env: suiteEnv,
+    })
+  }
+  const isolated = Object.keys(selection.projects).filter(p => p !== 'api' && files(p).length)
+  if (isolated.length) {
+    const chosen = isolated.flatMap(files)
+    steps.push({
+      label: `web: ${isolated.join(', ')}, ${chosen.length} file(s) under ${suiteDriver}`,
+      cwd: WEB_DIR,
+      command: vitest(isolated, chosen),
+      env: suiteEnv,
+    })
+  }
+  const notes = []
+  if (files('driver').length && target === 'local') {
+    steps.push({
+      label: `web: driver conformance under ${otherDriver}`,
+      cwd: WEB_DIR,
+      command: vitest(['driver'], files('driver')),
+      env: driverEnv(target, otherDriver),
+    })
+  } else if (files('driver').length) {
+    notes.push('driver conformance under postgres: skipped — remote target, no TCP')
+  }
+  const total = Object.values(selection.projects).reduce((n, f) => n + f.length, 0)
+  return {
+    target,
+    suiteDriver,
+    compose: target === 'local' && DATABASE_PROJECTS.some(p => files(p).length > 0),
+    banner: `test target: ${target}, --changed: ${total} web test file(s) and ${selection.packages.length} other package(s)`,
+    steps,
+    notes,
+  }
+}

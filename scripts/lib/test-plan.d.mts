@@ -35,3 +35,8 @@ export interface TestPlan {
 }
 
 export function planTests(env: Env, tree: { kitOnly: boolean }): TestPlan | { error: string }
+
+export function planSelectedTests(
+  env: Env,
+  selection: { projects: Record<string, string[]>; packages: string[] }
+): TestPlan | { error: string }

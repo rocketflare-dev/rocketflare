@@ -7,12 +7,25 @@
  *
  * The inner loop is the narrow scripts (`pnpm web test:api`, `test:ui`, `test:config`,
  * `test:driver`, or a vitest file path): postgres, no compose management.
+ *
+ * `--changed=<base>` (what `pnpm gate --changed` runs) narrows the run to the tests the change
+ * reaches: vitest's import graph, plus every test that reads the repository through the
+ * filesystem unless its `@gate-inputs` say otherwise (`lib/gate-changed.mjs`).
  */
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { COMPOSE_FILE, planTests, TARGET_HINT, WEB_DIR } from './lib/test-plan.mjs'
+import { planChanged, readsFiles, selectTests } from './lib/gate-changed.mjs'
+import { changedFiles, workspacePackages } from './lib/gate-changed-git.mjs'
+import {
+  COMPOSE_FILE,
+  planSelectedTests,
+  planTests,
+  TARGET_HINT,
+  WEB_DIR,
+} from './lib/test-plan.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -91,9 +104,74 @@ function reuseSharedTestServers() {
   return true
 }
 
-const plan = planTests(process.env, {
-  kitOnly: existsSync(path.join(ROOT, WEB_DIR, 'tests/kit-only')),
-})
+/** `vitest list --filesOnly --json` in apps/web, as repo-relative `{ file, project }`. */
+function vitestList(extra) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'rf-gate-list-'))
+  const out = path.join(dir, 'list.json')
+  const args = ['exec', 'dotenv', '-e', '.env.test', '--', 'vitest', 'list', '--filesOnly']
+  return new Promise(resolve => {
+    const child = spawn('pnpm', [...args, `--json=${out}`, ...extra], {
+      cwd: path.join(ROOT, WEB_DIR),
+      env: { ...process.env, NODE_ENV: 'test' },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    })
+    let stderr = ''
+    child.stderr.on('data', d => {
+      stderr += d
+    })
+    child.on('close', code => {
+      const list = existsSync(out) ? JSON.parse(readFileSync(out, 'utf8')) : null
+      rmSync(dir, { recursive: true, force: true })
+      if (code !== 0 || !list) fail(`vitest list failed:\n${stderr.slice(-2000)}`)
+      resolve(list.map(t => ({ file: path.relative(ROOT, t.file), project: t.projectName })))
+    })
+  })
+}
+
+/** Test helpers that read the filesystem: a test importing one reads the repository too. */
+function fsHelpers() {
+  const out = []
+  for (const sub of ['tests/helpers', 'tests/kit']) {
+    const dir = path.join(ROOT, WEB_DIR, sub)
+    if (!existsSync(dir)) continue
+    for (const f of readdirSync(dir)) {
+      if (!/\.tsx?$/.test(f)) continue
+      if (readsFiles(readFileSync(path.join(dir, f), 'utf8'))) {
+        out.push(`${sub.split('/')[1]}/${f.replace(/\.tsx?$/, '')}`)
+      }
+    }
+  }
+  return out
+}
+
+async function changedPlan(base) {
+  const { changed, existing } = changedFiles(ROOT, base)
+  const decided = planChanged({ changed, existing, packages: workspacePackages(ROOT) })
+  if ('full' in decided) {
+    console.log(`· ${decided.full} — running every test`)
+    return null
+  }
+  let projects = {}
+  if (decided.test.web) {
+    const [all, related] = await Promise.all([vitestList([]), vitestList([`--changed=${base}`])])
+    const sources = Object.fromEntries(
+      [...new Set(all.map(t => t.file))].map(f => [f, readFileSync(path.join(ROOT, f), 'utf8')])
+    )
+    const chosen = selectTests({ all, related, sources, changed, fsHelpers: fsHelpers() })
+    // vitest runs in apps/web: hand it absolute paths, which match exactly one file each.
+    projects = Object.fromEntries(
+      Object.entries(chosen).map(([p, files]) => [p, files.map(f => path.join(ROOT, f))])
+    )
+  }
+  return planSelectedTests(process.env, { projects, packages: decided.test.packages })
+}
+
+const changedArg = process.argv.slice(2).find(a => a.startsWith('--changed='))
+const plan =
+  (changedArg && (await changedPlan(changedArg.slice('--changed='.length)))) ||
+  planTests(process.env, {
+    kitOnly: existsSync(path.join(ROOT, WEB_DIR, 'tests/kit-only')),
+  })
 if ('error' in plan) fail(plan.error)
 
 console.log(plan.banner)

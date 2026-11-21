@@ -52,6 +52,7 @@ describe('pnpm gate', () => {
       list: false,
       json: false,
       keepGoing: false,
+      changed: null,
       steps: ['lint', 'typecheck', 'test', 'build'],
     })
     expect(parseGateArgs(['build', 'lint'])).toMatchObject({ steps: ['lint', 'build'] })

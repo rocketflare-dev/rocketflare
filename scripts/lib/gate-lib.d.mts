@@ -22,6 +22,13 @@ export function gateList(): {
 export function parseGateArgs(
   argv: string[]
 ):
-  | { list: boolean; json: boolean; keepGoing: boolean; steps: string[] }
+  | {
+      list: boolean
+      json: boolean
+      keepGoing: boolean
+      /** null: the full gate; '': `--changed` against the default base; else the named ref. */
+      changed: string | null
+      steps: string[]
+    }
   | { error: string }
   | { help: true }
