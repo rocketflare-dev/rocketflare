@@ -34,6 +34,7 @@ Field-report fixes: new apps start with `/rf-start` and a design conversation (`
 - `scripts/design-docs.mjs` builds `docs/design/html/` from `docs/design/*.md` and inlines a sanitised `docs/design/diagrams/*.svg`; `--open`, `--check`, `--contrast`, `--apply-brand` (`docs/CONCEPTS.md` §7).
 - The contrast floors and pairs moved from `apps/web/tests/ui/contrast.test.ts` into `scripts/lib/contrast.mjs`, which the test and `--contrast` share.
 - New libraries: `scripts/lib/brand.mjs`, `scripts/lib/markdown-lite.mjs`, `scripts/lib/svg-sanitize.mjs`, `scripts/lib/design-docs-lib.mjs`, each with a `.d.mts`.
+- `docs/DEPLOY.md` "Running somewhere other than Cloudflare": the kit is designed for Cloudflare; to run elsewhere, start from Rocketpod, which often lags behind in features.
 
 ## How to apply
 

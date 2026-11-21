@@ -16,7 +16,9 @@ credentials**, and the codebase is written to be driven by a coding agent: `CLAU
 contract → schema → route → page (→ command) loop, not a platform project.
 
 > See **[Rocketpod](https://github.com/rocketflare-dev/rocketpod)** for a version of Rocketflare that
-> runs without Cloudflare (Node in containers, Postgres for everything).
+> runs without Cloudflare (Node in containers, Postgres for everything). It often lags behind
+> Rocketflare in features ([`docs/DEPLOY.md`](docs/DEPLOY.md) "Running somewhere other than
+> Cloudflare").
 
 ## Getting started
 

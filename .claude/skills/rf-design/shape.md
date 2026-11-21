@@ -129,10 +129,13 @@ Each one becomes a "Done when" in the stage that introduces it, not a document n
 **Ask:** "Is there any reason this can't run on Cloudflare: an IT policy, where the data must live,
 an existing host?"
 
-The kit is Cloudflare-first by design. Realtime, queues, workflows, files, rate limits, cron and
-the default AI are Cloudflare services. The database is Postgres (Neon when deployed, or any
-Postgres through Hyperdrive), and email is Resend over HTTP. Both are portable. If they need another host, record it as a decision with its cost: those services need
-replacements. If it's a "what if", record it as fog for the owner. Don't redesign for it.
+The kit is designed for Cloudflare, and there is no supported way to run it elsewhere. If they
+must run somewhere else, the answer is to start from **Rocketpod**
+(https://github.com/rocketflare-dev/rocketpod), the container fork in the same organisation, not
+this kit. Say plainly that it often lags behind Rocketflare in features, and check its changelog
+for the capabilities the destination needs. Record the choice as a decision. If it's only a
+"what if", record it as fog for the owner and carry on. `docs/DEPLOY.md` "Running somewhere other
+than Cloudflare" is the page to point them at.
 
 ## 7. Who owns it and how it is licensed
 
