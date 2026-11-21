@@ -35,15 +35,22 @@ why). That requirement is the thing to re-check if the cost grows. Record the de
 `design.json` `tenancy`.
 
 Also settle **who may join**: `SIGNUP_MODE` is `open`, `invite_only` or `approval`, and
-`BOOTSTRAP_ADMIN_EMAILS` names the first admin. Settle **single sign-on** too, if their staff sign
-in with Google, Microsoft or another identity provider (`SETUP.md` 2.3b).
+`BOOTSTRAP_ADMIN_EMAILS` names the first admin.
+- **An internal tool or a closed group of businesses:** recommend `invite_only`.
+- **A product people sign up to themselves:** recommend `open`.
+- **Self sign-up that someone vets:** `approval`.
+
+Ask about **single sign-on** only if their staff already sign in to work with Google, Microsoft or
+another identity provider (`SETUP.md` 2.3b). Otherwise magic links are the default, and they need
+nothing set up. Record both in `design.json` `signup`.
 
 ## 2. People, roles and words
 
 **Ask:** "Who uses it day to day, and what can each of them do that the others can't?"
 
-The kit's roles are owner, admin and member in each organisation, plus a platform-wide global
-admin. Groups sit inside an organisation. Map each kind of person onto a kit role, plus a group
+The kit's roles are owner, admin and member in each organisation, plus `support`, a role the
+platform grants its own staff that the customer can see, so it needs a screen word too. A global
+admin is a platform-wide flag, not a role in an organisation. Groups sit inside an organisation. Map each kind of person onto a kit role, plus a group
 or a permission rule where the three roles aren't enough. Record:
 - the role name they will see on screen;
 - the kit role underneath.
@@ -55,18 +62,33 @@ not a bill; a reservation, not a booking; "Business", not "Organisation". For ea
 - the kit word it replaces;
 - the code name, which stays unchanged.
 
-Words decided now go into one terms module per domain from Stage 1. Words decided after two stages
-cost a builder a pass over 32 kit files and 71 of their own. The kit has no catalogue for its own
+Words decided now go into one terms module per domain from Stage 1. Words decided after the
+screens exist mean a pass over every screen, the kit's included, because they are scattered
+string literals by then. The kit has no catalogue for its own
 fixed words yet (Organisation, Members, API keys). List those in the glossary too, as "kit screens
 to reword", so the stage that touches them knows.
+
+**People outside every organisation.** Ask whether anyone uses the app without working for one of
+the organisations: guests, patients, parents, a partner's system. The kit has no identity for
+them (a known gap). Recommend the narrowest access that works:
+- **nothing**, if they never touch the app;
+- **a private link** scoped to one record (a stay, an order), for a person;
+- **an API key** of the organisation they deal with, for a system, with what it may call written
+  down.
+
+Making them members of an organisation gives them that organisation's screens. Recommend it only
+when that is the intent. Record each in `design.json` `outsiders`.
 
 ## 3. AI: on or off
 
 **Ask:** "Should this app have AI features: chat, agents, searching your documents?"
 
-The kit ships chat, agents and knowledge search, on Workers AI with no key needed locally. If the
-answer is **off**, write `"ai": "off"`, and add a Stage 1 "Done when": "the demonstration screens
-(Chat, Agents, Knowledge, Search) are hidden from everyone". The kit doesn't yet have one switch for
+The kit ships chat, agents and knowledge search. Locally they run on Workers AI, which needs a
+Cloudflare login and no key. Setup with `--offline` turns that off, and they answer 503 until a
+login or a provider key exists, so an offline setup says nothing about whether the app wants AI.
+Ask anyway. If the answer is **off**, write `"ai": "off"`, and add a Stage 1 "Done when": "the
+demonstration screens (Chat, Agents, Knowledge, Search) are hidden" (from everyone, unless they
+want them kept for some roles). The kit doesn't yet have one switch for
 this. Hiding them takes a small guard over the nav and routes, and the design should say so.
 Deleting the AI layer isn't recommended: every later kit upgrade would then diverge.
 
@@ -77,7 +99,7 @@ If **on**, ask what the AI does for them, and in which stage. A vague "AI everyw
 **Ask:** "Does the app take, split, or report money? Does anything need a sequence number, like
 invoices or receipts?"
 
-The kit has no money code (a known gap). If the answer is yes, record:
+The kit has no money code. If the answer is yes, record:
 - the currency;
 - when amounts are rounded (each purchase, each night, each invoice);
 - the rounding rule;
@@ -108,8 +130,8 @@ Each one becomes a "Done when" in the stage that introduces it, not a document n
 an existing host?"
 
 The kit is Cloudflare-first by design. Realtime, queues, workflows, files, rate limits, cron and
-the default AI are Cloudflare services. Postgres is Neon, and email is Resend over HTTP, both
-portable. If they need another host, record it as a decision with its cost: those services need
+the default AI are Cloudflare services. The database is Postgres (Neon when deployed, or any
+Postgres through Hyperdrive), and email is Resend over HTTP. Both are portable. If they need another host, record it as a decision with its cost: those services need
 replacements. If it's a "what if", record it as fog for the owner. Don't redesign for it.
 
 ## 7. Who owns it and how it is licensed

@@ -151,7 +151,10 @@ suites on vitest 4, §9 — never part of the gate).
 
 **Known gaps:** no IdP group sync (SCIM/SAML claims); no group hierarchy or per-group roles;
 conversations, runs, prompts and non-Knowledge files have no visibility; agent-written documents
-are always `tenant`; no audit log beyond `activity_events`; no personal API keys (tenant keys only).
+are always `tenant`; no audit log beyond `activity_events`; no personal API keys (tenant keys only);
+no supported pattern for organisations that must share some facts (partners, franchises, shared
+venues), so an app builds its own copy-and-consent exchange; no identity for people outside every
+organisation (guests, customers of a member business) other than a link or a tenant API key.
 `AGENT_TENANT_DAILY_COST_USD` is per organisation, not per person — the creation limit above is
 what bounds one account. A deleted organisation's `ai_usage` rows go with it (the FK cascade), so
 the operator's record of what it spent is lost with the organisation.
