@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `gate-verified-lib.mjs` (the workspace has no `allowJs`). Keep in step
- * with the exports there; `apps/web/tests/config/gate-verified.test.ts` typechecks against this.
+ * with the exports there; `apps/web/tests/kit-only/gate-verified.test.ts` typechecks against this.
  */
 
 export const LAUNCH_GATE_CHECK: 'launch/gate'

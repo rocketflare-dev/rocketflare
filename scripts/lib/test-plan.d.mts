@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `test-plan.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/gate.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/gate.test.ts` is what typechecks against this.
  */
 
 export type TestTarget = 'local' | 'remote'

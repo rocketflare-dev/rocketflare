@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `plugin-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/plugin-lib.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/plugin-lib.test.ts` is what typechecks against this.
  */
 import type { Ledger, PluginUses } from './surface.d.mts'
 import type { Surface } from './upgrade-lib.d.mts'

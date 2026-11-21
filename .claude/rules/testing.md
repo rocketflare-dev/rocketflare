@@ -21,7 +21,7 @@ installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, n
 invocations (`api` with `--no-isolate`, then the rest).
 
 **`pnpm test` is the one full test run** (`scripts/test.mjs`, the plan in
-`scripts/lib/test-plan.mjs`, unit-tested in `tests/config/gate.test.ts`), and the `test` step of
+`scripts/lib/test-plan.mjs`, unit-tested in `tests/kit-only/gate.test.ts`), and the `test` step of
 `pnpm gate`. It prints its target first. On a **local** target (the default) it starts the compose
 test Postgres and Neon proxy itself, runs every package's tests with the web suite under
 `postgres`, then the `driver` project again under `neon` through the proxy. On a **remote** target
@@ -36,21 +36,27 @@ notes and the root version being the kit's (`upgrade-notes`), the release and re
 the plugin CI that plugin repositories call from the kit, the manifest's kit-state claims
 (`kit-only/kit-manifest.test.ts`), the Launch conformance checker and its parsers (`kit-check`,
 `kit-check-parsers`, `launch-kit-schema` — the kit keeps them in step with the meta-kit), and the
-kit's own doc guards (`gate-string`). `scripts/rename.mjs` deletes the directory — and every other
+kit's own doc guards (`gate-string`) — and the kit's TOOLING: every test whose subject is
+`scripts/**` machinery or the rf-security runner (`plugin-*`, `upgrade-*`, `manifest-lib`,
+`surface`, `repo-paths`, `bundle*`, `deployer`, `release-version-only`, `gate*`,
+`bootstrap-lib`, `prereqs-sh`, the dev-tooling and `provision-*` helpers, `patch-toml`,
+`design-docs`, `rf-security/`). A copy runs that tooling but does not write it: it arrives through
+`kit:upgrade` already tested by the kit's gate, so re-running its end-to-end suites on every app
+commit buys the app nothing. `scripts/rename.mjs` deletes the directory — and every other
 `kitOnly` path: the maintainer scripts, their package.json scripts and `.claude/settings.json`
 hooks — when a copy is born and unwires `--project kit-only`; the project is registered only while the directory exists;
 `kit:upgrade` never ports one; `tests/config/kit-manifest.test.ts` fails a copy that carries one.
-A test of tooling a copy RUNS (upgrade, plugin, bootstrap, the update-check hook, the manifest
-reader) or of anything the app ships stays in `config` — the copy's gate is where it earns its keep.
-Such a test never judges the checkout's own state — its tomls, `launch.kit.json`, version or
+A test of anything the APP ships — its config, its composition (plugins well-formed, the MCP
+seam, wrangler parity), its code's pure halves — stays in `config`; the copy's gate is where it earns
+its keep. Such a test never judges the checkout's own state — its tomls, `launch.kit.json`, version or
 provisioning — because a copy's differ by design (renamed, then provisioned by Launch, which
-commits real KV ids). Build a fixture (`tests/config/fixtures/`: the toml snapshots feed the
+commits real KV ids). Build a fixture (`tests/kit-only/fixtures/`: the toml snapshots feed the
 patcher's tests; `tests/kit-only/fixtures/kit-fixture.mjs` makes a whole kit, fresh or provisioned
 like Launch's `write_config`, for the kit-only conformance tests), and put the claim about THIS
 checkout in `kit-only`.
 
 **The security audit's runner** (`.claude/skills/rf-security/tools/`, `docs/SECURITY-AUDIT.md`) is
-tested in `config` by `tests/config/rf-security/`: child-process runs of `audit.mjs` and
+tested in `kit-only` by `tests/kit-only/rf-security/`: child-process runs of `audit.mjs` and
 `guard-hook.mjs` over a synthetic run in the OS temp directory (`fixture.ts` plays the agents'
 part; `RF_SECURITY_RUNS` points the runs root there), never a real run's files. A confirmed audit
 finding, once fixed, lands as a permanent regression test in `tests/api/security/`, named for the

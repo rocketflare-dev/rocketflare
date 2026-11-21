@@ -1,4 +1,4 @@
-/** Types for `design-docs-lib.mjs` (no `allowJs`); `apps/web/tests/config/design-docs.test.ts` typechecks against this. */
+/** Types for `design-docs-lib.mjs` (no `allowJs`); `apps/web/tests/kit-only/design-docs.test.ts` typechecks against this. */
 import type { BrandResult } from './brand.mjs'
 import type { Theme, ThemeKind } from './contrast.mjs'
 

@@ -242,7 +242,7 @@ not support the client's version answers `start` with **400** and `supported`.
 
 ## Testing
 
-`apps/web/tests/config/deployer.test.ts` runs `scripts/deployer.mjs` against a fake deployer and a
+`apps/web/tests/kit-only/deployer.test.ts` runs `scripts/deployer.mjs` against a fake deployer and a
 fake OIDC endpoint: the whole flow, the payload (its `digest` and `source` included), the masking,
 rejection, timeout and `finish` with no ticket. It is the executable half of this page. Build once: `bundle-lib.test.ts` (pack/unpack,
 the digest, every verification failure, the two workflow decisions) and `bundle.test.ts` (the real

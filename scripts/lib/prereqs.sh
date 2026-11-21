@@ -6,7 +6,7 @@
 #
 # Functions only, no side effects on source. Each `*_hint` prints the fix lines and returns 0; the
 # caller decides to fail. Bash 3.2 (macOS) compatible. Tested by
-# `apps/web/tests/config/prereqs-sh.test.ts`, which sources this file with a fake environment:
+# `apps/web/tests/kit-only/prereqs-sh.test.ts`, which sources this file with a fake environment:
 # `ROCKETFLARE_PROC_VERSION` (default /proc/version) and `ROCKETFLARE_WINDOWS_ROOT` (default /mnt/c)
 # exist for that and nothing else.
 

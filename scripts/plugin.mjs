@@ -186,6 +186,24 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 // repositories to read their manifests — one clone, not two that take turns being stale.
 const WORK_DIR = PLUGIN_MIRROR_ROOT
 
+/**
+ * The host's own Biome, run directly rather than through `pnpm exec`, which is a second Node start
+ * per call and fails anyway, after that start, where Biome is not installed. Null when the host
+ * has none; every caller then skips formatting with the warning a failed run gives.
+ */
+const BIOME_BIN = path.join(
+  REPO_ROOT,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'biome.cmd' : 'biome'
+)
+
+/** Biome with these arguments in the host, or a failed result when the host has none. */
+function runBiome(args, options) {
+  if (!existsSync(BIOME_BIN)) return { status: 1, error: new Error('no biome'), stdout: null }
+  return spawnSync(BIOME_BIN, args, { cwd: REPO_ROOT, ...options })
+}
+
 /** Set while a nested audit runs under `--json`, so stdout stays ONE document. */
 let muted = false
 const out = (...lines) => {
@@ -508,14 +526,9 @@ function requireClean(args) {
 function writeManifestFile(file, data, { format }) {
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   if (!format) return
-  const r = spawnSync(
-    'pnpm',
-    ['exec', 'biome', 'format', '--write', path.relative(REPO_ROOT, file)],
-    {
-      cwd: REPO_ROOT,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }
-  )
+  const r = runBiome(['format', '--write', path.relative(REPO_ROOT, file)], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
   if (r.status !== 0) {
     warn(
       `note: could not run Biome on ${path.basename(file)} — run \`pnpm lint:fix\` before committing`
@@ -1081,10 +1094,7 @@ function auditAfterApply(args) {
 function formatWritten(paths) {
   // No paths would be the whole repository — never what an install or upgrade means.
   if (paths.length === 0) return null
-  const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', ...paths], {
-    cwd: REPO_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  const r = runBiome(['check', '--write', ...paths], { stdio: ['ignore', 'pipe', 'pipe'] })
   if (r.error || r.status === null) {
     warn('note: biome did not run — check the formatting of the copied files with `pnpm lint`.')
     return null
@@ -1835,8 +1845,7 @@ function filesUnder(rel) {
 
 /** What `add` would have left on disk for these bytes: it runs biome over what it copies. */
 function formattedLikeAdd(rel, bytes) {
-  const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', `--stdin-file-path=${rel}`], {
-    cwd: REPO_ROOT,
+  const r = runBiome(['check', '--write', `--stdin-file-path=${rel}`], {
     input: bytes,
     stdio: ['pipe', 'pipe', 'ignore'],
   })

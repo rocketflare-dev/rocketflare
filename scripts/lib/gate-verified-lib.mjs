@@ -12,7 +12,7 @@
  * but only Launch's App can post one whose `app.id` is `LAUNCH_GATE_APP_ID`. Every doubt — no
  * variable, another event, an API error, a malformed id — answers "not verified", so the fallback is
  * always the full gate. `scripts/gate-verified.mjs` runs this in CI; unit-tested with a fake fetch
- * in `apps/web/tests/config/gate-verified.test.ts`.
+ * in `apps/web/tests/kit-only/gate-verified.test.ts`.
  */
 
 export const LAUNCH_GATE_CHECK = 'launch/gate'

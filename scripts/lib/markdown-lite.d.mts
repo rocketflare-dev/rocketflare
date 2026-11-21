@@ -1,4 +1,4 @@
-/** Types for `markdown-lite.mjs` (no `allowJs`); `apps/web/tests/config/design-docs.test.ts` typechecks against this. */
+/** Types for `markdown-lite.mjs` (no `allowJs`); `apps/web/tests/kit-only/design-docs.test.ts` typechecks against this. */
 export interface MarkdownHooks {
   link?: (dest: string) => string | null
   image?: (src: string, alt: string, title: string | null, standalone: boolean) => string | null

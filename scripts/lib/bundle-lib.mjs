@@ -5,7 +5,7 @@
  *
  * Everything here is deterministic — entries sorted, fixed mtimes, owners and modes — and does no
  * I/O beyond what the caller hands it, so every decision is a unit test
- * (`apps/web/tests/config/bundle-lib.test.ts`). Node built-ins only: it runs before `pnpm install`.
+ * (`apps/web/tests/kit-only/bundle-lib.test.ts`). Node built-ins only: it runs before `pnpm install`.
  *
  * Archive layout (a ustar tarball, gzipped):
  *

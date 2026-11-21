@@ -1544,7 +1544,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 - **Kit-only files** (`kitOnly`): what is true of the kit repository and of nothing made from it.
   Its tests (`apps/web/tests/kit-only/**`, vitest project `kit-only`) — porting notes and the root
   version being the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the
-  manifest's kit-state claims, the Launch conformance checker's own tests, the kit's doc guards —
+  manifest's kit-state claims, the Launch conformance checker's own tests, the kit's doc guards,
+  and the tests of the kit's tooling (`scripts/**`, the rf-security runner: a copy runs it, never
+  writes it, and receives it already tested) —
   which the kit's gate runs (`pnpm test` names the project only while its directory exists); its
   workflows (`kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`); its maintainer scripts
   (`release.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
@@ -2275,7 +2277,7 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
 - **The runner** (`tools/audit.mjs`) does every mechanical step: run directories, budgets, briefs,
   ledger updates through upstream's validators (a step that does not validate leaves
   `*.next.json` and blocks the next), citations, reports and measured cost. Its tests are synthetic
-  fixtures in `apps/web/tests/config/rf-security/`.
+  fixtures in `apps/web/tests/kit-only/rf-security/`.
 - **Isolation**: proofs run only in the sandbox (`pnpm security:sandbox`: an image from `git
   archive`, its own Postgres on an internal network, a read-only root, no capabilities). While a
   run is active the guard hook in `.claude/settings.json` refuses deletes, moves, credential reads

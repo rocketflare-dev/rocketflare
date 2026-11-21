@@ -1,6 +1,6 @@
 /**
  * Pure helpers for `scripts/bootstrap.mjs` — no I/O, no process access, so
- * `apps/web/tests/config/bootstrap-lib.test.ts` can pin every text transformation the bootstrap
+ * `apps/web/tests/kit-only/bootstrap-lib.test.ts` can pin every text transformation the bootstrap
  * performs on files it does not own (`.dev.vars`, the two wrangler tomls) and every parser it
  * applies to another tool's stdout (`pnpm seed`, `wrangler whoami`). Types: `bootstrap-lib.d.mts`.
  *

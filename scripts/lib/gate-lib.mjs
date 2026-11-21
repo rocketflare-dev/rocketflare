@@ -2,7 +2,7 @@
  * `pnpm gate` — an app's checks, defined once (docs/CONCEPTS.md §4). The same command is the
  * pre-commit gate on a laptop, the one job in a copy's CI, and Launch's ship gate (which reads
  * `--list --json`, contract: `packages/shared/src/gate.ts`). `scripts/gate.mjs` executes; this file
- * holds the steps and the argument rules, unit-tested in `apps/web/tests/config/gate.test.ts`.
+ * holds the steps and the argument rules, unit-tested in `apps/web/tests/kit-only/gate.test.ts`.
  *
  * There is deliberately no step for generated files: `typecheck` regenerates
  * `worker-configuration.d.ts` (commit what changes), the `docs/plugin-api.md` diff is the kit's own

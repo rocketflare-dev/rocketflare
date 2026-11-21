@@ -1,7 +1,7 @@
 /**
  * The pure half of `scripts/upgrade.mjs`: path classification against `.rocketflare.json`, the
  * diff translator, and the release-note parser. No I/O and nothing runs at import time, so
- * `apps/web/tests/config/upgrade-lib.test.ts` can drive it under vitest; `upgrade-lib.d.mts`
+ * `apps/web/tests/kit-only/upgrade-lib.test.ts` can drive it under vitest; `upgrade-lib.d.mts`
  * beside this file is the hand-written type surface (no `allowJs`).
  *
  * The problem this solves: an adopted copy of the kit has been renamed (`scripts/rename.mjs`

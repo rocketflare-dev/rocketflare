@@ -19,7 +19,7 @@
  * is knowable.
  *
  * Pure apart from reading files, and nothing runs at import time, so
- * `apps/web/tests/config/surface.test.ts` drives every function with fixtures as well as over the
+ * `apps/web/tests/kit-only/surface.test.ts` drives every function with fixtures as well as over the
  * real repository. `surface.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  *
  * **The one non-`node:` dependency, and why it is lazy.** Reading which symbols a file imports is a

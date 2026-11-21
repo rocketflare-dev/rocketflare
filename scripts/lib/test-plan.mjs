@@ -1,7 +1,7 @@
 /**
  * What `pnpm test` runs, as data (docs/CONCEPTS.md §4, "The gate"). `scripts/test.mjs` executes
  * the plan; this file decides it, so the decision is unit-tested without spawning anything
- * (`apps/web/tests/config/gate.test.ts`).
+ * (`apps/web/tests/kit-only/gate.test.ts`).
  *
  * The TARGET is decided from the environment, never by probing a database:
  *

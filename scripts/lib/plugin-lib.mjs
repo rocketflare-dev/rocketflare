@@ -1,7 +1,7 @@
 /**
  * The pure half of `scripts/plugin.mjs` (D31, Phase B): the plugin id rules, the six barrel
  * lines, the file-root classification, the requirement check, the surface builder and the plan
- * text. No I/O and nothing runs at import time, so `apps/web/tests/config/plugin-lib.test.ts` can
+ * text. No I/O and nothing runs at import time, so `apps/web/tests/kit-only/plugin-lib.test.ts` can
  * drive every rule against a FIXTURE — which matters because most of them are rules about a plugin
  * this checkout does not have installed.
  *
@@ -2797,7 +2797,7 @@ export function deprecatedServerMembers(source) {
 /**
  * The tool-name rule every surface accepts — a copy of `MCP_TOOL_NAME_PATTERN` in
  * `packages/shared/src/mcp.ts` (this script cannot import TypeScript), pinned equal by
- * `tests/config/plugin-lib.test.ts`. MCP allows `.` and 128 characters; the chat models' APIs do
+ * `tests/kit-only/plugin-lib.test.ts`. MCP allows `.` and 128 characters; the chat models' APIs do
  * not, and one tool goes to both.
  */
 export const TOOL_NAME_RE = /^[A-Za-z0-9_-]{1,64}$/
