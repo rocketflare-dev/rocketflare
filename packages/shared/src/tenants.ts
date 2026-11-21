@@ -22,6 +22,23 @@ export type MembershipRole = z.infer<typeof membershipRoleSchema>
 export const membershipSourceSchema = z.enum(['manual', 'idp'])
 export type MembershipSource = z.infer<typeof membershipSourceSchema>
 
+/**
+ * What each role is CALLED on screen. The stored values stay `owner`/`admin`/`member`/`support`
+ * (permissions, the API and the CLI key on them); an app whose people say "Manager" and "Staff"
+ * edits the labels here, once, and every badge, picker and menu follows.
+ */
+export const ROLE_LABELS: Record<MembershipRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  member: 'Member',
+  support: 'Support',
+}
+
+/** `ROLE_LABELS[role]` — the one way a role reaches the screen. */
+export function roleLabel(role: MembershipRole): string {
+  return ROLE_LABELS[role]
+}
+
 /** Roles excluded from "how many people use this org" counts (a visiting global admin). */
 export const NON_MEMBER_ROLES = ['support'] as const satisfies readonly MembershipRole[]
 

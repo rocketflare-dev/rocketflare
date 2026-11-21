@@ -165,7 +165,8 @@ the operator's record of what it spent is lost with the organisation.
   membership → groups → features in one query. The second strategy is a Bearer tenant API key
   (hashed, expiry, soft revoke), with scopes `authMiddleware` enforces on every request: `read`
   allows GET/HEAD/OPTIONS, `write` or `*` allows everything; anything else is 403
-  `insufficient_scope`. The CASL check on the creator's role still applies on top. A key acts only
+  `insufficient_scope`. The CASL check on the creator's role still applies on top. A plugin reads
+  which key it was as `RequestCtx.apiKeyId` (the id, never the secret; `null` for a cookie). A key acts only
   within its organisation, plus its creator's own profile (`GET`/`PATCH /api/me`): `GET
   /api/tenants` lists that one organisation, and the routes about the person's whole account —
   `POST /api/tenants`, `GET /api/invitations/pending`, `POST /api/access-requests` — answer 403
@@ -591,13 +592,19 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
   clears the cache and redirects to `/login?returnUrl=`.
 - **Guards**: one `RequireGuard` primitive; nav items use the same guard as their page.
   `/login?as=` dev sign-in only works when the server reports `devLogin` and the email is a seeded
-  account.
+  account — one of `DEV_ACCOUNTS` (`ui/lib/dev-accounts.ts`), the list `pnpm seed` creates and the
+  quick-login buttons show, so the two cannot drift.
+- **Role labels**: a role reaches the screen only through `roleLabel(role)` / `ROLE_LABELS`
+  (`@rocketflare/shared/tenants`) — badges, pickers, menus and the quick-login buttons. The stored
+  values (`owner`/`admin`/`member`/`support`) never change; an app whose people say "Manager"
+  edits the labels there.
 - **Data**: `api-client.ts` parses with shared schemas, there is one hook file per resource, and
   keys come from `queryKeys`. zustand holds only websocket state. Detail: `.claude/rules/ui.md`,
   `apps/web/src/ui/CLAUDE.md`.
 
-**Known gaps:** no route preloading; no "system" theme or cross-tab sync; the dev quick-login list
-is hard-coded.
+**Known gaps:** no route preloading; no "system" theme or cross-tab sync; every dev account is
+seeded into the one main tenant (an app wanting a second tenant's owner seeds that tenant itself);
+the CLI prints raw role values, not `ROLE_LABELS`.
 
 ## 8. Analytics
 
@@ -1874,7 +1881,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the
   `/settings?tab=` tabs (the core list in `pages/settings/tabs.ts`, which `SettingsLayout` renders,
-  plus every plugin's `settingsTabs({ can })`, all behind the page's `admin`), and the Home quick
+  plus every plugin's `settingsTabs({ can })` — each tab may carry a `guard` (`PluginSettingsTab`,
+  the same `NavGuard` as a nav item, so `{ feature }` hides it where the organisation lacks the
+  flag), all behind the page's `admin`), and the Home quick
   links (plugins' `homeLinks`, then the core ones). Each is filtered by `useNavGuard`, the first
   entry for a path wins, and `source` is `kit` or the contributing plugin's id. It is what a
   command palette searches; `navigationEntries(plugins, checks)` is the pure half.
@@ -2059,8 +2068,12 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   A plugin imports its own `apps/web/src/host/<id>/` as `@/host/<id>/…` (the existing `@/*` alias),
   and only its own id's (`tests/helpers/plugins.ts`). **Known gap:** `plugin export` does not write
   host files back to `from` — they are the app's content, not the plugin's.
-- **Hooks** (`onTenantCreated`, `onTenantDeleted`, `onTenantStatusChanged`, `seedDemo`) run
-  post-commit, are idempotent, and are try/caught. DO state is purgeable only through instance
+- **Hooks** (`onTenantCreated`, `onTenantDeleted`, `onTenantStatusChanged`, `seed`, `seedDemo`) run
+  post-commit, are idempotent, and are try/caught. `seed` runs on EVERY `pnpm seed` (demo or not)
+  for reference data a plugin needs to be usable, `seedDemo` only with `--demo`; both get
+  `ctx.setFeature(key, enabled?, tenantId?)`, a per-organisation override (unknown key throws), and
+  `pnpm seed --feature <key>[=on|off][@<slug>]` writes the same row afterwards
+  (`apps/web/scripts/lib/seed-features.ts`). DO state is purgeable only through instance
   names **derived** from the tenant id. `onTenantStatusChanged(db, tenantId, status, env)` runs
   after a global admin suspends (`'suspended'`) or reactivates (`'active'`) a tenant, from
   `setTenantSuspended` (`runTenantStatusChangedHooks`), each failure logged as a warning and

@@ -71,7 +71,7 @@ describe('Settings → People', () => {
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Invite/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('columnheader', { name: 'Actions' })).not.toBeInTheDocument()
-    expect(within(row('Olive')).getByText('owner')).toBeInTheDocument()
+    expect(within(row('Olive')).getByText('Owner')).toBeInTheDocument()
   })
 
   it('admin: can change member roles but not owners, never offers the owner role, cannot remove owners', async () => {

@@ -161,12 +161,15 @@ export function toggleAiBlock(tomlText, mode) {
 }
 
 /**
- * The plaintext API key `pnpm seed` prints exactly once — the first non-empty line after its
- * "API key (shown ONCE" banner. Position-based on purpose: an adapted kit renames the prefix.
- * The "already exists" variant prints no banner and yields `undefined`.
+ * The plaintext API key `pnpm seed` prints exactly once, on the line labelled `api key:` — the
+ * token after the label, whatever its prefix (an adapted kit renames it). An older seed printed it
+ * alone on the line after an "API key (shown ONCE" banner; that is still read. The "already
+ * exists" variant prints neither and yields `undefined`.
  */
 export function extractSeedKey(stdout) {
   const lines = stdout.split('\n')
+  const labelled = lines.map(line => /^\s*api key:\s+(\S+)/.exec(line)?.[1]).find(Boolean)
+  if (labelled) return labelled
   const banner = lines.findIndex(line => line.includes('API key (shown ONCE'))
   if (banner === -1) return undefined
   const next = lines.slice(banner + 1).find(line => line.trim() !== '')

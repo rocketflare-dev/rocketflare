@@ -156,8 +156,9 @@ export interface PluginRequires {
   plugins?: readonly string[]
 }
 
-/** Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`). */
+/** Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given. */
 export interface PluginSeedContext {
+  /** The seeded tenant (`acme`, or the single tenant). */
   tenantId: string
   ownerId: string
   /**
@@ -166,6 +167,12 @@ export interface PluginSeedContext {
    */
   demoId: (key: string) => string
   log: (line: string) => void
+  /**
+   * Turn a registered feature flag on (default) or off for one organisation — `tenantId`, or the
+   * seeded tenant — as a per-tenant override, the same row `/admin/feature-flags` writes. An
+   * unknown key throws. How a plugin behind its own flag shows up after plain `pnpm seed`.
+   */
+  setFeature: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>
 }
 
 export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
@@ -369,6 +376,13 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
       status: 'active' | 'suspended',
       env: AppBindings
     ) => Promise<void>
+    /**
+     * Every `pnpm seed` (with or without `--demo`), after the core accounts and before any demo
+     * data: reference data the plugin needs to be usable at all (rooms, rates, a default
+     * catalogue) and the per-organisation flag that shows it (`ctx.setFeature`). Idempotent —
+     * fixed ids (`ctx.demoId`) + `onConflictDoNothing` — because the seed is re-run freely.
+     */
+    seed?: (db: Database, ctx: PluginSeedContext) => Promise<void>
     /** `pnpm seed --demo`, after the core block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }
@@ -430,6 +444,12 @@ export interface PluginHeaderItem {
   placement?: PluginHeaderPlacement
 }
 
+/** One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it. */
+export interface PluginSettingsTab extends TabConfig {
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+}
+
 /** A nav group, placed relative to a named core group ("Organisation" by default). */
 export interface PluginNavGroup {
   label?: string
@@ -442,8 +462,13 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
   shared: S
   routes: readonly PluginRoute[]
   nav?: readonly PluginNavGroup[]
-  /** Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. */
-  settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+  /**
+   * Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A
+   * tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host with
+   * `useNavGuard` — `{ feature: 'x' }` hides the tab in an organisation without the feature, which
+   * `can` alone cannot do (a plugin's grants hold in every organisation).
+   */
+  settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
   /**
    * Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches
    * from Home is one they were told about; a plugin that only adds a nav item is one they have to

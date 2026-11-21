@@ -230,22 +230,32 @@ describe('extractSeedKey', () => {
     '  tenant  Acme (acme)',
     '  user    owner@example.test       owner',
     '',
-    '  API key (shown ONCE — only its hash is stored):',
-    '    rocketflare_abcDEF123-_abcDEF123-_abcDEF123-_abcDEF1',
+    '  api key: rf_demo_xxxxxxxxxxxx',
+    '           local demo key for this machine only, safe to discard; shown ONCE (only its',
+    '           hash is stored). Keep it out of chats, tickets and screenshots all the same.',
     '',
     'Sign in locally (APP_ENV=development) without email:',
     '  curl -sS -X POST http://localhost:3001/auth/dev-login \\',
   ].join('\n')
 
-  it('captures the key printed after the one-time banner', () => {
-    expect(extractSeedKey(FRESH)).toBe('rocketflare_abcDEF123-_abcDEF123-_abcDEF123-_abcDEF1')
+  it('captures the key on the labelled line', () => {
+    expect(extractSeedKey(FRESH)).toBe('rf_demo_xxxxxxxxxxxx')
+  })
+
+  it("still reads an older seed's banner-then-key output", () => {
+    const older = [
+      '  API key (shown ONCE — only its hash is stored):',
+      '    myapp_demo_xxxxxxxxxxxx',
+    ].join('\n')
+    expect(extractSeedKey(older)).toBe('myapp_demo_xxxxxxxxxxxx')
   })
 
   it('is undefined for the "already exists" variant and for empty output', () => {
     const again = FRESH.replace(
-      / {2}API key \(shown ONCE[^\n]*\n[^\n]*\n/,
+      / {2}api key: [^\n]*\n[^\n]*\n[^\n]*\n/,
       '  API key rocketflare_abcD… already exists (revoke it and re-seed to mint a new one)\n'
     )
+    expect(again).not.toContain('api key:')
     expect(extractSeedKey(again)).toBeUndefined()
     expect(extractSeedKey('')).toBeUndefined()
   })
