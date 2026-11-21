@@ -43,6 +43,7 @@ import {
   renderAddPlan,
   setClaudeHooks,
 } from '../../../../scripts/lib/plugin-lib.mjs'
+import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..')
 /**
@@ -571,16 +572,15 @@ describe('pnpm plugin with claudeHooks and hostFiles, end to end', () => {
     // A commercial plugin carries its licence inside the folder it installs into. The host is
     // renamed to `acme`, so every other file is translated, but legal text must keep its
     // licensor's name: "Rocketflare Partner Licence" must not become "Acme Partner Licence".
-    // The kit's tokens are assembled from halves: in a renamed copy the rename rewrites this
-    // file too, and whole literals would already read as the copy's names.
-    const kit = ['rocket', 'flare']
+    // The kit's names come from `KIT`: the rename rewrites this file in a copy, but never
+    // `rename-lib.mjs`, so `KIT` still names what `plugin add` translates from.
     const host = makeHost()
-    const licence = `${kit.join('').replace(/^r/, 'R')} Partner Licence 1.0\n\nCopyright (c) 2026 ${kit.join('')}\n`
+    const licence = `${KIT.display} Partner Licence 1.0\n\nCopyright (c) 2026 ${KIT.slug}\n`
     const plugin = makeGuide({
       files: {
         ...GUIDE_FILES,
         'apps/web/src/plugins/gdemo/LICENSE': licence,
-        'apps/web/src/plugins/gdemo/terms.ts': `export const scope = '@${kit.join('')}/shared'\n`,
+        'apps/web/src/plugins/gdemo/terms.ts': `export const scope = '@${KIT.slug}/shared'\n`,
       },
     })
     const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
