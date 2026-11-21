@@ -32,8 +32,9 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > line each, a `✖` line plus a `fix:` hint on the first failure — and ends with the browser open at
 > `http://localhost:3000/login?as=owner@example.test`. macOS or Linux (Windows: WSL2). Re-runnable on
 > a half-done machine: it inspects before it acts and never overwrites a value you wrote. Flags:
-> `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
-> (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
+> `--offline` (no Cloudflare account: `DEV_WORKERS_AI=off` in `.dev.vars`, local `wrangler dev`
+> runs without Workers AI and no tracked file changes, §1.6), `--online` (turn it back on),
+> `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
 > §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`, `--db-url <url>` (an existing Postgres instead of Docker,
 > §1.4); `--check` is `pnpm preflight`. `--offline` never runs `wrangler whoami`, so step 8 makes
@@ -208,12 +209,14 @@ pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports;
 > **Cloudflare login and the AI binding.** `wrangler dev` runs everything locally EXCEPT the Workers AI
 > binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
 > on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account
-> is enough). To stay fully offline, comment out the `[ai]` block in BOTH tomls (the parity test keeps
-> them in sync): `pnpm bootstrap --offline` does exactly that, and `pnpm bootstrap --online` restores
-> it. Chat then needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY`
-> or report "not configured". After toggling, `pnpm typecheck` regenerates
-> `apps/web/worker-configuration.d.ts` without `AI` — restore the block (`--online`) before
-> committing so CI's typegen diff stays clean.
+> is enough). To stay fully offline, set `DEV_WORKERS_AI=off` in `apps/web/.dev.vars` (or the
+> shell): `pnpm bootstrap --offline` writes it and `pnpm bootstrap --online` sets it back to `on`.
+> Every local `wrangler dev` then runs from `apps/web/.wrangler.offline.toml`, a git-ignored copy of
+> `wrangler.toml` without `[ai]` that is regenerated at each launch; the tracked tomls and
+> `worker-configuration.d.ts` never change, so there is nothing to keep out of a commit. Chat then
+> needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY` or report
+> "not configured". Do not comment the `[ai]` block out for this (an older bootstrap did): any
+> `pnpm bootstrap` run puts it back in both tomls and moves the choice to `.dev.vars`.
 
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link

@@ -96,8 +96,9 @@ regenerate — that is a new table and a re-embed (`docs/ADAPTING.md` §3).
 ## The wrangler tomls
 
 `apps/web/wrangler.toml` and `wrangler.staging.toml` carry the adopter's real Hyperdrive and KV ids,
-a live `routes` line, their `APP_URL`, and an `[ai]` block whose comment state
-`pnpm bootstrap --offline` toggles. Never apply a textual patch to them.
+a live `routes` line and their `APP_URL`. Never apply a textual patch to them. (An `[ai]` block
+commented out is a copy from before the offline switch moved to `DEV_WORKERS_AI` in `.dev.vars`:
+`pnpm bootstrap --offline` restores it in both files — do that before upgrading, never port it.)
 
 Read `reference/apps/web/wrangler*.toml` and carry across **only** what code can observe:
 `compatibility_date`, `compatibility_flags`, `[limits]`, `[triggers].crons`, `[[migrations]]`,

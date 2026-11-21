@@ -324,10 +324,10 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # the an
 pnpm --filter @rocketflare/web exec wrangler workflows instances describe rocketflare-agent-run <runId>
 # Workers AI: `wrangler dev` proxies the `AI` binding to Cloudflare (a logged-in account; the calls are
 # real). Tests never touch it — `RecordingAi` answers deterministic vectors (.claude/rules/testing.md).
-# Offline switch: `pnpm bootstrap --offline` / `--online` (toggleAiBlock in scripts/lib/bootstrap-lib.mjs
-# comments the [ai] block out of BOTH tomls, or restores it, text-level — parity stays green because
-# the block is absent from both). `pnpm typecheck` then regenerates worker-configuration.d.ts without
-# `AI`: never commit that diff — run `--online` first.
+# Offline switch: `DEV_WORKERS_AI=off` in .dev.vars (`pnpm bootstrap --offline`; `--online` sets `on`).
+# Every local wrangler dev launch then runs from apps/web/.wrangler.offline.toml, a git-ignored copy of
+# wrangler.toml without [ai] (scripts/lib/dev-ai.mjs). The tracked tomls and worker-configuration.d.ts
+# never change for it — never comment the [ai] block out to go offline.
 ```
 
 `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.
@@ -341,7 +341,9 @@ different existing id refused unless `--force`) is the one writer of ids, `APP_U
 the `routes` line and the database driver (`DATABASE_DRIVER` plus the `[[hyperdrive]]` block, added
 under `postgres` and removed under `neon`, in BOTH tomls — `pnpm provision cloudflare <env> --driver
 neon|postgres`, D35) — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
-programmatic toml writer is `toggleAiBlock` above, same byte-preserving rule.) Worker secrets go in
+programmatic toml writer is `toggleAiBlock`, same byte-preserving rule: the bootstrap uses it only to
+restore an `[ai]` block an older release commented out, and `dev-ai.mjs` to write the git-ignored
+offline copy.) Worker secrets go in
 over stdin (`wrangler secret put NAME` reads stdin when it is not a TTY — never `--body`, never
 `secret bulk`), including a `neon` Worker's `DATABASE_URL` (the pooled Neon URI, put by `secrets`
 and `deploy`; `--rotate` re-puts it where `postgres` updates the Hyperdrive config); the vendor tokens are read from the environment first, then `apps/web/.provision.env`

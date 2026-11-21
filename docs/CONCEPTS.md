@@ -367,6 +367,16 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   one reader). `APP_URL` follows the UI port by hand — the Worker cannot read the shell — and
   outside production CORS/CSRF also allow the loopback twin of `APP_URL` and of the request's own
   loopback origin. `SETUP.md` 1.6.
+- **Local Workers AI switch**: `DEV_WORKERS_AI=off` (shell, then `.dev.vars`; `pnpm bootstrap
+  --offline` writes it, `--online` sets it `on`) makes every local `wrangler dev` launch —
+  `pnpm dev`, `pnpm dev:api`, `pnpm dev:tunnel` — run from `apps/web/.wrangler.offline.toml`, a
+  git-ignored copy of `wrangler.toml` with `[ai]` commented out, regenerated at each launch
+  (`scripts/lib/dev-ai.mjs`). The Worker then has no `AI` at all, so the resolver falls through
+  exactly as on a Worker deployed without the binding. The tracked tomls and
+  `worker-configuration.d.ts` are identical online or offline, so an offline copy stays clean for
+  commits and `kit:upgrade`. Not `wrangler dev --local`: that keeps an `env.AI` stub that throws
+  when called. Any bootstrap run restores an `[ai]` block an older release commented out of the
+  tomls, carrying the offline choice into `.dev.vars`. `SETUP.md` 1.6.
 
 - **Tunnel**: `pnpm dev:tunnel` runs cfld through `apps/web/scripts/cfld.mjs`. That script
   downloads cloudflared (pinned in `scripts/lib/cloudflared.mjs`) the first time there is no

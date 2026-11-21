@@ -65,7 +65,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 ## Commands (from the workspace root)
 
 ```bash
-pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online toggle [ai]) / read-only check
+pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online: DEV_WORKERS_AI in .dev.vars) / read-only check
 pnpm dev:db:up && pnpm db:migrate  # Postgres on the first free port from :5432 → DATABASE_URL; role → migrations → grants
 pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wrangler :3001 + vite :3000 (strict ports)
 pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database

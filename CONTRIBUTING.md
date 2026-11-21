@@ -56,7 +56,8 @@ The bootstrap is [`SETUP.md`](SETUP.md) Part 1 as one re-runnable command — ev
 `✔ n/9` verification line; the numbered steps there are what it runs, for doing it by hand or
 debugging one step (`pnpm preflight` is the read-only check). No external credentials are needed:
 magic links are logged; chat, agents and embeddings run on Workers AI through a logged-in Cloudflare
-account, or answer 503 with `bash scripts/bootstrap.sh --offline` until a key exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
+account, or answer 503 with `bash scripts/bootstrap.sh --offline` (`DEV_WORKERS_AI=off` in `.dev.vars`; no
+tracked file changes) until a key exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
 `pnpm --filter @rocketflare/cli test` need no database; the `api`, `api-isolated` and `ui` projects do.
 
 ### <a name="repository-structure"></a> Repository structure

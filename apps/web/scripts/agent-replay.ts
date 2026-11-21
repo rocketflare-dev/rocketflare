@@ -27,6 +27,8 @@ import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AGENT_KEYS, type AgentKey } from '@rocketflare/shared/ai/agents'
 import { count, desc, eq, or } from 'drizzle-orm'
+import { devWorkersAiMode } from '../../../scripts/lib/dev-ai.mjs'
+import { readDevVarsFile } from '../../../scripts/lib/dev-ports.mjs'
 import { type AnyAgentDefinition, getAgent, isAgentKey } from '../src/api/services/agents/registry'
 import {
   exportRunRecording,
@@ -99,12 +101,14 @@ async function loadCandidate(file: string, key: AgentKey): Promise<AnyAgentDefin
   return agent
 }
 
-/** Does the Worker have Workers AI? (`[ai]` uncommented — `pnpm bootstrap --offline` removes it.) */
+/**
+ * Does the local Worker have Workers AI? `[ai]` in the toml, and not switched off for local dev
+ * (`DEV_WORKERS_AI=off` in the shell or `.dev.vars` — `pnpm bootstrap --offline` writes it).
+ */
 function workerHasAi(): boolean {
   try {
-    return /^\[ai\]\s*$/m.test(
-      readFileSync(resolve(import.meta.dirname, '../wrangler.toml'), 'utf8')
-    )
+    const toml = readFileSync(resolve(import.meta.dirname, '../wrangler.toml'), 'utf8')
+    return /^\[ai\]\s*$/m.test(toml) && devWorkersAiMode(process.env, readDevVarsFile()) === 'on'
   } catch {
     return false
   }
