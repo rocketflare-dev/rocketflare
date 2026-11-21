@@ -34,6 +34,12 @@ if it changed — it is not a gate check, the compile against the fresh types is
 - Strict, ES2022, bundler resolution, `noEmit` in `tsconfig.base.json`; each package extends it
   (`apps/web/tsconfig.json` covers its `src`, `tests`, `scripts`; `apps/cli`, `packages/shared` theirs).
   `pnpm typecheck` runs all three
+- `tsc` is TypeScript 7 (the native compiler): no `baseUrl` (removed in 7), so `paths` entries are
+  `./`-relative. TypeScript 7 has no stable JavaScript API, so code that PARSES TypeScript — the
+  source-scanning guards in `tests/config/` (`driver-results`, `driver-conformance`,
+  `shared-imports`, `unscoped-allowlist`), `scripts/lib/surface.mjs` and `plugin-api-doc.mjs` —
+  imports `typescript6` (`npm:typescript@6.0.3`, a dev dependency at the root and in `apps/web`)
+  instead. Never import `typescript` for its API
 - Alias `@/*` → `apps/web/src/*` (web only). Shared contracts are imported as `@rocketflare/shared/<module>`
   (workspace link, resolved to `packages/shared/src/<module>.ts` — TS source, no build). `packages/shared`
   imports nothing from `apps/web` or `apps/cli` — it must bundle for the browser; `apps/cli` never

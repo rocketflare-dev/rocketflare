@@ -60,7 +60,6 @@ if (args.changed !== null) {
 
 /** The steps over a `--changed` plan; a step with no runs is reported as skipped. */
 function changedSteps(plan, base) {
-  const tsc = path.join(ROOT, 'node_modules/typescript/bin/tsc')
   return {
     lint: {
       display: `biome check on ${plan.lint.length} file(s)`,
@@ -80,23 +79,11 @@ function changedSteps(plan, base) {
           ]
         : [],
     },
-    // Incremental: the build info is kept per package, so an unchanged program is not re-checked.
-    // `wrangler types` is skipped — a toml change is a full-gate trigger.
     typecheck: {
-      display: `tsc --incremental in ${plan.typecheck.join(', ') || 'no package'}`,
+      display: `typecheck in ${plan.typecheck.join(', ') || 'no package'}`,
       runs: plan.typecheck.map(dir => ({
-        cwd: dir,
-        command: [
-          process.execPath,
-          '--max-old-space-size=4096',
-          tsc,
-          '--noEmit',
-          '-p',
-          'tsconfig.json',
-          '--incremental',
-          '--tsBuildInfoFile',
-          'node_modules/.cache/gate-changed/tsc.tsbuildinfo',
-        ],
+        cwd: '.',
+        command: ['pnpm', '--filter', `./${dir}`, 'typecheck'],
       })),
     },
     test: {

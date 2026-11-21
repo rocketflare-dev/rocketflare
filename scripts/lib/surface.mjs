@@ -36,12 +36,12 @@ import path from 'node:path'
 
 const require = createRequire(import.meta.url)
 
-/** @type {import('typescript') | null} */
+/** @type {import('typescript6') | null} */
 let cachedTs = null
 
 /** The TypeScript parser, loaded on first use. See the module header for why this is not a top import. */
 function typescript() {
-  if (!cachedTs) cachedTs = require('typescript')
+  if (!cachedTs) cachedTs = require('typescript6')
   return cachedTs
 }
 
