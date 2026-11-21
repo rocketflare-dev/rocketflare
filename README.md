@@ -16,7 +16,9 @@ credentials**, and the codebase is written to be driven by a coding agent: `CLAU
 contract → schema → route → page (→ command) loop, not a platform project.
 
 > See **[Rocketpod](https://github.com/rocketflare-dev/rocketpod)** for a version of Rocketflare that
-> runs without Cloudflare (Node in containers, Postgres for everything).
+> runs without Cloudflare (Node in containers, Postgres for everything). It often lags behind
+> Rocketflare in features ([`docs/DEPLOY.md`](docs/DEPLOY.md) "Running somewhere other than
+> Cloudflare").
 
 ## Getting started
 
@@ -24,6 +26,22 @@ The kit is a starting point, not a dependency: take a copy, cut it loose from th
 history, and make it your own — you will rename, delete and rewrite freely, and you never merge from
 here. Cut loose is not cut off: your copy keeps a `.rocketflare.json` saying where it came from, and
 `/rf-upgrade` ports later kit releases into it without recreating anything you deleted.
+
+**Starting a new app? Paste this into Claude Code** in the folder where you keep your projects:
+
+```
+I want to build an app with Rocketflare.
+Clone https://github.com/rocketflare-dev/rocketflare into a folder I name
+(default my-app), read its CLAUDE.md, then run the rf-start skill with me.
+Follow its steps in order, and don't settle anything about the app's
+design until it asks.
+```
+
+**`/rf-start`** detaches the clone, gets it running one prerequisite at a time, holds the design
+conversation with you (**`/rf-design`**: who it's for, how many organisations, roles and words, AI
+on or off, money, licence, the plugins that already do what you need, the stages, your brand), and
+renames it to your app. The design is written to `docs/design/` and opens as local pages in your
+colours.
 
 **Ask your coding agent.** Open the copy in Claude Code and type **`/rf-setup`** — it checks the
 toolchain, starts Postgres, migrates, seeds the demo workspace and leaves you signed in, showing one
@@ -45,7 +63,7 @@ curl -fsSL https://rocketflare.dev/install.sh | bash -s -- myapp   # clone → d
 
 ```bash
 git clone https://github.com/rocketflare-dev/rocketflare.git myapp && cd myapp
-rm -rf .git && git init && git add -A && git commit -m "Start from Rocketflare"   # your history starts here
+bash scripts/detach.sh                                                            # your history starts here
 git remote add origin git@github.com:<you>/myapp.git                              # your own repo, when ready
 
 bash scripts/bootstrap.sh          # checks Node 26 / pnpm 10 / Docker, generates the local secret, starts
@@ -125,7 +143,9 @@ you removed. [`CHANGELOG.md`](CHANGELOG.md) is what you would be catching up on.
 - **Evals and feedback** — `pnpm eval` runs vitest-evals suites against the real chat route and agent runtime in-process, with deterministic judges (tool trajectory, schema, contains, budget) and LLM judges (rubric, faithfulness to what was retrieved, reference answer) that go through the kit's own model resolver; runs are JSON with committed baselines and `--compare` regression checks, plus a local report UI. Thumbs on chat replies and run output feed `rocketflare evals promote`, which turns a bad real answer into a draft case. The `/rf-evals` skill drives all of it.
 
 ### Analytics
-An opt-in plugin, not part of the kit: `/rf-plugin add analytics` installs it.
+An opt-in plugin, not part of the kit: `/rf-plugin add analytics` installs it. It is one of several
+published plugins; `pnpm plugin list --available` lists them all, and https://rocketflare.dev/plugins
+is the page for browsing them.
 
 - **Semantic layer** — drizzle-cube mounted at `/cubejs-api` and `/mcp` behind the app's auth; every cube scopes its SQL to the current tenant, and a mandatory isolation test queries every cube as two tenants and asserts disjoint rows.
 - **Fact tables** — plain tables rebuilt per tenant in one transaction by the hourly cron, with a freshness endpoint and `rocketflare analytics check-facts` for ops.
@@ -160,7 +180,9 @@ rocketflare/          workspace root: package.json (scripts delegate via pnpm -r
 
 Everything runs from the root: `pnpm bootstrap` (= `bash scripts/bootstrap.sh` once Node and pnpm
 exist; `--offline` / `--online` switch local Workers AI through `.dev.vars`), `pnpm preflight` (the read-only check),
-`pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm web <script>` (any
+`pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm design:docs`
+(`docs/design/*.md` → HTML pages in your brand at `docs/design/html/`; `--open`, `--check`,
+`--contrast` and `--apply-brand` for a palette tried in `docs/design/brand.css`), `pnpm web <script>` (any
 `apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision tokens` (hidden prompts → `apps/web/.provision.env`)
 then `pnpm provision all` (the deploy orchestrator: Neon, Cloudflare, GitHub, secrets, Resend —
 `pnpm provision --help` lists the phases;

@@ -32,5 +32,6 @@ export type {
   PluginNavGroup,
   PluginRoute,
   PluginRouteTier,
+  PluginSettingsTab,
   UiPlugin,
 } from '../types'

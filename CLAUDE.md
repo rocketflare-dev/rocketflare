@@ -8,7 +8,10 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
+> **Starting a new app?** `/rf-start`: detach, setup, the design conversation (`/rf-design`, writes
+> `docs/design/`), then the rename. Settle nothing about the app's design before it asks.
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-start`, `/rf-design`, `/rf-setup`,
+> `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
 > `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs`, `/rf-mcp` and `/rf-plugin`
 > you may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
 > $35–200+; agree the mode and budget first, `docs/SECURITY-AUDIT.md`); **`/rf-provision` is
@@ -16,7 +19,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
-> plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
+> plan before `--apply`. `pnpm plugin list --available` lists what is published: check it before building. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
 > generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
 > `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the

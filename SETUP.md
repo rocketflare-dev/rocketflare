@@ -19,9 +19,26 @@ Legend: `[ready]` works out of the box · `[config]` needs your configuration
 
 **Fix missing prerequisites proactively rather than reporting them.** If Node is missing or too
 old, install 26 (`nvm install` reads `.nvmrc`, or `fnm use`, or the system package manager). If
-pnpm is missing, `corepack enable` (it reads `packageManager` from the root `package.json`). If
+pnpm is missing, `npm i -g pnpm@<the packageManager version>` from that Node (Node 26 ships no
+corepack; where one exists, `corepack enable` also works). If
 Docker is unavailable on macOS, `brew install colima docker && colima start`; on Linux install Docker
 Engine and add your user to the `docker` group. Confirm the tool works, then carry on.
+
+**Windows (WSL2) — before you start.** Three things stop a fresh Windows PC before the bootstrap
+can run, and `bash scripts/bootstrap.sh` names each one (`scripts/lib/prereqs.sh`):
+1. **A normal Ubuntu user.** A distro with only `root` is refused (correctly). In it:
+   `adduser <name> && usermod -aG sudo <name>`; then from Windows PowerShell
+   `wsl -d <distro> -u <name>` (`wsl --manage <distro> --set-default-user <name>` makes it the
+   default). Clone the kit into the Linux home (`~`), not under `/mnt/c`.
+2. **Docker Desktop's WSL integration.** Settings → Resources → WSL integration → turn on the
+   distro → Apply, then **quit Docker Desktop and start it again** — restarting the distro is not
+   enough. `docker version` inside the distro must answer.
+3. **Node 26 through a version manager.** The bootstrap installs Node only through nvm or fnm
+   that is already there: `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`,
+   open a new shell, `nvm install 26`.
+WSL appends Windows' PATH to the distro's, so `corepack`, `pnpm` or `node` may resolve to a
+Windows copy under `/mnt/c` (a CRLF script: `/bin/sh^M: bad interpreter`). The bootstrap ignores any
+of them on a Windows drive and installs pnpm with the active Node's own `npm`.
 
 ---
 
@@ -143,6 +160,7 @@ included, lands in your shell history.
 ### 1.4b Plugins `[ready]`
 ```bash
 pnpm plugin list                  # what is installed (id, version, repo, when)
+pnpm plugin list --available      # what could be: every published plugin, read live
 pnpm plugin check                 # audit them: exit 1 with one line per failure
 ```
 A **plugin** is a git repository copied into this app — never an npm package — that contributes
@@ -179,10 +197,18 @@ cron or `[vars]` key it declares is written into both tomls by `pnpm provision c
 ```bash
 pnpm seed             # idempotent: demo tenant, owner/admin/member users, one API key
 pnpm seed --demo      # the same, plus a populated workspace (what the bootstrap runs; or SEED_DEMO=1)
+pnpm seed --feature hotel                 # + a per-organisation override: on for the seeded tenant
+pnpm seed --feature hotel=off@other-org   # off for the tenant with that slug (repeatable)
 ```
 `pnpm seed` creates the tenant `Acme` (`acme`), `owner@` / `admin@` / `member@example.test`, a
 pending invitation for `invited@example.test`, the global admin `admin@rocketflare.local` and one API
-key. `--demo` additionally fills that workspace with a logistics company in use (the tenant is
+key. The accounts are `DEV_ACCOUNTS` in `apps/web/src/ui/lib/dev-accounts.ts` — the same list the
+login page's **Dev quick login** buttons read, so an app edits its accounts there once. The API key
+prints on a line labelled `api key:` and the invite link as a `local demo link`: both are values
+for this machine's database only, safe to discard. Each installed plugin's `hooks.seed` runs on
+every `pnpm seed` (its reference data, and the per-organisation flag that shows it); `--feature
+<key>[=on|off][@<tenant-slug>]` writes the same override `/admin/feature-flags` does, after the
+plugins and the demo, so it has the last word. `--demo` additionally fills that workspace with a logistics company in use (the tenant is
 renamed `Acme Logistics` in `multi` mode) — more members, two
 sibling tenants, two weeks of activity, conversations, an indexed knowledge base, finished agent
 runs (`summarize-text`, `research-topic`), an AI usage ledger and rebuilt fact tables — so every
@@ -190,7 +216,7 @@ page has something to show. Every demo row has a fixed id and is inserted `onCon
 re-running adds nothing; the chunk vectors are deterministic stand-ins (`embeddingModel:
 'seed:deterministic'`), so a seeded passage is found by the lexical half of the hybrid search, not
 the dense half. Local database only — it is a `tsx` script over `DATABASE_URL`.
-Verify: the output lists the seeded emails and prints the API key **once** (on the first run only;
+Verify: the output lists the seeded emails and prints the `api key:` line **once** (on the first run only;
 later runs say it already exists); with `--demo` it ends with a "Workspace `acme` now holds" table.
 `pnpm db:studio` shows the rows.
 
@@ -229,7 +255,7 @@ http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, 
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
-(`APP_ENV=development`). The page's shortcut acts only for the four seeded accounts, but the
+(`APP_ENV=development`). The page's shortcut acts only for the seeded `DEV_ACCOUNTS`, but the
 endpoint itself has no such list: in development, `POST /auth/dev-login` signs in ANY email
 address, with no password or link, and creates the user if it does not exist. It answers 404
 everywhere `APP_ENV` is not `development`.
@@ -669,14 +695,25 @@ turns a bad answer into a case. Everything else — suites, judges, baselines, C
 
 ### 2.7 Plugins `[ready]` (D31)
 
-Analytics is not part of the kit; it is the opt-in `analytics` PLUGIN (dashboards, cubes, the
-drizzle-cube API). `.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing
-and a fresh clone has no dashboards until you add it — `/rf-plugin add analytics`, or by hand:
+**What exists:** `pnpm plugin list --available` prints every published plugin — id, version,
+whether it is installed here, and its one-line description — read live from
+`rocketflare-dev/rocketflare-plugins` at its newest release tag (exit 3 if it cannot be reached;
+there is no cached list). When your git credentials can read
+`rocketflare-dev/rocketflare-commercial-plugins`, its plugins follow under a separate
+`Commercial plugins` heading with a `licence:` line: they are licensed separately. To browse rather
+than install, see https://rocketflare.dev/plugins. Check it before building a feature: the order is
+an existing plugin, else build it in the app, and write a plugin only for something meant to be
+installed in another app too.
+
+`.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing and a fresh clone
+has none — not even analytics (dashboards, cubes, the drizzle-cube API), which is an opt-in plugin
+like the rest. Add one with `/rf-plugin add <id>` (`/rf-plugin add` alone shows the list), or by
+hand — with no `@ref`, a repository is read at its newest release tag:
 
 ```bash
-pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git@3.8.2 \
+pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git \
   --subdir plugins/analytics                       # read the plan; re-run with --apply
-pnpm db:generate --name plugin-analytics-3.8.2 && pnpm db:migrate   # the host's migration
+pnpm db:generate --name plugin-analytics-<version> && pnpm db:migrate   # the host's migration
 ```
 
 Then run the plan's numbered steps (below). An app that wants it on every fresh clone lists it in

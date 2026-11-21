@@ -45,8 +45,16 @@ export const KIT = Object.freeze({
    * `rocketflare-plugin.json` is the ECOSYSTEM's filename, identical in every plugin repository.
    * Without these three, a copy renamed to `acme` looked for `.acme.json`, `.gitignore` stopped
    * ignoring the sidecar, and an app could never install any plugin at all.
+   *
+   * `rocketflare.dev/plugins` is the published plugin catalogue `pnpm plugin list --available`
+   * points at — upstream, like the org; renamed, it became a page on the app's own domain.
    */
-  preserved: ['.rocketflare.local.json', 'rocketflare-plugin.json', '.rocketflare.json'],
+  preserved: [
+    '.rocketflare.local.json',
+    'rocketflare.dev/plugins',
+    'rocketflare-plugin.json',
+    '.rocketflare.json',
+  ],
 })
 
 export const SLUG_RE = /^[a-z][a-z0-9-]*$/

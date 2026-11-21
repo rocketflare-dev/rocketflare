@@ -9,6 +9,7 @@ import {
   ShieldCheckIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/outline'
+import { roleLabel } from '@rocketflare/shared/tenants'
 import type { ComponentType } from 'react'
 import { Link } from 'react-router'
 import { uiPlugins } from '@/plugins/ui'
@@ -83,7 +84,7 @@ export default function Home() {
         badge={tenant && <RoleBadge role={tenant.role} />}
         description={
           user
-            ? `Signed in as ${user.name}${tenant ? ` · your role here is ${tenant.role}` : ''}${tenancyMode === 'single' ? '' : ' · switch organisations from the header'}`
+            ? `Signed in as ${user.name}${tenant ? ` · your role here is ${roleLabel(tenant.role)}` : ''}${tenancyMode === 'single' ? '' : ' · switch organisations from the header'}`
             : undefined
         }
       />

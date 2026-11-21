@@ -10,3 +10,11 @@ export const API_KEY_SESSION_PREFIX = 'api-key:'
 export function isApiKeySession(auth: Pick<AuthContext, 'session'>): boolean {
   return auth.session.id.startsWith(API_KEY_SESSION_PREFIX)
 }
+
+/**
+ * The id of the API key behind this request, or `null` for a cookie session (or any other
+ * credential). Only the id: the secret is never on the auth context to begin with.
+ */
+export function apiKeyIdOf(auth: Pick<AuthContext, 'session'>): string | null {
+  return isApiKeySession(auth) ? auth.session.id.slice(API_KEY_SESSION_PREFIX.length) : null
+}

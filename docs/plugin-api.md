@@ -284,7 +284,7 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean`
   `true` when this deployment ships the surface AND this organisation has it yet.
 - `interface HookCtx extends Pick<PluginContext, 'db'>`
-  A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seedDemo`.
+  A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seed`, `seedDemo`.
   - `tenant: Tenant`
   - `tenantId: string`
   - `userId: string \| null`
@@ -367,6 +367,8 @@ The server surface: the context family, and the types a plugin must be able to n
   Who is asking, flattened — the half of the auth context a plugin has any business reading.
   - `user: User`
   - `userId: string`
+  - `apiKeyId: string \| null`
+    The API key that authenticated this request (its `api_keys.id`), or `null` for a browser session. Never the secret. What a per-client limit or an audit line keys on: `userId` is…
   - `tenantId: string`
     The active organisation — the ONLY tenant id a query may filter by.
   - `role: MembershipRole \| null`
@@ -435,7 +437,9 @@ The server surface: the context family, and the types a plugin must be able to n
     Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
 - `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
-  Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+  Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given.
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
 - `interface PluginSignInInput`
   What a plugin's IdP proved about the person, handed to `signIn`.
 - `type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' \| 'maxTokens' > & { maxTokens?: number }`
@@ -542,11 +546,13 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface SearchKnowledgeInput`
 - `interface SearchKnowledgeResult`
 - `interface SeedCtx extends Pick<PluginContext, 'db'>`
-  `pnpm seed --demo`, after the core block.
+  `pnpm seed` (`hooks.seed`, every run) or `pnpm seed --demo` (`hooks.seedDemo`), after the core block.
   - `tenantId: string`
   - `ownerId: string`
   - `demoId: (key: string) => string`
   - `log: (line: string) => void`
+  - `setFeature?: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>`
+    A per-organisation override of a registered feature flag (on by default; `tenantId` defaults to the seeded tenant). Optional here so a plugin's own test can build a `SeedCtx`…
 - `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `requires?: PluginRequires`
@@ -594,7 +600,7 @@ The server surface: the context family, and the types a plugin must be able to n
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
     Rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
 - `class ServiceUnavailableError extends ApiError`
@@ -720,8 +726,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
   - `header?: readonly PluginHeaderItem[]`
@@ -807,14 +813,16 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
   - `tier?: PluginRouteTier`
     Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
 - `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
 - `interface QuickLink`
 - `interface TabConfig`
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
   - `header?: readonly PluginHeaderItem[]`
@@ -978,7 +986,9 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
 - `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
-  Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+  Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given.
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
 - `interface PublicSiteCsp`
   Developer-declared additions to the strict public CSP. Inline script stays banned.
 - `interface PublicSiteFormPath`
@@ -1031,15 +1041,15 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
     Rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
     Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
   - `header?: readonly PluginHeaderItem[]`
@@ -1567,6 +1577,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
 @/plugins/api :: member :: PluginAuth.user :: user: User
 @/plugins/api :: member :: PluginAuth.userId :: userId: string
+@/plugins/api :: member :: PluginAuth.apiKeyId :: apiKeyId: string | null
 @/plugins/api :: member :: PluginAuth.tenantId :: tenantId: string
 @/plugins/api :: member :: PluginAuth.role :: role: MembershipRole | null
 @/plugins/api :: member :: PluginAuth.isAdmin :: isAdmin: boolean
@@ -1607,6 +1618,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginRoute.tier :: tier?: PluginRouteTier
 @/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/api :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
 @/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal' > & { maxTokens?: number }
@@ -1675,6 +1687,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: SeedCtx.ownerId :: ownerId: string
 @/plugins/api :: member :: SeedCtx.demoId :: demoId: (key: string) => string
 @/plugins/api :: member :: SeedCtx.log :: log: (line: string) => void
+@/plugins/api :: member :: SeedCtx.setFeature :: setFeature?: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>
 @/plugins/api :: interface :: ServerPlugin :: interface ServerPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/api :: member :: ServerPlugin.shared :: shared: S
 @/plugins/api :: member :: ServerPlugin.requires :: requires?: PluginRequires
@@ -1700,7 +1713,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api :: class :: ServiceUnavailableError :: class ServiceUnavailableError extends ApiError
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
@@ -1782,7 +1795,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.shared :: shared: S
 @/plugins/api :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/api :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
 @/plugins/api :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
@@ -1826,13 +1839,14 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api/ui-wiring :: member :: PluginRoute.tier :: tier?: PluginRouteTier
 @/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
+@/plugins/api/ui-wiring :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
 @/plugins/api/ui-wiring :: interface :: QuickLink :: interface QuickLink
 @/plugins/api/ui-wiring :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui-wiring :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/api/ui-wiring :: member :: UiPlugin.shared :: shared: S
 @/plugins/api/ui-wiring :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
@@ -1924,6 +1938,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: PluginRoute.tier :: tier?: PluginRouteTier
 @/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/types :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/types :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
 @/plugins/types :: interface :: PublicSiteCsp :: interface PublicSiteCsp
 @/plugins/types :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
 @/plugins/types :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
@@ -1952,13 +1967,13 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/types :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/types :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/types :: member :: UiPlugin.shared :: shared: S
 @/plugins/types :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/types :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/types :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
 @/plugins/types :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>

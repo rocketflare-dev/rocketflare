@@ -6,6 +6,7 @@ import {
   BULK_INVITE_MAX,
   bulkInviteRequestSchema,
   inviteMemberRequestSchema,
+  roleLabel,
   type TenantRole,
   tenantRoleSchema,
 } from '@rocketflare/shared/tenants'
@@ -169,13 +170,13 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
           </label>
           <select
             id="invite-role"
-            className="select w-full capitalize"
+            className="select w-full"
             value={role}
             onChange={e => setRole(e.target.value as TenantRole)}
           >
             {roles.map(r => (
               <option key={r} value={r}>
-                {r}
+                {roleLabel(r)}
               </option>
             ))}
           </select>

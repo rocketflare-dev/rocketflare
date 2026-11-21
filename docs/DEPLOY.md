@@ -16,6 +16,18 @@ a compile check, and it is distributed through the repo (`pnpm cli …`, or `pnp
 build` and run `dist/cli.js`) or an internal registry — publishing the CLI is an app decision; the
 package is private by default (`"private": true`, like `packages/shared`, which must stay private).
 
+## Running somewhere other than Cloudflare
+
+Rocketflare is designed for Cloudflare, and there is no supported way to run it anywhere else.
+Realtime, queues, workflows, files, rate limits, cron and the default AI are Cloudflare services
+the code calls directly.
+
+If you need to run it elsewhere (your own servers, another cloud, an IT policy that rules out
+Cloudflare), use **[Rocketpod](https://github.com/rocketflare-dev/rocketpod)**, in the same GitHub
+organisation. It's the container fork: Node, Postgres for everything, S3, Docker Compose and Helm.
+It often lags behind Rocketflare in features, so check its changelog for what you need before
+choosing it.
+
 ## Topology
 
 ```

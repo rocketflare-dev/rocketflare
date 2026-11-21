@@ -23,9 +23,16 @@ SETUP.md Part 1 end to end and is **idempotent** — re-running after a fix is a
   verification line. Do not summarise a failure away — quote it.
 - The `plugins` step (6) installs code from other repositories into this one. **Name them before
   you run the bootstrap**, the same way you name the Postgres container — the kit's own
-  `defaultPlugins` is empty (analytics is opt-in: `/rf-plugin add analytics`), and an app's copy may
+  `defaultPlugins` is empty (every plugin is opt-in, analytics included — `pnpm plugin list
+  --available` lists what exists, https://rocketflare.dev/plugins to browse), and an app's copy may
   list its own. `--no-plugins` skips the step and gives a working app without them; `/rf-plugin` is the
   skill for installing one afterwards, where the plan is read before anything is written.
+
+- **Windows (WSL2).** A `✖` from the shell prerequisites (`running as root in WSL`, `docker not
+  found inside WSL`, `node … not found, and no fnm or nvm`) comes with the exact fix lines above
+  it: quote them and walk the person through them one at a time (`SETUP.md` "Windows (WSL2) —
+  before you start"). The Docker one needs Docker Desktop QUIT and restarted, which only they can
+  do; wait for `docker version` to answer before re-running.
 
 ## 0. Is this a copy, or the kit itself?
 
@@ -53,14 +60,18 @@ signature is identical for both:
   → say no. Deleting the history of the kit's own checkout is the one truly unrecoverable thing in
   this skill.
 
-On yes, record the commit first so the copy remembers where it came from — that id is the only way
-to diff against the kit later:
+On yes, run the kit's detach script. It records the kit commit in `.rocketflare.json` (the only
+way `pnpm kit:upgrade` can diff against the kit later) and in the first commit's message, then
+replaces the history:
 
 ```
-KIT_COMMIT=$(git rev-parse --short HEAD)
-rm -rf .git && git init -q && git add -A
-git commit -q -m "Start from Rocketflare" -m "Kit commit: $KIT_COMMIT"
+bash scripts/detach.sh
 ```
+
+It refuses a dirty tree, and an `origin` that isn't the kit's repository (`--force` for a mirror the
+user confirmed). If the script is missing, the copy was already renamed, and so was detached.
+Someone starting a new app from nothing is better served by `/rf-start`, which runs this, setup,
+the design and the rename in order.
 
 Then tell them to add their own `origin`. On no, or on any doubt, carry on to step 1 unchanged —
 setup works either way, and they can detach later by hand.
@@ -137,8 +148,10 @@ or stay offline?
    plugin the `plugins` step installed and the page it adds** (`pnpm plugin list` names them; say
    "no plugins installed" rather than nothing when there are none), and any note the script printed
    (an orphaned volume, `--offline`). Do not restate the ten ✔ lines
-   they just watched, and **do not echo the seeded API key** — it was printed once by the seed and
-   is in their scrollback; say that `pnpm cli login` mints another whenever they want one.
+   they just watched, and **do not echo the seeded API key** (the seed's `api key:` line, labelled
+   a local demo key) or the invite link — it was printed once by the seed and is in their
+   scrollback; say that both are throwaway values for this machine's database, and that
+   `pnpm cli login` mints another key whenever they want one.
 
 ## 4. Then ask what they want to do next — do not guess
 
@@ -151,7 +164,7 @@ open "want me to do anything else?". Offer these, in this order, with the first 
 | **Show me around** | Walk the seeded app: **Chat** (streams a reply — Workers AI needs the `wrangler login`, else a key), **Agents** (`summarize-text`, watch the timeline fill), **Knowledge → Search** (the demo documents are indexed), **Analytics** (the seeded Organisation Overview — only once the analytics plugin is added). Drive it with them; one screen at a time |
 | **Check it really works** | `pnpm test:db:up && pnpm test` (ephemeral Postgres on :5433) — which runs every installed plugin's own tests too (with analytics added, the two-tenant cube isolation one, then the SETUP.md 1.6 analytics check, `pnpm cli analytics check-facts`) |
 | **Make it mine** | `/rf-adapt <slug>` — the rename (package scope, Worker, database, CLI, theme). Ask for the slug if they have not said one |
-| **Add a capability** | Want dashboards? `/rf-plugin add analytics`. Otherwise `/rf-plugin` — install a plugin (a git repository copied in, with a plan you read first), or audit what is installed with `pnpm plugin list` / `pnpm plugin check` |
+| **Add a capability** | First see what already exists: `pnpm plugin list --available` (every published plugin — analytics, search, inbox, the user guide and more — with a one-line description each). `/rf-plugin add` with no id shows that list and installs the one they pick (a git repository copied in, with a plan you read first); `pnpm plugin list` / `pnpm plugin check` audit what is installed |
 | **Deploy it** | `/rf-provision` — **user-invoked only**: tell them to type it, and that it needs the three accounts (Cloudflare on Workers Paid, Neon, Resend) and `pnpm provision tokens` in their own terminal first |
 
 Leave the dev stack running unless they ask you to stop it (`pnpm dev:stop`). If they pick
@@ -171,7 +184,7 @@ prerequisite lines, then hands over to `scripts/bootstrap.mjs` for the ten steps
 | 4 | `database` | this checkout's Postgres container is up and healthy on the port it chose (5432 unless taken; the step says so and writes it to `.dev.vars`); the `Connected to … (<driver> driver)` part names the local driver. Under `neon` the Neon proxy container is up too (`local driver neon: Neon proxy at http://localhost:<port>`). With `--db-url` there is no container: the line reads `external <host>/<db> · Connected to …` once `db:check` answers |
 | 5 | `migrate` | role → migrations → grants applied; the pgvector extension is installed |
 | 6 | `plugins` | every plugin in `.rocketflare.json`'s `defaultPlugins` is installed, its tables generated and migrated. The kit declares none, so in the kit the line reads `no defaultPlugins declared — nothing to install` and there is no **Analytics** nav item — dashboards, cubes and fact tables are the opt-in `analytics` plugin (`docs/CONCEPTS.md` §8, `/rf-plugin add analytics`). Skipped with `--no-plugins` |
-| 7 | `seed` | demo tenant, owner/admin/member users, one API key (printed once), plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
+| 7 | `seed` | demo tenant, the `DEV_ACCOUNTS` users, one API key (printed once on a line labelled `api key:`, a local demo value), each plugin's `hooks.seed`, plus the populated demo workspace unless `--no-demo`. The seed prints `seeding <host>/<db>` first; with `--db-url` it runs with `SEED_ALLOW_REMOTE=1` |
 | 8 | `cloudflare` | wrangler is logged in (Workers AI available) — or `--offline` was chosen (`[ai] off (--offline; wrangler login not checked)`) |
 | 9 | `cli` | `pnpm cli whoami` with the seeded key — deferred/skipped with `--no-dev` (needs the server) |
 | 10 | `run` | `pnpm dev` started and `/api/health` answered — skipped with `--no-dev` (you do it in step 3) |

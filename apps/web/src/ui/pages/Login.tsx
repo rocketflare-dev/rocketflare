@@ -28,7 +28,7 @@
  * `?as=<email>` (what `pnpm bootstrap` opens) signs in through the same dev-login call once on
  * mount. Threat model: this is login-CSRF against a dev-only route that already 404s outside
  * `APP_ENV=development`; the page honours it ONLY when the server reports `devLogin` AND the email
- * is one of `DEV_ACCOUNTS` — an arbitrary address in the URL does nothing.
+ * is one of `DEV_ACCOUNTS` (`ui/lib/dev-accounts.ts`, the list `pnpm seed` creates) — an arbitrary address in the URL does nothing.
  */
 
 import { EnvelopeIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
@@ -49,6 +49,7 @@ import { FieldError, fieldErrorFor, SkeletonRows } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
 import { ApiError, api } from '@/ui/lib/api-client'
+import { DEV_ACCOUNTS, devAccountLabel, isDevAccount } from '@/ui/lib/dev-accounts'
 import { hardNavigate, safeReturnUrl } from '@/ui/lib/navigation'
 
 /** Friendly copy per `?error=` code the auth routes redirect with. */
@@ -66,14 +67,6 @@ export const LOGIN_ERROR_COPY: Record<string, string> = {
     'Your organisation requires single sign-on for this email address. Sign in with it to continue.',
 }
 const GENERIC_LOGIN_ERROR = 'Sign in failed. Please try again.'
-
-/** Seeded by `pnpm seed`; the server only honours these when `APP_ENV === 'development'`. */
-export const DEV_ACCOUNTS = [
-  { email: 'owner@example.test', label: 'Owner' },
-  { email: 'admin@example.test', label: 'Admin' },
-  { email: 'member@example.test', label: 'Member' },
-  { email: 'admin@rocketflare.local', label: 'Global admin' },
-] as const
 
 export default function Login() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -111,8 +104,7 @@ export default function Login() {
   // account on a server that offers dev login — see the header comment.
   const asEmail = searchParams.get('as')
   const autoLoginFired = useRef(false)
-  const autoLoginEmail =
-    methods?.devLogin && DEV_ACCOUNTS.some(account => account.email === asEmail) ? asEmail : null
+  const autoLoginEmail = methods?.devLogin && isDevAccount(asEmail) ? asEmail : null
   // biome-ignore lint/correctness/useExhaustiveDependencies: devLogin is recreated every render; the effect keys on the email only
   useEffect(() => {
     if (!autoLoginEmail || status === 'authenticated' || autoLoginFired.current) return
@@ -323,7 +315,7 @@ export default function Login() {
                 {busy === `dev:${account.email}` ? (
                   <span className="loading loading-spinner loading-xs" />
                 ) : (
-                  account.label
+                  devAccountLabel(account)
                 )}
               </button>
             ))}

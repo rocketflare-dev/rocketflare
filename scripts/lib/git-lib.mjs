@@ -76,29 +76,36 @@ export function mirrorDirFor(repo, root) {
  *
  * Throws with `exitCode: 3` when the remote cannot be reached and there is no usable cache, which
  * is the one failure a caller reports differently from a genuine error.
+ *
+ * `fresh` makes a failed fetch that same failure even when a cache exists: `plugin list --available`
+ * reports what the remote holds NOW, and a stale mirror read as if it were current is exactly the
+ * stale list it exists to replace. `quiet` keeps git's own output off the terminal and never lets it
+ * prompt for credentials — a repository the person cannot read is an answer there, not a prompt.
  */
 export function ensureMirror(
   repo,
   dir,
-  { fetch = true, cwd = process.cwd(), warn = () => {} } = {}
+  { fetch = true, fresh = false, quiet = false, cwd = process.cwd(), warn = () => {} } = {}
 ) {
+  const spawnOpts = quiet
+    ? { cwd, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }
+    : { cwd, stdio: 'inherit' }
   if (!existsSync(dir)) {
     if (!fetch) throw new Error(`no cached mirror at ${dir} and --no-fetch was given`)
     mkdirSync(path.dirname(dir), { recursive: true })
     const clone = spawnSync(
       'git',
       [...NO_COMMIT_GRAPH, 'clone', '--bare', '--filter=blob:none', '--no-tags', repo, dir],
-      {
-        cwd,
-        stdio: 'inherit',
-      }
+      spawnOpts
     )
     if (clone.status !== 0) {
       // A git too old for partial clone, or a server that refuses it.
       rmSync(dir, { recursive: true, force: true })
-      const plain = spawnSync('git', ['clone', '--bare', repo, dir], { cwd, stdio: 'inherit' })
-      if (plain.status !== 0)
+      const plain = spawnSync('git', ['clone', '--bare', repo, dir], spawnOpts)
+      if (plain.status !== 0) {
+        rmSync(dir, { recursive: true, force: true })
         throw Object.assign(new Error(`cannot clone ${repo}`), { exitCode: 3 })
+      }
     }
     makeGit(cwd).git([
       '-C',
@@ -115,8 +122,11 @@ export function ensureMirror(
   }
   disableCommitGraph(cwd, dir)
   if (fetch) {
-    const fetched = makeGit(cwd).quiet(['-C', dir, 'fetch', '--prune', '--tags', 'origin'])
-    if (!fetched.ok && !existsSync(path.join(dir, 'HEAD'))) {
+    const fetched = makeGit(cwd).quiet(
+      ['-C', dir, 'fetch', '--prune', '--tags', 'origin'],
+      quiet ? { env: spawnOpts.env } : {}
+    )
+    if (!fetched.ok && (fresh || !existsSync(path.join(dir, 'HEAD')))) {
       throw Object.assign(new Error(`cannot reach ${repo}`), { exitCode: 3 })
     }
     if (!fetched.ok) warn('note: fetch failed — using the cached mirror as it is')
@@ -162,6 +172,29 @@ export function mirror(dir) {
       const args = ['ls-tree', '-r', '--name-only', '-z', ref]
       if (prefix !== '') args.push('--', `${prefix.replace(/\/$/, '')}/`)
       return quiet(args).out.split(NUL).filter(Boolean)
+    },
+    /**
+     * Fetch the blobs of `paths` at `ref` in ONE round trip. A blobless mirror otherwise fetches
+     * each blob lazily on first read — one request per file, which made reading eighteen small
+     * files cost fifteen seconds. Best effort: on failure the reads still fetch lazily.
+     */
+    prefetch: (ref, paths) => {
+      if (paths.length === 0) return
+      const oids = quiet(['ls-tree', '-z', ref, '--', ...paths])
+        .out.split(NUL)
+        .filter(Boolean)
+        .map(line => line.split(/\s+/)[2])
+      if (oids.length === 0) return
+      quiet([
+        '-c',
+        'fetch.negotiationAlgorithm=noop',
+        'fetch',
+        'origin',
+        '--no-tags',
+        '--no-write-fetch-head',
+        '--filter=blob:none',
+        ...oids,
+      ])
     },
     /**
      * True when `ancestor` is reachable from `descendant` — i.e. the diff from `descendant` to

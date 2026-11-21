@@ -1,7 +1,7 @@
 ---
 name: rf-plugin
 description: Install, upgrade, remove and audit Rocketflare plugins — a plugin is a git repository copied into this app, not an npm package. Use when someone asks to add a plugin, pull in a plugin's later releases, uninstall one, check the installed set, or author a plugin of their own.
-argument-hint: "[add <id|repo|path> | upgrade <id> | remove <id> | list | check]"
+argument-hint: "[add [<id|repo|path>] | upgrade <id> | remove <id> | list [--available] | check]"
 ---
 
 # /rf-plugin — the capabilities this app installs
@@ -23,7 +23,12 @@ is as trusting as merging a pull request. Every command prints a plan and stops.
 plan to the user and get an explicit yes before you ever type `--apply`.** Never chain the two.
 
 `$ARGUMENTS` is the command and its target. With none, run step 4 (`list` + `check`) and ask what
-they want to do.
+they want to do. **`add` with no target** shows the catalogue (step 2) and asks which one — never
+"which repository?".
+
+**Before anyone writes a plugin:** check that none already does the job (`pnpm plugin list
+--available`). If none fits, the feature is usually built in the app itself; a plugin is for a
+capability meant to be installed in ANOTHER app too (step 6).
 
 ## 1. Check the ground
 
@@ -39,6 +44,23 @@ and is for people who know why they are using it) because the install should be 
 
 ## 2. `add` — read the plan, then ask
 
+**No id given?** Show what exists first:
+
+```
+pnpm plugin list --available
+```
+
+Expect one line per plugin under `Plugins (github.com/rocketflare-dev/rocketflare-plugins at
+<tag>)` — `id  version  [installed]  description` — read live from the repository at its newest
+release tag, and, only when the person's git credentials can read it, a second block headed
+`Commercial plugins (…)` with a `licence:` line. Say the commercial ones are licensed separately
+and point at that line; never offer one as if it were free. Exit 3 with one `error:` line means the
+repository could not be reached: say so and stop — never answer from memory or an old list.
+`--json` gives `{ catalogues: [{ repo, tag, commercial, licence, plugins: [{ id, version,
+description, subdir, installed, installedVersion }] }] }`. Ask (`AskUserQuestion`) which to
+install, offering the ones not yet installed, then continue below with that id. People browsing
+rather than installing can read https://rocketflare.dev/plugins.
+
 ```
 pnpm plugin add <repo|path>[@ref] [--subdir <dir>]
 ```
@@ -46,8 +68,10 @@ pnpm plugin add <repo|path>[@ref] [--subdir <dir>]
 **A bare id** (`/rf-plugin add analytics`) is a first-party plugin: repo
 `https://github.com/rocketflare-dev/rocketflare-plugins.git`, `--subdir plugins/<id>`, `@` its
 newest release tag (`git ls-remote --tags --refs <repo> | sed 's#.*/##' | sort -V | tail -1`) —
-never the default branch, which can be ahead of every release. An id with no `plugins/<id>` there
-is not first-party: ask for the repository.
+never the default branch, which can be ahead of every release. Leaving the `@ref` off does the
+same: a repository with no ref is read at its newest `X.Y.Z` tag. An id the catalogue lists under
+`Commercial plugins` is the same shape in `rocketflare-dev/rocketflare-commercial-plugins`. An id
+in neither is not published: ask for the repository.
 
 A **repo URL** is mirrored under `.upgrade/plugins/` (`--no-fetch` reuses the cache offline); a
 **local path** is read directly, which is the authoring loop (step 6). Expect a plan with these
@@ -128,6 +152,8 @@ Then commit: one commit, message `Install plugin <id>@<version>`, so the next up
 pnpm plugin list
 pnpm plugin check
 ```
+
+(`pnpm plugin list --available` is the other list — what could be installed, step 2.)
 
 `check` exits 1 with one `✖` line per failure, and **every line carries the edit**:
 `<file>:<line> <what is wrong> — <the exact change>`. Do what the line says; you should not need

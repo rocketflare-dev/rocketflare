@@ -28,13 +28,23 @@ export interface Mirror {
   listFiles(ref: string, prefix?: string): string[]
   /** True when `ancestor` is reachable from `descendant` (so a diff between them runs backwards). */
   isAncestor(ancestor: string, descendant: string): boolean
+  /** Fetch the blobs of `paths` at `ref` in one round trip (best effort). */
+  prefetch(ref: string, paths: readonly string[]): void
   latestTag(): string | null
 }
 export function mirror(dir: string): Mirror
 export function ensureMirror(
   repo: string,
   dir: string,
-  options?: { fetch?: boolean; cwd?: string; warn?: (line: string) => void }
+  options?: {
+    fetch?: boolean
+    /** A failed fetch is fatal (exit 3) even with a cached mirror. */
+    fresh?: boolean
+    /** git's output off the terminal, and never a credentials prompt. */
+    quiet?: boolean
+    cwd?: string
+    warn?: (line: string) => void
+  }
 ): Mirror
 
 /** Where a plugin repository's mirror lives, relative to the repository root. */
