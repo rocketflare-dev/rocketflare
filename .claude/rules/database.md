@@ -20,6 +20,10 @@ Hyperdrive), chosen per deployment. Never add `pg`. **No driver import outside
 
 - Every domain table has `tenantId` via `tenantRef()` (`apps/web/src/db/schema/_helpers.ts`) — `uuid`, FK to
   `tenants.id`, `onDelete: 'cascade'`, and it comes FIRST in every composite index
+- To make a row unable to point at another tenant's row, reference it with a composite FK
+  `(tenant_id, x_id) → t(tenant_id, id)` (the target needs `unique(tenant_id, id)`), and give it
+  `onDelete: 'cascade'` too: EVERY foreign key carrying `tenant_id` must cascade, so `tenant.purge`
+  reaches every row — a reference with no `onDelete` is NO ACTION, which `schema-invariants.test.ts` fails
 - Every query filters by `tenantId` from the auth context (`withAuthAndDb`), never from a client-
   supplied id. This predicate is what keeps the `(tenant_id, …)` indexes selective; it never goes away
 - Cross-tenant SQL lives in exactly two places: `apps/web/src/api/routes/admin.ts` (behind
