@@ -291,7 +291,7 @@ A model you leave out shows "—" on Settings → Usage rather than a wrong numb
    start one, `update AgentRun` plus the agent's `approvers` to answer a question. UI conventions:
    `apps/web/src/ui/CLAUDE.md`.
 6. Tests — `tests/api/agent-runs.test.ts` (enqueue → row + `stubs(env).workflow.created`) and a
-   `// @vitest-isolate` runtime test mocking `@/api/services/ai/resolve` with a `FakeChatClient` script
+   runtime test handing `overrideResolveChatForTests` a `FakeChatClient` script
    that answers the terminal tool (`.claude/rules/testing.md`). An agent that interrupts needs one
    more: park it, answer it, re-enter `execute` and assert there is still exactly ONE interrupt row
    and one copy of whatever it wrote — `tests/api/agent-research.test.ts` is the template, and

@@ -304,23 +304,53 @@ export async function resolveDecisions(
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
-  options: ResolveOptions & {
-    fallbackSystem: SystemPrompt
-    /**
-     * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
-     * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
-     */
-    fallbackPromptKey?: PromptKey
-    /**
-     * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
-     * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
-     * billed to the deployment, which need not match the agent's own chat model.
-     */
-    wrapChat?: (
-      client: ChatClient,
-      chat: { provider: AiProvider; billedToPlatform: boolean }
-    ) => ChatClient
-  }
+  options: ResolveDecisionsOptions
+): Promise<ResolvedDecisions> {
+  if (decisionsOverride) return decisionsOverride(tenantId, options)
+  return resolveDecisionsFromConfig(db, cfg, env, tenantId, options)
+}
+
+/** What a test answers `resolveDecisions` with (`overrideResolveDecisionsForTests`). */
+export type ResolveDecisionsOverride = (
+  tenantId: string,
+  options: ResolveDecisionsOptions
+) => Promise<ResolvedDecisions>
+
+let decisionsOverride: ResolveDecisionsOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveDecisions` call from `fn` until it is reset with `null` —
+ * the decisions twin of `overrideResolveChatForTests`, reset by `tests/api-setup.ts` after every
+ * file. Nothing in `src/` calls it.
+ */
+export function overrideResolveDecisionsForTests(fn: ResolveDecisionsOverride | null): void {
+  decisionsOverride = fn
+}
+
+export type ResolveDecisionsOptions = ResolveOptions & {
+  fallbackSystem: SystemPrompt
+  /**
+   * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
+   * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
+   */
+  fallbackPromptKey?: PromptKey
+  /**
+   * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
+   * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
+   * billed to the deployment, which need not match the agent's own chat model.
+   */
+  wrapChat?: (
+    client: ChatClient,
+    chat: { provider: AiProvider; billedToPlatform: boolean }
+  ) => ChatClient
+}
+
+async function resolveDecisionsFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveDecisionsOptions
 ): Promise<ResolvedDecisions> {
   const row = await findDefaultConfig(db, tenantId, 'decisions')
   if (row) {

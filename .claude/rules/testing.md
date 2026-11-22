@@ -208,7 +208,7 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
   `WebSocketRequestResponsePair` with `vi.stubGlobal`). Route tests for `/ws` stop at the forwarded request
 - Nudges: `stubs(env).hub.broadcasts` after `waitOnExecutionContext(ctx)` — assert the tenant id,
   the method and the event `type`; `realtime-nudges.test.ts` covers the kit's emitters
-- Workflow (`agent-run-workflow.test.ts`, `// @vitest-isolate` because it mocks the resolve seam):
+- Workflow (`agent-run-workflow.test.ts`, a fake chat client through `overrideResolveChatForTests`):
   the step bodies are plain exported functions in `services/agents/runtime.ts` — `claimStep(db, env,
   logger, params)`, `executeRun(db, cfg, env, logger, params)`, `finishStep(db, env, logger, params,
   outcome?)` — call them directly against Postgres, or instantiate `new AgentRunWorkflow(ctx, env)`
@@ -222,9 +222,11 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
   turns)` (`tests/helpers/ai.ts`, re-exported by `@testkit/integration`) scripts the `AI` binding
   stub's chat answers — `{ text?, toolCalls?: [{ name, input }], usage? }` per turn — and returns
   the recorded calls; `createTestEnv({ AI: undefined })` is the 503 (`plugin-stream-chat.test.ts`)
-- AI seam: `vi.mock('@/api/services/ai/resolve', async importOriginal => ({ ...(await importOriginal()),
-  resolveChat: vi.fn(async () => ({ client: new FakeChatClient(script), provider, model, source,
-  maxOutputTokens })) }))` in a `// @vitest-isolate` file (`chat.test.ts`, `agent-run-workflow.test.ts`).
+- AI seam: `overrideResolveChatForTests(async () => ({ client: new FakeChatClient(script), provider,
+  model, source, billedToPlatform: false, maxOutputTokens }))` at the top of the file, and
+  `overrideResolveDecisionsForTests` for `ctx.decide` (`chat.test.ts`, `agent-triage-research.test.ts`);
+  `tests/api-setup.ts` resets both after each file, so the file shares the `api` registry. Record
+  calls inside the override if the test asserts on them — never `vi.mock` the module.
   `FakeChatClient(script)` (`tests/helpers/ai.ts`) answers turns of `{ text, toolUses, usage, error }`,
   streams text in word-sized deltas and records every `calls[i]` (`ChatParams`) so a test can assert the
   system prompt, tools and `toolChoice` the route sent; `aguiFrames(res)` parses an AG-UI stream body

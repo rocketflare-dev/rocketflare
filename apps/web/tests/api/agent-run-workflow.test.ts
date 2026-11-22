@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the chat provider seam), so this file needs its own module registry.
 /**
  * `AgentRunWorkflow` driven end to end under Node: the class with a fake `step` (runs callbacks
  * inline, records names/config) and test bindings against the real database. claim → execute
@@ -34,6 +32,7 @@ import {
 } from '@/api/services/agents/runs'
 import { executeRun, finishStep } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { searchChunks } from '@/api/services/ai/retrieval'
 import type { ChatClient, ChatParams } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
@@ -50,20 +49,15 @@ import { createFakeWorkflowStep, type FakeWorkflowStepOptions } from '../mocks/c
 
 const state: { client: ChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible',
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible',
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 
@@ -132,7 +126,7 @@ const originalAgent = AGENTS['summarize-text']
 /**
  * Swap `summarize-text` for an agent written for this test. The built-in agents do not interrupt
  * until phase 8 and the registry is keyed by `AgentKey`, so there is no third key to borrow; the
- * swap is undone after every test and the file is `@vitest-isolate` for it.
+ * swap is undone after every test, so no later file sharing the registry sees it.
  */
 function installAgent(run: (ctx: AgentContext) => Promise<unknown>): void {
   AGENTS['summarize-text'] = {

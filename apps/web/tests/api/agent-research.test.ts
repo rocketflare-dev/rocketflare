@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the chat provider seam), so this file needs its own module registry.
 /**
  * `research-topic` — the agentic agent, driven through the real runtime against Postgres
  * with a `FakeChatClient` scripting the turns and a really-ingested document behind
@@ -30,6 +28,7 @@ import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { parseToolLoopCheckpoint } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -41,20 +40,15 @@ import { createTestEnv, type TestEnv } from '../mocks/bindings'
 
 const state: { client: ChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible' as const,
-        model: 'fake-model',
-        source: 'tenant' as const,
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible' as const,
+    model: 'fake-model',
+    source: 'tenant' as const,
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 
