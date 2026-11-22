@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.44.0 — 2026-11-22
+
+`kit:upgrade` runs the target release's upgrader and 3-way merges stale patches, `pnpm test` reads its ports from the compose file, plugin upgrades stop duplicating core edits, and plugins gain Home cards, framing and larger upload caps.
+[Porting note](docs/upgrades/0.44.0.md).
+
 ## 0.43.0 — 2026-11-22
 
 `pnpm gate --changed` gates only what a branch changed, the full gate is faster (TypeScript 7, shared test registries), and a copy no longer runs the kit's tooling tests.
