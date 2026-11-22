@@ -27,6 +27,18 @@ export function isMarkedIsolated(source: string): boolean {
   return firstLine === ISOLATE_MARKER
 }
 
+/**
+ * The `api-fixtures` project (`tests/api-fixtures-setup.ts`): a shared registry whose app has the
+ * fixture agents (`tests/helpers/fixture-agents.ts`) installed in the plugin barrels. A file that
+ * runs the fixture agents carries this on its FIRST line instead of mocking the barrels.
+ */
+export const FIXTURE_AGENTS_MARKER = '// @vitest-fixture-agents'
+
+export function isMarkedFixtureAgents(source: string): boolean {
+  const firstLine = source.split('\n', 1)[0]?.trim() ?? ''
+  return firstLine === FIXTURE_AGENTS_MARKER
+}
+
 /** Heuristic used only by the contract test to flag files that probably need the marker. */
 export function looksLikeItNeedsIsolation(source: string): boolean {
   return /\bvi\.(mock|doMock|resetModules)\b/.test(source)

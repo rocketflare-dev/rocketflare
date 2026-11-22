@@ -1,5 +1,4 @@
-// @vitest-isolate
-// Mocks the provider seam, the tool builder and the plugin barrels, so this file needs its own module registry.
+// @vitest-fixture-agents
 /**
  * `ToolCtx.requesterUrls` is the URLs the PERSON wrote: in chat, their own turns; in an agent run,
  * the input they submitted through the API. A URL that arrives any other way — in the model's own
@@ -8,16 +7,18 @@
  */
 import { conversationSchema } from '@rocketflare/shared/ai/chat'
 import { eq } from 'drizzle-orm'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { AGENTS, type AnyAgentDefinition } from '@/api/services/agents/registry'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import type { AgentToolContext } from '@/api/services/agents/tools'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
 import { agentRuns } from '@/db/schema'
 import { agentRunStarter } from '@/plugins/api/agent-runs'
+import type { AnyServerPlugin } from '@/plugins/server'
 import { FakeChatClient } from '../../helpers/ai'
 import {
   createTestSession,
@@ -27,6 +28,7 @@ import {
 import { setupTestDatabase } from '../../helpers/db'
 import { FIXTURE_AGENT } from '../../helpers/fixture-agents'
 import { json, request } from '../../helpers/request'
+import { withServerPlugins } from '../../helpers/server-plugins'
 import { createTestEnv, type TestEnv } from '../../mocks/bindings'
 
 const state: { client: FakeChatClient | null; built: AgentToolContext[] } = {
@@ -34,39 +36,27 @@ const state: { client: FakeChatClient | null; built: AgentToolContext[] } = {
   built: [],
 }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible',
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-        billedToPlatform: false,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible',
+    model: 'fake-model',
+    source: 'tenant',
+    maxOutputTokens: 2048,
+    billedToPlatform: false,
   }
 })
-vi.mock('@/api/services/agents/tools', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/agents/tools')>()
-  return {
-    ...actual,
-    toolsFor: vi.fn(async (_surface: string, ctx: AgentToolContext) => {
+// Records the context every tool is built from — the one a plugin's web-fetching tool would get.
+withServerPlugins([
+  {
+    shared: { id: 'requester-urls-fixture', label: 'Requester URLs' },
+    tools: (ctx: AgentToolContext) => {
       state.built.push(ctx)
       return []
-    }),
-  }
-})
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
+    },
+  },
+] as unknown as AnyServerPlugin[])
 
 const db = setupTestDatabase()
 const originalAgent = AGENTS[FIXTURE_AGENT]

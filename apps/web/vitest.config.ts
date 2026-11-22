@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 import { defaultClientConditions } from 'vite'
 import { defineConfig } from 'vitest/config'
 import {
+  isMarkedFixtureAgents,
   isMarkedIsolated,
   apiTestFiles as listApiTestFiles,
   testDirs,
@@ -81,10 +82,16 @@ const KIT_ONLY_DIR = path.resolve(import.meta.dirname, './tests/kit-only')
  * `testDirs` lists the kit's directory and every plugin's, the same list the isolation contract
  * test walks, because the `// @vitest-isolate` marker decides which api project a file joins.
  */
-function apiTestFiles(isolated: boolean): string[] {
+function apiTestFiles(project: 'api' | 'api-isolated' | 'api-fixtures'): string[] {
+  const projectOf = (source: string) =>
+    isMarkedIsolated(source)
+      ? 'api-isolated'
+      : isMarkedFixtureAgents(source)
+        ? 'api-fixtures'
+        : 'api'
   return testDirs(import.meta.dirname, 'api').flatMap(dir =>
     listApiTestFiles(dir.abs)
-      .filter(f => isMarkedIsolated(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
+      .filter(f => projectOf(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === project)
       .map(f => `${dir.rel}/${f}`)
   )
 }
@@ -167,7 +174,7 @@ export default defineConfig({
           environment: 'node',
           globalSetup: ['./tests/setup.ts'],
           setupFiles: ['./tests/api-setup.ts'],
-          include: apiTestFiles(false),
+          include: apiTestFiles('api'),
         },
         resolve: { alias },
       },
@@ -179,7 +186,21 @@ export default defineConfig({
           environment: 'node',
           globalSetup: ['./tests/setup.ts'],
           setupFiles: ['./tests/api-setup.ts'],
-          include: apiTestFiles(true),
+          include: apiTestFiles('api-isolated'),
+        },
+        resolve: { alias },
+      },
+      {
+        // Files marked `// @vitest-fixture-agents`: a shared registry, like `api`, in which the
+        // fixture agents are installed once per worker before the app is first imported.
+        extends: true,
+        test: {
+          name: 'api-fixtures',
+          isolate: false,
+          environment: 'node',
+          globalSetup: ['./tests/setup.ts'],
+          setupFiles: ['./tests/api-fixtures-setup.ts', './tests/api-setup.ts'],
+          include: apiTestFiles('api-fixtures'),
         },
         resolve: { alias },
       },

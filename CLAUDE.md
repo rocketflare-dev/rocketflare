@@ -58,7 +58,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   `:15`-cron fact tables, dashboards
 - **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, esbuild → `dist/cli.js` (bin `rocketflare`)
-- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `ui-isolated` · `config` · `config-isolated` · `kit-only` (the kit's own
+- **Tests**: vitest projects `api` · `api-isolated` · `api-fixtures` · `driver` · `ui` · `ui-isolated` · `config` · `config-isolated` · `kit-only` (the kit's own
   tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; the
   suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
   local proxy); cli; the eval kit's unit tests (`apps/evals/tests`). Evals themselves are

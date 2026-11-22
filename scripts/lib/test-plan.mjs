@@ -86,7 +86,7 @@ function driverEnv(target, driver) {
  * `apps/web/vitest.config.ts`'s business, and no script names a project.
  */
 export const SUITES = {
-  api: ['api', 'api-isolated'],
+  api: ['api', 'api-isolated', 'api-fixtures'],
   ui: ['ui', 'ui-isolated'],
   config: ['config', 'config-isolated'],
   driver: ['driver'],
@@ -123,6 +123,7 @@ export function planTests(env, tree) {
   // never names the project and there is nothing to unwire.
   const isolated = [
     'api-isolated',
+    'api-fixtures',
     'driver',
     'ui',
     'ui-isolated',
@@ -217,7 +218,7 @@ export function planSuites(env, { suites, files, kitOnly }) {
 }
 
 /** The projects that open the test database (`tests/setup.ts` is their global setup). */
-const DATABASE_PROJECTS = ['api', 'api-isolated', 'driver']
+const DATABASE_PROJECTS = ['api', 'api-isolated', 'api-fixtures', 'driver']
 
 /**
  * `pnpm test --changed`: the same shape as `planTests`, over the files `selectTests` chose

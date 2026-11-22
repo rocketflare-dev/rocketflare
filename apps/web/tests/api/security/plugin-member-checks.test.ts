@@ -1,21 +1,20 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
  * What a plugin learns about the person behind a tool call or a callback: the CASL grant they hold
  * now, not the row-visibility flag and not what they held when a token was minted.
+ *
+ * The plugin is a fixture (`withServerPlugins`), not the example one an app may delete: its grants
+ * make `support` read-only, as a finance or integration plugin's do, and its tool builder records
+ * the `can` it is handed.
  */
-import {
-  EXAMPLE_FEATURE_ID,
-  EXAMPLE_NOTE_SUBJECT,
-} from '@rocketflare/shared/plugins/example-feature/index'
 import { and, eq } from 'drizzle-orm'
-import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { accessScopeForUser } from '@/api/services/access'
 import { buildAgentTools } from '@/api/services/agents/tools'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
 import { tenants, tenantUsers, users } from '@/db/schema'
 import { memberCan, toolCtx } from '@/plugins/api'
-import { serverPlugins } from '@/plugins/server'
+import type { AnyServerPlugin } from '@/plugins/server'
 import { FakeChatClient } from '../../helpers/ai'
 import {
   createTestSession,
@@ -27,27 +26,42 @@ import {
 } from '../../helpers/auth'
 import { setupTestDatabase } from '../../helpers/db'
 import { json, request } from '../../helpers/request'
+import { withServerPlugins } from '../../helpers/server-plugins'
 import { createTestEnv, type TestEnv } from '../../mocks/bindings'
 
-const SUBJECT = EXAMPLE_NOTE_SUBJECT as never
+const FIXTURE_SUBJECT = 'MemberChecksFixtureNote'
+const SUBJECT = FIXTURE_SUBJECT as never
 
 const seen: { can: ((a: never, s: never) => boolean) | null } = { can: null }
+const state: { client: FakeChatClient | null } = { client: null }
 
-const state = vi.hoisted(() => ({ client: null as unknown }))
+withServerPlugins([
+  {
+    shared: { id: 'member-checks-fixture', label: 'Member checks' },
+    grants: {
+      owner: (can: (a: string, s: string) => void) => can('manage', FIXTURE_SUBJECT),
+      admin: (can: (a: string, s: string) => void) => can('manage', FIXTURE_SUBJECT),
+      support: (can: (a: string, s: string) => void) => can('read', FIXTURE_SUBJECT),
+      member: (can: (a: string, s: string) => void) => {
+        can('read', FIXTURE_SUBJECT)
+        can('create', FIXTURE_SUBJECT)
+      },
+    },
+    tools: (raw: unknown) => {
+      seen.can = (raw as { can?: never }).can ?? null
+      return []
+    },
+  },
+] as unknown as AnyServerPlugin[])
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  return {
-    ...actual,
-    resolveChat: vi.fn(async () => ({
-      client: state.client,
-      provider: 'anthropic_compatible',
-      model: 'fake-model',
-      source: 'tenant',
-      maxOutputTokens: 2048,
-    })),
-  }
-})
+overrideResolveChatForTests(async () => ({
+  client: state.client as FakeChatClient,
+  provider: 'anthropic_compatible',
+  model: 'fake-model',
+  source: 'tenant',
+  billedToPlatform: false,
+  maxOutputTokens: 2048,
+}))
 
 const db = setupTestDatabase()
 const env: TestEnv = createTestEnv()
@@ -55,27 +69,8 @@ const config = loadConfig(env)
 const logger = { debug() {}, info() {}, warn() {}, error() {} }
 const ctx = { db, config, logger, env } as never
 
-const examplePlugin = serverPlugins.find(p => p.shared.id === EXAMPLE_FEATURE_ID)
-if (!examplePlugin) throw new Error('example-feature is not installed')
-const originalTools = examplePlugin.tools
-const originalGrants = examplePlugin.grants
-// A plugin whose grants make `support` read-only, as a finance or integration plugin's do.
-examplePlugin.grants = {
-  ...originalGrants,
-  support: can => can('read', EXAMPLE_NOTE_SUBJECT),
-}
-
-afterAll(() => {
-  examplePlugin.tools = originalTools
-  examplePlugin.grants = originalGrants
-})
-
 beforeEach(() => {
   seen.can = null
-  examplePlugin.tools = raw => {
-    seen.can = (raw as { can?: never }).can ?? null
-    return []
-  }
   state.client = new FakeChatClient([{ text: 'hello' }], 'anthropic_compatible')
 })
 

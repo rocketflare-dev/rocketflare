@@ -3,10 +3,10 @@
  * roles (phase=role) → migrations → roles (phase=grants) → clean → seed one owner/tenant/API
  * key/session, exposed to tests as `inject('seed')` (`TestSeed` in helpers/auth.ts).
  *
- * Two projects (`api`, `api-isolated`) name this file and vitest calls a globalSetup ONCE PER
+ * Three projects (`api`, `api-isolated`, `api-fixtures`) name this file, and vitest runs it ONCE PER
  * PROJECT, re-importing the module, so a module-level flag would not dedupe. The memo hangs
- * off `globalThis` — the only thing the two module instances share — and holds the seed so the
- * second project `provide()`s the same rows instead of inserting duplicates.
+ * off `globalThis` — the only thing the module instances share — and holds the seed so a
+ * later project `provide()`s the same rows instead of inserting duplicates.
  */
 import { applyDbRoles } from '../scripts/db-roles'
 import { seedTestFixtures, type TestSeed } from './helpers/auth'

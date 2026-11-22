@@ -177,7 +177,9 @@
         ".claude/skills/rf-agent-replay/**",
         "packages/shared/src/ai/agents.ts",
         "apps/web/src/plugins/api/agent-runs.ts",
-        "apps/web/tests/api/plugin-agent-runs.test.ts"
+        "apps/web/tests/api/plugin-agent-runs.test.ts",
+        "apps/web/tests/api/agent-run-routes.test.ts",
+        "apps/web/tests/api/agent-run-runtime.test.ts"
       ],
       "registries": [
         "apps/web/src/worker.ts",

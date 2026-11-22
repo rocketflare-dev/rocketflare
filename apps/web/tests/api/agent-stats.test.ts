@@ -1,5 +1,4 @@
-// @vitest-isolate
-// Mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * `GET /api/agents/stats`: one row per registered agent, scoped like the runs list (a member's own
  * runs, an admin's every run), windowed by `?days=`, with tokens and cost from the runs' own
@@ -7,7 +6,7 @@
  */
 import { agentStatsResponseSchema } from '@rocketflare/shared/ai/agents'
 import { MICROCENTS_PER_USD } from '@rocketflare/shared/ai/pricing'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { agentRuns, aiUsage } from '@/db/schema'
 import {
   createTestSession,
@@ -20,13 +19,6 @@ import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv } from '../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000)

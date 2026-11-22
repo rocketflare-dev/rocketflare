@@ -11,7 +11,7 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), eight projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`apps/web`), nine projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` + `api-fixtures` (Node, **real Postgres** on 5433),
 `driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
 `openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
 `ui` + `ui-isolated` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
@@ -157,6 +157,12 @@ the reason goes on line 2:
 // @vitest-isolate
 // Mocks the plugin barrels, so this file needs its own module registry.
 ```
+
+A file that runs the fixture agents (`tests/helpers/fixture-agents.ts`) carries
+`// @vitest-fixture-agents` on its first line instead, and mocks nothing: it runs in
+`api-fixtures`, a shared registry whose setup (`tests/api-fixtures-setup.ts`) installs the fixture
+plugin into the real barrels once per worker, before the app is first imported — the agent-key
+enum is `z.enum(AGENT_KEYS)`, frozen at import, so the fixture must be there first.
 
 Spies and stubs need no marker. Vitest restores every `vi.spyOn` spy (on `globalThis.fetch`
 included) after each file even in a shared registry, and the per-file setups (`tests/api-setup.ts`,
@@ -428,10 +434,11 @@ the whole rule, and it is why neither half duplicates the other.
 - **A core test must not borrow an EXAMPLE agent either** (`summarize-text`, `research-topic`,
   `triage-research` — `kind: "example"` surfaces an app deletes). It uses the fixture agents in
   `tests/helpers/fixture-agents.ts` (`FIXTURE_AGENT` takes `{ text }`, `FIXTURE_AGENT_B`
-  `{ topic }`), registered through the plugin seam by mocking `@rocketflare/shared/plugins` and
-  `@/plugins/server` (`withFixtureShared` / `withFixtureServer`) — so an api file doing it is
-  `// @vitest-isolate`; a UI or CLI test needs only the shared barrel, and a test storing a key as
-  an opaque string mocks nothing. A test of an example's own behaviour is listed in that surface's
+  `{ topic }`), registered through the plugin seam: an api file starts with
+  `// @vitest-fixture-agents` and runs in `api-fixtures`, whose setup puts them in the barrels; a
+  UI test mocks the shared barrel (`withFixtureShared`), and a test storing a key as an opaque
+  string needs neither. The core route and runtime tests (`agent-run-routes`, `agent-run-runtime`)
+  run on the fixture agent; the example's own files test only what is the example's. A test of an example's own behaviour is listed in that surface's
   `paths`; `tests/kit-only/example-surfaces.test.ts` fails a test outside the surface that names
   the key or imports one of its files. `tests/api-setup.ts` imports `@/db/client` inside its hook
   for this reason: a static import there evaluates the barrels before the test's `vi.mock` exists

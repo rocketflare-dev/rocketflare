@@ -1,5 +1,4 @@
-// @vitest-isolate
-// Mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * What a run's budget measures. The token budget counts every token the provider processed,
  * prompt-cache reads and writes included. A cost cap can only hold a model it can price, so an
@@ -36,13 +35,6 @@ import { setupTestDatabase } from '../../helpers/db'
 import { FIXTURE_AGENT } from '../../helpers/fixture-agents'
 import { request } from '../../helpers/request'
 import { createTestEnv, type TestEnv } from '../../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 function fakeLogger() {
