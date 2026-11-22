@@ -4,7 +4,7 @@
     {
       "id": "analytics",
       "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "3.13.2",
+      "ref": "3.13.3",
       "subdir": "plugins/analytics"
     }
   ]

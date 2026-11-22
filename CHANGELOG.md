@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.43.0 — 2026-11-22
+
+`pnpm gate --changed` gates only what a branch changed, the full gate is faster (TypeScript 7, shared test registries), and a copy no longer runs the kit's tooling tests.
+[Porting note](docs/upgrades/0.43.0.md).
+
 ## 0.42.0 — 2026-11-21
 
 Field-report fixes: new apps start with `/rf-start` and a design conversation (`/rf-design`, rendered by `pnpm design:docs`), `pnpm plugin list --available` shows what already exists, setup handles WSL, and plugins gain four missing seams.
