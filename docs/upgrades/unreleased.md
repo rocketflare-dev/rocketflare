@@ -4,7 +4,7 @@ previous: 0.44.0
 date: null
 breaking: false
 migrations: []
-areas: []
+areas: [config]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -12,20 +12,19 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
-`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
+`tests/config/kit-manifest.test.ts` passes in a kit checkout without `apps/web/tests/kit-only/`, which is how plugin CI gates a plugin, so plugin repositories pass against the newest kit again.
+
+- The "kit-only tests are run by the kit's gate" case expects `kit-only` in the `pnpm test` plan only while the directory exists. Plugin CI `git rm`s it to gate a plugin as a copy would, and since 0.43.0 every plugin failed there.
+- `scripts/release.mjs` (kit repository only) prints `git add <note> && git commit -am …`, because `-a` stages tracked files only and the new porting note was left out of the release commit.
 
 ## How to apply
 
-_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
-outside its own step._
+1. Run `pnpm kit:upgrade --to 0.44.1 --apply`; the changed test file is the kit's and updates with it.
 
 ## Conflicts to expect
 
-_One line each: `path → what changed → what to do`. Or exactly `None.`_
+None.
 
 ## Verify
 
-_Numbered checkable commands and assertions only._
+1. `pnpm test config apps/web/tests/config/kit-manifest.test.ts` passes.
