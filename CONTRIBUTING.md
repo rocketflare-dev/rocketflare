@@ -169,7 +169,8 @@ adds one step, because rocketflare.dev keeps its own copy of the release list.
    warns that the changes touch auth, tenancy/RLS, the identity or plugin seams or AI tool binding,
    run a diff-scoped `standard` audit first (`/rf-security standard <previous>..HEAD`,
    [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) "Cadence"); it is a warning, never a failure.
-2. `git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
+2. `git add docs/upgrades/X.Y.Z.md && git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
+   The `git add` matters: `-a` stages only tracked files, and the porting note is a new one.
    The tag has to be annotated because tags are signed. The kit's `deploy.yml` skips deployment,
    since its tomls hold placeholders, and `notify-plugins.yml` pings the plugin repositories.
 3. **Update the site's changelog**, which never happens automatically. `rocketflare-www` stores
