@@ -10,6 +10,7 @@ import { exposedOverMcp, mayConnect } from '@/api/services/mcp/settings'
 import { mcpResourceMetadataUrl, mcpResourceUrl } from '@/api/services/mcp/tokens'
 import { assertNoReservedPluginPaths, isReservedPath } from '@/api/utils/routes/api-prefixes'
 import { loadConfig } from '@/config'
+import { KIT_NAME } from '../helpers/kit-name'
 import { createTestEnv } from '../mocks/bindings'
 
 const cfg = loadConfig(createTestEnv({ APP_NAME: 'Acme Tools' } as never))
@@ -117,7 +118,7 @@ describe('what a client is told', () => {
     ].join(' ')
     expect(text).toContain('Acme Tools')
     expect(text).toContain('Northwind')
-    expect(text).not.toMatch(/rocketflare/i)
+    expect(text).not.toMatch(KIT_NAME)
   })
   it('caps an answer and says how much was left out', () => {
     expect(capResult('abc', 10)).toBe('abc')

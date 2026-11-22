@@ -27,7 +27,7 @@ and `../../routes/oauth.ts` (OAuth endpoints and discovery). How it works and it
   credentials). Keep it registered before the mount table in `api/index.ts`. `isMcpPath`
   (`middleware/cors.ts`) must cover every path with its own CORS, with or without a trailing slash.
   Tests: `tests/api/mcp-server.test.ts` ("the transport", "the 401 challenge"),
-  `tests/api/security/mcp-cors-paths.test.ts`.
+  `tests/config/security/mcp-cors-paths.test.ts`.
 - **Admission is re-read on every call** in `resolveMcpMember`. It checks the block, the
   membership, the tenant's status, the support role (refused), the `mcp` flag, the organisation's
   switch and the connect policy. `isGlobalAdmin` is always `false`. Cache none of it on the grant.

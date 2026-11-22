@@ -9,6 +9,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import McpSettingsPage, { cliServerName, DescriptionText } from '@/ui/pages/settings/Mcp'
 import SettingsLayout from '@/ui/pages/settings/SettingsLayout'
+import { KIT_NAME } from '../helpers/kit-name'
 import { mcpConnection as connection } from './helpers/mcp'
 import {
   makeSession,
@@ -127,7 +128,7 @@ describe('Settings → MCP', () => {
       )
     ).toBeInTheDocument()
     await screen.findByText('search_knowledge')
-    expect(container.textContent).not.toMatch(/rocketflare/i)
+    expect(container.textContent).not.toMatch(KIT_NAME)
     expect(cliServerName('  Ünïcode & Co. ')).toBe('n-code-co')
   })
 

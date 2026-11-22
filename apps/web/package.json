@@ -27,7 +27,7 @@
     "lint:fix": "biome check --write .",
     "format": "biome format . --write",
     "build": "pnpm build:ui && pnpm build:api",
-    "build:ui": "vite build",
+    "build:ui": "vite build && node scripts/check-ui-bundle.mjs",
     "build:api": "wrangler deploy --dry-run --outdir dist/api",
     "clean": "rm -rf dist coverage .wrangler",
     "test": "node ../../scripts/test.mjs web",

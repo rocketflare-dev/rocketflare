@@ -347,7 +347,7 @@ old interval reports stale between runs. Local trigger:
 `needsApiKey/BaseUrl`, `supportsThinking/ServiceTier`, presets, suggested models — the settings form
 is built from this) → an adapter branch in `services/ai/client.ts` behind `ChatClient` /
 `EmbeddingsClient` (`fetch` injectable; normalise every failure with `normalizeAiError`; embeddings
-must return `EMBEDDING_DIM`-wide vectors) → a case in `tests/api/ai-client.test.ts` with
+must return `EMBEDDING_DIM`-wide vectors) → a case in `tests/config/ai-client.test.ts` with
 `sseResponse()`. A vendor that speaks an existing wire format is NOT a provider: add a
 `PROVIDER_PRESETS` entry (base URL + default model) instead. Bedrock recipe (not shipped): a
 `bedrock` provider whose adapter signs `POST /model/<id>/invoke` with `aws4fetch` SigV4 (access key +

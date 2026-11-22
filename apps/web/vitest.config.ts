@@ -150,7 +150,10 @@ const configProject = (name: 'config' | 'config-isolated') => ({
     testTimeout: PROCESS_TEST_TIMEOUT,
     environment: 'node' as const,
     isolate: name === 'config-isolated',
-    setupFiles: name === 'config' ? ['./tests/config/shared-setup.ts'] : [],
+    setupFiles: [
+      './tests/config/setup.ts',
+      ...(name === 'config' ? ['./tests/config/shared-setup.ts'] : []),
+    ],
     include: splitTestFiles('config', name === 'config-isolated'),
   },
   resolve: { alias },

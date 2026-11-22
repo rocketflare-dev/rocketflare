@@ -143,7 +143,8 @@ describe('useNavigationEntries', () => {
       session: makeSession({ tenant: makeTenant({ role: 'member' }) }),
     })
     const ids = ((await screen.findByTestId('entries')).textContent ?? '').split(' ')
-    expect(ids).toEqual(expect.arrayContaining(['nav:/chat', 'nav:/documents', 'link:/profile']))
+    // Pages every app keeps: chat and documents are removable surfaces (.rocketflare.json).
+    expect(ids).toEqual(expect.arrayContaining(['nav:/', 'link:/profile']))
     expect(ids.some(id => id.startsWith('settings:'))).toBe(false)
     expect(ids).not.toContain('nav:/settings')
     expect(ids).not.toContain('nav:/admin')

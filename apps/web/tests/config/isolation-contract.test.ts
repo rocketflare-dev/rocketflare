@@ -14,13 +14,13 @@ import {
  * vitest.config.ts uses the same predicate to route files, so this test is what keeps the
  * two in agreement.
  */
-const API_TEST_DIR = path.resolve(__dirname)
+const API_TEST_DIR = path.resolve(__dirname, '../api')
 
 describe('api test isolation contract', () => {
   const files = apiTestFiles(API_TEST_DIR)
 
   it('finds the api test files', () => {
-    expect(files).toContain('isolation-contract.test.ts')
+    expect(files).toContain('health.test.ts')
   })
 
   it.each(files)('%s carries the isolate marker if it mocks modules/globals', file => {

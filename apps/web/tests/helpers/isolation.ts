@@ -12,7 +12,7 @@ import path from 'node:path'
  *     // @vitest-isolate
  *
  * This rule is imported by BOTH vitest.config.ts (decides where a file runs) and
- * tests/api/isolation-contract.test.ts (fails CI when a file needs the marker and lacks it),
+ * tests/config/isolation-contract.test.ts (fails CI when a file needs the marker and lacks it),
  * so the two can never disagree.
  */
 export const ISOLATE_MARKER = '// @vitest-isolate'

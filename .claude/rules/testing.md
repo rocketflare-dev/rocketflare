@@ -160,7 +160,7 @@ its FIRST line must be **exactly** the marker, with nothing after it; the reason
 `isMarkedIsolated` (`apps/web/tests/helpers/isolation.ts`) compares the trimmed first line to
 `// @vitest-isolate` — `// @vitest-isolate — mocks a module` does NOT match, and `vitest.config.ts`
 then places the file in the shared `api` project. Forgetting it does not fail in your file; it hands
-the fake to whatever runs next in that worker. `apps/web/tests/api/isolation-contract.test.ts`
+the fake to whatever runs next in that worker. `apps/web/tests/config/isolation-contract.test.ts`
 catches a missing or malformed marker only when its heuristic (`vi.mock|doMock|stubGlobal|stubEnv|
 spyOn(globalThis`) matches the file; anything else that leaks (a module-level singleton you mutate,
 a fake `WebSocket` factory left set) is on you.
@@ -250,7 +250,7 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
   fixture PDF is text typed `application/pdf`; override `convert` for `format: 'error'` (→ `failed` +
   ack) or a throw (→ `failed` + retry); `createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY })` is the
   Worker that embeds but cannot convert (503 `conversion_not_configured`, nothing stored)
-- Tracing (D32): `tests/api/observability.test.ts` needs no database — `createTracer({ sinks:
+- Tracing (D32): `tests/config/observability.test.ts` needs no database — `createTracer({ sinks:
   [collect] })` hands a test every recorded span, `tracerFor(cfg, { fetch })` takes an injected
   `fetch` for the OTLP POST, and the OTLP/JSON request is compared to a FIXTURE (the protobuf case
   walks the bytes back with a small decoder). Nesting is asserted through the real `runToolLoop`, so

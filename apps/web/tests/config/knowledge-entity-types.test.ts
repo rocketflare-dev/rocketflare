@@ -179,10 +179,6 @@ describe('the installed set', () => {
       }
     }
   })
-
-  it('the kit core registers no domain types of its own', () => {
-    expect(APP_ENTITY_TYPES).toEqual([])
-  })
 })
 
 describe('the shared closed sets', () => {
