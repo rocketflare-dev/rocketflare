@@ -9,19 +9,13 @@ import SideNav, {
   isPathActive,
   type NavConfig,
 } from '@/ui/components/SideNav'
-import type { NavGuard } from '@/ui/hooks/useNavGuard'
 import {
   makeSession,
+  makeUser,
   renderWithProviders,
   stubFetch,
   stubHealthFetch,
 } from './helpers/renderWithProviders'
-
-const guardMock = vi.fn<(guard: NavGuard | undefined) => boolean>(() => true)
-vi.mock('@/ui/hooks/useNavGuard', async importOriginal => {
-  const mod = await importOriginal<typeof import('@/ui/hooks/useNavGuard')>()
-  return { ...mod, useNavGuard: () => guardMock }
-})
 
 const config: NavConfig = [
   { items: [{ to: '/', label: 'Home', icon: HomeIcon }] },
@@ -136,13 +130,15 @@ describe('isPathActive', () => {
 describe('SideNav', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
-    guardMock.mockReset()
-    guardMock.mockImplementation(() => true)
   })
 
-  it('shows everything when the guard allows all (the default)', async () => {
+  // The real guard (`useNavGuard`) over the session: a global admin who owns the organisation
+  // passes every guard in `config`.
+  it('shows everything to a global admin who owns the organisation', async () => {
     vi.stubGlobal('fetch', stubHealthFetch())
-    renderWithProviders(<SideNav items={config} />)
+    renderWithProviders(<SideNav items={config} />, {
+      session: makeSession({ user: makeUser({ isGlobalAdmin: true }) }),
+    })
 
     expect(screen.getByRole('link', { name: /^Home/ })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /Settings/ })).toBeInTheDocument()
@@ -152,10 +148,12 @@ describe('SideNav', () => {
     await waitFor(() => expect(screen.getByText('v1.2.3')).toBeInTheDocument())
   })
 
-  it('hides items whose guard is denied', () => {
+  it('hides items whose guard is denied: without an organisation only unguarded items show', () => {
     vi.stubGlobal('fetch', stubHealthFetch())
-    guardMock.mockImplementation(guard => guard === undefined)
-    renderWithProviders(<SideNav items={config} />, { route: '/settings/people' })
+    renderWithProviders(<SideNav items={config} />, {
+      route: '/settings/people',
+      session: makeSession({ tenant: null }),
+    })
 
     expect(screen.getByRole('link', { name: /^Home/ })).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Settings/ })).not.toBeInTheDocument()
@@ -166,7 +164,10 @@ describe('SideNav', () => {
 
   it('marks the current section active', () => {
     vi.stubGlobal('fetch', stubHealthFetch())
-    renderWithProviders(<SideNav items={config} />, { route: '/settings/people' })
+    renderWithProviders(<SideNav items={config} />, {
+      route: '/settings/people',
+      session: makeSession(),
+    })
     expect(screen.getByRole('link', { name: /Settings/ })).toHaveAttribute('data-active', 'true')
     expect(screen.getByRole('link', { name: /^Home/ })).toHaveAttribute('data-active', 'false')
   })

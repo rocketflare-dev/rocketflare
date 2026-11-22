@@ -167,7 +167,7 @@ enum is `z.enum(AGENT_KEYS)`, frozen at import, so the fixture must be there fir
 Spies and stubs need no marker. Vitest restores every `vi.spyOn` spy (on `globalThis.fetch`
 included) after each file even in a shared registry, and the per-file setups (`tests/api-setup.ts`,
 `tests/ui/setup.ts`, `tests/config/setup.ts`) run `vi.unstubAllGlobals()` and `vi.unstubAllEnvs()`.
-Prefer a seam to a module mock: `overrideResolveChatForTests` (a fake chat client) is reset by
+Prefer a seam to a module mock — in ui tests too: `overrideHardNavigateForTests` (`@/ui/lib/navigation`, restored by `tests/ui/setup.ts`) records full-page navigations, and `SettingsLayout` takes a `plugins` prop for fixture tabs. `overrideResolveChatForTests` (a fake chat client) is reset by
 `api-setup.ts` after each file, so a file using it shares the registry.
 
 `isMarkedIsolated` (`apps/web/tests/helpers/isolation.ts`) compares the trimmed first line to

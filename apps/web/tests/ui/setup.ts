@@ -31,7 +31,8 @@ afterEach(async () => {
 
 // Vitest restores spies after every file even in a shared registry, but not `vi.stubGlobal` or `vi.stubEnv`. Undo
 // a file's stubs when it ends, not after each test: a file may stub once in `beforeAll`.
-afterAll(() => {
+afterAll(async () => {
+  ;(await import('@/ui/lib/navigation')).overrideHardNavigateForTests(null)
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
 })

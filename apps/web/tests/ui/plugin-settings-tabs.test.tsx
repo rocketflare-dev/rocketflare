@@ -6,22 +6,20 @@
 
 import { screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { AnyUiPlugin } from '@/plugins/types'
 import SettingsLayout from '@/ui/pages/settings/SettingsLayout'
 import { makeSession, renderWithProviders, stubFetch } from './helpers/renderWithProviders'
 
-vi.mock('@/plugins/ui', () => {
-  const uiPlugins = [
-    {
-      shared: { id: 'hotel', label: 'Hotel' },
-      routes: [],
-      settingsTabs: () => [
-        { id: 'taxes', label: 'Taxes', content: null, guard: { feature: 'hotel' } },
-        { id: 'front-desk', label: 'Front desk', content: null },
-      ],
-    },
-  ]
-  return { uiPlugins, UI_PLUGINS: uiPlugins }
-})
+const plugins = [
+  {
+    shared: { id: 'hotel', label: 'Hotel' },
+    routes: [],
+    settingsTabs: () => [
+      { id: 'taxes', label: 'Taxes', content: null, guard: { feature: 'hotel' } },
+      { id: 'front-desk', label: 'Front desk', content: null },
+    ],
+  },
+] as unknown as readonly AnyUiPlugin[]
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -30,14 +28,18 @@ afterEach(() => {
 describe('plugin settings tab guard', () => {
   it('hides a feature-guarded tab where the organisation lacks the feature', async () => {
     stubFetch()
-    renderWithProviders(<SettingsLayout />, { session: makeSession({ features: [] }) })
+    renderWithProviders(<SettingsLayout plugins={plugins} />, {
+      session: makeSession({ features: [] }),
+    })
     expect(await screen.findByRole('tab', { name: /Front desk/ })).toBeInTheDocument()
     expect(screen.queryByRole('tab', { name: /Taxes/ })).not.toBeInTheDocument()
   })
 
   it('shows it where the feature is on', async () => {
     stubFetch()
-    renderWithProviders(<SettingsLayout />, { session: makeSession({ features: ['hotel'] }) })
+    renderWithProviders(<SettingsLayout plugins={plugins} />, {
+      session: makeSession({ features: ['hotel'] }),
+    })
     expect(await screen.findByRole('tab', { name: /Taxes/ })).toBeInTheDocument()
   })
 })

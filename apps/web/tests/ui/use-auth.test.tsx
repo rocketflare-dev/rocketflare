@@ -1,9 +1,9 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { useLocation } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { noTenantRoute, useAuth } from '@/ui/hooks/useAuth'
 import { api } from '@/ui/lib/api-client'
-import { hardNavigate } from '@/ui/lib/navigation'
+import { overrideHardNavigateForTests } from '@/ui/lib/navigation'
 import { queryKeys } from '@/ui/lib/query-keys'
 import {
   makeSession,
@@ -13,10 +13,10 @@ import {
   unauthorizedResponse,
 } from './helpers/renderWithProviders'
 
-vi.mock('@/ui/lib/navigation', async importOriginal => {
-  const mod = await importOriginal<typeof import('@/ui/lib/navigation')>()
-  return { ...mod, hardNavigate: vi.fn() }
-})
+// Full-page navigations are recorded here, not made (jsdom cannot navigate).
+const hardNavigate = vi.fn()
+beforeAll(() => overrideHardNavigateForTests(hardNavigate))
+afterAll(() => overrideHardNavigateForTests(null))
 
 function LogoutProbe({ returnUrl }: { returnUrl?: string }) {
   const { logout } = useAuth()

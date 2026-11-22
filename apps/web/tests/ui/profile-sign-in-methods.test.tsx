@@ -3,8 +3,8 @@
  * provider identity attaches to the signed-in user rather than signing in as whoever it matches.
  */
 import { fireEvent, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { hardNavigate } from '@/ui/lib/navigation'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { overrideHardNavigateForTests } from '@/ui/lib/navigation'
 import Profile from '@/ui/pages/Profile'
 import {
   makeSession,
@@ -13,10 +13,10 @@ import {
   stubFetch,
 } from './helpers/renderWithProviders'
 
-vi.mock('@/ui/lib/navigation', async importOriginal => {
-  const mod = await importOriginal<typeof import('@/ui/lib/navigation')>()
-  return { ...mod, hardNavigate: vi.fn() }
-})
+// Full-page navigations are recorded here, not made (jsdom cannot navigate).
+const hardNavigate = vi.fn()
+beforeAll(() => overrideHardNavigateForTests(hardNavigate))
+afterAll(() => overrideHardNavigateForTests(null))
 
 describe('Profile → sign-in methods', () => {
   afterEach(() => {
