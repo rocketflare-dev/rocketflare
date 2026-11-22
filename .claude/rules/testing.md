@@ -420,8 +420,9 @@ the whole rule, and it is why neither half duplicates the other.
 - **A kit test must not borrow a plugin's keys.** `tests/config/features.test.ts` and
   `tests/api/feature-flags.test.ts` register their own fixture flag now: the kit ships none,
   `feature_flags.key` is platform state with `tenant_feature_overrides` cascading off it, and two
-  files resetting one key delete each other's rows across tenants. The API one is
-  `// @vitest-isolate` because it mutates the shared registry. For the same reason an assertion that
+  files resetting one key delete each other's rows across tenants. The API one adds the key in
+  `beforeAll` and removes it in `afterAll`, so it can share the registry. For the same reason an
+  assertion that
   pinned the exact agent-tool list is a PREFIX assertion — a plugin's tools are appended after the
   kit's three
 - **A core test must not borrow an EXAMPLE agent either** (`summarize-text`, `research-topic`,
@@ -434,3 +435,9 @@ the whole rule, and it is why neither half duplicates the other.
   `paths`; `tests/kit-only/example-surfaces.test.ts` fails a test outside the surface that names
   the key or imports one of its files. `tests/api-setup.ts` imports `@/db/client` inside its hook
   for this reason: a static import there evaluates the barrels before the test's `vi.mock` exists
+- **A fixture server plugin without a mock.** `withServerPlugins(fixtures, { replace? })`
+  (`tests/helpers/server-plugins.ts`) splices fixtures into the real `serverPlugins` for one file
+  and restores it after, so the file shares the `api` registry (`plugin-tools`, `mcp-plugin-tools`,
+  `plugin-tenant-status-hook`, `security/chat-approval-gates`). Only consumers that read the barrel
+  at CALL time see a fixture — the tool builder, the MCP listing, the tenant hooks; one read at
+  module load (mounts, `API_PREFIXES`, the agent and prompt registries) still needs the mock
