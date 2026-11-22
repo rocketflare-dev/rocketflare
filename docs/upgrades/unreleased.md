@@ -24,6 +24,7 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 - The local test worker limit rises from 6 to 10 on machines with the cores for it.
 - More of the kit's tests leave a copy's gate: `ci-workflows` (the kit's workflow shape and its release-check script), the `plugin check` MCP fixtures, the 0027 migration backfill, and the pins on the kit's exact entity types and job types (`kit-makeup`). Eleven `api` files that open no database run in `config`, now guarded against outbound network like `api`.
 - Tests no longer break when an app renames itself or removes chat or documents: the "never the kit's name" checks spell the name so the rename cannot rewrite it (`tests/helpers/kit-name.ts`), and the navigation test pins no removable page.
+- `overrideResolveChatForTests` (`@/api/services/ai/resolve`) lets a test hand the code a fake chat client without `vi.mock`, so its file shares the `api` registry; `tests/api-setup.ts` resets it after each file. `chat.test.ts` uses it.
 - The UI bundle's chunk checks run after `vite build` (`scripts/check-ui-bundle.mjs`, called by `build:ui`), so they always read the build just made; in the gate they used to skip, because the tests ran before the build.
 
 ## How to apply
@@ -44,7 +45,8 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 14. Move these from `apps/web/tests/api/` to `apps/web/tests/config/`, keeping each name: `ai-client`, `observability`, `agent-loop`, `agent-loop-journal`, `agent-tool-loop-interrupt`, `storage`, `plugin-signed-state`, `validate` and `isolation-contract` (each `.test.ts`), and `security/mcp-cors-paths` and `security/email-link-logging` to `apps/web/tests/config/security/`. Apply the kit diff for `isolation-contract.test.ts` (it reads `../api`).
 15. Apply the kit diff for `apps/web/tests/config/{mcp,mcp-plugin-seam,plugins,knowledge-entity-types,ui-bundle}.test.ts`, `apps/web/tests/api/{mcp-server,mcp-oauth-admission,scheduled,scheduled-prune,auth-dev-login,auth-magic-link,agent-run-stream}.test.ts`, `apps/web/tests/ui/{mcp-settings,navigation-entries}.test.tsx`, `.github/workflows/ci.yml` and `deploy.yml` (comments only), and add `apps/web/tests/helpers/kit-name.ts`, `apps/web/tests/config/setup.ts` and `apps/web/scripts/check-ui-bundle.mjs`.
 16. In `apps/web/package.json`, set `build:ui` to `vite build && node scripts/check-ui-bundle.mjs`.
-17. If your app has a module-level store of its own (a `zustand` `create`, a singleton client), reset it in the `afterEach` of `apps/web/tests/ui/setup.ts`.
+17. Apply the kit diff for `apps/web/src/api/services/ai/resolve.ts` and `apps/web/tests/api/chat.test.ts`. A test of yours that mocks `@/api/services/ai/resolve` only to return a fake client can call `overrideResolveChatForTests(async () => ({ … }))` instead and drop its `// @vitest-isolate` line.
+18. If your app has a module-level store of its own (a `zustand` `create`, a singleton client), reset it in the `afterEach` of `apps/web/tests/ui/setup.ts`.
 
 ## Conflicts to expect
 

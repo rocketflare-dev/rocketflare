@@ -342,7 +342,7 @@ export async function resolveDecisions(
       source: 'platform',
     }
   }
-  const chat = await resolveChat(db, cfg, env, tenantId, {
+  const chat = await resolveChatFromConfig(db, cfg, env, tenantId, {
     promptKey: options.fallbackPromptKey ?? DECISIONS_FALLBACK_PROMPT_KEY,
     fetch: options.fetch,
   })
@@ -364,12 +364,42 @@ export async function resolveDecisions(
   }
 }
 
+/** What a test answers `resolveChat` with (`overrideResolveChatForTests`). */
+export type ResolveChatOverride = (
+  tenantId: string,
+  options: ResolveOptions
+) => Promise<ResolvedChat>
+
+let chatOverride: ResolveChatOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveChat` call from `fn` until it is reset with `null`, so a
+ * test can hand the code under test a fake chat client without `vi.mock`, and its file can share
+ * the `api` project's module registry. `tests/api-setup.ts` resets it after every file. Calls
+ * inside this module (the decisions fallback) still resolve for real, as they did under a mock.
+ * Nothing in `src/` calls it.
+ */
+export function overrideResolveChatForTests(fn: ResolveChatOverride | null): void {
+  chatOverride = fn
+}
+
 export async function resolveChat(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
   options: ResolveOptions = {}
+): Promise<ResolvedChat> {
+  if (chatOverride) return chatOverride(tenantId, options)
+  return resolveChatFromConfig(db, cfg, env, tenantId, options)
+}
+
+async function resolveChatFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveOptions
 ): Promise<ResolvedChat> {
   const {
     assignment,
