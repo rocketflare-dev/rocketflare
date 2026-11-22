@@ -123,7 +123,7 @@ describe('pnpm test: the plan', () => {
     expect(p.steps[0]?.command).toEqual(['pnpm', '-r', '--filter', '!./apps/web', 'test'])
     expect(webRuns(p)).toEqual([
       'api @ postgres',
-      'api-isolated+driver+ui+config @ postgres',
+      'api-isolated+driver+ui+ui-isolated+config @ postgres',
       'driver @ neon',
     ])
     expect(p.steps.at(-1)?.env.NEON_LOCAL_PROXY).toBe(PROXY_URL)
@@ -142,7 +142,7 @@ describe('pnpm test: the plan', () => {
   it('GATE_SUITE_DRIVER=neon: the suite under neon, the conformance pass under postgres', () => {
     expect(webRuns(plan({ GATE_SUITE_DRIVER: 'neon' }))).toEqual([
       'api @ neon',
-      'api-isolated+driver+ui+config @ neon',
+      'api-isolated+driver+ui+ui-isolated+config @ neon',
       'driver @ postgres',
     ])
   })
@@ -151,7 +151,7 @@ describe('pnpm test: the plan', () => {
     const p = plan(GATE_BRANCH)
     expect(p.compose).toBe(false)
     expect(p.banner).toMatch(/gate-ab12cd-1/)
-    expect(webRuns(p)).toEqual(['api @ neon', 'api-isolated+driver+ui+config @ neon'])
+    expect(webRuns(p)).toEqual(['api @ neon', 'api-isolated+driver+ui+ui-isolated+config @ neon'])
     for (const step of p.steps.filter(s => s.command.includes('vitest'))) {
       expect(step.env).toMatchObject({ TEST_DATABASE_EPHEMERAL: '1', APP_DATABASE_URL: '' })
       expect(step.env.NEON_LOCAL_PROXY).toBeUndefined()
@@ -162,7 +162,9 @@ describe('pnpm test: the plan', () => {
   })
 
   it('names the kit-only project only when the checkout carries it', () => {
-    expect(webRuns(plan({}, true))[1]).toBe('api-isolated+driver+ui+config+kit-only @ postgres')
+    expect(webRuns(plan({}, true))[1]).toBe(
+      'api-isolated+driver+ui+ui-isolated+config+kit-only @ postgres'
+    )
     expect(webRuns(plan({}, false)).join('\n')).not.toMatch(/kit-only/)
     expect(existsSync(path.join(REPO, 'scripts/test.mjs'))).toBe(true)
   })

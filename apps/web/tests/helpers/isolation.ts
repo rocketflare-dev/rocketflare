@@ -27,16 +27,31 @@ export function looksLikeItNeedsIsolation(source: string): boolean {
   return /\bvi\.(mock|doMock|stubGlobal|stubEnv|spyOn\(\s*globalThis)/.test(source)
 }
 
-/** All *.test.ts files under `dir`, relative to it, recursively, sorted. */
-export function apiTestFiles(dir: string): string[] {
+/**
+ * The ui suite is split the same way (`ui` shares a registry, `ui-isolated` does not), but a ui
+ * file is routed by the heuristic itself, the marker being only a way to opt in by hand. A
+ * plugin's ui tests live in the plugin's repository, so a rule that needed every mocking file
+ * marked would break a host the day a plugin it already has shipped an unmarked one.
+ */
+export function uiNeedsIsolation(source: string): boolean {
+  return isMarkedIsolated(source) || looksLikeItNeedsIsolation(source)
+}
+
+/** Every file under `dir` whose name matches `pattern`, relative to it, recursively, sorted. */
+export function testFiles(dir: string, pattern: RegExp): string[] {
   const out: string[] = []
   const walk = (d: string) => {
     for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
       const full = path.join(d, entry.name)
       if (entry.isDirectory()) walk(full)
-      else if (/\.test\.ts$/.test(entry.name)) out.push(path.relative(dir, full))
+      else if (pattern.test(entry.name)) out.push(path.relative(dir, full))
     }
   }
   if (fs.existsSync(dir)) walk(dir)
   return out.sort()
+}
+
+/** All *.test.ts files under `dir`, relative to it, recursively, sorted. */
+export function apiTestFiles(dir: string): string[] {
+  return testFiles(dir, /\.test\.ts$/)
 }

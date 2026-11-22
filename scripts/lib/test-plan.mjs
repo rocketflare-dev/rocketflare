@@ -107,7 +107,14 @@ export function planTests(env, tree) {
   const suiteEnv = driverEnv(target, suiteDriver)
   // The kit's OWN tests exist only in the kit: the rename deletes the directory, so a copy's plan
   // never names the project and there is nothing to unwire.
-  const isolated = ['api-isolated', 'driver', 'ui', 'config', ...(tree.kitOnly ? ['kit-only'] : [])]
+  const isolated = [
+    'api-isolated',
+    'driver',
+    'ui',
+    'ui-isolated',
+    'config',
+    ...(tree.kitOnly ? ['kit-only'] : []),
+  ]
 
   const banner =
     target === 'remote'

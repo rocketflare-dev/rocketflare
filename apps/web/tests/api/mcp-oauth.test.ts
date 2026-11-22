@@ -415,10 +415,12 @@ describe('the code', () => {
 
   it('expires after sixty seconds', async () => {
     const c = await codeFor()
+    // This user's request only: every file shares the client id and the database, so a wider
+    // update expires a code another file is exchanging at the same moment.
     await db
       .update(oauthRequests)
       .set({ codeExpiresAt: new Date(Date.now() - 1000) })
-      .where(eq(oauthRequests.clientId, CLAUDE_LIKE_CLIENT))
+      .where(eq(oauthRequests.userId, c.user.id))
     const res = await exchange(c)
     expect(((await res.json()) as { error: string }).error).toBe('invalid_grant')
   })

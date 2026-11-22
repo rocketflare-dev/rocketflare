@@ -11,10 +11,10 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), six projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`apps/web`), seven projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
 `openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
-`ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
+`ui` + `ui-isolated` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
 helpers, the driver guards `driver-results.test.ts` and `driver-conformance.test.ts`, and every
 installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, no database:
 `tests/kit-only/**`, the KIT's own tests — see below). The web suite is two `vitest run`
@@ -162,6 +162,14 @@ the fake to whatever runs next in that worker. `apps/web/tests/api/isolation-con
 catches a missing or malformed marker only when its heuristic (`vi.mock|doMock|stubGlobal|stubEnv|
 spyOn(globalThis`) matches the file; anything else that leaks (a module-level singleton you mutate,
 a fake `WebSocket` factory left set) is on you.
+
+**`ui` is split the same way, but by the heuristic itself.** `ui` shares a registry
+(`isolate: false` in its project config); a ui file goes to `ui-isolated` when it carries the
+marker OR the heuristic matches it (`uiNeedsIsolation`). No marker is needed, because a plugin's ui
+tests live in the plugin's repository and a host must not break the day a plugin ships an unmarked
+one. Under the shared registry the app's module-level state outlives a file, so
+`tests/ui/setup.ts` resets the singletons after each test (`queryClient`, the toast and websocket
+stores) and unstubs globals after each file. A new module-level store gets a reset line there.
 
 ## Testing background work — plain functions, no platform
 
@@ -337,7 +345,7 @@ the whole rule, and it is why neither half duplicates the other.
 
 - **A plugin's tests live inside it** — `src/plugins/<id>/tests/{api,ui,config}` — so installing or
   removing one moves its tests with it and never touches `tests/`. `vitest.config.ts` discovers all
-  three: the `ui` and `config` projects by glob, and the api ones through the same `apiTestFiles()`
+  three: the `config` project by glob, the ui ones through `uiTestFiles()`, and the api ones through the same `apiTestFiles()`
   walk the kit's use, so **the `// @vitest-isolate` marker decides which api project a plugin file
   lands in exactly as it does for a kit file** (first line, exact match, reason on line 2)
 - **A plugin reaches the harness through `@testkit`, never a relative climb into `tests/`.** Two

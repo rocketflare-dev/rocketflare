@@ -4,7 +4,12 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defaultClientConditions } from 'vite'
 import { defineConfig } from 'vitest/config'
-import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation.ts'
+import {
+  isMarkedIsolated,
+  apiTestFiles as listApiTestFiles,
+  testFiles,
+  uiNeedsIsolation,
+} from './tests/helpers/isolation.ts'
 import { latencyFactor } from './tests/helpers/latency.ts'
 
 const alias = {
@@ -102,6 +107,43 @@ function apiTestFiles(isolated: boolean): string[] {
   )
 }
 
+const UI_TEST_DIR = path.resolve(import.meta.dirname, './tests/ui')
+
+/**
+ * The ui tests, kit and plugins alike, split on `uiNeedsIsolation`: a file that mocks a module or a
+ * global gets its own registry (`ui-isolated`), every other one shares the worker's (`ui`), which
+ * imports React, the router and the app shell once per worker instead of once per file.
+ */
+function uiTestFiles(isolated: boolean): string[] {
+  const dirs: Array<{ abs: string; rel: string }> = [
+    { abs: UI_TEST_DIR, rel: 'tests/ui' },
+    ...pluginDirs().map(id => ({
+      abs: path.join(PLUGINS_DIR, id, 'tests/ui'),
+      rel: `src/plugins/${id}/tests/ui`,
+    })),
+  ]
+  return dirs.flatMap(dir =>
+    testFiles(dir.abs, /\.(test|spec)\.tsx?$/)
+      .filter(f => uiNeedsIsolation(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
+      .map(f => `${dir.rel}/${f}`)
+  )
+}
+
+const uiProject = (name: 'ui' | 'ui-isolated') => ({
+  extends: true as const,
+  plugins: [react()],
+  test: {
+    name,
+    environment: 'jsdom' as const,
+    isolate: name === 'ui-isolated',
+    setupFiles: ['./tests/ui/setup.ts'],
+    include: uiTestFiles(name === 'ui-isolated'),
+  },
+  // Without the browser's conditions `react-router` loads as CJS here and an ESM importer such
+  // as `react-router-dom` gets a second copy, so the two halves share no router context.
+  resolve: { alias, conditions: [...defaultClientConditions] },
+})
+
 export default defineConfig({
   test: {
     globals: true,
@@ -192,22 +234,9 @@ export default defineConfig({
             },
           ]
         : []),
-      {
-        extends: true,
-        plugins: [react()],
-        test: {
-          name: 'ui',
-          environment: 'jsdom',
-          setupFiles: ['./tests/ui/setup.ts'],
-          include: [
-            'tests/ui/**/*.{test,spec}.{ts,tsx}',
-            'src/plugins/*/tests/ui/**/*.{test,spec}.{ts,tsx}',
-          ],
-        },
-        // Without the browser's conditions `react-router` loads as CJS here and an ESM importer such
-        // as `react-router-dom` gets a second copy, so the two halves share no router context.
-        resolve: { alias, conditions: [...defaultClientConditions] },
-      },
+      // Shared module registry, set here rather than on the command line as `api`'s is.
+      uiProject('ui'),
+      uiProject('ui-isolated'),
     ],
   },
 })
