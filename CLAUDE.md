@@ -74,6 +74,7 @@ pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wran
 pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm gate [step…] · pnpm gate --list [--json]  # THE gate: lint → typecheck → test → build (CI's one job, Launch's ship gate)
+pnpm gate --changed[=<ref>]  # local commits: each step over what the branch changed; full gate before a push
 pnpm test  # every package; starts the test DB + Neon proxy; suite under postgres, then driver under neon
 pnpm test api|ui|config|driver [file…]  # the inner loop: one suite (shared + isolated projects), DB expected up
 TEST_DATABASE_BRANCH=gate-… pnpm test  # a sandbox gate: no Docker, the whole suite on a Neon gate branch (CONCEPTS §4)

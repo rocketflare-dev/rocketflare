@@ -12,8 +12,10 @@ manual: false
 
 ## What changed
 
-A copy's gate no longer runs the kit's tooling tests, which now live in the kit-only project, and
-`pnpm plugin` runs the host's Biome directly instead of through `pnpm exec`.
+`pnpm gate --changed` gates only what a branch changed, the full gate is faster (TypeScript 7, shared test registries), and a copy no longer runs the kit's tooling tests.
+
+- `pnpm gate --changed[=<ref>]` runs lint on the changed files and typecheck, test and build only where the change reaches (`scripts/lib/gate-changed.mjs`, `docs/CONCEPTS.md` §4). A config, lockfile, migration or harness change runs the full gate. For local commits: the full `pnpm gate` still runs before a push and in CI.
+- `pnpm plugin` runs the host's Biome directly instead of through `pnpm exec`.
 
 - The tests of `scripts/**` and the rf-security runner moved from `apps/web/tests/config/` to `apps/web/tests/kit-only/` (rationale: `docs/CONCEPTS.md` §13, "Kit-only files").
 - The toml snapshots moved with `patch-toml.test.ts`, from `apps/web/tests/config/fixtures/` to `apps/web/tests/kit-only/fixtures/`.
@@ -65,6 +67,7 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 28. If your app still has the `summarize-text` example, take the kit's `apps/web/tests/api/agent-runs.test.ts` and `agent-run-workflow.test.ts` (now example-only) and add `agent-run-routes.test.ts` and `agent-run-runtime.test.ts`. If you deleted the example, add only the two new files. Either way, add both new paths to the `feature-agents` surface's `paths` in `.rocketflare.json`.
 29. Anything of yours that names vitest projects (a CI step, a script) adds `--project api-fixtures` beside `api-isolated`.
 30. Apply the kit diff for `apps/web/src/ui/lib/navigation.ts` (`overrideHardNavigateForTests`), `apps/web/src/ui/pages/settings/SettingsLayout.tsx` (an optional `plugins` prop), `apps/web/tests/ui/setup.ts`, and the ui tests `use-auth`, `login`, `profile-sign-in-methods`, `sidenav` (the real guard over a session, no `useNavGuard` mock) and `plugin-settings-tabs`. A ui test of yours that does `vi.mock('@/ui/lib/navigation', …)` to stub `hardNavigate` uses `overrideHardNavigateForTests(vi.fn())` in `beforeAll` instead, and moves to the shared `ui` project.
+31. For `pnpm gate --changed`: add `scripts/lib/gate-changed.mjs`, `scripts/lib/gate-changed.d.mts` and `scripts/lib/gate-changed-git.mjs`, and apply the kit diff for `scripts/gate.mjs`, `scripts/test.mjs`, `scripts/lib/gate-lib.mjs`, `scripts/lib/gate-lib.d.mts`, `scripts/lib/test-plan.mjs`, `scripts/lib/test-plan.d.mts`, `CLAUDE.md`, `docs/CONCEPTS.md` §4 and `.claude/rules/code-quality.md`.
 
 ## Conflicts to expect
 
@@ -82,3 +85,4 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 4. `pnpm test ui` and `pnpm test config` pass, and so does `pnpm test ui config --sequence.shuffle.files` (a shared registry that leaks fails in some order).
 5. `pnpm test api --sequence.shuffle.files --sequence.seed=1` passes, and so does seed 2.
 6. `pnpm test api` lists three projects, `api`, `api-isolated` and `api-fixtures`, and passes with `--sequence.shuffle.files --sequence.seed=3`.
+7. With one line changed in `apps/web/src/ui/pages/settings/General.tsx`, `pnpm gate --changed` prints how many paths changed, runs only the web tests that line reaches, and passes; `pnpm gate --changed` with a change to `biome.json` says it is running the full gate.

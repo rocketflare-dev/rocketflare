@@ -21,6 +21,11 @@ itself and runs the driver conformance pass under both drivers (docs/CONCEPTS.md
 `typecheck` regenerates `apps/web/worker-configuration.d.ts` (`wrangler types`); commit the file
 if it changed — it is not a gate check, the compile against the fresh types is.
 
+While you work, `pnpm gate --changed` runs each step over what the branch changed since its merge
+base with `origin/main`: lint on those files, typecheck/test/build in the packages they reach,
+only the web tests their imports reach. A config, lockfile, migration or harness change makes it
+the full gate. Run the full `pnpm gate` before you push (docs/CONCEPTS.md §4).
+
 ## Style (Biome 2, `biome.json`)
 
 - Single quotes, `asNeeded` semicolons, 100 columns, 2-space indent, trailing commas `es5`

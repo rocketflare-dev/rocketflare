@@ -441,6 +441,16 @@ path); no per-PR previews.
   `docs/plugin-api.md` diff is the kit's own check (`kit.yml`), since a copy publishes no plugin
   API; `pnpm plugin check` runs at the end of `plugin add|upgrade --apply` (exit 8 when the written
   tree fails it) and in `plugin-ci.yml`.
+- **`pnpm gate --changed[=<ref>]`, the local inner loop** (`scripts/lib/gate-changed.mjs`, a pure
+  plan over the changed paths): everything that differs from the merge base with `origin/main`
+  (or `<ref>`), committed, staged, modified or untracked. Lint checks those files; typecheck,
+  test and build run only in the packages they reach, following workspace dependencies; the web
+  tests are vitest's own import-graph answer, plus any changed test file and every test that
+  reads the repository through `fs` or a child process (its inputs are invisible to the graph).
+  The rule is "when in doubt, run more": a change to a dependency manifest, the lockfile, a
+  compiler, lint or vitest config, a toml, a migration, the test harness or the gate itself makes
+  it the full gate. It is for local commits only: run the full `pnpm gate` before a push, and no
+  workflow passes `--changed`.
 - **Verified once (opt-in, for an app Launch ships).** After a green sandbox gate Launch's GitHub
   App posts a `launch/gate` check run keyed by the tree (`external_id: tree:<sha>`). With the
   repository variable `LAUNCH_GATE_APP_ID` set to that App's id, the first step of `ci.yml`'s
