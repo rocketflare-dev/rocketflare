@@ -11,14 +11,16 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), seven projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`apps/web`), eight projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
 `driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
 `openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
 `ui` + `ui-isolated` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
 helpers, the driver guards `driver-results.test.ts` and `driver-conformance.test.ts`, and every
 installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, no database:
-`tests/kit-only/**`, the KIT's own tests — see below). The web suite is two `vitest run`
-invocations (`api` with `--no-isolate`, then the rest).
+`tests/kit-only/**`, the KIT's own tests — see below), and `config-isolated` beside `config`. Each
+shared-registry project sets `isolate: false` in `vitest.config.ts`, so no command line carries
+`--no-isolate`. The full web suite is two `vitest run` invocations (`api`, then the rest), which
+measured faster than one.
 
 **`pnpm test` is the one full test run** (`scripts/test.mjs`, the plan in
 `scripts/lib/test-plan.mjs`, unit-tested in `tests/kit-only/gate.test.ts`), and the `test` step of
@@ -170,6 +172,10 @@ tests live in the plugin's repository and a host must not break the day a plugin
 one. Under the shared registry the app's module-level state outlives a file, so
 `tests/ui/setup.ts` resets the singletons after each test (`queryClient`, the toast and websocket
 stores) and unstubs globals after each file. A new module-level store gets a reset line there.
+`config` and `config-isolated` split the same way. The shared `config` project also loads the
+server barrel first (`tests/config/shared-setup.ts`): a file importing a plugin module directly
+would otherwise enter the plugin import cycle from the plugin's side and leave a barrel holding
+`undefined` cached for every later file.
 
 ## Testing background work — plain functions, no platform
 
@@ -323,12 +329,14 @@ admin+) and that `withEvalScope` tags spans.
 ## Commands
 
 `pnpm test` (every package; it starts the test database itself — see above), or `pnpm gate` for the
-whole pre-commit gate. The inner loop is the narrow scripts, which run under `postgres` and expect
-the database up (`pnpm test:db:up`, or any earlier `pnpm test`): `pnpm web test:driver` for the
-driver project alone, and single projects through the web package: `pnpm web test:api` ·
-`pnpm web test:ui` · `pnpm web test:config` ·
-`pnpm web test:kit-only` (the kit only) ·
-`pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
+whole pre-commit gate. The inner loop is `pnpm test <suite…> [file…]`: `api`, `ui`, `config`,
+`driver` and (the kit only) `kit-only`. Each suite is its shared and isolated projects together, run
+under `postgres` with the database expected up (`pnpm test:db:up`, or any earlier `pnpm test`),
+and a file path or a name filter narrows it (`pnpm test api apps/web/tests/api/health.test.ts`).
+`pnpm test web` is the full web plan without the other packages. The `apps/web` `test:*` scripts
+(`pnpm web test:api` and the rest) are one-line aliases for these. The project lists live in
+`scripts/lib/test-plan.mjs` (`SUITES`), never in a `package.json`, so a new project changes no
+script. `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
 before a deploy.
 
 ## CLI tests (`apps/cli/tests`)

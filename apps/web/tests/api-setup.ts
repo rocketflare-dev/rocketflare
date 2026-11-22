@@ -9,13 +9,15 @@
  * `@rocketflare/shared/ai/agents` and the plugin barrels — before the test file's `vi.mock` calls
  * exist, and a mocked barrel (`tests/helpers/fixture-agents.ts`) would never be read.
  */
-import { afterAll } from 'vitest'
+import { afterAll, vi } from 'vitest'
 import { installNetworkGuard } from './helpers/network-guard'
 
 // No api test reaches the internet: a non-local request fails at once, naming its URL.
 installNetworkGuard()
 
 afterAll(async () => {
+  // `api` shares a module registry, and Vitest undoes spies after each file but not stubs.
+  vi.unstubAllGlobals()
   const { closeAllDatabases } = await import('@/db/client')
   await closeAllDatabases()
 })

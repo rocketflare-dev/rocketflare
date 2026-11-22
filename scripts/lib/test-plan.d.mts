@@ -34,7 +34,17 @@ export interface TestPlan {
   notes: string[]
 }
 
-export function planTests(env: Env, tree: { kitOnly: boolean }): TestPlan | { error: string }
+export const SUITES: Record<'api' | 'ui' | 'config' | 'driver' | 'kit-only', string[]>
+
+export function planTests(
+  env: Env,
+  tree: { kitOnly: boolean; webOnly?: boolean }
+): TestPlan | { error: string }
+
+export function planSuites(
+  env: Env,
+  input: { suites: string[]; files: string[]; kitOnly: boolean }
+): TestPlan | { error: string }
 
 export function planSelectedTests(
   env: Env,

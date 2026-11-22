@@ -80,6 +80,19 @@ function driverEnv(target, driver) {
     : { NODE_ENV: 'test', DATABASE_DRIVER: 'postgres' }
 }
 
+/**
+ * The suites `pnpm test <suite…>` accepts, each the vitest projects it runs. A suite is the
+ * shared-registry project and its isolated half together: which file runs in which half is
+ * `apps/web/vitest.config.ts`'s business, and no script names a project.
+ */
+export const SUITES = {
+  api: ['api', 'api-isolated'],
+  ui: ['ui', 'ui-isolated'],
+  config: ['config', 'config-isolated'],
+  driver: ['driver'],
+  'kit-only': ['kit-only'],
+}
+
 function vitest(projects, extra = []) {
   return [
     'pnpm',
@@ -97,7 +110,8 @@ function vitest(projects, extra = []) {
 
 /**
  * @param {Record<string, string | undefined>} env
- * @param {{ kitOnly: boolean }} tree what the checkout carries (`apps/web/tests/kit-only/` exists)
+ * @param {{ kitOnly: boolean, webOnly?: boolean }} tree what the checkout carries
+ *   (`apps/web/tests/kit-only/` exists); `webOnly` (`pnpm test web`) skips the other packages
  */
 export function planTests(env, tree) {
   const resolved = resolveTarget(env)
@@ -113,6 +127,7 @@ export function planTests(env, tree) {
     'ui',
     'ui-isolated',
     'config',
+    'config-isolated',
     ...(tree.kitOnly ? ['kit-only'] : []),
   ]
 
@@ -122,16 +137,20 @@ export function planTests(env, tree) {
       : `test target: local compose (the suite under ${suiteDriver}, then the driver project under ${otherDriver})`
 
   const steps = [
-    {
-      label: 'the other packages',
-      cwd: '.',
-      command: ['pnpm', '-r', '--filter', `!./${WEB_DIR}`, 'test'],
-      env: {},
-    },
+    ...(tree.webOnly
+      ? []
+      : [
+          {
+            label: 'the other packages',
+            cwd: '.',
+            command: ['pnpm', '-r', '--filter', `!./${WEB_DIR}`, 'test'],
+            env: {},
+          },
+        ]),
     {
       label: `web: api (shared registry) under ${suiteDriver}`,
       cwd: WEB_DIR,
-      command: vitest(['api'], ['--no-isolate']),
+      command: vitest(['api']),
       env: suiteEnv,
     },
     {
@@ -153,6 +172,48 @@ export function planTests(env, tree) {
     notes.push('driver conformance under postgres: skipped — remote target, no TCP')
   }
   return { target, suiteDriver, compose: target === 'local', banner, steps, notes }
+}
+
+/**
+ * `pnpm test <suite…> [file…]`, the inner loop: the named suites' projects in one vitest run under
+ * the suite driver, narrowed to the files or filters given. No suite runs every web project. No
+ * other package, no second driver pass and no compose management (the database is expected up:
+ * `pnpm test:db:up`, or any earlier `pnpm test`): that is the full run's job.
+ * @param {Record<string, string | undefined>} env
+ * @param {{ suites: string[], files: string[], kitOnly: boolean }} input
+ */
+export function planSuites(env, { suites, files, kitOnly }) {
+  const resolved = resolveTarget(env)
+  if ('error' in resolved) return resolved
+  const { target, suiteDriver } = resolved
+  const unknown = suites.filter(s => !(s in SUITES))
+  if (unknown.length) {
+    return {
+      error: `unknown suite ${unknown.join(', ')}: one of ${Object.keys(SUITES).join(', ')}`,
+    }
+  }
+  if (suites.includes('kit-only') && !kitOnly) {
+    return { error: 'kit-only runs in the kit repository only: a copy has no tests/kit-only/' }
+  }
+  const named = suites.length
+    ? suites
+    : Object.keys(SUITES).filter(s => s !== 'kit-only' || kitOnly)
+  const projects = named.flatMap(s => SUITES[s])
+  return {
+    target,
+    suiteDriver,
+    compose: false,
+    banner: `test target: ${target}, ${named.join(' + ')} under ${suiteDriver}${files.length ? `, ${files.length} filter(s)` : ''}`,
+    steps: [
+      {
+        label: `web: ${projects.join(', ')} under ${suiteDriver}`,
+        cwd: WEB_DIR,
+        command: vitest(projects, files),
+        env: driverEnv(target, suiteDriver),
+      },
+    ],
+    notes: [],
+  }
 }
 
 /** The projects that open the test database (`tests/setup.ts` is their global setup). */
@@ -184,7 +245,7 @@ export function planSelectedTests(env, selection) {
     steps.push({
       label: `web: api, ${files('api').length} file(s) under ${suiteDriver}`,
       cwd: WEB_DIR,
-      command: vitest(['api'], ['--no-isolate', ...files('api')]),
+      command: vitest(['api'], files('api')),
       env: suiteEnv,
     })
   }

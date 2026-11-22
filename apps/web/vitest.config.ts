@@ -59,11 +59,11 @@ const LATENCY_FACTOR = latencyFactor(process.env)
 const PROCESS_TEST_TIMEOUT = 20_000 * LATENCY_FACTOR
 
 // Forks are capped because each holds its own Postgres connections (test DB runs
-// max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 6 is where Postgres
-// becomes the bottleneck. See .claude/rules/testing.md.
+// max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 10 measured ~10 s off
+// `api-isolated` on a large machine against 6. See .claude/rules/testing.md.
 const MAX_WORKERS =
   Number.parseInt(process.env.TEST_MAX_WORKERS ?? '', 10) ||
-  (EPHEMERAL ? 2 : Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
+  (EPHEMERAL ? 2 : Math.min(10, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
 const API_TEST_DIR = path.resolve(import.meta.dirname, './tests/api')
 
@@ -107,23 +107,22 @@ function apiTestFiles(isolated: boolean): string[] {
   )
 }
 
-const UI_TEST_DIR = path.resolve(import.meta.dirname, './tests/ui')
-
 /**
- * The ui tests, kit and plugins alike, split on `uiNeedsIsolation`: a file that mocks a module or a
- * global gets its own registry (`ui-isolated`), every other one shares the worker's (`ui`), which
- * imports React, the router and the app shell once per worker instead of once per file.
+ * The ui and config tests, kit and plugins alike, split on `uiNeedsIsolation`: a file that mocks a
+ * module or a global gets its own registry (`<kind>-isolated`), every other one shares the
+ * worker's, which imports the app once per worker instead of once per file.
  */
-function uiTestFiles(isolated: boolean): string[] {
+function splitTestFiles(kind: 'ui' | 'config', isolated: boolean): string[] {
   const dirs: Array<{ abs: string; rel: string }> = [
-    { abs: UI_TEST_DIR, rel: 'tests/ui' },
+    { abs: path.resolve(import.meta.dirname, `./tests/${kind}`), rel: `tests/${kind}` },
     ...pluginDirs().map(id => ({
-      abs: path.join(PLUGINS_DIR, id, 'tests/ui'),
-      rel: `src/plugins/${id}/tests/ui`,
+      abs: path.join(PLUGINS_DIR, id, `tests/${kind}`),
+      rel: `src/plugins/${id}/tests/${kind}`,
     })),
   ]
+  const pattern = kind === 'ui' ? /\.(test|spec)\.tsx?$/ : /\.(test|spec)\.ts$/
   return dirs.flatMap(dir =>
-    testFiles(dir.abs, /\.(test|spec)\.tsx?$/)
+    testFiles(dir.abs, pattern)
       .filter(f => uiNeedsIsolation(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
       .map(f => `${dir.rel}/${f}`)
   )
@@ -137,11 +136,24 @@ const uiProject = (name: 'ui' | 'ui-isolated') => ({
     environment: 'jsdom' as const,
     isolate: name === 'ui-isolated',
     setupFiles: ['./tests/ui/setup.ts'],
-    include: uiTestFiles(name === 'ui-isolated'),
+    include: splitTestFiles('ui', name === 'ui-isolated'),
   },
   // Without the browser's conditions `react-router` loads as CJS here and an ESM importer such
   // as `react-router-dom` gets a second copy, so the two halves share no router context.
   resolve: { alias, conditions: [...defaultClientConditions] },
+})
+
+const configProject = (name: 'config' | 'config-isolated') => ({
+  extends: true as const,
+  test: {
+    name,
+    testTimeout: PROCESS_TEST_TIMEOUT,
+    environment: 'node' as const,
+    isolate: name === 'config-isolated',
+    setupFiles: name === 'config' ? ['./tests/config/shared-setup.ts'] : [],
+    include: splitTestFiles('config', name === 'config-isolated'),
+  },
+  resolve: { alias },
 })
 
 export default defineConfig({
@@ -168,11 +180,11 @@ export default defineConfig({
     },
     projects: [
       {
-        // Shared module registry. Isolation is turned off on the command line
-        // (`vitest run --project api --no-isolate`).
+        // Shared module registry.
         extends: true,
         test: {
           name: 'api',
+          isolate: false,
           environment: 'node',
           globalSetup: ['./tests/setup.ts'],
           setupFiles: ['./tests/api-setup.ts'],
@@ -205,20 +217,9 @@ export default defineConfig({
         },
         resolve: { alias },
       },
-      {
-        // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
-        extends: true,
-        test: {
-          name: 'config',
-          testTimeout: PROCESS_TEST_TIMEOUT,
-          environment: 'node',
-          include: [
-            'tests/config/**/*.{test,spec}.ts',
-            'src/plugins/*/tests/config/**/*.{test,spec}.ts',
-          ],
-        },
-        resolve: { alias },
-      },
+      // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
+      configProject('config'),
+      configProject('config-isolated'),
       ...(fs.existsSync(KIT_ONLY_DIR)
         ? [
             {
@@ -234,7 +235,6 @@ export default defineConfig({
             },
           ]
         : []),
-      // Shared module registry, set here rather than on the command line as `api`'s is.
       uiProject('ui'),
       uiProject('ui-isolated'),
     ],

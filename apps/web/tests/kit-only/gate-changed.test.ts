@@ -187,7 +187,8 @@ describe('pnpm test --changed: the plan', () => {
       'postgres',
       'neon',
     ])
-    expect(p.steps[1]?.command).toContain('--no-isolate')
+    expect(p.steps[1]?.command).toEqual(expect.arrayContaining(['--project', 'api']))
+    expect(p.steps[1]?.command).not.toContain('api-isolated')
     expect(p.steps[0]?.command).toEqual(['pnpm', '--filter', './apps/cli', 'test'])
   })
 })

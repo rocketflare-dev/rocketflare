@@ -58,7 +58,7 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   `:15`-cron fact tables, dashboards
 - **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, esbuild → `dist/cli.js` (bin `rocketflare`)
-- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `ui-isolated` · `config` · `kit-only` (the kit's own
+- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `ui-isolated` · `config` · `config-isolated` · `kit-only` (the kit's own
   tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; the
   suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
   local proxy); cli; the eval kit's unit tests (`apps/evals/tests`). Evals themselves are
@@ -75,6 +75,7 @@ pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev t
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm gate [step…] · pnpm gate --list [--json]  # THE gate: lint → typecheck → test → build (CI's one job, Launch's ship gate)
 pnpm test  # every package; starts the test DB + Neon proxy; suite under postgres, then driver under neon
+pnpm test api|ui|config|driver [file…]  # the inner loop: one suite (shared + isolated projects), DB expected up
 TEST_DATABASE_BRANCH=gate-… pnpm test  # a sandbox gate: no Docker, the whole suite on a Neon gate branch (CONCEPTS §4)
 pnpm dev:db:up --neon|--postgres  # D35: local dev on either driver
 pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)

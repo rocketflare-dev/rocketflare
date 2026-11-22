@@ -5,8 +5,11 @@
  * compose database when the target is local, and runs the steps in order, stopping at the first
  * that fails.
  *
- * The inner loop is the narrow scripts (`pnpm web test:api`, `test:ui`, `test:config`,
- * `test:driver`, or a vitest file path): postgres, no compose management.
+ * `pnpm test <suite…> [file…]` is the inner loop: `api`, `ui`, `config`, `driver` (and `kit-only`
+ * in the kit), each its shared and isolated vitest projects together, narrowed to any file paths or
+ * filters given, under the suite driver. A path alone runs it in whichever project holds it.
+ * `pnpm test web` is the full plan without the other packages. The `apps/web` `test:*` scripts
+ * are one-line aliases for these, so no `package.json` names a vitest project.
  *
  * `--changed=<base>` (what `pnpm gate --changed` runs) narrows the run to the tests the change
  * reaches: vitest's import graph, plus every test that reads the repository through the
@@ -22,7 +25,9 @@ import { changedFiles, workspacePackages } from './lib/gate-changed-git.mjs'
 import {
   COMPOSE_FILE,
   planSelectedTests,
+  planSuites,
   planTests,
+  SUITES,
   TARGET_HINT,
   WEB_DIR,
 } from './lib/test-plan.mjs'
@@ -166,12 +171,25 @@ async function changedPlan(base) {
   return planSelectedTests(process.env, { projects, packages: decided.test.packages })
 }
 
-const changedArg = process.argv.slice(2).find(a => a.startsWith('--changed='))
+const argv = process.argv.slice(2)
+const changedArg = argv.find(a => a.startsWith('--changed='))
+const kitOnly = existsSync(path.join(ROOT, WEB_DIR, 'tests/kit-only'))
+// Paths arrive relative to the caller (`pnpm web test:api tests/api/x.test.ts` runs in apps/web,
+// `pnpm test api apps/web/tests/api/x.test.ts` at the root); vitest runs in apps/web, so an
+// existing path is handed over absolute. Anything else is a vitest name filter, passed as given.
+const callerDir = process.env.INIT_CWD ?? process.cwd()
+const positional = argv.filter(a => !a.startsWith('--changed'))
+const suites = positional.filter(a => a in SUITES)
+const files = positional
+  .filter(a => !(a in SUITES) && a !== 'web')
+  .map(a => (existsSync(path.resolve(callerDir, a)) ? path.resolve(callerDir, a) : a))
 const plan =
   (changedArg && (await changedPlan(changedArg.slice('--changed='.length)))) ||
-  planTests(process.env, {
-    kitOnly: existsSync(path.join(ROOT, WEB_DIR, 'tests/kit-only')),
-  })
+  (positional.length === 1 && positional[0] === 'web'
+    ? planTests(process.env, { kitOnly, webOnly: true })
+    : positional.length
+      ? planSuites(process.env, { suites, files, kitOnly })
+      : planTests(process.env, { kitOnly }))
 if ('error' in plan) fail(plan.error)
 
 console.log(plan.banner)

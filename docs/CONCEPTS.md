@@ -455,8 +455,8 @@ path); no per-PR previews.
   probing, and prints it first. **Local** (the default): it starts the compose test Postgres and
   Neon proxy itself (`docker compose … --profile neon up -d --wait`; Docker down is a failure that
   names both fixes, never a skip), then every package, the web suite under `postgres`, and the
-  `driver` project under `neon`. The narrow scripts (`pnpm web test:api|ui|config|driver`) are the
-  inner loop: `postgres`, no compose management.
+  `driver` project under `neon`. `pnpm test <suite…> [file…]` (`api|ui|config|driver`, the
+  `pnpm web test:*` aliases) is the inner loop: `postgres`, no compose management.
 - **Remote target — an ephemeral test database** (`pnpm test` with `TEST_DATABASE_BRANCH` set): the
   whole gate's tests where there is no Docker and only 443 out — a coding sandbox, whose
   orchestrator (Launch) creates a throwaway Neon branch per gate attempt and passes its owner
