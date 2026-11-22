@@ -46,6 +46,8 @@ export interface CoreEdit {
 export function applyCoreEdits(text: string, edits: CoreEdit[]): string
 export function revertCoreEdits(text: string, edits: CoreEdit[]): string
 export function partialCoreEdits(text: string, edits: CoreEdit[]): string[]
+/** Where a declared core-edit line sits, as itself or as the lines a formatter wrapped it into. */
+export function findEditLine(lines: string[], line: string): { start: number; end: number } | null
 export function coreEditsByFile(manifest: { coreEdits?: CoreEdit[] }): Map<string, CoreEdit[]>
 
 export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'seed' | 'refused'
@@ -179,6 +181,8 @@ export function workerFirstPatterns(prefixes: readonly string[]): string[]
 export function markReprovision(text: string): string
 export function awaitsReprovision(text: string): boolean
 export function settleReprovision(text: string, prefixes: readonly string[]): string
+/** `run_worker_first` without the patterns of `dropped` API prefixes (one kept for a kit path). */
+export function pruneWorkerFirst(text: string, dropped: string[]): { text: string; removed: string[] }
 export function restoreWorkerFirst(
   text: string,
   prefixes: readonly string[]

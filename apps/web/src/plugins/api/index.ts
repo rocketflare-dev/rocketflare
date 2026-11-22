@@ -46,6 +46,7 @@ export type {
   AnyUiPlugin,
   PluginHeaderItem,
   PluginHeaderPlacement,
+  PluginHomeCard,
   PluginNavGroup,
   PluginRequires,
   PluginRoute,

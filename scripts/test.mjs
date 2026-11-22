@@ -24,15 +24,27 @@ import { planChanged, readsFiles, selectTests } from './lib/gate-changed.mjs'
 import { changedFiles, workspacePackages } from './lib/gate-changed-git.mjs'
 import {
   COMPOSE_FILE,
+  envTestDatabasePort,
   planSelectedTests,
   planSuites,
   planTests,
+  proxyUrl,
   SUITES,
   TARGET_HINT,
+  testPorts,
   WEB_DIR,
 } from './lib/test-plan.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const COMPOSE_TEXT = existsSync(path.join(ROOT, COMPOSE_FILE))
+  ? readFileSync(path.join(ROOT, COMPOSE_FILE), 'utf8')
+  : ''
+const ENV_TEST_FILE = path.join(ROOT, WEB_DIR, '.env.test')
+const ENV_TEST_TEXT = existsSync(ENV_TEST_FILE) ? readFileSync(ENV_TEST_FILE, 'utf8') : ''
+// The ports this checkout's compose file publishes: a copy may move them off the kit's :5433 /
+// :4433 so it never shares another checkout's servers (#178).
+const PORTS = testPorts(COMPOSE_TEXT)
+const PROXY = proxyUrl(PORTS.proxy)
 
 function run(command, { cwd = ROOT, env = {}, quiet = false } = {}) {
   const [bin, ...args] = command
@@ -72,24 +84,24 @@ function holderOf(port) {
 }
 
 /**
- * Another checkout's test containers already hold the ports (every copy of the kit uses :5433 and
- * :4433): reuse them instead of failing `compose up`, and give this checkout its own database
- * there, named by its `.env.test`. Returns true when the shared servers are in use.
+ * Another checkout's test containers already hold the ports (every copy of the kit publishes
+ * :5433 and :4433 unless it moved them in its compose file): reuse them instead of failing
+ * `compose up`, and give this checkout its own database there, named by its `.env.test`. Returns
+ * true when the shared servers are in use.
  */
 function reuseSharedTestServers() {
-  const compose = readFileSync(path.join(ROOT, COMPOSE_FILE), 'utf8')
-  const ours = new Set([...compose.matchAll(/container_name:\s*(\S+)/g)].map(m => m[1]))
-  const pg = holderOf(5433)
-  const proxy = holderOf(4433)
+  const ours = new Set([...COMPOSE_TEXT.matchAll(/container_name:\s*(\S+)/g)].map(m => m[1]))
+  const pg = holderOf(PORTS.postgres)
+  const proxy = holderOf(PORTS.proxy)
   if ((!pg || ours.has(pg)) && (!proxy || ours.has(proxy))) return false
   if (!pg || !proxy) {
     fail(
-      `:5433 is held by ${pg ?? 'nothing'} and :4433 by ${proxy ?? 'nothing'} — another checkout's ` +
-        'test containers are half up. `pnpm dev:db:status` lists them; start or stop that pair.'
+      `:${PORTS.postgres} is held by ${pg ?? 'nothing'} and :${PORTS.proxy} by ${proxy ?? 'nothing'} — ` +
+        "another checkout's test containers are half up. `pnpm dev:db:status` lists them; start or " +
+        'stop that pair.'
     )
   }
-  const envTest = readFileSync(path.join(ROOT, WEB_DIR, '.env.test'), 'utf8')
-  const url = new URL(/^DATABASE_URL=(\S+)/m.exec(envTest)?.[1] ?? '')
+  const url = new URL(/^DATABASE_URL=(\S+)/m.exec(ENV_TEST_TEXT)?.[1] ?? '')
   const db = url.pathname.slice(1)
   const user = decodeURIComponent(url.username)
   if (!/^[a-z0-9_]+$/.test(db)) fail(`.env.test DATABASE_URL names an odd database "${db}"`)
@@ -168,7 +180,11 @@ async function changedPlan(base) {
       Object.entries(chosen).map(([p, files]) => [p, files.map(f => path.join(ROOT, f))])
     )
   }
-  return planSelectedTests(process.env, { projects, packages: decided.test.packages })
+  return planSelectedTests(process.env, {
+    projects,
+    packages: decided.test.packages,
+    proxy: PROXY,
+  })
 }
 
 const argv = process.argv.slice(2)
@@ -186,15 +202,25 @@ const files = positional
 const plan =
   (changedArg && (await changedPlan(changedArg.slice('--changed='.length)))) ||
   (positional.length === 1 && positional[0] === 'web'
-    ? planTests(process.env, { kitOnly, webOnly: true })
+    ? planTests(process.env, { kitOnly, webOnly: true, proxy: PROXY })
     : positional.length
-      ? planSuites(process.env, { suites, files, kitOnly })
-      : planTests(process.env, { kitOnly }))
+      ? planSuites(process.env, { suites, files, kitOnly, proxy: PROXY })
+      : planTests(process.env, { kitOnly, proxy: PROXY }))
 if ('error' in plan) fail(plan.error)
 
 console.log(plan.banner)
 
 if (plan.compose) {
+  // The suite connects where `.env.test` says; the runner starts what the compose file says. When
+  // they disagree, the database comes up on one port and every test waits on the other, failing
+  // as "Database not ready after 15 attempts" with nothing naming the cause.
+  const envPort = envTestDatabasePort(ENV_TEST_TEXT)
+  if (envPort !== null && envPort !== PORTS.postgres) {
+    fail(
+      `${WEB_DIR}/.env.test connects to :${envPort}, but ${COMPOSE_FILE} publishes the test ` +
+        `Postgres on :${PORTS.postgres}. Make them the same port (DATABASE_URL and APP_DATABASE_URL).`
+    )
+  }
   if (run(['docker', 'info'], { quiet: true }) !== 0) {
     fail(`Docker is not running, and a local target needs it. ${TARGET_HINT}`)
   }
@@ -208,7 +234,7 @@ if (plan.compose) {
   if (up !== 0) {
     fail(
       'the test database did not start (docker compose up failed above). Another checkout holding ' +
-        ':5433 or :4433 is the usual cause: `pnpm dev:db:status` lists them.'
+        `:${PORTS.postgres} or :${PORTS.proxy} is the usual cause: \`pnpm dev:db:status\` lists them.`
     )
   }
 }

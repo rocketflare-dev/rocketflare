@@ -361,7 +361,10 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   `/api/ai/documents/upload`, a plugin's `uploadPaths`) a JSON body keeps the 1 MB cap, and any
   other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB multipart overhead, the
   largest file an upload route may take); each upload route mounts its own tighter cap and checks
-  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16).
+  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16). A
+  plugin's `uploadLimits` names EXACT paths whose non-JSON body may go higher, up to
+  `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB, clamped; `uploadLimitIssues` in `plugins.test.ts`
+  refuses more) plus multipart overhead — checked first, for that path alone (§16).
 - **Contracts (D13)**: zod schemas from `@rocketflare/shared` are used by the server, UI and CLI.
   There is no `hono/client` RPC. Errors are `{ error, statusCode, code?, details? }` everywhere,
   and success bodies are bare.
@@ -524,8 +527,11 @@ needs a cloud account; `neon` in deployment has no read cache and pays a round t
 divergences it knows — a new kind (a driver release that parses something differently) surfaces
 in `kit.yml`'s full-neon pass or in production, not in a copy's gate, whose suite runs `postgres`;
 the proxy image is pulled by every local `pnpm test` (the narrow scripts never pull it); the TEST
-database is pinned to
-5433, so two checkouts cannot run `pnpm test` at once (each app has its own Compose project,
+database is on :5433 and the proxy on :4433 unless a copy moves them in
+`apps/web/docker-compose.test.yml` (`pnpm test` reads the published ports there, refuses a
+`.env.test` that connects elsewhere, and reuses another checkout's servers only on those ports;
+the security sandbox listens where `.env.test` connects); two checkouts on the same ports share
+one server, a database each (each app has its own Compose project,
 `<slug>-test`, so switching checkouts no longer recreates the other's container). `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
 re-run of the bootstrap without the flag checks for Docker again. The remote target is proven in
@@ -588,7 +594,8 @@ project.
   `owned_by_document`.
 - **Framing is opt-in per response**: only a route that proved the type (`isEmbeddableMimeType`, PDF)
   sets `embeddable`, which relaxes `DENY` to `SAMEORIGIN` for that one response. It is set before
-  the 304 early return. Never use a path allowlist for this.
+  the 304 early return. Never use a path allowlist for this. A plugin route reaches the same flag
+  through `ctx.embeddable(contentType)` (§16), which applies the same `isEmbeddableMimeType` test.
 - A missing `FILES` binding is 503 `storage_not_configured`. `tenant.purge` pages through the
   tenant prefix and is idempotent.
 
@@ -1608,13 +1615,23 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 - **`scripts/upgrade.mjs`**: a blobless mirror in `.upgrade/`. It classifies paths, drops absent
   surfaces and plugin-owned files (a vendored plugin's are ported as core — it has no release chain
   of its own), translates through the same `applyReplacements()` as the rename,
-  then patches with `--reject` as a fallback. A plan run works on a dirty tree; `--apply` needs a
-  clean one, `git rm`s the kit's deletions only with `--apply-deletes`, and `git add`s exactly
-  what it wrote (rejected files stay unstaged), so the gate's `git ls-files` scanners see the new
-  files. It **never** applies kit migrations (snapshots are
+  then patches. A file whose patch no longer applies (usually hunk context the copy's own formatter
+  moved — import order) is merged 3-way with `git merge-file` (base = the old kit file, theirs =
+  the new one, both translated); a clean merge is taken and staged, a conflicting one becomes a
+  `*.rej`, or conflict markers in place under `--3way`. A `manual` file the kit changed gets the
+  same merge as a starting point under `.upgrade/work/<v>/merged/`, never written into the tree.
+  **The target release's upgrader plans the jump**: when its `scripts/upgrade.mjs` differs from
+  the copy's, the copy's extracts it and `scripts/lib/` from the mirror into `.upgrade/tool/<v>/`
+  (translated as the rename translated the copy's) and runs that, pointed back at the checkout by
+  `KIT_UPGRADE_ROOT`, so an upgrader fix released inside the range applies to the jump that crosses
+  it. `scripts/lib/rename-lib.{mjs,d.mts}` is always ported verbatim (`ALWAYS_PORTED_TOOLING`),
+  whatever a copy's `neverPort` says: the ported tools import it. A plan run works on a dirty
+  tree; `--apply` needs a clean one, `git rm`s the kit's deletions only with `--apply-deletes`,
+  and `git add`s exactly what it wrote (rejected and conflicted files stay unstaged), so the
+  gate's `git ls-files` scanners see the new files. It **never** applies kit migrations (snapshots are
   cumulative), writes resource ids into tomls, applies deletions unasked, or ports the root
   version. The version stamp is written last, only on a clean apply — or by `--continue`, once
-  every `*.rej` an apply left is resolved and deleted; `pnpm plugin upgrade <id> --continue` is the
+  every `*.rej` an apply left is resolved and deleted and no conflict marker remains; `pnpm plugin upgrade <id> --continue` is the
   same finish for a plugin. Every release path is checked
   before anything is written, a plan run included: one that is not a plain path inside the
   repository (`scripts/lib/repo-paths.mjs`), is under `.git/`, or reaches an added file through a
@@ -1747,7 +1764,11 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 - **Core edits**: a line a plugin needs in a core file outside the barrels (a Vite dev proxy
   prefix, a resolve alias) is a `coreEdits` entry in its manifest (`{ file, after, lines[] }`) —
   a plain path inside the repository. `add` inserts it after the anchor, `remove` reverts it byte for byte, `upgrade` applies the new
-  release's list. Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
+  release's list. A declared line is matched as code (`findEditLine`): one the host's formatter
+  wrapped onto several lines still counts as present and is reverted whole, so an upgrade never
+  writes it twice. `upgrade` also drops from `run_worker_first` the API prefixes the release no
+  longer declares and no other plugin needs (`pruneWorkerFirst`; one entry of a kit-owned path
+  stays). Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
   `pnpm provision cloudflare <env>`.
 - **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
   `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys
@@ -1941,6 +1962,20 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   collapses nothing on a narrow screen: an item is a compact control and opens anything large as
   its own lazy chunk. `headerItemIssues` (`plugins.test.ts`) refuses a duplicate id or an unknown
   placement.
+- **Home cards (`UiPlugin.homeCards`)**: `{ id, Component, guard?, order? }[]` — Home's "what needs
+  doing" section, above the quick links (approvals waiting, an inbox to triage). `PluginHomeCards`
+  merges them across plugins, orders by `order`, then plugin id, then card id, and puts each behind
+  its guard, its own `Suspense` and its own error boundary, like a header item. A card with nothing
+  to ask renders `null`; the section brings no chrome, and with no card passing its guard it is
+  absent. `Component` is `lazy(() => import(...))`. The core quick links are data in
+  `pages/home-links.ts`, so the plugin UI kit never imports the Home page (`plugin-ui-kit-graph.test.ts`).
+- **Framing a response (`ctx.embeddable(contentType)`)**: a plugin route that has proved its body
+  is an `EMBEDDABLE_MIME_TYPES` type (today PDF) — from its own row, never the request — lets a
+  same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6). Any other type
+  is refused (`false`) and `DENY` stands. Call it before any 304 early return.
+- **Large uploads (`ServerPlugin.uploadLimits`)**: `{ '/api/<id>/upload': bytes }` — an exact path
+  whose non-JSON body may exceed `uploadPaths`' 10 MB, up to 50 MiB (§3, body limits). The route
+  still mounts its own `bodyLimit` and checks each file; the Worker holds the body in memory.
 - **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the

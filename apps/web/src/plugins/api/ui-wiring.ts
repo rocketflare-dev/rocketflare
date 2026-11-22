@@ -23,12 +23,13 @@ export type { TabConfig } from '../../ui/components/shared'
 export type { NavGuard } from '../../ui/hooks/useNavGuard'
 export { isGuardList, useNavGuard } from '../../ui/hooks/useNavGuard'
 export { featureGuard } from '../../ui/lib/feature-guards'
-export type { QuickLink } from '../../ui/pages/Home'
+export type { QuickLink } from '../../ui/pages/home-links'
 
 export type {
   AnyUiPlugin,
   PluginHeaderItem,
   PluginHeaderPlacement,
+  PluginHomeCard,
   PluginNavGroup,
   PluginRoute,
   PluginRouteTier,

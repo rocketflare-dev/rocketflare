@@ -50,6 +50,7 @@ import {
   deprecatedServerMembers,
   describeClash,
   eventClashes,
+  findEditLine,
   hasBarrelLine,
   isolationEvidence,
   isVendored,
@@ -70,6 +71,7 @@ import {
   pluginMigrationTag,
   pluginPlatformProblems,
   pluginRoots,
+  pruneWorkerFirst,
   rangeWithin,
   removeBarrelLine,
   removeSteps,
@@ -377,6 +379,27 @@ describe('core edits a plugin declares', () => {
     expect(partialCoreEdits(applyCoreEdits(VITE, edits), edits)).toEqual([])
   })
 
+  it('recognises a line the host formatter wrapped: not added twice, and reverted whole (#178)', () => {
+    // What Biome makes of the 105-column nivo alias after `plugin upgrade` formats vite.config.ts.
+    const wrapped = applyCoreEdits(VITE, edits).replace(
+      "      '@nivo/heatmap': path.resolve(__dirname, './src/plugins/analytics/ui/lib/nivo-heatmap.tsx'),",
+      [
+        "      '@nivo/heatmap': path.resolve(",
+        '        __dirname,',
+        "        './src/plugins/analytics/ui/lib/nivo-heatmap.tsx'",
+        '      ),',
+      ].join('\n')
+    )
+    expect(wrapped).toContain('        __dirname,')
+    expect(applyCoreEdits(wrapped, edits)).toBe(wrapped)
+    expect(partialCoreEdits(wrapped, edits)).toEqual([])
+    expect(revertCoreEdits(wrapped, edits)).toBe(VITE)
+    expect(findEditLine(wrapped.split('\n'), edits[1]?.lines[0] ?? '')).toMatchObject({
+      start: expect.any(Number),
+    })
+    expect(findEditLine(VITE.split('\n'), edits[1]?.lines[0] ?? '')).toBeNull()
+  })
+
   it("groups a manifest's edits by the file they touch", () => {
     const byFile = coreEditsByFile({ coreEdits: edits })
     expect([...byFile.keys()]).toEqual(['apps/web/vite.config.ts'])
@@ -386,6 +409,40 @@ describe('core edits a plugin declares', () => {
   it('is empty for a manifest that declares none', () => {
     expect(coreEditsByFile({}).size).toBe(0)
     expect(applyCoreEdits(VITE, [])).toBe(VITE)
+  })
+})
+
+describe('run_worker_first after a release drops an API prefix (#178)', () => {
+  const TOML = `[assets]
+run_worker_first = [
+  "/api",
+  "/api/*",
+  "/mcp",
+  "/mcp/*",
+  # analytics
+  "/cubejs-api",
+  "/cubejs-api/*",
+  "/mcp",
+  "/mcp/*",
+  "/old-hook",
+  "/old-hook/*",
+]
+`
+
+  it("drops a duplicate of a kit-owned path and the single entry of anything else, keeping the kit's", () => {
+    const r = pruneWorkerFirst(TOML, ['/mcp', '/old-hook'])
+    expect(r.removed).toEqual(['/mcp', '/mcp/*', '/old-hook', '/old-hook/*'])
+    expect(r.text.match(/"\/mcp"/g)).toHaveLength(1)
+    expect(r.text).not.toContain('/old-hook')
+    expect(r.text).toContain('"/cubejs-api/*",')
+    expect(r.text.indexOf('"/mcp"')).toBeLessThan(r.text.indexOf('# analytics'))
+  })
+
+  it("never removes the kit's single entry for a path it owns, and is a no-op with nothing dropped", () => {
+    const kitOnly = TOML.replace('  "/mcp",\n  "/mcp/*",\n  "/old-hook"', '  "/old-hook"')
+    expect(pruneWorkerFirst(kitOnly, ['/mcp']).text).toBe(kitOnly)
+    expect(pruneWorkerFirst(TOML, [])).toEqual({ text: TOML, removed: [] })
+    expect(pruneWorkerFirst('name = "x"\n', ['/mcp']).text).toBe('name = "x"\n')
   })
 })
 

@@ -7,7 +7,9 @@
  * body beneath an upload prefix (`PUT /api/ai/documents/:id/visibility` matches one) keeps the
  * 1 MB cap, so nothing under a prefix is uncapped. A plugin's public mount may declare
  * its own `bodyLimitBytes` (≤ `MAX_PUBLIC_MOUNT_BODY_BYTES`), which REPLACES the 1 MB cap beneath
- * its prefix. Hono's `bodyLimit` counts bytes whatever the content type, so a cap covers JSON,
+ * its prefix. A plugin's `uploadLimits` names EXACT paths whose non-JSON body may go above that, up
+ * to `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB) plus multipart overhead — checked first, so one
+ * large-file route does not lift the cap for anything beside it. Hono's `bodyLimit` counts bytes whatever the content type, so a cap covers JSON,
  * form-encoded and `application/scim+json` alike. Over-limit → 413 in the shared envelope.
  */
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
@@ -45,6 +47,29 @@ export const MAX_UPLOAD_PATH_BODY_BYTES =
 
 const uploadPathBodyLimit = bodyLimit({ maxSize: MAX_UPLOAD_PATH_BODY_BYTES, onError: tooLarge })
 
+/**
+ * The most an exact plugin upload path (`ServerPlugin.uploadLimits`) may ask for: a 25 MiB mail
+ * attachment and the `.eml` built from it (~34 MiB) fit; the Worker still holds the whole body in
+ * memory, so this stays well under the isolate's 128 MB. Values above it are clamped, and
+ * `tests/config/plugins.test.ts` refuses them.
+ */
+export const MAX_PLUGIN_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
+
+/** One exact path with its own non-JSON cap — a plugin's `uploadLimits` entry. */
+export interface UploadLimit {
+  path: string
+  maxBytes: number
+}
+
+/** `uploadLimits` records from every plugin, as the list `apiBodyLimit` takes. */
+export function pluginUploadLimits(
+  plugins: readonly { uploadLimits?: Readonly<Record<string, number>> }[]
+): UploadLimit[] {
+  return plugins.flatMap(p =>
+    Object.entries(p.uploadLimits ?? {}).map(([path, maxBytes]) => ({ path, maxBytes }))
+  )
+}
+
 /** `application/json`, `application/<x>+json` — a body a JSON route parses. */
 function isJsonBody(c: Context): boolean {
   const type = (c.req.header('Content-Type') ?? '').split(';')[0]?.trim().toLowerCase() ?? ''
@@ -73,7 +98,9 @@ export interface BodyLimitOverride {
 }
 
 /**
- * The `/api/*` body cap (middleware step 5): beneath an upload path, core's or a plugin's
+ * The `/api/*` body cap (middleware step 5): on an exact `uploadLimits` path a non-JSON body gets
+ * that path's cap (clamped to `MAX_PLUGIN_UPLOAD_LIMIT_BYTES`) plus multipart overhead and a JSON
+ * body the 1 MB cap; beneath an upload path, core's or a plugin's
  * `uploadPaths`, a non-JSON body gets `MAX_UPLOAD_PATH_BODY_BYTES` (the route mounts its own,
  * tighter cap) and a JSON body the 1 MB cap; an override prefix gets its own cap — the longest
  * matching prefix wins, clamped to `MAX_PUBLIC_MOUNT_BODY_BYTES` — and everything else gets
@@ -81,8 +108,20 @@ export interface BodyLimitOverride {
  */
 export function apiBodyLimit(
   overrides: readonly BodyLimitOverride[] = [],
-  pluginUploadPaths: readonly string[] = []
+  pluginUploadPaths: readonly string[] = [],
+  uploadLimits: readonly UploadLimit[] = []
 ): MiddlewareHandler {
+  const exact = new Map(
+    uploadLimits.map(u => [
+      u.path,
+      bodyLimit({
+        maxSize:
+          Math.min(Math.max(0, u.maxBytes), MAX_PLUGIN_UPLOAD_LIMIT_BYTES) +
+          MULTIPART_OVERHEAD_BYTES,
+        onError: tooLarge,
+      }),
+    ])
+  )
   const limits = [...overrides]
     .sort((a, b) => b.prefix.length - a.prefix.length)
     .map(o => ({
@@ -94,6 +133,8 @@ export function apiBodyLimit(
     }))
   return (c, next) => {
     const path = c.req.path
+    const sized = exact.get(path)
+    if (sized) return (isJsonBody(c) ? jsonBodyLimit : sized)(c, next)
     if (isUploadPath(path) || pluginUploadPaths.some(p => isUnderPrefix(path, p))) {
       return (isJsonBody(c) ? jsonBodyLimit : uploadPathBodyLimit)(c, next)
     }

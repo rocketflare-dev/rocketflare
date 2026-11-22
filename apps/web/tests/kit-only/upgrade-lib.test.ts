@@ -15,6 +15,7 @@ import rawManifest from '../../../../.rocketflare.json'
 import { deriveNames } from '../../../../scripts/lib/rename-lib.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
+  ALWAYS_PORTED_TOOLING,
   absentSurfaces,
   BinaryPatchError,
   classifyPath,
@@ -35,6 +36,7 @@ import {
   stripKitOnlyHooks,
   stripKitOnlyWiring,
   translateBlock,
+  upgraderHandoff,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
 
 // A JSON import widens every literal to `string`; the manifest's shape is the lib's contract.
@@ -252,6 +254,20 @@ describe('classifyPath', () => {
         kitOnly: ['apps/cli/tests/kit-only/**'],
       }).class
     ).toBe('skipped-kit-only')
+  })
+
+  it("ports rename-lib verbatim even off a copy's neverPort — ported tools import it (#178)", () => {
+    // Every copy made before 0.44.0 lists it in its own (never-ported) neverPort.
+    const older = { ...manifest, neverPort: [...manifest.neverPort, ...ALWAYS_PORTED_TOOLING] }
+    for (const p of ALWAYS_PORTED_TOOLING) {
+      const c = classifyPath(p, { ...base, manifest: older })
+      expect(c.class, p).toBe('modified')
+      expect(c.translate, p).toBe(false)
+    }
+    // The CLI that drives the rename is still the kit's alone.
+    expect(classifyPath('scripts/rename.mjs', { ...base, manifest: older }).class).toBe(
+      'skipped-kit-only'
+    )
   })
 
   it('ports the kit tooling untranslated when asked', () => {
@@ -785,5 +801,17 @@ describe('mirror().isAncestor', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('upgraderHandoff (#178)', () => {
+  it("runs the target's upgrader only when it differs and reads the hand-over", () => {
+    const here = readFileSync(path.join(REPO_ROOT, 'scripts/upgrade.mjs'), 'utf8')
+    expect(upgraderHandoff({ local: here, target: here })).toBe('same')
+    expect(upgraderHandoff({ local: here, target: null })).toBe('same')
+    expect(upgraderHandoff({ local: here, target: `${here}\n// later` })).toBe('delegate')
+    expect(upgraderHandoff({ local: here, target: '// an upgrader from before it' })).toBe(
+      'too-old'
+    )
   })
 })

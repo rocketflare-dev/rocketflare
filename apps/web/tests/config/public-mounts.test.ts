@@ -11,7 +11,14 @@
  */
 import type { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
-import { apiBodyLimit, MAX_JSON_BODY_BYTES } from '@/api/middleware/body-limit'
+import {
+  apiBodyLimit,
+  MAX_JSON_BODY_BYTES,
+  MAX_PLUGIN_UPLOAD_LIMIT_BYTES,
+  MAX_UPLOAD_PATH_BODY_BYTES,
+  MULTIPART_OVERHEAD_BYTES,
+  pluginUploadLimits,
+} from '@/api/middleware/body-limit'
 import { errorHandler } from '@/api/middleware/error-handler'
 import {
   mountPublicRoutes,
@@ -58,6 +65,51 @@ describe('plugin upload paths', () => {
     expect((await app.request('/api/orders/upload', big)).status).not.toBe(413)
     expect((await app.request('/api/orders/uploads', big)).status).toBe(413)
     expect((await app.request('/api/orders', big)).status).toBe(413)
+  })
+})
+
+describe('plugin upload limits', () => {
+  const LIMIT = MAX_UPLOAD_PATH_BODY_BYTES + 1024 * 1024
+  const app = createRouter()
+  app.onError(errorHandler)
+  app.use(
+    '/api/*',
+    apiBodyLimit(
+      [],
+      ['/api/orders/files'],
+      pluginUploadLimits([
+        { uploadLimits: { '/api/orders/upload': LIMIT } },
+        { uploadLimits: { '/api/orders/huge': MAX_PLUGIN_UPLOAD_LIMIT_BYTES * 4 } },
+      ])
+    )
+  )
+  app.route('/api/orders', echoRouter())
+  const post = (bytes: number, type = 'application/octet-stream') => ({
+    method: 'POST',
+    headers: { 'Content-Type': type },
+    body: 'x'.repeat(bytes),
+  })
+  const atCap = LIMIT + MULTIPART_OVERHEAD_BYTES
+
+  it('lets a non-JSON body up to its cap through on the exact path, and 413s one byte over', async () => {
+    expect((await app.request('/api/orders/upload', post(atCap))).status).toBe(200)
+    expect((await app.request('/api/orders/upload', post(atCap + 1))).status).toBe(413)
+  })
+
+  it('keeps the 1 MB cap for a JSON body on that path', async () => {
+    const json = post(MAX_JSON_BODY_BYTES + 1, 'application/json')
+    expect((await app.request('/api/orders/upload', json)).status).toBe(413)
+  })
+
+  it('lifts nothing beside the exact path', async () => {
+    const big = post(MAX_UPLOAD_PATH_BODY_BYTES + 1)
+    expect((await app.request('/api/orders/upload/x', big)).status).toBe(413)
+    expect((await app.request('/api/orders/files', big)).status).toBe(413)
+  })
+
+  it('clamps a limit above the ceiling', async () => {
+    const over = post(MAX_PLUGIN_UPLOAD_LIMIT_BYTES + MULTIPART_OVERHEAD_BYTES + 1)
+    expect((await app.request('/api/orders/huge', over)).status).toBe(413)
   })
 })
 

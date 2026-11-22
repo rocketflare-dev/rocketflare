@@ -19,9 +19,53 @@
  * suspected seam hole by hand.
  */
 
-export const PROXY_URL = 'http://localhost:4433'
+import { parseYaml } from './yaml-lite.mjs'
+
+/** The host ports the kit's `docker-compose.test.yml` publishes; a copy may move both. */
+export const DEFAULT_TEST_PORTS = Object.freeze({ postgres: 5433, proxy: 4433 })
+export const proxyUrl = port => `http://localhost:${port}`
+export const PROXY_URL = proxyUrl(DEFAULT_TEST_PORTS.proxy)
 export const COMPOSE_FILE = 'apps/web/docker-compose.test.yml'
 export const WEB_DIR = 'apps/web'
+
+/** The host port of a compose service's first `ports:` entry (`"5433:5432"` → 5433), or null. */
+function publishedPort(service) {
+  const first = Array.isArray(service?.ports) ? service.ports[0] : null
+  const m = /^(?:[\d.]+:)?(\d+):\d+(?:\/\w+)?$/.exec(String(first ?? '').trim())
+  return m ? Number(m[1]) : null
+}
+
+/**
+ * The host ports `docker-compose.test.yml` publishes for the test Postgres and the Neon proxy.
+ * Read, never assumed: a copy that moved its test database off :5433 (so it never meets another
+ * checkout's) found the KIT's server there and created its database in it (#178). A file that
+ * does not say falls back to the kit's ports.
+ * @param {string} composeText
+ */
+export function testPorts(composeText) {
+  let services = {}
+  try {
+    services = parseYaml(composeText)?.services ?? {}
+  } catch {
+    services = {}
+  }
+  return {
+    postgres: publishedPort(services['postgres-test']) ?? DEFAULT_TEST_PORTS.postgres,
+    proxy: publishedPort(services['neon-proxy-test']) ?? DEFAULT_TEST_PORTS.proxy,
+  }
+}
+
+/** The port in `.env.test`'s `DATABASE_URL`, or null when there is none to read. */
+export function envTestDatabasePort(envTestText) {
+  const raw = /^DATABASE_URL=(\S+)/m.exec(envTestText)?.[1]
+  if (!raw) return null
+  try {
+    const url = new URL(raw)
+    return Number(url.port || 5432)
+  } catch {
+    return null
+  }
+}
 
 const DRIVERS = ['postgres', 'neon']
 
@@ -63,7 +107,7 @@ export function resolveTarget(env) {
 }
 
 /** The environment a web vitest run needs for one driver on one target. */
-function driverEnv(target, driver) {
+function driverEnv(target, driver, proxy = PROXY_URL) {
   if (target === 'remote') {
     // `.env.test`'s local URLs must not win: dotenv never overwrites a variable that is already
     // set, so the branch's DATABASE_URL stands, and the app-role URL is blanked (unset, the app
@@ -76,7 +120,7 @@ function driverEnv(target, driver) {
     }
   }
   return driver === 'neon'
-    ? { NODE_ENV: 'test', DATABASE_DRIVER: 'neon', NEON_LOCAL_PROXY: PROXY_URL }
+    ? { NODE_ENV: 'test', DATABASE_DRIVER: 'neon', NEON_LOCAL_PROXY: proxy }
     : { NODE_ENV: 'test', DATABASE_DRIVER: 'postgres' }
 }
 
@@ -110,7 +154,7 @@ function vitest(projects, extra = []) {
 
 /**
  * @param {Record<string, string | undefined>} env
- * @param {{ kitOnly: boolean, webOnly?: boolean }} tree what the checkout carries
+ * @param {{ kitOnly: boolean, webOnly?: boolean, proxy?: string }} tree what the checkout carries
  *   (`apps/web/tests/kit-only/` exists); `webOnly` (`pnpm test web`) skips the other packages
  */
 export function planTests(env, tree) {
@@ -118,7 +162,7 @@ export function planTests(env, tree) {
   if ('error' in resolved) return resolved
   const { target, suiteDriver } = resolved
   const otherDriver = suiteDriver === 'postgres' ? 'neon' : 'postgres'
-  const suiteEnv = driverEnv(target, suiteDriver)
+  const suiteEnv = driverEnv(target, suiteDriver, tree.proxy)
   // The kit's OWN tests exist only in the kit: the rename deletes the directory, so a copy's plan
   // never names the project and there is nothing to unwire.
   const isolated = [
@@ -167,7 +211,7 @@ export function planTests(env, tree) {
       label: `web: driver conformance under ${otherDriver}`,
       cwd: WEB_DIR,
       command: vitest(['driver']),
-      env: driverEnv(target, otherDriver),
+      env: driverEnv(target, otherDriver, tree.proxy),
     })
   } else {
     notes.push('driver conformance under postgres: skipped — remote target, no TCP')
@@ -181,9 +225,9 @@ export function planTests(env, tree) {
  * other package, no second driver pass and no compose management (the database is expected up:
  * `pnpm test:db:up`, or any earlier `pnpm test`): that is the full run's job.
  * @param {Record<string, string | undefined>} env
- * @param {{ suites: string[], files: string[], kitOnly: boolean }} input
+ * @param {{ suites: string[], files: string[], kitOnly: boolean, proxy?: string }} input
  */
-export function planSuites(env, { suites, files, kitOnly }) {
+export function planSuites(env, { suites, files, kitOnly, proxy }) {
   const resolved = resolveTarget(env)
   if ('error' in resolved) return resolved
   const { target, suiteDriver } = resolved
@@ -210,7 +254,7 @@ export function planSuites(env, { suites, files, kitOnly }) {
         label: `web: ${projects.join(', ')} under ${suiteDriver}`,
         cwd: WEB_DIR,
         command: vitest(projects, files),
-        env: driverEnv(target, suiteDriver),
+        env: driverEnv(target, suiteDriver, proxy),
       },
     ],
     notes: [],
@@ -226,7 +270,7 @@ const DATABASE_PROJECTS = ['api', 'api-isolated', 'api-fixtures', 'driver']
  * driver conformance pass runs only when a driver file was chosen — the seam is proven on every
  * full run, and a change that reaches it reaches the `driver` project's files.
  * @param {Record<string, string | undefined>} env
- * @param {{ projects: Record<string, string[]>, packages: string[] }} selection web files are
+ * @param {{ projects: Record<string, string[]>, packages: string[], proxy?: string }} selection web files are
  *   paths relative to apps/web; packages are repo-relative dirs
  */
 export function planSelectedTests(env, selection) {
@@ -234,7 +278,7 @@ export function planSelectedTests(env, selection) {
   if ('error' in resolved) return resolved
   const { target, suiteDriver } = resolved
   const otherDriver = suiteDriver === 'postgres' ? 'neon' : 'postgres'
-  const suiteEnv = driverEnv(target, suiteDriver)
+  const suiteEnv = driverEnv(target, suiteDriver, selection.proxy)
   const files = p => selection.projects[p] ?? []
   const steps = selection.packages.map(dir => ({
     label: `${dir} (reached by the change)`,
@@ -266,7 +310,7 @@ export function planSelectedTests(env, selection) {
       label: `web: driver conformance under ${otherDriver}`,
       cwd: WEB_DIR,
       command: vitest(['driver'], files('driver')),
-      env: driverEnv(target, otherDriver),
+      env: driverEnv(target, otherDriver, selection.proxy),
     })
   } else if (files('driver').length) {
     notes.push('driver conformance under postgres: skipped — remote target, no TCP')

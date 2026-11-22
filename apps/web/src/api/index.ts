@@ -8,7 +8,12 @@
 import type { Hono, MiddlewareHandler } from 'hono'
 import { serverPlugins } from '../plugins/server'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
-import { apiBodyLimit, isUnderPrefix, jsonBodyLimit } from './middleware/body-limit'
+import {
+  apiBodyLimit,
+  isUnderPrefix,
+  jsonBodyLimit,
+  pluginUploadLimits,
+} from './middleware/body-limit'
 import { configMiddleware } from './middleware/config'
 import { corsMiddleware } from './middleware/cors'
 import { csrfProtection } from './middleware/csrf'
@@ -95,7 +100,8 @@ app.use(
   '/api/*',
   apiBodyLimit(
     publicBodyLimitOverrides(publicMounts),
-    serverPlugins.flatMap(p => p.uploadPaths ?? [])
+    serverPlugins.flatMap(p => p.uploadPaths ?? []),
+    pluginUploadLimits(serverPlugins)
   )
 )
 // A plugin may own a prefix outside `/api` (a protocol endpoint); it gets the JSON cap too.

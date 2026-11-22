@@ -56,7 +56,12 @@ No trailer either? Ask which kit version they copied and use that tag. Do not gu
 pnpm kit:upgrade $ARGUMENTS
 ```
 
-Expect six `✔ n/6` lines and a report. Read `.upgrade/work/<version>/plan.md` — it embeds every
+Expect six `✔ n/6` lines and a report. A line `upgrader <version>'s, not this copy's` after
+`1/6` is normal: the target release's own upgrader (extracted into `.upgrade/tool/`) is planning
+the jump, so every upgrader fix up to that release applies, and the `✔ n/6` lines repeat once.
+`note: …predates the hand-over` means the target's upgrader is older than the hand-over (before
+0.44.0): this copy's plans it, and an upgrader bug fixed in between can still show in the plan.
+Read `.upgrade/work/<version>/plan.md` — it embeds every
 release note in range, and each is also at the `.upgrade/work/<version>/notes/X.Y.Z.md` path the
 report prints. Then tell them, in
 three or four lines: which versions they are crossing, what each release note says it did, how many
@@ -100,12 +105,19 @@ Exit 0 means everything landed, **staged**: `--apply` `git add`s every file it w
 `.rocketflare.json`), so `git diff --cached` is the upgrade and the gate's `git ls-files` scanners
 see the new files. Add `--apply-deletes` only when the user agrees to drop the files the kit
 deleted (listed in the plan) — it `git rm`s them; without it they stay and the report says so.
-**Exit 4 means some hunks rejected** — that is work remaining, not
+A file whose patch no longer applies is merged 3-way first (the old and new kit versions into
+the copy's file); a clean merge is applied and staged, and the report lists it as `merged`. Most
+rejects were only import order a formatter moved, and never reach you now.
+**Exit 4 means some hunks rejected or conflicted** — that is work remaining, not
 a failure, and the script deliberately does NOT stamp the new version until it is finished. For each
 `*.rej` beside a file: read the reject, read the file, apply the intent by hand, delete the `.rej`.
+With `--3way` a conflicting file gets `<<<<<<<` / `>>>>>>>` blocks in place instead of a `.rej`:
+resolve each block. For a `manual` file (`package.json`, the tomls, `.dev.vars.example`) the
+plan's `merged/<path>` is a 3-way merge to start from — read it, never copy it over blind.
 A reject means the adopter's copy has diverged there; their version usually wins on anything they
 changed on purpose. When the last one is gone, **`pnpm kit:upgrade --to <version> --continue`**
-records the version, commit and history the apply held back (it refuses while a `*.rej` remains,
+records the version, commit and history the apply held back (it refuses while a `*.rej` or a
+conflict marker remains,
 and refuses a plan that no longer starts from what `.rocketflare.json` records). A file with
 rejects is left unstaged: `git add` each one you resolve. Never re-run
 `--apply` to finish: the tree is dirty, and the patch no longer applies to files it already patched.
