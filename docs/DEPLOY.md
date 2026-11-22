@@ -480,8 +480,9 @@ if: |
 
 **A copy's CI is one job, and it is the gate.** `ci.yml` adds nothing to `pnpm gate` but the
 secrets scan, so a green PR means exactly what a green `pnpm gate` on a laptop means, and what
-Launch's ship gate runs in a sandbox (`tests/config/ci-workflows.test.ts` holds the file to that:
-no second test job, no `services:` database beside the compose file, no `--skip`). A copy's
+Launch's ship gate runs in a sandbox. Keep it that way: no second test job, no `services:`
+database beside the compose file, no `--skip`. The kit pins its own `ci.yml` to that shape, and
+`scripts/kit-check.mjs` checks a copy's against the Launch contract. A copy's
 plugins are installed and committed, so the one gate covers them. What proves the KIT — what a
 rename does to it, what a fresh clone installs, whether its published plugin API moved — is
 `kit.yml`, which is `kitOnly`: the rename deletes it and `kit:upgrade` never ports it. It is a

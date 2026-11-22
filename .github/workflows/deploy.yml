@@ -122,7 +122,7 @@ jobs:
   # the PARENT has a completed, successful CI run on its exact sha. That is Launch's `release: X.Y.Z`
   # commit, whose own CI is still running (or `[skip ci]`) when the tag deploys; the gate would
   # re-test code its parent's run already passed. In-progress still does not count, for either.
-  # The decision is `gatedDecision` in scripts/release-check.mjs (tests/config/ci-workflows.test.ts).
+  # The decision is `gatedDecision` in scripts/release-check.mjs, tested in the kit.
   gated:
     name: Already gated?
     needs: guard

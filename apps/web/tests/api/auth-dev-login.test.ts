@@ -2,10 +2,10 @@
  * `POST /auth/dev-login`: development only — 404 elsewhere; creates/finds the user, bypasses
  * gating, sets the cookie, answers with the session response.
  */
-import { and, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { SESSION_COOKIE_NAME } from '@/api/auth/cookies'
-import { tenants, tenantUsers, users } from '@/db/schema'
+import { users } from '@/db/schema'
 import {
   createTestTenantWithUser,
   createTestUser,
@@ -69,22 +69,5 @@ describe('POST /auth/dev-login', () => {
     const res = await devLogin({ email: 'nope' })
     expect(res.status).toBe(400)
     expect(await json(res)).toMatchObject({ code: 'validation_failed' })
-  })
-
-  it('single mode: a new dev user is auto-joined to the single tenant', async () => {
-    const env = createTestEnv({ TENANCY_MODE: 'single' })
-    const email = `devsingle_${uniqueId().toLowerCase()}@example.test`
-    const res = await devLogin({ email }, env)
-    const body = await json<{ tenant: { id: string; role: string } }>(res)
-    const [oldest] = await db.select().from(tenants).orderBy(tenants.createdAt).limit(1)
-    expect(body.tenant).toMatchObject({ id: oldest?.id, role: 'member' })
-    const [user] = await db.select().from(users).where(eq(users.email, email))
-    const rows = await db
-      .select()
-      .from(tenantUsers)
-      .where(
-        and(eq(tenantUsers.userId, user?.id ?? ''), eq(tenantUsers.tenantId, oldest?.id ?? ''))
-      )
-    expect(rows).toHaveLength(1)
   })
 })

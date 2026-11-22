@@ -1,4 +1,4 @@
-/** Types for `brand.mjs` (no `allowJs`); `apps/web/tests/config/design-docs.test.ts` typechecks against this. */
+/** Types for `brand.mjs` (no `allowJs`); `apps/web/tests/kit-only/design-docs.test.ts` typechecks against this. */
 export type BlockKind = 'theme' | 'light' | 'dark'
 export function tokenBlocks(
   css: string

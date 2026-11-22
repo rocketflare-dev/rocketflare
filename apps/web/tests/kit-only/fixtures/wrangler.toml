@@ -1,4 +1,4 @@
-# FIXTURE for tests/config/patch-toml.test.ts: a snapshot of the kit's apps/web/wrangler.toml as it
+# FIXTURE for tests/kit-only/patch-toml.test.ts: a snapshot of the kit's apps/web/wrangler.toml as it
 # shipped (unprovisioned). Never deployed; never edited by Launch or by `pnpm provision`.
 # Production Worker config. Staging is a standalone copy (wrangler.staging.toml) — keep the
 # two files in sync: same bindings/classes/limits, differing ONLY in name, routes, [vars]

@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the provider seam (`ai/resolve`) and the entity-type registry, so it needs its own registry.
 /**
  * Knowledge-fact extraction (D43) against real Postgres, with a scripted `FakeChatClient` as the
  * model: when `knowledge.extract` is enqueued (flag, registered types, a text that changed — never
@@ -19,7 +17,12 @@ import { z } from 'zod'
 import { handleDocumentIndex } from '@/api/queues/handlers/document-index'
 import { handleKnowledgeExtract } from '@/api/queues/handlers/knowledge-extract'
 import type { JobContext } from '@/api/queues/jobs'
+import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import {
+  overrideResolveChatForTests,
+  overrideResolveDecisionsForTests,
+} from '@/api/services/ai/resolve'
 import { setTenantOverride } from '@/api/services/features'
 import { buildJobEnvelope } from '@/api/services/jobs'
 import { extractDocumentFacts, type FactCandidate } from '@/api/services/knowledge/extract'
@@ -30,6 +33,7 @@ import type {
   KnowledgeJudge,
   ValueQuestion,
 } from '@/api/services/knowledge/judge'
+import { overrideKnowledgeEntityTypesForTests } from '@/api/services/knowledge/registry'
 import { reviewFact } from '@/api/services/knowledge/review'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
 import { valueKey } from '@/api/services/knowledge/values'
@@ -53,33 +57,24 @@ const state: {
   resolved: { name: string; tenantId: string }[]
 } = { client: null, types: [], resolved: [] }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  const { AiNotConfiguredError } = await import('@/api/services/ai/errors')
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic',
-        model: 'claude-haiku-5-5',
-        source: 'tenant',
-        billedToPlatform: false,
-        maxOutputTokens: 4096,
-      }
-    }),
-    // No decision engine unless a test passes its own judge: the literal rules decide.
-    resolveDecisions: vi.fn(async () => {
-      throw new AiNotConfiguredError('chat')
-    }),
+    client: state.client,
+    provider: 'anthropic',
+    model: 'claude-haiku-5-5',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 4096,
   }
 })
 
-vi.mock('@/api/services/knowledge/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/knowledge/registry')>()
-  return { ...actual, knowledgeEntityTypes: () => state.types }
+// No decision engine unless a test passes its own judge: the literal rules decide.
+overrideResolveDecisionsForTests(async () => {
+  throw new AiNotConfiguredError('chat')
 })
+
+overrideKnowledgeEntityTypesForTests(() => state.types)
 
 const db = setupTestDatabase()
 

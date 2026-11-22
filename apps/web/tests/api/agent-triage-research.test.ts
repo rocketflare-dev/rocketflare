@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the chat and decisions seams), so this file needs its own module registry.
 /**
  * `triage-research` end to end over a really-ingested document, with a scripted decisions
  * engine, on all three routes: the screen keeps the passage and the answer cites only kept
@@ -16,6 +14,10 @@ import { enqueueRun, getRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import {
+  overrideResolveChatForTests,
+  overrideResolveDecisionsForTests,
+} from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -33,41 +35,37 @@ const state: { client: ChatClient | null; decide: Decider | null; asks: number }
   asks: 0,
 }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible' as const,
-        model: 'fake-model',
-        source: 'tenant' as const,
-        maxOutputTokens: 2048,
-      }
-    }),
-    resolveDecisions: vi.fn(async () => ({
-      client: {
-        provider: 'typesafe' as const,
-        method: 'typesafe' as const,
-        ask: async (req: DecisionRequest) => {
-          state.asks += 1
-          if (!state.decide) throw new AiError('auth', 'typesafe', 'no decider scripted')
-          return {
-            answers: state.decide(req),
-            usage: { inputTokens: 40, outputTokens: 4 },
-            model: 'jev-1.13.0',
-          }
-        },
-      },
-      provider: 'typesafe' as const,
-      model: 'jev-latest',
-      method: 'typesafe' as const,
-      source: 'platform' as const,
-    })),
+    client: state.client,
+    provider: 'anthropic_compatible' as const,
+    model: 'fake-model',
+    source: 'tenant' as const,
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
+
+overrideResolveDecisionsForTests(async () => ({
+  client: {
+    provider: 'typesafe' as const,
+    method: 'typesafe' as const,
+    ask: async (req: DecisionRequest) => {
+      state.asks += 1
+      if (!state.decide) throw new AiError('auth', 'typesafe', 'no decider scripted')
+      return {
+        answers: state.decide(req),
+        usage: { inputTokens: 40, outputTokens: 4 },
+        model: 'jev-1.13.0',
+      }
+    },
+  },
+  provider: 'typesafe' as const,
+  model: 'jev-latest',
+  method: 'typesafe' as const,
+  source: 'platform' as const,
+}))
 
 const db = setupTestDatabase()
 

@@ -1,7 +1,4 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` and swaps an entry of the `AGENTS` registry, so this file
-// needs its own module registry.
-// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * The runtime half of human-in-the-loop, against the real database: `ctx.interrupt`,
  * `executeRun`'s park and decline arms, steering delivery, artifacts, and the two lifecycle
@@ -53,6 +50,7 @@ import {
 import { executeRun, isRetryableRunError } from '@/api/services/agents/runtime'
 import { InterruptDeclinedError, InterruptRequested, type Tool } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -63,28 +61,16 @@ import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
-
 const state: { client: ChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  return {
-    ...actual,
-    resolveChat: vi.fn(async () => ({
-      client: state.client ?? new FakeChatClient([], 'anthropic_compatible'),
-      provider: 'anthropic_compatible',
-      model: 'fake-model',
-      source: 'tenant',
-      maxOutputTokens: 2048,
-    })),
-  }
-})
+overrideResolveChatForTests(async () => ({
+  client: state.client ?? new FakeChatClient([], 'anthropic_compatible'),
+  provider: 'anthropic_compatible',
+  model: 'fake-model',
+  source: 'tenant',
+  billedToPlatform: false,
+  maxOutputTokens: 2048,
+}))
 
 const db = setupTestDatabase()
 
@@ -104,7 +90,7 @@ const original = AGENTS[FIXTURE_AGENT]
 
 /**
  * Swap the fixture agent's definition for the run under test (`tests/helpers/fixture-agents.ts`,
- * registered through mocked plugin barrels, so no example agent is borrowed) — the swap is undone after every test and the file is `@vitest-isolate` for it.
+ * installed in the plugin barrels by the `api-fixtures` project, so no example agent is borrowed) — the swap is undone after every test, so no later file sharing the registry sees it.
  */
 function installAgent(
   run: (ctx: AgentContext) => Promise<unknown>,

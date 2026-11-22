@@ -4,25 +4,13 @@
  * `@ag-ui/proto` are `apps/web` server dependencies; only `@ag-ui/core`'s zod schemas ship, and
  * only in the lazy chat chunk.
  *
- * It reads the built output, so it is skipped when there is none (CI builds after it runs; a local
- * `pnpm web build:ui` makes it assert). The import-graph rule itself is not enforceable from a
- * bundle — this catches the consequence, which is the thing that actually costs users bytes.
+ * The bundle half reads the built output, so it runs after the build instead:
+ * `scripts/check-ui-bundle.mjs`, which `build:ui` calls straight after `vite build`. This file keeps
+ * the source-level half, which needs no build.
  */
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-
-const ASSETS = path.resolve(__dirname, '../../dist/ui/assets')
-const built = existsSync(ASSETS)
-
-/** What must never appear in the eager entry chunk, and the rule each stands for. */
-const EAGER_FORBIDDEN = ['recharts', 'drizzle-cube', 'react-markdown']
-
-/** What must never appear in ANY chunk: the protobuf transport is the server's business. */
-const FORBIDDEN_ANYWHERE = ['@bufbuild/protobuf', '@ag-ui/proto', '@ag-ui/encoder']
-
-const chunks = () => (built ? readdirSync(ASSETS).filter(f => f.endsWith('.js')) : [])
-const read = (file: string) => readFileSync(path.join(ASSETS, file), 'utf8')
 
 /**
  * The source-level half, which runs whether or not there is a build: `components/shared` is the
@@ -42,32 +30,6 @@ describe('components/shared', () => {
         ).join('\n')
         return /react-markdown|remark-|components\/ai/.test(imports)
       })
-    expect(offenders).toEqual([])
-  })
-})
-
-describe.skipIf(!built)('the UI bundle', () => {
-  it('keeps the heavy dependencies out of the eager entry chunk', () => {
-    const entry = chunks().filter(f => /^index-[^.]+\.js$/.test(f))
-    expect(entry).toHaveLength(1)
-    const source = read(entry[0] as string)
-    for (const needle of EAGER_FORBIDDEN) expect(source).not.toContain(needle)
-  })
-
-  /**
-   * The run workspace carries `Markdown`, the interrupt panel and the timeline. It must
-   * be its OWN chunk: the route is reached from a notification by people who may never open any
-   * other AI surface, and the shell must not pay for it.
-   */
-  it('lands the run workspace in its own lazy chunk', () => {
-    expect(chunks().filter(f => f.startsWith('RunPage-'))).toHaveLength(1)
-  })
-
-  it('ships no protobuf in any chunk', () => {
-    const offenders = chunks().filter(file => {
-      const source = read(file)
-      return FORBIDDEN_ANYWHERE.some(needle => source.includes(needle))
-    })
     expect(offenders).toEqual([])
   })
 })

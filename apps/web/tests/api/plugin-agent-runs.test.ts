@@ -1,6 +1,4 @@
-// @vitest-isolate
-// Swaps an entry of the shared `AGENTS` registry, so this file needs its own module registry.
-// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * A plugin starting an agent run from a background context — `ctx.startAgentRun` on
  * `JobCtx`, `CronCtx` and `EmailCtx`, through the route's own `enqueueRun`:
@@ -18,7 +16,7 @@
 import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import { makeCronCtx, makeEmailCtx, makeJobCtx, makeToolCtx } from '@testkit/unit'
 import { and, eq } from 'drizzle-orm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { traceIdForRun } from '@/api/observability/trace-ids'
 import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/services/agents/registry'
@@ -30,13 +28,6 @@ import { createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 

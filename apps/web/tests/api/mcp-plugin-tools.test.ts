@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the server plugin barrel, so this file needs its own module registry.
 /**
  * A plugin's tools reach an MCP client through `ServerPlugin.tools` and nothing else, under the
  * organisation's exposure mode:
@@ -14,10 +12,11 @@
  *   refuses, is left out — the real owner keeps the name;
  * - the settings page lists every tool with its provider and why one is unavailable.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { groupMembers, groups, groupTypes } from '@/db/schema'
 import { defineTool, toolCtx } from '@/plugins/api'
+import type { AnyServerPlugin } from '@/plugins/server'
 import {
   createTestSession,
   createTestTenant,
@@ -28,54 +27,55 @@ import {
 import { setupTestDatabase } from '../helpers/db'
 import { connectMcp, enableMcp, mcpClient, mcpPost, mcpTestEnv, toolJson } from '../helpers/mcp'
 import { json, request } from '../helpers/request'
+import { withServerPlugins } from '../helpers/server-plugins'
 
-vi.mock('@/plugins/server', () => {
-  const tool = (name: string, extra: object = {}) =>
-    defineTool({
-      name,
-      description: `the ${name} tool`,
-      schema: z.object({ n: z.coerce.number().optional() }),
-      handler: async input => JSON.stringify({ ok: true, input }),
-      ...extra,
-    })
-  return {
-    serverPlugins: [
-      {
-        shared: { id: 'fixture-plugin', label: 'Fixture' },
-        tools: () => [
-          tool('fixture_read', { mcp: { title: 'Read the fixture' } }),
-          tool('fixture_write', { sideEffects: true }),
-          tool('fixture_gated', { sideEffects: true, requiresApproval: true }),
-          tool('fixture_chat_only', { surfaces: ['chat'] }),
-          defineTool({ name: 'fixture_terminal', description: 'answer', schema: z.object({}) }),
-        ],
-      },
-      { shared: { id: 'late-plugin', label: 'Late' }, tools: () => [tool('late_read')] },
-      // Echoes who `ToolCtx` says is calling, and the flags it answers with.
-      {
-        shared: { id: 'whoami-plugin', label: 'Who am I' },
-        tools: (ctx: Parameters<typeof toolCtx>[0]) => [
-          defineTool({
-            name: 'whoami_read',
-            description: 'who is calling',
-            schema: z.object({}),
-            handler: async () => {
-              const c = toolCtx(ctx)
-              return JSON.stringify({ requester: c.requester, features: await c.features() })
-            },
-          }),
-        ],
-      },
-      // Still on the deprecated name: it must keep reaching clients until the kit removes it.
-      { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_read')] },
-      // Names the builder refuses: a core tool's, another plugin's, one a chat model rejects.
-      {
-        shared: { id: 'shadow-plugin', label: 'Shadow' },
-        tools: () => [tool('search_knowledge'), tool('fixture_read'), tool('shadow.dotted')],
-      },
-    ],
-  }
-})
+const tool = (name: string, extra: object = {}) =>
+  defineTool({
+    name,
+    description: `the ${name} tool`,
+    schema: z.object({ n: z.coerce.number().optional() }),
+    handler: async input => JSON.stringify({ ok: true, input }),
+    ...extra,
+  })
+
+withServerPlugins(
+  [
+    {
+      shared: { id: 'fixture-plugin', label: 'Fixture' },
+      tools: () => [
+        tool('fixture_read', { mcp: { title: 'Read the fixture' } }),
+        tool('fixture_write', { sideEffects: true }),
+        tool('fixture_gated', { sideEffects: true, requiresApproval: true }),
+        tool('fixture_chat_only', { surfaces: ['chat'] }),
+        defineTool({ name: 'fixture_terminal', description: 'answer', schema: z.object({}) }),
+      ],
+    },
+    { shared: { id: 'late-plugin', label: 'Late' }, tools: () => [tool('late_read')] },
+    // Echoes who `ToolCtx` says is calling, and the flags it answers with.
+    {
+      shared: { id: 'whoami-plugin', label: 'Who am I' },
+      tools: (ctx: Parameters<typeof toolCtx>[0]) => [
+        defineTool({
+          name: 'whoami_read',
+          description: 'who is calling',
+          schema: z.object({}),
+          handler: async () => {
+            const c = toolCtx(ctx)
+            return JSON.stringify({ requester: c.requester, features: await c.features() })
+          },
+        }),
+      ],
+    },
+    // Still on the deprecated name: it must keep reaching clients until the kit removes it.
+    { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_read')] },
+    // Names the builder refuses: a core tool's, another plugin's, one a chat model rejects.
+    {
+      shared: { id: 'shadow-plugin', label: 'Shadow' },
+      tools: () => [tool('search_knowledge'), tool('fixture_read'), tool('shadow.dotted')],
+    },
+  ] as unknown as AnyServerPlugin[],
+  { replace: true }
+)
 
 const db = setupTestDatabase()
 const env = mcpTestEnv()

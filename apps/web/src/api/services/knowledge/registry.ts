@@ -88,8 +88,27 @@ export function composeEntityTypes(
 
 let memo: readonly EntityTypeRegistration[] | null = null
 
+/** What a test answers `knowledgeEntityTypes` with (`overrideKnowledgeEntityTypesForTests`). */
+export type KnowledgeEntityTypesOverride = () => readonly EntityTypeRegistration[]
+
+let typesOverride: KnowledgeEntityTypesOverride | null = null
+
+/**
+ * **Tests only.** Answers `knowledgeEntityTypes` (and so `knowledgeEntityType`) from `fn` until it
+ * is reset with `null`, so a test can register fixture types without `vi.mock` and its file can
+ * share the `api` project's module registry. `fn` is called on every read, so a test may change
+ * what it returns between cases; nothing validates it. `tests/api-setup.ts` resets it after every
+ * file. Nothing in `src/` calls it.
+ */
+export function overrideKnowledgeEntityTypesForTests(
+  fn: KnowledgeEntityTypesOverride | null
+): void {
+  typesOverride = fn
+}
+
 /** The app's entity types plus every installed plugin's, validated. Empty in the bare kit. */
 export function knowledgeEntityTypes(): readonly EntityTypeRegistration[] {
+  if (typesOverride) return typesOverride()
   if (memo === null) {
     memo = composeEntityTypes([
       { owner: null, types: APP_ENTITY_TYPES },

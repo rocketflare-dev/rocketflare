@@ -304,23 +304,53 @@ export async function resolveDecisions(
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
-  options: ResolveOptions & {
-    fallbackSystem: SystemPrompt
-    /**
-     * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
-     * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
-     */
-    fallbackPromptKey?: PromptKey
-    /**
-     * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
-     * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
-     * billed to the deployment, which need not match the agent's own chat model.
-     */
-    wrapChat?: (
-      client: ChatClient,
-      chat: { provider: AiProvider; billedToPlatform: boolean }
-    ) => ChatClient
-  }
+  options: ResolveDecisionsOptions
+): Promise<ResolvedDecisions> {
+  if (decisionsOverride) return decisionsOverride(tenantId, options)
+  return resolveDecisionsFromConfig(db, cfg, env, tenantId, options)
+}
+
+/** What a test answers `resolveDecisions` with (`overrideResolveDecisionsForTests`). */
+export type ResolveDecisionsOverride = (
+  tenantId: string,
+  options: ResolveDecisionsOptions
+) => Promise<ResolvedDecisions>
+
+let decisionsOverride: ResolveDecisionsOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveDecisions` call from `fn` until it is reset with `null` —
+ * the decisions twin of `overrideResolveChatForTests`, reset by `tests/api-setup.ts` after every
+ * file. Nothing in `src/` calls it.
+ */
+export function overrideResolveDecisionsForTests(fn: ResolveDecisionsOverride | null): void {
+  decisionsOverride = fn
+}
+
+export type ResolveDecisionsOptions = ResolveOptions & {
+  fallbackSystem: SystemPrompt
+  /**
+   * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
+   * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
+   */
+  fallbackPromptKey?: PromptKey
+  /**
+   * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
+   * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
+   * billed to the deployment, which need not match the agent's own chat model.
+   */
+  wrapChat?: (
+    client: ChatClient,
+    chat: { provider: AiProvider; billedToPlatform: boolean }
+  ) => ChatClient
+}
+
+async function resolveDecisionsFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveDecisionsOptions
 ): Promise<ResolvedDecisions> {
   const row = await findDefaultConfig(db, tenantId, 'decisions')
   if (row) {
@@ -342,7 +372,7 @@ export async function resolveDecisions(
       source: 'platform',
     }
   }
-  const chat = await resolveChat(db, cfg, env, tenantId, {
+  const chat = await resolveChatFromConfig(db, cfg, env, tenantId, {
     promptKey: options.fallbackPromptKey ?? DECISIONS_FALLBACK_PROMPT_KEY,
     fetch: options.fetch,
   })
@@ -364,12 +394,42 @@ export async function resolveDecisions(
   }
 }
 
+/** What a test answers `resolveChat` with (`overrideResolveChatForTests`). */
+export type ResolveChatOverride = (
+  tenantId: string,
+  options: ResolveOptions
+) => Promise<ResolvedChat>
+
+let chatOverride: ResolveChatOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveChat` call from `fn` until it is reset with `null`, so a
+ * test can hand the code under test a fake chat client without `vi.mock`, and its file can share
+ * the `api` project's module registry. `tests/api-setup.ts` resets it after every file. Calls
+ * inside this module (the decisions fallback) still resolve for real, as they did under a mock.
+ * Nothing in `src/` calls it.
+ */
+export function overrideResolveChatForTests(fn: ResolveChatOverride | null): void {
+  chatOverride = fn
+}
+
 export async function resolveChat(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
   options: ResolveOptions = {}
+): Promise<ResolvedChat> {
+  if (chatOverride) return chatOverride(tenantId, options)
+  return resolveChatFromConfig(db, cfg, env, tenantId, options)
+}
+
+async function resolveChatFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveOptions
 ): Promise<ResolvedChat> {
   const {
     assignment,

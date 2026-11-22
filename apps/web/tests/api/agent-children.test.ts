@@ -1,6 +1,4 @@
-// @vitest-isolate
-// Swaps entries in the `AGENTS` registry (a parent that spawns, a child it spawns) and mocks
-// `@/api/services/ai/resolve` and the plugin barrels, so this file needs its own module registry.
+// @vitest-fixture-agents
 /**
  * Child runs (`ctx.spawn`, D44 phase 3), through the runtime's real steps:
  *   - the parent parks with NO ask, the child is a run of its own (`parent_run_id`, a budget carved
@@ -19,6 +17,7 @@ import { AGENTS, type AgentContext, type AnyAgentDefinition } from '@/api/servic
 import { enqueueRun, getRun, requestCancel } from '@/api/services/agents/runs'
 import { claimStep, executeRun, finishStep } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -30,30 +29,18 @@ import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv, type TestEnv } from '../mocks/bindings'
 
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
-
 const state: { client: ChatClient | null } = {
   client: new FakeChatClient([{ text: 'x' }], 'anthropic'),
 }
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic', 'no client')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic', 'no client')
-      return {
-        client: state.client,
-        provider: 'anthropic' as const,
-        model: 'claude-sonnet-4-5',
-        source: 'tenant' as const,
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic' as const,
+    model: 'claude-sonnet-4-5',
+    source: 'tenant' as const,
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 

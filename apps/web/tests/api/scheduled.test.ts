@@ -54,11 +54,13 @@ describe('scheduled dispatcher', () => {
 
   it('the Worker handler accepts a ScheduledController', async () => {
     const ctx = createExecutionContext()
-    await scheduled(
-      { cron: '0 4 * * *', scheduledTime: Date.now(), noRetry() {} },
-      createTestEnv(),
-      ctx
-    )
+    await expect(
+      scheduled(
+        { cron: '0 4 * * *', scheduledTime: Date.now(), noRetry() {} },
+        createTestEnv(),
+        ctx
+      )
+    ).resolves.toBeUndefined()
     await waitOnExecutionContext(ctx)
   })
 })

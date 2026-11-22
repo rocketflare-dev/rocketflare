@@ -247,11 +247,6 @@ export const EXCLUDED_PATHS = Object.freeze([
   'scripts/release-check.mjs',
   'scripts/lib/upgrade-lib.mjs',
   'scripts/lib/upgrade-lib.d.mts',
-  'apps/web/tests/config/upgrade-lib.test.ts',
-  // Its fixture kit must speak the KIT's names (`@rocketflare/…`) while its fixture app speaks
-  // `acme`'s, because the excluded `upgrade.mjs` translates from the former. Renamed, its kit side
-  // read `@my-app/…`, which nothing translates to `@acme/…`, so every hunk touching it rejected.
-  'apps/web/tests/config/upgrade-apply.test.ts',
   'apps/web/tests/config/kit-manifest.test.ts',
   'CHANGELOG.md', // the kit's releases, described in the kit's own terms
 ])

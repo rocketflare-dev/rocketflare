@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Spies on the global fetch (Resend failure path), so this file needs its own module registry.
 /**
  * `JOBS_QUEUE` consumer as a plain function over a hand-built `MessageBatch`: valid
  * `email.send` → email service ran (dev fallback line) + `ack()`; invalid envelope → `ack()` and no

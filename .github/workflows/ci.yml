@@ -3,7 +3,8 @@ name: CI
 # The quality gate, in ONE job: the secrets scan, then `pnpm gate` — lint, typecheck, test, build,
 # the same command a person runs before committing and Launch's ship gate runs in a sandbox
 # (docs/CONCEPTS.md §4). The workflow adds no check of its own beyond gitleaks, so what passes
-# here is exactly what passes on a laptop; `tests/config/ci-workflows.test.ts` holds it to that.
+# here is exactly what passes on a laptop. Keep it that way; `scripts/kit-check.mjs` checks the
+# Launch contract (the required check, the gate-verified variable).
 #
 # `pnpm test` (the gate's `test` step) starts the test Postgres and the Neon proxy from
 # `apps/web/docker-compose.test.yml` itself, runs the suite under `postgres`, then the `driver`

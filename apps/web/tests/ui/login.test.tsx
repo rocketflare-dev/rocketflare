@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { Route, Routes, useLocation } from 'react-router'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { hardNavigate } from '@/ui/lib/navigation'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { overrideHardNavigateForTests } from '@/ui/lib/navigation'
 import Login, { LOGIN_ERROR_COPY } from '@/ui/pages/Login'
 import {
   makeSession,
@@ -10,10 +10,10 @@ import {
   stubFetch,
 } from './helpers/renderWithProviders'
 
-vi.mock('@/ui/lib/navigation', async importOriginal => {
-  const mod = await importOriginal<typeof import('@/ui/lib/navigation')>()
-  return { ...mod, hardNavigate: vi.fn() }
-})
+// Full-page navigations are recorded here, not made (jsdom cannot navigate).
+const hardNavigate = vi.fn()
+beforeAll(() => overrideHardNavigateForTests(hardNavigate))
+afterAll(() => overrideHardNavigateForTests(null))
 
 const ALL_METHODS = { magicLink: true, providers: ['google'], devLogin: true }
 

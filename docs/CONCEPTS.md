@@ -441,6 +441,16 @@ path); no per-PR previews.
   `docs/plugin-api.md` diff is the kit's own check (`kit.yml`), since a copy publishes no plugin
   API; `pnpm plugin check` runs at the end of `plugin add|upgrade --apply` (exit 8 when the written
   tree fails it) and in `plugin-ci.yml`.
+- **`pnpm gate --changed[=<ref>]`, the local inner loop** (`scripts/lib/gate-changed.mjs`, a pure
+  plan over the changed paths): everything that differs from the merge base with `origin/main`
+  (or `<ref>`), committed, staged, modified or untracked. Lint checks those files; typecheck,
+  test and build run only in the packages they reach, following workspace dependencies; the web
+  tests are vitest's own import-graph answer, plus any changed test file and every test that
+  reads the repository through `fs` or a child process (its inputs are invisible to the graph).
+  The rule is "when in doubt, run more": a change to a dependency manifest, the lockfile, a
+  compiler, lint or vitest config, a toml, a migration, the test harness or the gate itself makes
+  it the full gate. It is for local commits only: run the full `pnpm gate` before a push, and no
+  workflow passes `--changed`.
 - **Verified once (opt-in, for an app Launch ships).** After a green sandbox gate Launch's GitHub
   App posts a `launch/gate` check run keyed by the tree (`external_id: tree:<sha>`). With the
   repository variable `LAUNCH_GATE_APP_ID` set to that App's id, the first step of `ci.yml`'s
@@ -455,8 +465,8 @@ path); no per-PR previews.
   probing, and prints it first. **Local** (the default): it starts the compose test Postgres and
   Neon proxy itself (`docker compose … --profile neon up -d --wait`; Docker down is a failure that
   names both fixes, never a skip), then every package, the web suite under `postgres`, and the
-  `driver` project under `neon`. The narrow scripts (`pnpm web test:api|ui|config|driver`) are the
-  inner loop: `postgres`, no compose management.
+  `driver` project under `neon`. `pnpm test <suite…> [file…]` (`api|ui|config|driver`, the
+  `pnpm web test:*` aliases) is the inner loop: `postgres`, no compose management.
 - **Remote target — an ephemeral test database** (`pnpm test` with `TEST_DATABASE_BRANCH` set): the
   whole gate's tests where there is no Docker and only 443 out — a coding sandbox, whose
   orchestrator (Launch) creates a throwaway Neon branch per gate attempt and passes its owner
@@ -1544,7 +1554,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 - **Kit-only files** (`kitOnly`): what is true of the kit repository and of nothing made from it.
   Its tests (`apps/web/tests/kit-only/**`, vitest project `kit-only`) — porting notes and the root
   version being the kit's, the release/rename machinery, the maintainer hooks, plugin CI, the
-  manifest's kit-state claims, the Launch conformance checker's own tests, the kit's doc guards —
+  manifest's kit-state claims, the Launch conformance checker's own tests, the kit's doc guards,
+  and the tests of the kit's tooling (`scripts/**`, the rf-security runner: a copy runs it, never
+  writes it, and receives it already tested) —
   which the kit's gate runs (`pnpm test` names the project only while its directory exists); its
   workflows (`kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`); its maintainer scripts
   (`release.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
@@ -2275,7 +2287,7 @@ it costs and how to read it: `docs/SECURITY-AUDIT.md`.
 - **The runner** (`tools/audit.mjs`) does every mechanical step: run directories, budgets, briefs,
   ledger updates through upstream's validators (a step that does not validate leaves
   `*.next.json` and blocks the next), citations, reports and measured cost. Its tests are synthetic
-  fixtures in `apps/web/tests/config/rf-security/`.
+  fixtures in `apps/web/tests/kit-only/rf-security/`.
 - **Isolation**: proofs run only in the sandbox (`pnpm security:sandbox`: an image from `git
   archive`, its own Postgres on an internal network, a read-only root, no capabilities). While a
   run is active the guard hook in `.claude/settings.json` refuses deletes, moves, credential reads

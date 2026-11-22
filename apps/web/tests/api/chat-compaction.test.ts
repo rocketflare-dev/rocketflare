@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
  * Chat history compaction: the `chat.compact` job folds the messages that no longer fit a
  * conversation's character budget into `conversations.summary`, and the next turn replays that
@@ -17,6 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { handleChatCompact } from '@/api/queues/handlers/chat-compact'
 import type { JobContext } from '@/api/queues/jobs'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
 import { conversations, messages } from '@/db/schema'
 import { aguiFrames, customEvent, FakeChatClient } from '../helpers/ai'
@@ -27,20 +26,15 @@ import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 const state: { client: FakeChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible',
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible',
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 

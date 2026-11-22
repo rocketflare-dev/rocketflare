@@ -19,6 +19,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { KIT_NAME } from '../helpers/kit-name'
 import { enableMcp, mcpPost, mcpTestEnv } from '../helpers/mcp'
 import {
   authorizePath,
@@ -358,6 +359,6 @@ describe('branding', () => {
     await record(await revokePost(acme, { token: c.refreshToken, client_id: c.clientId }))
     await record(await mcpPost(acme, '/mcp', LIST, { Authorization: `Bearer ${c.accessToken}` }))
     const all = seen.join('\n')
-    expect(all).not.toMatch(/rocketflare/i)
+    expect(all).not.toMatch(KIT_NAME)
   })
 })

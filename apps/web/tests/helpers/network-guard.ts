@@ -7,8 +7,8 @@
  *
  * A test that wants a provider answer runs a local server (`node:http` on 127.0.0.1, as
  * `security/ai-config-stored-credential.test.ts` does) or injects `fetch`. The guard wraps
- * `globalThis.fetch` once per process; a file that stubs fetch itself (`// @vitest-isolate`) still
- * replaces it.
+ * `globalThis.fetch` once per process; a file that stubs or spies on fetch itself still replaces
+ * it, and the stub is undone when the file ends.
  */
 const GUARDED = Symbol.for('rocketflare.tests.networkGuard')
 

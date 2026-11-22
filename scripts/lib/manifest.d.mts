@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `manifest.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/manifest-lib.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/manifest-lib.test.ts` is what typechecks against this.
  */
 import type { Manifest, Surface } from './upgrade-lib.d.mts'
 

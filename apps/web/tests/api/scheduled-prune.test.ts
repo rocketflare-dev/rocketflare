@@ -4,13 +4,12 @@
  */
 import { eq, inArray } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { dispatchScheduled, runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
+import { runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
 import { hashToken } from '@/api/utils/core/hash'
 import { randomToken } from '@/api/utils/core/ids'
 import { aiSpans, magicLinkTokens, teamInvitations, userSessions } from '@/db/schema'
 import { createTestSession, createTestTenantWithUser, createTestUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
-import { createExecutionContext, createTestEnv, waitOnExecutionContext } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 const DAY = 86_400_000
@@ -120,17 +119,6 @@ describe('pruneExpired', () => {
         .from(teamInvitations)
         .where(eq(teamInvitations.tokenHash, await hashToken(recentExpired)))
     ).toHaveLength(1)
-  })
-
-  it('runs from the cron dispatcher', async () => {
-    const ctx = createExecutionContext()
-    const reports = await dispatchScheduled('0 4 * * *', createTestEnv(), ctx)
-    await waitOnExecutionContext(ctx)
-    // Core first; an installed plugin may append its own tasks to a core cron.
-    expect(reports.slice(0, 2)).toEqual([
-      expect.objectContaining({ task: 'pruneExpired', status: 'ok' }),
-      expect.objectContaining({ task: 'pruneAiSpans', status: 'ok' }),
-    ])
   })
 })
 

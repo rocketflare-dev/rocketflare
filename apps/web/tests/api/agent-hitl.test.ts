@@ -1,6 +1,4 @@
-// @vitest-isolate
-// Swaps entries in the `AGENTS` registry (an agent with `meta.hitl`) and mocks the plugin barrels
-// to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * HITL upgrades (D44 phase 3):
  *   - `askTiming`: `meta.hitl.timeout` capped at `AGENT_INTERRUPT_TIMEOUT`; no reminder at or past
@@ -43,13 +41,6 @@ import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { itSweeps } from '../helpers/sweeps'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 // The two timeout cases backdate a park and sweep: one sweep at a time across files.

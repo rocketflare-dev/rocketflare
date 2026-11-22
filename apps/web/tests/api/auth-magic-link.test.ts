@@ -4,7 +4,7 @@
  * redirects, expired/invalid/consumed tokens redirect with an error code, SIGNUP_MODE decides new
  * users, BOOTSTRAP_ADMIN_EMAILS promotes on verified login.
  */
-import { and, eq, isNull, sql } from 'drizzle-orm'
+import { and, eq, isNull } from 'drizzle-orm'
 import { describe, expect, it, vi } from 'vitest'
 import { SESSION_COOKIE_NAME } from '@/api/auth/cookies'
 import { requestMagicLink } from '@/api/routes/auth/magic-link'
@@ -321,6 +321,5 @@ describe('sign-up gating (SIGNUP_MODE)', () => {
       )
     expect(membership[0]?.role).toBe('member')
     expect(res.status).toBe(303)
-    expect(sql).toBeDefined()
   })
 })

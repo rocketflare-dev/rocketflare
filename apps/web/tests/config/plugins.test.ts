@@ -960,19 +960,9 @@ describe('installed plugins', () => {
  * reach `JobTypeOf` / `AgentKeyOf` / `FeatureKeyOf` without anything being installed for it.
  */
 describe('the closed sets a plugin opens', () => {
-  it('name the kit exactly, and widen for what is installed', () => {
-    expectTypeOf<CoreJobType>().toEqualTypeOf<
-      | 'email.send'
-      | 'activity.record'
-      | 'document.index'
-      | 'document.convert'
-      | 'document.reembed'
-      | 'chat.compact'
-      | 'tenant.purge'
-      | 'event.deliver'
-      | 'knowledge.extract'
-    >()
-    // A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
+  it('widen for what is installed', () => {
+    // The kit's exact set is `tests/kit-only/kit-makeup.test.ts`: an app adds core job types of its
+    // own. A plugin may only WIDEN the kit's set — the property the whole "variants are data" change
     // bought. Which types a particular plugin adds is that plugin's own test to make.
     expectTypeOf<CoreJobType>().toMatchTypeOf<JobType>()
     // The envelope narrows per type — what a handler is handed, and the reason `runHandler`'s

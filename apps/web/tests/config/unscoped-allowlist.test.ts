@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
-import ts from 'typescript'
+import ts from 'typescript6'
 import { describe, expect, it } from 'vitest'
 import * as schema from '@/db/schema'
 import { serverPlugins } from '@/plugins/server'

@@ -1,9 +1,9 @@
-// @vitest-isolate
+// @vitest-fixture-agents
 /**
  * An exclusive agent's slot is one per tenant, but a run is its requester's: whoever finds the slot
  * taken learns that it is busy, and only the requester or an admin learns which run holds it.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   bearerHeader,
   createTestApiKey,
@@ -15,13 +15,6 @@ import { setupTestDatabase } from '../../helpers/db'
 import { FIXTURE_AGENT } from '../../helpers/fixture-agents'
 import { json, request } from '../../helpers/request'
 import { createTestEnv } from '../../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 const INPUT = 'Text only its requester should read back'

@@ -1,13 +1,14 @@
-// @vitest-isolate
 /**
  * A chat turn has no way to park for a person's answer, so a tool that declares an approval gate
  * (`requiresApproval` or `requiresApprovalWhen`) is not offered to the model and cannot run there.
- * Isolated because it replaces the provider seam and the tool list.
+ * The gated tools arrive the way a real one would, from a plugin (`withServerPlugins`).
  */
 import { conversationSchema } from '@rocketflare/shared/ai/chat'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type { Tool } from '@/api/services/ai/agent-loop'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
+import type { AnyServerPlugin } from '@/plugins/server'
 import { aguiFrames, FakeChatClient } from '../../helpers/ai'
 import {
   createTestSession,
@@ -16,57 +17,47 @@ import {
 } from '../../helpers/auth'
 import { setupTestDatabase } from '../../helpers/db'
 import { json, request } from '../../helpers/request'
+import { withServerPlugins } from '../../helpers/server-plugins'
 import { createTestEnv } from '../../mocks/bindings'
 
-const handlers = vi.hoisted(() => ({
+const handlers = {
   always: vi.fn(async () => 'written'),
   conditional: vi.fn(async () => 'written'),
   open: vi.fn(async () => 'read'),
-}))
+}
 const state: { client: FakeChatClient | null } = { client: null }
 
-vi.mock('@/api/services/agents/tools', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/agents/tools')>()
-  const schema = z.object({ value: z.string() })
-  const extra: Tool<{ value: string }>[] = [
-    {
-      name: 'gated_write',
-      description: 'A write a person must approve',
-      schema,
-      handler: handlers.always,
-      requiresApproval: true,
-    },
-    {
-      name: 'conditionally_gated_write',
-      description: 'A write a person must approve for some inputs',
-      schema,
-      handler: handlers.conditional,
-      requiresApprovalWhen: () => false,
-    },
-    { name: 'open_read', description: 'A read', schema, handler: handlers.open },
-  ]
-  return {
-    ...actual,
-    toolsFor: async (...args: Parameters<typeof actual.toolsFor>) => [
-      ...(await actual.toolsFor(...args)),
-      ...(extra as Tool[]),
-    ],
-  }
-})
+const schema = z.object({ value: z.string() })
+const gatedTools: Tool<{ value: string }>[] = [
+  {
+    name: 'gated_write',
+    description: 'A write a person must approve',
+    schema,
+    handler: handlers.always,
+    requiresApproval: true,
+  },
+  {
+    name: 'conditionally_gated_write',
+    description: 'A write a person must approve for some inputs',
+    schema,
+    handler: handlers.conditional,
+    requiresApprovalWhen: () => false,
+  },
+  { name: 'open_read', description: 'A read', schema, handler: handlers.open },
+]
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  return {
-    ...actual,
-    resolveChat: vi.fn(async () => ({
-      client: state.client,
-      provider: 'anthropic_compatible',
-      model: 'fake-model',
-      source: 'tenant',
-      maxOutputTokens: 2048,
-    })),
-  }
-})
+withServerPlugins([
+  { shared: { id: 'gates-fixture', label: 'Gates' }, tools: () => gatedTools as Tool[] },
+] as unknown as AnyServerPlugin[])
+
+overrideResolveChatForTests(async () => ({
+  client: state.client as FakeChatClient,
+  provider: 'anthropic_compatible',
+  model: 'fake-model',
+  source: 'tenant',
+  billedToPlatform: false,
+  maxOutputTokens: 2048,
+}))
 
 const db = setupTestDatabase()
 

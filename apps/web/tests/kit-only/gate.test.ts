@@ -10,7 +10,12 @@ import { gateListSchema } from '@rocketflare/shared/gate'
 import { describe, expect, it } from 'vitest'
 import { GATE_STEPS, gateList, parseGateArgs } from '../../../../scripts/lib/gate-lib.mjs'
 import type { TestPlan } from '../../../../scripts/lib/test-plan.d.mts'
-import { PROXY_URL, planTests, resolveTarget } from '../../../../scripts/lib/test-plan.mjs'
+import {
+  PROXY_URL,
+  planSuites,
+  planTests,
+  resolveTarget,
+} from '../../../../scripts/lib/test-plan.mjs'
 
 const REPO = path.resolve(__dirname, '../../../..')
 const GATE_BRANCH = {
@@ -52,6 +57,7 @@ describe('pnpm gate', () => {
       list: false,
       json: false,
       keepGoing: false,
+      changed: null,
       steps: ['lint', 'typecheck', 'test', 'build'],
     })
     expect(parseGateArgs(['build', 'lint'])).toMatchObject({ steps: ['lint', 'build'] })
@@ -122,11 +128,12 @@ describe('pnpm test: the plan', () => {
     expect(p.steps[0]?.command).toEqual(['pnpm', '-r', '--filter', '!./apps/web', 'test'])
     expect(webRuns(p)).toEqual([
       'api @ postgres',
-      'api-isolated+driver+ui+config @ postgres',
+      'api-isolated+api-fixtures+driver+ui+ui-isolated+config+config-isolated @ postgres',
       'driver @ neon',
     ])
     expect(p.steps.at(-1)?.env.NEON_LOCAL_PROXY).toBe(PROXY_URL)
-    expect(p.steps[1]?.command).toContain('--no-isolate')
+    // The shared registry is the project's own setting (vitest.config.ts), not a flag.
+    expect(p.steps[1]?.command).not.toContain('--no-isolate')
   })
 
   it('the conformance pass is pinned: the driver project runs under BOTH drivers locally', () => {
@@ -141,7 +148,7 @@ describe('pnpm test: the plan', () => {
   it('GATE_SUITE_DRIVER=neon: the suite under neon, the conformance pass under postgres', () => {
     expect(webRuns(plan({ GATE_SUITE_DRIVER: 'neon' }))).toEqual([
       'api @ neon',
-      'api-isolated+driver+ui+config @ neon',
+      'api-isolated+api-fixtures+driver+ui+ui-isolated+config+config-isolated @ neon',
       'driver @ postgres',
     ])
   })
@@ -150,7 +157,10 @@ describe('pnpm test: the plan', () => {
     const p = plan(GATE_BRANCH)
     expect(p.compose).toBe(false)
     expect(p.banner).toMatch(/gate-ab12cd-1/)
-    expect(webRuns(p)).toEqual(['api @ neon', 'api-isolated+driver+ui+config @ neon'])
+    expect(webRuns(p)).toEqual([
+      'api @ neon',
+      'api-isolated+api-fixtures+driver+ui+ui-isolated+config+config-isolated @ neon',
+    ])
     for (const step of p.steps.filter(s => s.command.includes('vitest'))) {
       expect(step.env).toMatchObject({ TEST_DATABASE_EPHEMERAL: '1', APP_DATABASE_URL: '' })
       expect(step.env.NEON_LOCAL_PROXY).toBeUndefined()
@@ -160,9 +170,52 @@ describe('pnpm test: the plan', () => {
     expect(p.notes.join('\n')).toMatch(/skipped — remote target, no TCP/)
   })
 
+  it('pnpm test web: the full web plan, without the other packages', () => {
+    const p = planTests({}, { kitOnly: false, webOnly: true })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.steps.map(s => s.label)).not.toContain('the other packages')
+    expect(p.steps).toHaveLength(3)
+  })
+
   it('names the kit-only project only when the checkout carries it', () => {
-    expect(webRuns(plan({}, true))[1]).toBe('api-isolated+driver+ui+config+kit-only @ postgres')
+    expect(webRuns(plan({}, true))[1]).toBe(
+      'api-isolated+api-fixtures+driver+ui+ui-isolated+config+config-isolated+kit-only @ postgres'
+    )
     expect(webRuns(plan({}, false)).join('\n')).not.toMatch(/kit-only/)
     expect(existsSync(path.join(REPO, 'scripts/test.mjs'))).toBe(true)
+  })
+})
+
+describe('pnpm test <suite…>: the inner loop', () => {
+  const suites = (input: Parameters<typeof planSuites>[1], env = {}) => {
+    const p = planSuites(env, input)
+    if ('error' in p) throw new Error(p.error)
+    return p
+  }
+  const projects = (p: TestPlan) =>
+    (p.steps[0]?.command ?? []).flatMap((a, i, all) => (all[i - 1] === '--project' ? [a] : []))
+
+  it('a suite is its shared and isolated projects together, in one run', () => {
+    const p = suites({ suites: ['api', 'ui'], files: [], kitOnly: false })
+    expect(p.steps).toHaveLength(1)
+    expect(projects(p)).toEqual(['api', 'api-isolated', 'api-fixtures', 'ui', 'ui-isolated'])
+  })
+
+  it('leaves the database alone: the inner loop expects it up, and never pulls the proxy', () => {
+    expect(suites({ suites: ['driver'], files: [], kitOnly: false }).compose).toBe(false)
+  })
+
+  it('passes files through, and with no suite named runs every web project', () => {
+    const p = suites({ suites: [], files: ['/w/tests/api/a.test.ts'], kitOnly: false })
+    expect(projects(p)).not.toContain('kit-only')
+    expect(projects(p)).toContain('config-isolated')
+    expect(p.steps[0]?.command.at(-1)).toBe('/w/tests/api/a.test.ts')
+  })
+
+  it('refuses kit-only in a copy, and a suite it does not know', () => {
+    expect(planSuites({}, { suites: ['kit-only'], files: [], kitOnly: false })).toHaveProperty(
+      'error'
+    )
+    expect(planSuites({}, { suites: ['nope'], files: [], kitOnly: true })).toHaveProperty('error')
   })
 })

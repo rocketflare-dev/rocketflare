@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest'
 import rawManifest from '../../../../.rocketflare.json'
 import { readManifest } from '../../../../scripts/lib/manifest.mjs'
 import { KIT } from '../../../../scripts/lib/rename-lib.mjs'
+import { planTests } from '../../../../scripts/lib/test-plan.mjs'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   classifyPath,
@@ -147,15 +148,23 @@ describe('kit-only tests', () => {
   const webPackage = JSON.parse(
     readFileSync(path.join(REPO_ROOT, 'apps/web/package.json'), 'utf8')
   ) as { scripts?: Record<string, string> }
-  const flag = new RegExp(`--project[ =]${KIT_ONLY_PROJECT}(?![\\w-])`)
-  const wired = Object.values(webPackage.scripts ?? {}).some(command => flag.test(command))
+  // A script names it as a vitest project or as a `pnpm test` suite (`test.mjs kit-only`).
+  const flag = new RegExp(`(--project[ =]|test\\.mjs )${KIT_ONLY_PROJECT}(?![\\w-])`)
+  const scripted = Object.values(webPackage.scripts ?? {}).some(command => flag.test(command))
+  // The gate runs it when the plan does: `pnpm test` adds the project while the directory exists.
+  const plan = planTests(
+    {},
+    { kitOnly: existsSync(path.join(REPO_ROOT, 'apps/web/tests/kit-only')) }
+  )
+  const planned = !('error' in plan) && plan.steps.some(s => s.command.includes(KIT_ONLY_PROJECT))
 
   it(isKit ? 'exist in the kit' : 'are not in this copy', () => {
     expect(present.length > 0, present.join(', ') || 'no kit-only file').toBe(isKit)
   })
 
   it(isKit ? 'are run by the kit’s gate' : 'are not wired into this copy’s gate', () => {
-    expect(wired, `a \`--project ${KIT_ONLY_PROJECT}\` in apps/web/package.json`).toBe(isKit)
+    expect(planned, `${KIT_ONLY_PROJECT} in the pnpm test plan`).toBe(isKit)
+    expect(scripted, `a script naming ${KIT_ONLY_PROJECT} in apps/web/package.json`).toBe(isKit)
   })
 
   // The maintainer scripts are kit-only too, and so is what calls them: a root package.json script

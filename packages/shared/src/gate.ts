@@ -1,7 +1,7 @@
 /**
  * `pnpm gate --list --json` — the contract for anything that runs an app's gate step by step
  * (Launch's ship gate reads it to decide what to run; docs/CONCEPTS.md §4). `scripts/gate.mjs`
- * prints it and `apps/web/tests/config/gate.test.ts` parses that output with this schema.
+ * prints it and `apps/web/tests/kit-only/gate.test.ts` parses that output with this schema.
  *
  * `schema` rises only when an existing field changes meaning. A new step or a new field is not a
  * schema change, so a reader must tolerate both. `steps` is in RUN order.

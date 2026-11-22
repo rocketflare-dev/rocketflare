@@ -1,6 +1,4 @@
-// @vitest-isolate
-// Mocks the agent registry, so this file needs its own module registry.
-// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * The exclusive SLOT a run holds — `agent_runs.concurrency_key`, which the partial unique
  * index reads:
@@ -11,12 +9,13 @@
  * - a caller's `enqueueRun({ concurrencyKey })` narrows the slot to one active run per key, for
  *   either kind of agent.
  *
- * The fixture agent (`tests/helpers/fixture-agents.ts`) is made non-exclusive here by mocking the registry's
- * `getAgent` — the only place `enqueueRun` reads the definition from.
+ * The fixture agent (`tests/helpers/fixture-agents.ts`) is made non-exclusive here by swapping its
+ * `AGENTS` entry for the file, and putting it back after.
  */
 import { createAgentRunResponseSchema } from '@rocketflare/shared/ai/agents'
 import { and, eq } from 'drizzle-orm'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { AGENTS } from '@/api/services/agents/registry'
 import { enqueueRun } from '@/api/services/agents/runs'
 import { loadConfig } from '@/config'
 import { agentRuns } from '@/db/schema'
@@ -26,24 +25,13 @@ import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv, stubs } from '../mocks/bindings'
 
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
-
-vi.mock('@/api/services/agents/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/agents/registry')>()
-  return {
-    ...actual,
-    getAgent: (key: Parameters<typeof actual.getAgent>[0]) => {
-      const agent = actual.getAgent(key)
-      return (key as string) === 'fixture-agent'
-        ? { ...agent, meta: { ...agent.meta, exclusive: false } }
-        : agent
-    },
-  }
+// The fixture agent, non-exclusive for this file only: the registry is shared with later files.
+const original = AGENTS[FIXTURE_AGENT]
+beforeAll(() => {
+  AGENTS[FIXTURE_AGENT] = { ...original, meta: { ...original.meta, exclusive: false } }
+})
+afterAll(() => {
+  AGENTS[FIXTURE_AGENT] = original
 })
 
 const db = setupTestDatabase()

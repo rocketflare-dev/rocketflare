@@ -33,7 +33,7 @@ describe('the @testkit alias', () => {
     const tsconfig = JSON.parse(read('tsconfig.json')) as {
       compilerOptions: { paths: Record<string, string[]> }
     }
-    expect(tsconfig.compilerOptions.paths['@testkit/*']).toEqual(['tests/kit/*'])
+    expect(tsconfig.compilerOptions.paths['@testkit/*']).toEqual(['./tests/kit/*'])
   })
 
   it('is registered in vitest.config.ts, so a test resolves it', () => {

@@ -1,6 +1,4 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` and swaps an entry of the shared `AGENTS` registry, so this file needs its own module registry.
-// Also mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * The durable loop through the real runtime and database (`executeRun`, `agent_run_turns`):
  *   - a retry after a crash part-way through a turn is billed only for the turns it still owes,
@@ -32,6 +30,7 @@ import {
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { runToolLoop, type Tool } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -42,28 +41,16 @@ import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { createTestEnv, type TestEnv } from '../mocks/bindings'
 
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
-
 const state: { client: ChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  return {
-    ...actual,
-    resolveChat: vi.fn(async () => ({
-      client: state.client,
-      provider: 'anthropic' as const,
-      model: 'claude-sonnet-4-5',
-      source: 'tenant' as const,
-      maxOutputTokens: 2048,
-    })),
-  }
-})
+overrideResolveChatForTests(async () => ({
+  client: state.client as ChatClient,
+  provider: 'anthropic' as const,
+  model: 'claude-sonnet-4-5',
+  source: 'tenant' as const,
+  billedToPlatform: false,
+  maxOutputTokens: 2048,
+}))
 
 const db = setupTestDatabase()
 

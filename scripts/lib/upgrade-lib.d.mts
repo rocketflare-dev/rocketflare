@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `upgrade-lib.mjs` (the workspace has no `allowJs`). Keep in step with
- * the exports there; `apps/web/tests/config/upgrade-lib.test.ts` is what typechecks against this.
+ * the exports there; `apps/web/tests/kit-only/upgrade-lib.test.ts` is what typechecks against this.
  */
 import type { Names } from './rename-lib.d.mts'
 

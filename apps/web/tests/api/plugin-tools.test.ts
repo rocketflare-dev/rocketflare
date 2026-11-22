@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the server plugin barrel, so this file needs its own module registry.
 /**
  * `ServerPlugin.tools` may be async and may answer per tenant — that is how a plugin
  * offers a tool only to the tenants that turned it on. A builder that throws is logged and left
@@ -7,61 +5,63 @@
  * filters the one list per surface, and the deprecated `agentTools` still contributes when `tools`
  * is absent. And `sealSecret`/`openSecret`, the one way a plugin stores a tenant's credential.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { fullAccessScope } from '@/api/services/access'
 import { buildAgentTools, toolsFor } from '@/api/services/agents/tools'
 import { loadConfig } from '@/config'
 import type { Database } from '@/db/client'
 import { defineTool, openSecret, sealSecret } from '@/plugins/api'
+import type { AnyServerPlugin } from '@/plugins/server'
+import { withServerPlugins } from '../helpers/server-plugins'
 import { createTestEnv } from '../mocks/bindings'
 
 const ENABLED_TENANT = '00000000-0000-4000-8000-00000000000a'
 
-vi.mock('@/plugins/server', () => {
-  const tool = (name: string, extra: object = {}) =>
-    defineTool({
-      name,
-      description: name,
-      schema: z.object({}),
-      handler: async () => '{}',
-      ...extra,
-    })
-  return {
-    serverPlugins: [
-      {
-        shared: { id: 'async-plugin', label: 'Async' },
-        tools: async (ctx: { scope: { tenantId: string } }) =>
-          ctx.scope.tenantId === ENABLED_TENANT ? [tool('async_tool')] : [],
+const tool = (name: string, extra: object = {}) =>
+  defineTool({
+    name,
+    description: name,
+    schema: z.object({}),
+    handler: async () => '{}',
+    ...extra,
+  })
+
+withServerPlugins(
+  [
+    {
+      shared: { id: 'async-plugin', label: 'Async' },
+      tools: async (ctx: { scope: { tenantId: string } }) =>
+        ctx.scope.tenantId === ENABLED_TENANT ? [tool('async_tool')] : [],
+    },
+    {
+      shared: { id: 'broken-plugin', label: 'Broken' },
+      tools: async () => {
+        throw new Error('settings table missing')
       },
-      {
-        shared: { id: 'broken-plugin', label: 'Broken' },
-        tools: async () => {
-          throw new Error('settings table missing')
-        },
-      },
-      { shared: { id: 'sync-plugin', label: 'Sync' }, tools: () => [tool('sync_tool')] },
-      // Still on the deprecated name: contributes, because it has no `tools`.
-      { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_tool')] },
-      // Both names: `tools` wins, and the old builder is never called.
-      {
-        shared: { id: 'both-plugin', label: 'Both' },
-        tools: () => [tool('new_name_tool')],
-        agentTools: () => [tool('old_name_tool')],
-      },
-      {
-        shared: { id: 'surfaces-plugin', label: 'Surfaces' },
-        tools: () => [
-          tool('mcp_and_agents_tool', { surfaces: ['mcp', 'agents'] }),
-          tool('chat_only_tool', { surfaces: ['chat'] }),
-          tool('gated_write_tool', { sideEffects: true, requiresApproval: true }),
-          tool('sometimes_gated_tool', { requiresApprovalWhen: () => false }),
-          defineTool({ name: 'terminal_tool', description: 'answer', schema: z.object({}) }),
-        ],
-      },
-    ],
-  }
-})
+    },
+    { shared: { id: 'sync-plugin', label: 'Sync' }, tools: () => [tool('sync_tool')] },
+    // Still on the deprecated name: contributes, because it has no `tools`.
+    { shared: { id: 'legacy-plugin', label: 'Legacy' }, agentTools: () => [tool('legacy_tool')] },
+    // Both names: `tools` wins, and the old builder is never called.
+    {
+      shared: { id: 'both-plugin', label: 'Both' },
+      tools: () => [tool('new_name_tool')],
+      agentTools: () => [tool('old_name_tool')],
+    },
+    {
+      shared: { id: 'surfaces-plugin', label: 'Surfaces' },
+      tools: () => [
+        tool('mcp_and_agents_tool', { surfaces: ['mcp', 'agents'] }),
+        tool('chat_only_tool', { surfaces: ['chat'] }),
+        tool('gated_write_tool', { sideEffects: true, requiresApproval: true }),
+        tool('sometimes_gated_tool', { requiresApprovalWhen: () => false }),
+        defineTool({ name: 'terminal_tool', description: 'answer', schema: z.object({}) }),
+      ],
+    },
+  ] as unknown as AnyServerPlugin[],
+  { replace: true }
+)
 
 const env = createTestEnv()
 const cfg = loadConfig(env)

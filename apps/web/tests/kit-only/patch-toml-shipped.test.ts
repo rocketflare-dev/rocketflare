@@ -1,6 +1,6 @@
 /**
- * Kit-only: `tests/config/patch-toml.test.ts` runs the patcher on a SNAPSHOT of the kit's tomls
- * (`tests/config/fixtures/wrangler{,.staging}.toml`), because in a copy the files on disk are
+ * Kit-only: `tests/kit-only/patch-toml.test.ts` runs the patcher on a SNAPSHOT of the kit's tomls
+ * (`tests/kit-only/fixtures/wrangler{,.staging}.toml`), because in a copy the files on disk are
  * already provisioned. Here, in the kit, the snapshot must still be the shipped tomls byte for byte
  * (after its two-line FIXTURE header), so a change to the tomls' shape reaches the patcher's tests.
  * Changed a toml? Copy it over its snapshot and keep the header.
@@ -28,7 +28,7 @@ const installedPlugins = ['.rocketflare.json', '.rocketflare.local.json']
 it.skipIf(installedPlugins.length > 0).each(['wrangler.toml', 'wrangler.staging.toml'])(
   'the patcher tests snapshot %s as the kit ships it',
   file => {
-    const snapshot = read(`tests/config/fixtures/${file}`)
+    const snapshot = read(`tests/kit-only/fixtures/${file}`)
     expect(snapshot.split('\n').slice(0, 2).join('\n')).toMatch(/^# FIXTURE[^\n]*\n# /)
     expect(snapshot.split('\n').slice(2).join('\n')).toBe(read(file))
   }

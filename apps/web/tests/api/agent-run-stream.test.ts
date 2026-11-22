@@ -13,7 +13,6 @@ import {
   RUN_STREAM_MAX_MS,
   RUN_STREAM_POLL_MS,
   RUN_STREAM_SLOW_MS,
-  RUN_STREAM_TAIL_LIMIT,
 } from '@rocketflare/shared/ai/agents'
 import { kitAguiEventSchema } from '@rocketflare/shared/ai/agui'
 import { eq } from 'drizzle-orm'
@@ -499,8 +498,7 @@ describe('the tail query and the cadence', () => {
     expect(runStreamTickMs(10_000)).toBeLessThan(3000)
   })
 
-  it('bounds one tick and keeps the caps reachable', () => {
-    expect(RUN_STREAM_TAIL_LIMIT).toBe(200)
+  it('keeps the idle cap reachable', () => {
     expect(RUN_STREAM_IDLE_CAP_MS).toBeLessThan(RUN_STREAM_MAX_MS)
   })
 })

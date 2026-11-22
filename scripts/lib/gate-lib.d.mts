@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `gate-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/gate.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/gate.test.ts` is what typechecks against this.
  */
 
 export const GATE_LIST_SCHEMA_VERSION: 1
@@ -22,6 +22,13 @@ export function gateList(): {
 export function parseGateArgs(
   argv: string[]
 ):
-  | { list: boolean; json: boolean; keepGoing: boolean; steps: string[] }
+  | {
+      list: boolean
+      json: boolean
+      keepGoing: boolean
+      /** null: the full gate; '': `--changed` against the default base; else the named ref. */
+      changed: string | null
+      steps: string[]
+    }
   | { error: string }
   | { help: true }

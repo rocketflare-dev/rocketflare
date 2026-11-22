@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the provider's HTTP endpoints on the global fetch, so it needs its own module registry.
 /**
  * Microsoft sign-in identifies the person by the user principal name, and trusts it only when the
  * signing-in directory lists the UPN's domain among its verified domains. The separately editable

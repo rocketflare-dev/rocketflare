@@ -6,25 +6,23 @@
  *
  * The fixtures arrive through the seam a real plugin uses (D31): a `SharedPlugin` declaring two
  * agent keys and two prompt keys, and a `ServerPlugin` carrying the definitions and the prompts.
- * A test installs them by mocking the two barrels — so it must be a `// @vitest-isolate` file
- * (api) or run on vitest's default isolation (ui, config, cli):
+ * An api test does not install them itself: it starts with `// @vitest-fixture-agents` and runs
+ * in the `api-fixtures` project, whose setup (`tests/api-fixtures-setup.ts`) pushes
+ * `fixtureShared` and `fixtureServer` into the real barrels once per worker, before the app is
+ * imported. A ui test mocks the shared barrel, which is all the UI reads (it validates `agentKey`
+ * with the same enum), and so runs in `ui-isolated`:
  *
  *     vi.mock('@rocketflare/shared/plugins', async importOriginal =>
  *       (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
  *     )
- *     vi.mock('@/plugins/server', async importOriginal =>
- *       (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
- *     )
- *
- * The UI and the CLI need only the shared half: they validate `agentKey` with the same enum.
  *
  * A test that needs a different body or meta still swaps `AGENTS[FIXTURE_AGENT]` for the test, as
  * before. A test that only stores a key as an opaque string (a row, a trace name) uses the
  * constant without mocking anything.
  *
- * This module is imported from inside `vi.mock` factories, so it imports nothing at runtime but
- * `zod`: a value import of a composer (`@rocketflare/shared/ai/agents`) would read the barrel it
- * is in the middle of mocking.
+ * This module is imported from inside a `vi.mock` factory and by the project setup before the
+ * app, so it imports nothing at runtime but `zod`: a value import of a composer
+ * (`@rocketflare/shared/ai/agents`) would read a barrel before the fixture is in it.
  */
 import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import type { PromptDefinition } from '@rocketflare/shared/ai/prompts'
@@ -100,16 +98,9 @@ export const fixtureServer = {
 } as unknown as AnyServerPlugin
 
 type SharedBarrel = typeof import('@rocketflare/shared/plugins')
-type ServerBarrel = typeof import('@/plugins/server')
 
 /** `@rocketflare/shared/plugins` with the fixture plugin appended. */
 export function withFixtureShared(actual: SharedBarrel): SharedBarrel {
   const plugins = [...actual.sharedPlugins, fixtureShared]
   return { ...actual, SHARED_PLUGINS: plugins, sharedPlugins: plugins } as unknown as SharedBarrel
-}
-
-/** `@/plugins/server` with the fixture plugin appended. */
-export function withFixtureServer(actual: ServerBarrel): ServerBarrel {
-  const plugins = [...actual.serverPlugins, fixtureServer]
-  return { ...actual, SERVER_PLUGINS: plugins, serverPlugins: plugins } as unknown as ServerBarrel
 }

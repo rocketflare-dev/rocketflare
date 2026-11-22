@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the server plugin barrel to install a recording plugin, so this file needs its own module registry.
 /**
  * `hooks.onTenantStatusChanged`: suspending or reactivating a tenant runs every plugin's hook
  * after the status has changed, with the new status and the bindings; a hook that throws is
@@ -19,44 +17,37 @@ import {
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { request } from '../helpers/request'
+import { withServerPlugins } from '../helpers/server-plugins'
 import { createTestEnv, type TestEnv } from '../mocks/bindings'
 
-const heard = vi.hoisted(
-  () => [] as { tenantId: string; status: string; stored: string | undefined; hasKv: boolean }[]
-)
+const heard: { tenantId: string; status: string; stored: string | undefined; hasKv: boolean }[] = []
 
-vi.mock('@/plugins/server', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/plugins/server')>()
-  const { eq } = await import('drizzle-orm')
-  const { tenants } = await import('@/db/schema')
-  const broken = {
-    shared: { id: 'status-broken' },
-    hooks: {
-      onTenantStatusChanged: async () => {
-        throw new Error('hook exploded')
-      },
+const broken = {
+  shared: { id: 'status-broken' },
+  hooks: {
+    onTenantStatusChanged: async () => {
+      throw new Error('hook exploded')
     },
-  }
-  const recorder = {
-    shared: { id: 'status-recorder' },
-    hooks: {
-      onTenantStatusChanged: async (
-        db: import('@/db/client').Database,
-        tenantId: string,
-        status: string,
-        env: TestEnv
-      ) => {
-        const [row] = await db
-          .select({ status: tenants.status })
-          .from(tenants)
-          .where(eq(tenants.id, tenantId))
-        heard.push({ tenantId, status, stored: row?.status, hasKv: Boolean(env.RATE_LIMIT_KV) })
-      },
+  },
+}
+const recorder = {
+  shared: { id: 'status-recorder' },
+  hooks: {
+    onTenantStatusChanged: async (
+      db: import('@/db/client').Database,
+      tenantId: string,
+      status: string,
+      env: TestEnv
+    ) => {
+      const [row] = await db
+        .select({ status: tenants.status })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+      heard.push({ tenantId, status, stored: row?.status, hasKv: Boolean(env.RATE_LIMIT_KV) })
     },
-  }
-  const plugins = [...actual.serverPlugins, broken, recorder] as unknown as AnyServerPlugin[]
-  return { ...actual, SERVER_PLUGINS: plugins, serverPlugins: plugins }
-})
+  },
+}
+withServerPlugins([broken, recorder] as unknown as AnyServerPlugin[])
 
 const db = setupTestDatabase()
 

@@ -16,9 +16,10 @@
  * `jobs:`), which is all these files use. The `gated` job's decision is `gatedDecision` in
  * `scripts/release-check.mjs`, driven here with a fake API and once for real against a stub `gh`
  * and a scratch git repository, because its failure mode is the security property: any doubt must
- * mean "gate here". `--version-only` itself is `tests/config/release-version-only.test.ts`.
+ * mean "gate here". `--version-only` itself is `tests/kit-only/release-version-only.test.ts`.
  * The kit's OWN workflow (kit.yml) is pinned by `tests/kit-only/kit-workflow.test.ts`: a copy has
- * none. The `config` project: no database.
+ * none. Kit-only: a copy owns its workflows (Launch's contract for them is `scripts/kit-check.mjs`),
+ * and these pin the kit's shape and test its vendored scripts.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

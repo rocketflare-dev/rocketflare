@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Spies on the global fetch (fake Google and Microsoft endpoints), so it needs its own registry.
 /**
  * Generic OAuth router: start sets the single `oauth_state` cookie and redirects to the
  * provider; the callback validates state, exchanges the code (stubbed token endpoint), fetches the

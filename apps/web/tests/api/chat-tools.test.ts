@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
  * Chat with the knowledge tools. The one that matters is the FIRST test: the tools are built
  * from the STREAM's database client, not the request's. The request's client is closed in
@@ -15,10 +13,11 @@
 import { KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import { CHAT_MAX_TOOL_TURNS, conversationSchema } from '@rocketflare/shared/ai/chat'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { SEARCH_KNOWLEDGE_TOOL } from '@/api/services/agents/tools'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
 import { aiSpans, messages } from '@/db/schema'
 import { aguiFrames, aguiTypes, customEvent, FakeChatClient, type FakeScript } from '../helpers/ai'
@@ -32,20 +31,15 @@ const state: {
   provider: 'anthropic_compatible' | 'workers_ai'
 } = { client: null, provider: 'anthropic_compatible' }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: state.provider,
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: state.provider,
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 

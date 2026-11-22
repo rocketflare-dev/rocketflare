@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `test-plan.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/gate.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/gate.test.ts` is what typechecks against this.
  */
 
 export type TestTarget = 'local' | 'remote'
@@ -34,4 +34,19 @@ export interface TestPlan {
   notes: string[]
 }
 
-export function planTests(env: Env, tree: { kitOnly: boolean }): TestPlan | { error: string }
+export const SUITES: Record<'api' | 'ui' | 'config' | 'driver' | 'kit-only', string[]>
+
+export function planTests(
+  env: Env,
+  tree: { kitOnly: boolean; webOnly?: boolean }
+): TestPlan | { error: string }
+
+export function planSuites(
+  env: Env,
+  input: { suites: string[]; files: string[]; kitOnly: boolean }
+): TestPlan | { error: string }
+
+export function planSelectedTests(
+  env: Env,
+  selection: { projects: Record<string, string[]>; packages: string[] }
+): TestPlan | { error: string }

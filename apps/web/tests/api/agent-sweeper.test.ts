@@ -1,5 +1,4 @@
-// @vitest-isolate
-// Mocks the plugin barrels to register the fixture agents (tests/helpers/fixture-agents.ts).
+// @vitest-fixture-agents
 /**
  * `sweepLostRuns` — the read path's settle for runs nobody is reading. Every case backdates the
  * row past `SWEEP_STALE_MS` and sets what the Workflow stub reports:
@@ -29,13 +28,6 @@ import { setupTestDatabase } from '../helpers/db'
 import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { itSweeps } from '../helpers/sweeps'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
-
-vi.mock('@rocketflare/shared/plugins', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
-)
-vi.mock('@/plugins/server', async importOriginal =>
-  (await import('../helpers/fixture-agents')).withFixtureServer(await importOriginal())
-)
 
 const db = setupTestDatabase()
 // Every case backdates a run past the sweep's staleness: one sweep at a time across files.

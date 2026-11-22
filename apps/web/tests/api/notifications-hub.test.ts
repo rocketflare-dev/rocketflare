@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the `WebSocketRequestResponsePair` global, so this file needs its own module registry.
 /**
  * `NotificationsHub` DO unit tests: the class under Node with a fake `DurableObjectState`
  * (tagged fake sockets with `send` spies). Covers the RPC surface — `broadcast`, `broadcastToUser`,

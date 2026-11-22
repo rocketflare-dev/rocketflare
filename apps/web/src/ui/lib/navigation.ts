@@ -33,9 +33,21 @@ export function navigateTo(to: string, options: { replace?: boolean } = {}): voi
   else hardNavigate(to)
 }
 
+const assignLocation = (url: string) => window.location.assign(url)
+let assign: (url: string) => void = assignLocation
+
 /** Full-page navigation — the server sets/clears the cookie and every cache starts clean. */
 export function hardNavigate(url: string): void {
-  window.location.assign(url)
+  assign(url)
+}
+
+/**
+ * **Tests only.** Records full-page navigations instead of making them (jsdom cannot navigate),
+ * so a test needs no `vi.mock` of this module and shares the `ui` registry; `null` restores
+ * the real one. `tests/ui/setup.ts` restores it after each file.
+ */
+export function overrideHardNavigateForTests(fn: ((url: string) => void) | null): void {
+  assign = fn ?? assignLocation
 }
 
 /** `/settings/people?tab=x` — the current in-app location (router's when mounted). */
