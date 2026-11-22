@@ -152,10 +152,10 @@ describe('kit-only tests', () => {
   const flag = new RegExp(`(--project[ =]|test\\.mjs )${KIT_ONLY_PROJECT}(?![\\w-])`)
   const scripted = Object.values(webPackage.scripts ?? {}).some(command => flag.test(command))
   // The gate runs it when the plan does: `pnpm test` adds the project while the directory exists.
-  const plan = planTests(
-    {},
-    { kitOnly: existsSync(path.join(REPO_ROOT, 'apps/web/tests/kit-only')) }
-  )
+  // Plugin CI (`plugin-ci.yml`) `git rm`s the directory from a kit checkout to gate a plugin as a
+  // copy would, so in the kit the plan follows the directory, not the manifest.
+  const kitOnlyDir = existsSync(path.join(REPO_ROOT, 'apps/web/tests/kit-only'))
+  const plan = planTests({}, { kitOnly: kitOnlyDir })
   const planned = !('error' in plan) && plan.steps.some(s => s.command.includes(KIT_ONLY_PROJECT))
 
   it(isKit ? 'exist in the kit' : 'are not in this copy', () => {
@@ -163,7 +163,7 @@ describe('kit-only tests', () => {
   })
 
   it(isKit ? 'are run by the kit’s gate' : 'are not wired into this copy’s gate', () => {
-    expect(planned, `${KIT_ONLY_PROJECT} in the pnpm test plan`).toBe(isKit)
+    expect(planned, `${KIT_ONLY_PROJECT} in the pnpm test plan`).toBe(isKit && kitOnlyDir)
     expect(scripted, `a script naming ${KIT_ONLY_PROJECT} in apps/web/package.json`).toBe(isKit)
   })
 
