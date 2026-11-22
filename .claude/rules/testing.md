@@ -148,22 +148,31 @@ behaviour rather than the attack.
 
 ## The `// @vitest-isolate` marker
 
-`api` shares one module registry per worker; `api-isolated` gives each file a fresh one. If a
-file uses `vi.mock`, `vi.stubGlobal`, `vi.spyOn(globalThis…)` or otherwise needs a clean process,
-its FIRST line must be **exactly** the marker, with nothing after it; the reason goes on line 2:
+`api` shares one module registry per worker; `api-isolated` gives each file a fresh one. A file
+that evaluates a module under a fake (`vi.mock`, `vi.doMock`) or drops the registry
+(`vi.resetModules`) must carry the marker on its FIRST line, **exactly**, with nothing after it;
+the reason goes on line 2:
 
 ```ts
 // @vitest-isolate
-// Spies on the global fetch, so this file needs its own module registry.
+// Mocks the plugin barrels, so this file needs its own module registry.
 ```
+
+Spies and stubs need no marker. Vitest restores every `vi.spyOn` spy (on `globalThis.fetch`
+included) after each file even in a shared registry, and the per-file setups (`tests/api-setup.ts`,
+`tests/ui/setup.ts`, `tests/config/setup.ts`) run `vi.unstubAllGlobals()` and `vi.unstubAllEnvs()`.
+Prefer a seam to a module mock: `overrideResolveChatForTests` (a fake chat client) is reset by
+`api-setup.ts` after each file, so a file using it shares the registry.
 
 `isMarkedIsolated` (`apps/web/tests/helpers/isolation.ts`) compares the trimmed first line to
 `// @vitest-isolate` — `// @vitest-isolate — mocks a module` does NOT match, and `vitest.config.ts`
 then places the file in the shared `api` project. Forgetting it does not fail in your file; it hands
 the fake to whatever runs next in that worker. `apps/web/tests/config/isolation-contract.test.ts`
-catches a missing or malformed marker only when its heuristic (`vi.mock|doMock|stubGlobal|stubEnv|
-spyOn(globalThis`) matches the file; anything else that leaks (a module-level singleton you mutate,
-a fake `WebSocket` factory left set) is on you.
+walks the same directories as `vitest.config.ts` (`testDirs`: `tests/api` and every installed
+plugin's `src/plugins/<id>/tests/api`) and catches a missing or malformed marker when its heuristic
+(`vi.mock|doMock|resetModules`) matches the file. What it cannot see is module-level state a test
+mutates: a registry entry added (`FEATURE_FLAGS`, `AGENTS`), a fake factory left set. Restore it in
+`afterAll` (`feature-flags.test.ts`, `seed-features.test.ts`), or mark the file.
 
 **`ui` is split the same way, but by the heuristic itself.** `ui` shares a registry
 (`isolate: false` in its project config); a ui file goes to `ui-isolated` when it carries the
@@ -195,8 +204,8 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
   `queue(batch, env, ctx)` is tested the same way with the two queue names (`queue-dispatch.test.ts`)
 - Durable Object: instantiate `NotificationsHub` with a fake `DurableObjectState`
   (`getWebSockets(tag)` over tagged fake sockets with `send` spies) and call the RPC methods; the
-  101 upgrade cannot run under Node (`notifications-hub.test.ts`, `// @vitest-isolate` because it
-  stubs `WebSocketRequestResponsePair`). Route tests for `/ws` stop at the forwarded request
+  101 upgrade cannot run under Node (`notifications-hub.test.ts`, which stubs
+  `WebSocketRequestResponsePair` with `vi.stubGlobal`). Route tests for `/ws` stop at the forwarded request
 - Nudges: `stubs(env).hub.broadcasts` after `waitOnExecutionContext(ctx)` — assert the tenant id,
   the method and the event `type`; `realtime-nudges.test.ts` covers the kit's emitters
 - Workflow (`agent-run-workflow.test.ts`, `// @vitest-isolate` because it mocks the resolve seam):

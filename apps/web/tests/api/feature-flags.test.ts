@@ -1,6 +1,3 @@
-// @vitest-isolate
-// Registers a fixture flag in the shared `FEATURE_FLAGS` registry (see below), so it needs its own
-// module registry rather than leaking that key into every later file.
 /**
  * Feature flags end to end: the admin surface, the two layers composing, and — the assertion
  * that matters most — that a GLOBAL ADMIN is dark too.

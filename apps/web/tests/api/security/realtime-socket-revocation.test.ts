@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the WebSocketPair / WebSocketRequestResponsePair / Response globals around the hub.
 /**
  * A socket the hub admitted is closed when the membership or session that admitted it goes away:
  * removal from the tenant, sign-out, a block, a suspension, and the identity provider's own

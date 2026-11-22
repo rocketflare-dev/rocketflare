@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the global fetch (the platform OpenAI embedder), so this file needs its own module registry.
 /**
  * PLATFORM documents (`documents.tenant_id` NULL — knowledge about the app itself), end to end on
  * real Postgres:

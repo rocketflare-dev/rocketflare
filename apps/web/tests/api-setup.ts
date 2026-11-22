@@ -18,6 +18,7 @@ installNetworkGuard()
 afterAll(async () => {
   // `api` shares a module registry, and Vitest undoes spies after each file but not stubs.
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
   // A file's fake chat client must not answer the next file's calls.
   // (A file that mocks the module whole may not carry the setter.)
   const resolve = await import('@/api/services/ai/resolve')

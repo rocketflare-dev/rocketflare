@@ -1,6 +1,3 @@
-// @vitest-isolate
-// Replays committed run recordings through the real registry — isolated so no other file's agent
-// swaps leak into what is replayed.
 /**
  * The gate's version check (D44 phase 3): every recording in `tests/agent-recordings/` — a settled
  * run written by `pnpm web agent:replay <agent> --tenant <slug> --record tests/agent-recordings` —

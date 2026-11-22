@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the provider's HTTP endpoints on the global fetch, so it needs its own module registry.
 /**
  * The OAuth flow cookie is a `__Host-` cookie: a same-named cookie without the prefix is not read,
  * and the return path it carries is re-checked at the callback, so a value that is not a

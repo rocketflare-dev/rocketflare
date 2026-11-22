@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Registers a fixture flag in the shared `FEATURE_FLAGS` registry, so it needs its own module registry.
 /**
  * The seed's per-organisation flags: `--feature` overrides (the seeded tenant, or one named by
  * slug) and a plugin's `hooks.seed` calling `ctx.setFeature` — each a `tenant_feature_overrides`
@@ -8,7 +6,7 @@
 import { FEATURE_FLAGS, FEATURE_KEYS, type FeatureDefinition } from '@rocketflare/shared/features'
 import type { FeatureName } from '@rocketflare/shared/permissions'
 import { and, eq } from 'drizzle-orm'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { tenantFeatures } from '@/api/services/features'
 import { loadConfig } from '@/config'
 import { tenantFeatureOverrides } from '@/db/schema'
@@ -35,6 +33,14 @@ beforeAll(() => {
     environmentGated: false,
   }
   FEATURE_KEYS.push(KEY)
+})
+
+// `api` shares a module registry, so the fixture key must not outlive this file; its override
+// rows go with it (the tenants are this file's own, but the key is not).
+afterAll(async () => {
+  await db.delete(tenantFeatureOverrides).where(eq(tenantFeatureOverrides.flagKey, KEY))
+  delete (FEATURE_FLAGS as Record<string, FeatureDefinition>)[KEY]
+  FEATURE_KEYS.splice(FEATURE_KEYS.indexOf(KEY), 1)
 })
 
 async function override(tenantId: string) {

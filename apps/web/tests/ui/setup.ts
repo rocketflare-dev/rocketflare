@@ -29,8 +29,9 @@ afterEach(async () => {
   useWebSocketStore.setState(useWebSocketStore.getInitialState(), true)
 })
 
-// Vitest restores spies after every file even in a shared registry, but not `vi.stubGlobal`. Undo
+// Vitest restores spies after every file even in a shared registry, but not `vi.stubGlobal` or `vi.stubEnv`. Undo
 // a file's stubs when it ends, not after each test: a file may stub once in `beforeAll`.
 afterAll(() => {
   vi.unstubAllGlobals()
+  vi.unstubAllEnvs()
 })

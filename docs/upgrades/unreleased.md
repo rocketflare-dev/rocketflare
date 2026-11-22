@@ -25,6 +25,7 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 - More of the kit's tests leave a copy's gate: `ci-workflows` (the kit's workflow shape and its release-check script), the `plugin check` MCP fixtures, the 0027 migration backfill, and the pins on the kit's exact entity types and job types (`kit-makeup`). Eleven `api` files that open no database run in `config`, now guarded against outbound network like `api`.
 - Tests no longer break when an app renames itself or removes chat or documents: the "never the kit's name" checks spell the name so the rename cannot rewrite it (`tests/helpers/kit-name.ts`), and the navigation test pins no removable page.
 - `overrideResolveChatForTests` (`@/api/services/ai/resolve`) lets a test hand the code a fake chat client without `vi.mock`, so its file shares the `api` registry; `tests/api-setup.ts` resets it after each file. `chat.test.ts` uses it.
+- A test that only spies on or stubs a global no longer needs `// @vitest-isolate`: Vitest restores spies after each file, and the api, ui and config setups now undo `vi.stubGlobal` and `vi.stubEnv`. The heuristic flags only `vi.mock`, `vi.doMock` and `vi.resetModules`, twelve kit api files dropped the marker, and the isolation contract also checks every installed plugin's `tests/api`.
 - The UI bundle's chunk checks run after `vite build` (`scripts/check-ui-bundle.mjs`, called by `build:ui`), so they always read the build just made; in the gate they used to skip, because the tests ran before the build.
 
 ## How to apply
@@ -47,6 +48,9 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 16. In `apps/web/package.json`, set `build:ui` to `vite build && node scripts/check-ui-bundle.mjs`.
 17. Apply the kit diff for `apps/web/src/api/services/ai/resolve.ts` and `apps/web/tests/api/chat.test.ts`. A test of yours that mocks `@/api/services/ai/resolve` only to return a fake client can call `overrideResolveChatForTests(async () => ({ … }))` instead and drop its `// @vitest-isolate` line.
 18. If your app has a module-level store of its own (a `zustand` `create`, a singleton client), reset it in the `afterEach` of `apps/web/tests/ui/setup.ts`.
+19. Apply the kit diff for `apps/web/tests/helpers/isolation.ts` (the narrower heuristic and the new `testDirs`), `apps/web/vitest.config.ts`, `apps/web/tests/api-setup.ts`, `apps/web/tests/ui/setup.ts`, `apps/web/tests/config/setup.ts`, `apps/web/tests/config/isolation-contract.test.ts`, `apps/web/tests/helpers/network-guard.ts` (a comment) and `.claude/rules/testing.md` (the marker section).
+20. Delete the `// @vitest-isolate` line and its reason lines from `apps/web/tests/api/` `auth-oauth`, `email`, `jobs-consumer`, `knowledge-rerank`, `platform-knowledge`, `notifications-hub`, `feature-flags`, `agent-recordings`, `security/microsoft-sign-in-email`, `security/oauth-flow-cookie` and `security/realtime-socket-revocation` (each `.test.ts`), and apply the kit diff for `seed-features.test.ts` (an `afterAll` removing its fixture flag).
+21. A test of your own whose only reason for `// @vitest-isolate` is `vi.spyOn`, `vi.stubGlobal` or `vi.stubEnv` can drop the marker the same way, once anything else it changes at module level (a registry entry, a singleton) is restored in its `afterAll`.
 
 ## Conflicts to expect
 
@@ -61,3 +65,4 @@ A copy's gate no longer runs the kit's tooling tests, which now live in the kit-
 2. `ls apps/web/tests/config/rf-security` fails: the directory is gone.
 3. `pnpm typecheck` passes and `pnpm exec tsc --version` prints `Version 7.0.2`.
 4. `pnpm test ui` and `pnpm test config` pass, and so does `pnpm test ui config --sequence.shuffle.files` (a shared registry that leaks fails in some order).
+5. `pnpm test api --sequence.shuffle.files --sequence.seed=1` passes, and so does seed 2.

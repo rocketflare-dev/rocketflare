@@ -7,6 +7,7 @@ import { defineConfig } from 'vitest/config'
 import {
   isMarkedIsolated,
   apiTestFiles as listApiTestFiles,
+  testDirs,
   testFiles,
   uiNeedsIsolation,
 } from './tests/helpers/isolation.ts'
@@ -65,8 +66,6 @@ const MAX_WORKERS =
   Number.parseInt(process.env.TEST_MAX_WORKERS ?? '', 10) ||
   (EPHEMERAL ? 2 : Math.min(10, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
-const API_TEST_DIR = path.resolve(import.meta.dirname, './tests/api')
-
 /**
  * The kit's OWN tests (`docs/CONCEPTS.md` §13): release notes, the version chain, the release and
  * rename machinery — true of the kit repository and of nothing made from it. `scripts/rename.mjs`
@@ -75,32 +74,15 @@ const API_TEST_DIR = path.resolve(import.meta.dirname, './tests/api')
  * which vitest ignores).
  */
 const KIT_ONLY_DIR = path.resolve(import.meta.dirname, './tests/kit-only')
-const PLUGINS_DIR = path.resolve(import.meta.dirname, './src/plugins')
 
 /**
  * A plugin (D31) keeps its tests inside its own directory — `src/plugins/<id>/tests/{api,ui,config}`
- * — so that installing or removing one moves its tests with it and never touches `tests/`. The api
- * ones have to be discovered the same way the kit's are, because the `// @vitest-isolate` marker
- * decides which of the two api projects a file belongs to.
+ * — so that installing or removing one moves its tests with it and never touches `tests/`.
+ * `testDirs` lists the kit's directory and every plugin's, the same list the isolation contract
+ * test walks, because the `// @vitest-isolate` marker decides which api project a file joins.
  */
-function pluginDirs(): string[] {
-  if (!fs.existsSync(PLUGINS_DIR)) return []
-  return fs
-    .readdirSync(PLUGINS_DIR, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
-    .sort()
-}
-
 function apiTestFiles(isolated: boolean): string[] {
-  const dirs: Array<{ abs: string; rel: string }> = [
-    { abs: API_TEST_DIR, rel: 'tests/api' },
-    ...pluginDirs().map(id => ({
-      abs: path.join(PLUGINS_DIR, id, 'tests/api'),
-      rel: `src/plugins/${id}/tests/api`,
-    })),
-  ]
-  return dirs.flatMap(dir =>
+  return testDirs(import.meta.dirname, 'api').flatMap(dir =>
     listApiTestFiles(dir.abs)
       .filter(f => isMarkedIsolated(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
       .map(f => `${dir.rel}/${f}`)
@@ -109,17 +91,11 @@ function apiTestFiles(isolated: boolean): string[] {
 
 /**
  * The ui and config tests, kit and plugins alike, split on `uiNeedsIsolation`: a file that mocks a
- * module or a global gets its own registry (`<kind>-isolated`), every other one shares the
+ * module or resets the registry gets its own registry (`<kind>-isolated`), every other one shares the
  * worker's, which imports the app once per worker instead of once per file.
  */
 function splitTestFiles(kind: 'ui' | 'config', isolated: boolean): string[] {
-  const dirs: Array<{ abs: string; rel: string }> = [
-    { abs: path.resolve(import.meta.dirname, `./tests/${kind}`), rel: `tests/${kind}` },
-    ...pluginDirs().map(id => ({
-      abs: path.join(PLUGINS_DIR, id, `tests/${kind}`),
-      rel: `src/plugins/${id}/tests/${kind}`,
-    })),
-  ]
+  const dirs = testDirs(import.meta.dirname, kind)
   const pattern = kind === 'ui' ? /\.(test|spec)\.tsx?$/ : /\.(test|spec)\.ts$/
   return dirs.flatMap(dir =>
     testFiles(dir.abs, pattern)

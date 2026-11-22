@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Stubs the global fetch (the Fireworks reranker and the OpenAI embedder), so it needs its own registry.
 /**
  * Reranking and knowledge metering, end to end through the real services and database:
  *
