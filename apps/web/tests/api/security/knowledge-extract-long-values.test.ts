@@ -1,16 +1,20 @@
-// @vitest-isolate
-// Mocks the provider seam (`ai/resolve`) and the entity-type registry, so it needs its own registry.
 /**
  * What a chat endpoint sends back for a fact is bounded before extraction reads it: a value, its
  * wording or a validity date longer than `MAX_CANDIDATE_TEXT_CHARS` is dropped as a bad value or
  * a bad date, at a cost that does not grow with its length, and the section's other facts are
  * still written.
  */
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import {
+  overrideResolveChatForTests,
+  overrideResolveDecisionsForTests,
+} from '@/api/services/ai/resolve'
 import { setTenantOverride } from '@/api/services/features'
 import { extractDocumentFacts } from '@/api/services/knowledge/extract'
+import { overrideKnowledgeEntityTypesForTests } from '@/api/services/knowledge/registry'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
 import { loadConfig } from '@/config'
 import { FakeChatClient } from '../../helpers/ai'
@@ -20,26 +24,20 @@ import { createTestEnv } from '../../mocks/bindings'
 
 const state: { client: FakeChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  const { AiNotConfiguredError } = await import('@/api/services/ai/errors')
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'openai',
-        model: 'test-model',
-        source: 'tenant',
-        billedToPlatform: false,
-        maxOutputTokens: 4096,
-      }
-    }),
-    resolveDecisions: vi.fn(async () => {
-      throw new AiNotConfiguredError('chat')
-    }),
+    client: state.client,
+    provider: 'openai',
+    model: 'test-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 4096,
   }
+})
+
+overrideResolveDecisionsForTests(async () => {
+  throw new AiNotConfiguredError('chat')
 })
 
 const customer: EntityTypeRegistration = {
@@ -51,10 +49,7 @@ const customer: EntityTypeRegistration = {
     plan: z.string(),
   }),
 }
-vi.mock('@/api/services/knowledge/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/knowledge/registry')>()
-  return { ...actual, knowledgeEntityTypes: () => [customer] }
-})
+overrideKnowledgeEntityTypesForTests(() => [customer])
 
 const db = setupTestDatabase()
 const TEXT = '# Harbour Bakery\n\nMonthly Fee: £285 per month.\nSupport is included.\nPlan: Gold.'

@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the provider seam (`ai/resolve`) and the entity-type registry, so it needs its own registry.
 /**
  * Extraction builds what it shows the models only from documents everyone who can read the new
  * document may also read: while one document's facts are read, the known entities, their accepted
@@ -11,10 +9,15 @@
  */
 import { entityCardSchema } from '@rocketflare/shared/ai/knowledge-facts'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { buildAgentTools } from '@/api/services/agents/tools'
+import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import {
+  overrideResolveChatForTests,
+  overrideResolveDecisionsForTests,
+} from '@/api/services/ai/resolve'
 import { setTenantOverride } from '@/api/services/features'
 import { extractDocumentFacts, type FactCandidate } from '@/api/services/knowledge/extract'
 import type {
@@ -23,6 +26,7 @@ import type {
   KnowledgeJudge,
   ValueQuestion,
 } from '@/api/services/knowledge/judge'
+import { overrideKnowledgeEntityTypesForTests } from '@/api/services/knowledge/registry'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
 import { loadConfig } from '@/config'
 import { groupMembers, groups, groupTypes, knowledgeEntities } from '@/db/schema'
@@ -44,32 +48,23 @@ const state: { client: FakeChatClient | null; types: EntityTypeRegistration[] } 
   types: [],
 }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
-  const { AiNotConfiguredError } = await import('@/api/services/ai/errors')
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic',
-        model: 'claude-haiku-5-5',
-        source: 'tenant',
-        billedToPlatform: false,
-        maxOutputTokens: 4096,
-      }
-    }),
-    resolveDecisions: vi.fn(async () => {
-      throw new AiNotConfiguredError('chat')
-    }),
+    client: state.client,
+    provider: 'anthropic',
+    model: 'claude-haiku-5-5',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 4096,
   }
 })
 
-vi.mock('@/api/services/knowledge/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/knowledge/registry')>()
-  return { ...actual, knowledgeEntityTypes: () => state.types }
+overrideResolveDecisionsForTests(async () => {
+  throw new AiNotConfiguredError('chat')
 })
+
+overrideKnowledgeEntityTypesForTests(() => state.types)
 
 const db = setupTestDatabase()
 

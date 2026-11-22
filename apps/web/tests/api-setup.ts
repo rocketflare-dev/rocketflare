@@ -28,6 +28,11 @@ afterAll(async () => {
   if (typeof resolve.overrideResolveDecisionsForTests === 'function') {
     resolve.overrideResolveDecisionsForTests(null)
   }
+  // Nor a file's fixture knowledge entity types be the next file's registry.
+  const registry = await import('@/api/services/knowledge/registry')
+  if (typeof registry.overrideKnowledgeEntityTypesForTests === 'function') {
+    registry.overrideKnowledgeEntityTypesForTests(null)
+  }
   const { closeAllDatabases } = await import('@/db/client')
   await closeAllDatabases()
 })

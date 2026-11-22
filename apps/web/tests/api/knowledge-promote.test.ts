@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks the knowledge entity-type registry (a type backed by a real table), so it needs its own registry.
 /**
  * `POST /api/knowledge/entities/:id/promote` and merge-into-a-domain-row (D43): a staging entity
  * becomes a row of its registered type — `promoted_type` / `promoted_id` recorded, its facts moved
@@ -13,10 +11,11 @@ import {
   entityCardSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { and, eq } from 'drizzle-orm'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { buildAgentTools } from '@/api/services/agents/tools'
 import { setTenantOverride } from '@/api/services/features'
+import { overrideKnowledgeEntityTypesForTests } from '@/api/services/knowledge/registry'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
 import { loadConfig } from '@/config'
 import { groups, groupTypes, knowledgeEntities, knowledgeFacts } from '@/db/schema'
@@ -40,14 +39,7 @@ const team: EntityTypeRegistration = {
   facts: z.object({ monthly_fee_gbp: z.number(), visit_day: z.string() }),
 }
 
-vi.mock('@/api/services/knowledge/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/knowledge/registry')>()
-  return {
-    ...actual,
-    knowledgeEntityTypes: () => [team],
-    knowledgeEntityType: (type: string) => (type === 'team' ? team : undefined),
-  }
-})
+overrideKnowledgeEntityTypesForTests(() => [team])
 
 const db = setupTestDatabase()
 const env = createTestEnv()
