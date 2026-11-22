@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.44.1 — 2026-11-22
+
+`tests/config/kit-manifest.test.ts` passes in a kit checkout without `apps/web/tests/kit-only/`, which is how plugin CI gates a plugin, so plugin repositories pass against the newest kit again.
+[Porting note](docs/upgrades/0.44.1.md).
+
 ## 0.44.0 — 2026-11-22
 
 `kit:upgrade` runs the target release's upgrader and 3-way merges stale patches, `pnpm test` reads its ports from the compose file, plugin upgrades stop duplicating core edits, and plugins gain Home cards, framing and larger upload caps.
