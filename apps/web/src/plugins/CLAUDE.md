@@ -155,6 +155,12 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `invalid_custom_event`. Validate the body and do anything else that can fail BEFORE calling it.
   Test it with `scriptPlatformChat(env, turns)` from `@testkit/integration`, never a `vi.mock` of
   the resolver.
+- **A route serving a PDF a page frames calls `ctx.embeddable(row.contentType)`** — the type from
+  YOUR row, before any 304 early return; only an `EMBEDDABLE_MIME_TYPES` type is let through
+  (`SAMEORIGIN` + `frame-ancestors 'self'` for that response). Never a header of your own.
+- **A file above 10 MB** goes to an exact path in `uploadLimits` (`{ '/api/<id>/upload': bytes }`,
+  ≤ 50 MiB, `uploadLimitIssues`), never a wider `uploadPaths` prefix; the route still mounts its own
+  `bodyLimit` and checks each file.
 - **Storage is `ctx.storage()`** (keyed `tenants/<tenantId>/<id>/…`, so `tenant.purge` removes it),
   never `env.FILES` with a hand-built prefix.
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:
@@ -257,6 +263,11 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   boundary, so a throw renders nothing. Keep one compact at every width (an icon button below
   `sm`); a palette or drawer it opens is its own lazy chunk. Guard it with the same const as the
   route it serves.
+- **`homeCards`** (`{ id, Component: lazy(...), guard?, order? }`) are Home's "what needs doing"
+  section, above the quick links, via `PluginHomeCards` — same ordering and isolation as `header`.
+  A card with nothing to ask renders `null`. The core quick links are data in
+  `pages/home-links.ts`: the plugin UI kit must never import the Home PAGE
+  (`tests/config/plugin-ui-kit-graph.test.ts`), or `apps/evals` compiles Home's whole graph.
 - **`useNavigationEntries()`** (`@/plugins/api/ui`, so from a lazy page or palette) lists every
   destination the reader may open: composed nav, settings tabs (`pages/settings/tabs.ts` + plugins'
   `settingsTabs`) and Home links, each through `useNavGuard`, first entry per path wins.

@@ -35,7 +35,7 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 - `components/` — the shell: `Layout` (slots `headerStart` = `OrgSwitcher`, `headerCenter` =
   the `center` plugin header items, `headerEnd` = the `end` plugin header items +
   `NotificationsBell` + `UserMenu`, `sidebarFooter`; `PluginHeaderSlot` renders a placement's
-  `UiPlugin.header` items, each guarded and isolated), `SideNav` (`CORE_NAVIGATION` composed with
+  `UiPlugin.header` items, each guarded and isolated; `PluginHomeCards` renders `UiPlugin.homeCards` on Home the same way), `SideNav` (`CORE_NAVIGATION` composed with
   plugin groups by `composeNav`, filtered by `filterNavConfig`), guards (`ProtectedRoute`,
   `RequireGuard`, `AdminRoute`, `GlobalAdminRoute`), `permissions/` (`AbilityProvider` unpacks
   `session.permissions`; `IfCan`/`IfCannot`), realtime (`WebSocketProvider`, `WebSocketStatus`,

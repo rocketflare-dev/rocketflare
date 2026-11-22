@@ -396,6 +396,8 @@ The server surface: the context family, and the types a plugin must be able to n
   One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
 - `type PluginHeaderPlacement = 'center' \| 'end'`
   Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
 - `interface PluginIdentity`
   `identityFor(c, pluginId)`: sign a person in, or provision them.
 - `interface PluginIdentityUser`
@@ -499,6 +501,8 @@ The server surface: the context family, and the types a plugin must be able to n
     The value `validate('json' | 'query' | 'param', schema)` already parsed.
   - `page<T>( items: T[], total: number, query: PaginationQuery ): { items: T[]; pagination: PaginationMeta }`
     `{ items, pagination }` — the one list shape every consumer parses.
+  - `embeddable(contentType: string): boolean`
+    Let a same-origin page FRAME this one response (`X-Frame-Options: SAMEORIGIN` + CSP `frame-ancestors 'self'` instead of `DENY` + `'none'`) — the opt-in `/api/files/:id` uses for…
   - `defer(fn: () => Promise<unknown>): void`
     Run something that may outlive the response (an email, an audit write, a nudge). It goes through `waitUntil`, is never awaited on the response path, and LOGS rather than throws —…
   - `enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>`
@@ -594,6 +598,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
   - `uploadPaths?: readonly string[]`
     Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
+  - `uploadLimits?: Readonly<Record<string, number>>`
+    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -730,6 +736,8 @@ The server surface: the context family, and the types a plugin must be able to n
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
   - `header?: readonly PluginHeaderItem[]`
     Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
@@ -797,6 +805,8 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
   One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
 - `type PluginHeaderPlacement = 'center' \| 'end'`
   Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
 - `interface PluginNavGroup`
   A nav group, placed relative to a named core group ("Organisation" by default).
   - `label?: string`
@@ -825,6 +835,8 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
   - `header?: readonly PluginHeaderItem[]`
     Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
@@ -961,6 +973,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
 - `type PluginHeaderPlacement = 'center' \| 'end'`
   Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
   One entry of the mount table in `api/index.ts`: prefix, router, optional gate.
 - `interface PluginNavGroup`
@@ -1035,6 +1049,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
   - `uploadPaths?: readonly string[]`
     Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
+  - `uploadLimits?: Readonly<Record<string, number>>`
+    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -1052,6 +1068,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
     Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
   - `header?: readonly PluginHeaderItem[]`
     Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
@@ -1355,7 +1373,7 @@ Builders for the context family, for tests that never touch data.
 - `type FakeCronCtx = CronCtx & RecordsAgentRuns`
 - `type FakeEmailCtx = EmailCtx & RecordsAgentRuns`
 - `type FakeJobCtx = JobCtx & RecordsAgentRuns`
-- `type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> settle(): Promise<void> }`
+- `type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> readonly framed: boolean settle(): Promise<void> }`
   What a fake request context carries beyond the real one: the deferred work it collected.
 - `type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }`
   The fake step recorder, so a test can assert the NAMES a run asked for and their order.
@@ -1594,6 +1612,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PluginDeprovisionResult :: interface PluginDeprovisionResult
 @/plugins/api :: interface :: PluginHeaderItem :: interface PluginHeaderItem
 @/plugins/api :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/api :: interface :: PluginHomeCard :: interface PluginHomeCard
 @/plugins/api :: interface :: PluginIdentity :: interface PluginIdentity
 @/plugins/api :: interface :: PluginIdentityUser :: interface PluginIdentityUser
 @/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon
@@ -1653,6 +1672,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestCtx.uuid :: uuid(name: string): string
 @/plugins/api :: member :: RequestCtx.valid :: valid<T>(target: 'json' | 'query' | 'param' | 'form' | 'header' | 'cookie'): T
 @/plugins/api :: member :: RequestCtx.page :: page<T>( items: T[], total: number, query: PaginationQuery ): { items: T[]; pagination: PaginationMeta }
+@/plugins/api :: member :: RequestCtx.embeddable :: embeddable(contentType: string): boolean
 @/plugins/api :: member :: RequestCtx.defer :: defer(fn: () => Promise<unknown>): void
 @/plugins/api :: member :: RequestCtx.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
 @/plugins/api :: member :: RequestCtx.enqueueMany :: enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
@@ -1710,6 +1730,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
+@/plugins/api :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
@@ -1797,6 +1818,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
 @/plugins/api :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
@@ -1829,6 +1851,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: interface :: NavItem :: interface NavItem
 @/plugins/api/ui-wiring :: interface :: PluginHeaderItem :: interface PluginHeaderItem
 @/plugins/api/ui-wiring :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/api/ui-wiring :: interface :: PluginHomeCard :: interface PluginHomeCard
 @/plugins/api/ui-wiring :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.before :: before?: string
@@ -1848,6 +1871,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api/ui-wiring :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
@@ -1923,6 +1947,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
 @/plugins/types :: interface :: PluginHeaderItem :: interface PluginHeaderItem
 @/plugins/types :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/types :: interface :: PluginHomeCard :: interface PluginHomeCard
 @/plugins/types :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/types :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/types :: member :: PluginNavGroup.label :: label?: string
@@ -1964,6 +1989,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
 @/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
+@/plugins/types :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
@@ -1975,6 +2001,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
 @/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/types :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/types :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
 @/plugins/types :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
@@ -2143,7 +2170,7 @@ nothing in the comparison that can throw.
 @testkit/unit :: type :: FakeCronCtx :: type FakeCronCtx = CronCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeEmailCtx :: type FakeEmailCtx = EmailCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeJobCtx :: type FakeJobCtx = JobCtx & RecordsAgentRuns
-@testkit/unit :: type :: FakeRequestCtx :: type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> settle(): Promise<void> }
+@testkit/unit :: type :: FakeRequestCtx :: type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> readonly framed: boolean settle(): Promise<void> }
 @testkit/unit :: type :: FakeWorkflowCtx :: type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }
 @testkit/unit :: function :: makeCronCtx :: function makeCronCtx(options: CronCtxOptions): FakeCronCtx
 @testkit/unit :: function :: makeEmailCtx :: function makeEmailCtx(options: CronCtxOptions): FakeEmailCtx

@@ -155,4 +155,6 @@ its eager-entry import allowlist: `apps/web/src/plugins/CLAUDE.md`.
 
 A plugin's top-bar control is a `UiPlugin.header` item rendered by `PluginHeaderSlot`, never an
 edit to `Layout` or `App.tsx`: each item sits behind its own guard, `Suspense` and error boundary,
-so a header item that throws must render nothing rather than break the shell.
+so a header item that throws must render nothing rather than break the shell. A card on Home is a
+`UiPlugin.homeCards` entry rendered by `PluginHomeCards` the same way, never an edit to `Home.tsx`;
+the core quick links are data in `pages/home-links.ts`, which hooks import instead of the page.

@@ -44,7 +44,7 @@ import type { NavItem } from '../ui/components/SideNav'
 import type { TabConfig } from '../ui/components/shared'
 import type { NavGuard } from '../ui/hooks/useNavGuard'
 import type { AgentForm } from '../ui/pages/agents/forms'
-import type { QuickLink } from '../ui/pages/Home'
+import type { QuickLink } from '../ui/pages/home-links'
 
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
@@ -314,6 +314,16 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * mounts its own `bodyLimit` at the file size it takes (at most 10 MB plus multipart overhead).
    */
   uploadPaths?: readonly string[]
+  /**
+   * EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`,
+   * each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and
+   * `tests/config/plugins.test.ts` refuses more), under `/api/<id>/`. Checked before `uploadPaths`
+   * and the 1 MB cap, for that path alone — a sibling path is untouched; a JSON body there keeps
+   * 1 MB. The cap is the transport's (plus 64 KB multipart overhead): the route still mounts its
+   * own `bodyLimit` and checks each file. The Worker holds the body in memory, so ask for what the
+   * largest real file needs, not a round number.
+   */
+  uploadLimits?: Readonly<Record<string, number>>
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
   rlsExcludedTables?: readonly string[]
   /**
@@ -444,6 +454,23 @@ export interface PluginHeaderItem {
   placement?: PluginHeaderPlacement
 }
 
+/**
+ * One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is
+ * asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and isolates
+ * each card (`PluginHomeCards`: its own `Suspense` and error boundary); a card with nothing to ask
+ * renders `null`. Lazy, like a header item, so Home's eager chunk carries none of its code.
+ */
+export interface PluginHomeCard {
+  /** Unique within the plugin; the React key is `<plugin id>:<id>`. */
+  id: string
+  /** `lazy(() => import('./ui/home/X'))` and nothing else, exactly like a route's `Component`. */
+  Component: LazyExoticComponent<ComponentType>
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+  /** Ascending, default 0; ties break on plugin id, then card id — never on install order. */
+  order?: number
+}
+
 /** One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it. */
 export interface PluginSettingsTab extends TabConfig {
   /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
@@ -478,6 +505,12 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * The host does NOT de-duplicate or re-order: two plugins offering the same `to` show twice.
    */
   homeLinks?: readonly QuickLink[]
+  /**
+   * Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged
+   * across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense` and error
+   * boundary (`PluginHomeCards`).
+   */
+  homeCards?: readonly PluginHomeCard[]
   /**
    * Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id,
    * rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.

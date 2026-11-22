@@ -9,7 +9,10 @@
  */
 
 import { eventNameProblem } from '@rocketflare/shared/plugins'
-import { MAX_PUBLIC_MOUNT_BODY_BYTES } from '@/api/middleware/body-limit'
+import {
+  MAX_PLUGIN_UPLOAD_LIMIT_BYTES,
+  MAX_PUBLIC_MOUNT_BODY_BYTES,
+} from '@/api/middleware/body-limit'
 import { PUBLIC_SITE_HOST } from '@/api/middleware/public-sites'
 import {
   isForbiddenCspSource,
@@ -203,6 +206,32 @@ export function uploadPathIssues(id: string, paths: readonly string[]): string[]
   return paths
     .filter(p => !p.startsWith(root) || p.length === root.length)
     .map(p => `${id}: upload path '${p}' is outside ${root}`)
+}
+
+/**
+ * A plugin's `uploadLimits`: each an exact path under `/api/<id>/` with a positive integer cap no
+ * larger than `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` — the host clamps a larger one, and saying so here
+ * is what stops a plugin believing it asked for 200 MB and got it.
+ */
+export function uploadLimitIssues(
+  id: string,
+  limits: Readonly<Record<string, number>> | undefined
+): string[] {
+  const root = `/api/${id}/`
+  return Object.entries(limits ?? {}).flatMap(([path, bytes]) => {
+    const issues: string[] = []
+    if (!path.startsWith(root) || path.length === root.length) {
+      issues.push(`${id}: upload limit path '${path}' is outside ${root}`)
+    }
+    if (!Number.isInteger(bytes) || bytes <= 0) {
+      issues.push(`${id}: upload limit for '${path}' must be a positive integer of bytes`)
+    } else if (bytes > MAX_PLUGIN_UPLOAD_LIMIT_BYTES) {
+      issues.push(
+        `${id}: upload limit for '${path}' (${bytes}) exceeds the ${MAX_PLUGIN_UPLOAD_LIMIT_BYTES}-byte ceiling`
+      )
+    }
+    return issues
+  })
 }
 
 /**

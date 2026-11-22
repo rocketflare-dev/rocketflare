@@ -23,6 +23,7 @@
  * builds. `makeRequestCtx` is the exception and says so on itself.
  */
 
+import { isEmbeddableMimeType } from '@rocketflare/shared/files'
 import type { GroupRef } from '@rocketflare/shared/groups'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
@@ -127,6 +128,8 @@ export interface RequestCtxOptions extends BaseOptions {
  */
 export type FakeRequestCtx = RequestCtx & {
   readonly deferred: ReadonlyArray<() => Promise<unknown>>
+  /** Whether `ctx.embeddable(...)` let the response be framed — there is no response to read. */
+  readonly framed: boolean
   /** Run everything deferred so far, swallowing failures exactly as `defer` does. */
   settle(): Promise<void>
 }
@@ -181,6 +184,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
   const isAdmin = isGlobalAdmin || role === 'owner' || role === 'admin' || role === 'support'
   const isOwner = isGlobalAdmin || role === 'owner'
 
+  let framed = false
   const deferred: Array<() => Promise<unknown>> = []
   const defer = (fn: () => Promise<unknown>) => {
     deferred.push(fn)
@@ -256,6 +260,16 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
     },
 
     page: <T>(items: T[], total: number, query: PaginationQuery) => paginated(items, total, query),
+    // The same decision as the real adapter, recorded on `framed` instead of a header.
+    embeddable: contentType => {
+      const type = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
+      if (!isEmbeddableMimeType(type)) return false
+      framed = true
+      return true
+    },
+    get framed() {
+      return framed
+    },
 
     defer,
     enqueue: async (input, opts) => {

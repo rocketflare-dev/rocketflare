@@ -361,7 +361,10 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   `/api/ai/documents/upload`, a plugin's `uploadPaths`) a JSON body keeps the 1 MB cap, and any
   other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB multipart overhead, the
   largest file an upload route may take); each upload route mounts its own tighter cap and checks
-  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16).
+  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16). A
+  plugin's `uploadLimits` names EXACT paths whose non-JSON body may go higher, up to
+  `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB, clamped; `uploadLimitIssues` in `plugins.test.ts`
+  refuses more) plus multipart overhead — checked first, for that path alone (§16).
 - **Contracts (D13)**: zod schemas from `@rocketflare/shared` are used by the server, UI and CLI.
   There is no `hono/client` RPC. Errors are `{ error, statusCode, code?, details? }` everywhere,
   and success bodies are bare.
@@ -588,7 +591,8 @@ project.
   `owned_by_document`.
 - **Framing is opt-in per response**: only a route that proved the type (`isEmbeddableMimeType`, PDF)
   sets `embeddable`, which relaxes `DENY` to `SAMEORIGIN` for that one response. It is set before
-  the 304 early return. Never use a path allowlist for this.
+  the 304 early return. Never use a path allowlist for this. A plugin route reaches the same flag
+  through `ctx.embeddable(contentType)` (§16), which applies the same `isEmbeddableMimeType` test.
 - A missing `FILES` binding is 503 `storage_not_configured`. `tenant.purge` pages through the
   tenant prefix and is idempotent.
 
@@ -1941,6 +1945,20 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   collapses nothing on a narrow screen: an item is a compact control and opens anything large as
   its own lazy chunk. `headerItemIssues` (`plugins.test.ts`) refuses a duplicate id or an unknown
   placement.
+- **Home cards (`UiPlugin.homeCards`)**: `{ id, Component, guard?, order? }[]` — Home's "what needs
+  doing" section, above the quick links (approvals waiting, an inbox to triage). `PluginHomeCards`
+  merges them across plugins, orders by `order`, then plugin id, then card id, and puts each behind
+  its guard, its own `Suspense` and its own error boundary, like a header item. A card with nothing
+  to ask renders `null`; the section brings no chrome, and with no card passing its guard it is
+  absent. `Component` is `lazy(() => import(...))`. The core quick links are data in
+  `pages/home-links.ts`, so the plugin UI kit never imports the Home page (`plugin-ui-kit-graph.test.ts`).
+- **Framing a response (`ctx.embeddable(contentType)`)**: a plugin route that has proved its body
+  is an `EMBEDDABLE_MIME_TYPES` type (today PDF) — from its own row, never the request — lets a
+  same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6). Any other type
+  is refused (`false`) and `DENY` stands. Call it before any 304 early return.
+- **Large uploads (`ServerPlugin.uploadLimits`)**: `{ '/api/<id>/upload': bytes }` — an exact path
+  whose non-JSON body may exceed `uploadPaths`' 10 MB, up to 50 MiB (§3, body limits). The route
+  still mounts its own `bodyLimit` and checks each file; the Worker holds the body in memory.
 - **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the
