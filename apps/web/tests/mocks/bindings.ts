@@ -616,6 +616,11 @@ export function createExecutionContext(): TestExecutionContext {
     exports: {} as Cloudflare.Exports,
     tracing: {} as never,
     abort() {},
+    // Required from workerd 1.20261103 (wrangler ≥ 4.157, #114). An extra member is harmless
+    // under an older wrangler: a type assertion does no excess-property check.
+    mapVirtualHost() {
+      throw new Error('createExecutionContext: mapVirtualHost is not mocked — no test uses it yet')
+    },
   } as TestExecutionContext
 }
 

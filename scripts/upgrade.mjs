@@ -17,11 +17,15 @@
  *   3. classify every changed path, dropping anything belonging to a surface that is gone;
  *   4. translate the survivors through `scripts/lib/rename-lib.mjs` — the same token map the
  *      rename used — and write a patch, the whole text of every added file, and a plan;
- *   5. with `--apply`, write the added files and `git apply` the patch, falling back to per-file
- *      `--reject` so one stale file cannot block the rest; with `--apply-deletes` also `git rm` the
- *      files the kit deleted; then `git add` exactly what it wrote, so the gate run next (whose
- *      source scanners read `git ls-files`) sees the new files and `git diff --cached` is the
- *      upgrade. Only `--apply` needs a clean tree; a plan run works on a dirty one.
+ *   5. with `--apply`, write the added files and `git apply` the patch, falling back per file to a
+ *      3-way merge (base = the old kit file, theirs = the new one, both translated; most rejects
+ *      are only hunk context the copy's own formatting moved) and then to `--reject` — or, with
+ *      `--3way`, conflict markers — so one stale file cannot block the rest; with `--apply-deletes`
+ *      also `git rm` the files the kit deleted; then `git add` exactly what it wrote, so the gate
+ *      run next (whose source scanners read `git ls-files`) sees the new files and
+ *      `git diff --cached` is the upgrade. Only `--apply` needs a clean tree; a plan run works on
+ *      a dirty one. When the TARGET release's `upgrade.mjs` differs from this one, that one runs
+ *      instead (`handOver`), so upgrader fixes inside the range apply to this jump.
  *
  * It never applies a kit migration (port the schema, then `pnpm db:generate` — the kit's snapshot
  * chain would tell drizzle your own tables do not exist), never writes a resource id into a
@@ -41,7 +45,16 @@
  * rejects (work remains, not a failure) · 5 `.rocketflare.json` missing · 6 an installed plugin
  * does not support the target kit version (`--force` to proceed). Zero dependencies, Node ≥ 24.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -56,7 +69,7 @@ import {
 import { formatJson } from './lib/json-format.mjs'
 import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { isVendored, unsupportedForKit } from './lib/plugin-lib.mjs'
-import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
+import { applyReplacements, deriveNames, isExcluded } from './lib/rename-lib.mjs'
 import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-paths.mjs'
 import {
   absentSurfaces,
@@ -71,10 +84,18 @@ import {
   splitDiff,
   stripIndexLines,
   translateBlock,
+  UPGRADE_DELEGATED_ENV,
+  UPGRADE_ROOT_ENV,
+  UPGRADER_FILES,
+  upgraderHandoff,
 } from './lib/upgrade-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = path.resolve(HERE, '..')
+// A handed-over run (`handOver` below) lives under `.upgrade/tool/`, so its own location is not
+// the checkout: the copy's script that started it says where the checkout is.
+const REPO_ROOT = process.env[UPGRADE_ROOT_ENV]
+  ? path.resolve(process.env[UPGRADE_ROOT_ENV])
+  : path.resolve(HERE, '..')
 // Re-exported rather than restated: `manifest.mjs` is the one place the provenance file is named,
 // and it builds the name from `KIT.slug` so a rename cannot rewrite it.
 const MANIFEST = MANIFEST_FILE
@@ -90,6 +111,7 @@ const warn = (...lines) => {
 export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>] [--no-fetch]
                                 [--apply] [--apply-deletes] [--include-kit-tooling]
                                 [--adopt <ref>] [--dry-run] [--force] [--json] [--continue]
+                                [--3way]
 
   --to <ref>             kit tag or commit to move to (default: newest release tag in the mirror)
   --from <ref>           override the adopted ref (default: kit.commit, else the kit.version tag)
@@ -105,8 +127,12 @@ export const USAGE = `usage: node scripts/upgrade.mjs [--to <ref>] [--from <ref>
   --force                --apply on a dirty git tree, and run past an installed plugin that does
                          not support the target kit version
   --json                 print the plan as JSON on stdout (what /rf-upgrade reads)
-  --continue             after an --apply that left rejects: once every *.rej is resolved and
-                         deleted, record the upgrade (version, commit, history) that apply held back
+  --3way                 with --apply, a file whose patch does not apply and whose 3-way merge
+                         conflicts gets conflict markers in place instead of a *.rej (a clean
+                         3-way merge is always taken, with or without this flag)
+  --continue             after an --apply that left rejects or conflicts: once every *.rej is
+                         resolved and deleted and no conflict marker remains, record the upgrade
+                         (version, commit, history) that apply held back
   -h, --help`
 
 export function parseArgs(argv) {
@@ -122,6 +148,7 @@ export function parseArgs(argv) {
     force: false,
     json: false,
     continue: false,
+    threeWay: false,
   }
   const takesValue = { '--to': 'to', '--from': 'from', '--adopt': 'adopt' }
   for (let i = 0; i < argv.length; i++) {
@@ -141,6 +168,7 @@ export function parseArgs(argv) {
     else if (a === '--force') args.force = true
     else if (a === '--json') args.json = true
     else if (a === '--continue') args.continue = true
+    else if (a === '--3way') args.threeWay = true
     else return { error: `unknown option '${a}'` }
   }
   return args
@@ -214,6 +242,17 @@ function continueUpgrade(manifest, args) {
       'already stamped, or the plan is from another run. Nothing written.'
     )
     return 1
+  }
+  const conflicted = (plan.applied?.conflicted ?? []).filter(f => {
+    const abs = path.join(REPO_ROOT, f)
+    return existsSync(abs) && CONFLICT_MARKER.test(readFileSync(abs, 'utf8'))
+  })
+  if (conflicted.length > 0) {
+    warn(
+      `error: ${conflicted.length} file(s) still carry conflict markers — resolve each block:`,
+      ...conflicted.map(f => `  ${f}`)
+    )
+    return 4
   }
   const rejects = pendingRejects()
   if (rejects.length > 0) {
@@ -347,6 +386,13 @@ function main(argv) {
       `warning: '${to}' is an ancestor of '${from}' — this diff runs BACKWARDS, so kit additions`,
       'read as deletions. Pass --to <later ref> unless you meant to go back.'
     )
+  }
+
+  // The TARGET release's upgrader plans this jump, not this copy's: a fix to the upgrader released
+  // inside the range otherwise never applies to the one jump that crosses it (#178).
+  if (!process.env[UPGRADE_DELEGATED_ENV]) {
+    const handed = handOver(kit, to, names, argv)
+    if (handed !== null) return handed
   }
 
   // 2/6 — surfaces
@@ -527,6 +573,23 @@ function main(argv) {
         f.class === 'binary'
       ) {
         if (f.change !== 'deleted') write(path.join('reference', f.path), kit.show(to, f.path))
+        // A file that is yours to decide (package.json, the tomls, .dev.vars.example) still gets a
+        // 3-way merge to start from: most of what changed in it is the kit's, and the merge
+        // places it beside your own lines instead of leaving you to diff two versions by eye.
+        if (f.change === 'modified' && f.class !== 'binary' && localSet.has(f.path)) {
+          const merged = mergeKitChange(f, {
+            kit,
+            from,
+            to,
+            names,
+            workRoot,
+            translate: !isExcluded(f.path),
+          })
+          if (merged) {
+            write(path.join('merged', f.path), merged.text)
+            f.merge = { path: `${workDir}/merged/${f.path}`, conflicts: merged.conflicts }
+          }
+        }
       }
     }
     for (const n of notes) write(path.join(NOTES_SUBDIR, path.basename(n.file)), n.text)
@@ -575,6 +638,7 @@ function main(argv) {
       reason: f.reason,
       surface: f.surface,
       touchesPluginRegistry: f.touchesPluginRegistry,
+      ...(f.merge ? { merge: f.merge } : {}),
     })),
     renames,
     counts: byClass,
@@ -600,6 +664,8 @@ function main(argv) {
   // `git ls-files`, and the gate run straight after an apply must see the new files).
   const toStage = []
   const rejectedFiles = []
+  const mergedFiles = []
+  const conflictedFiles = []
   const removed = []
   const keptDeletes = []
   if (args.apply && !args.dryRun) {
@@ -626,19 +692,37 @@ function main(argv) {
           if (existsSync(path.join(workRoot, 'files', `${f.path}.patch`))) toStage.push(f.path)
         }
       } else {
-        for (const f of files.filter(x => x.class === 'modified' || x.class === 'verbatim')) {
-          const one = path.join(workRoot, 'files', `${f.path}.patch`)
-          if (!existsSync(one)) continue
-          const r = gitQuiet([
+        const applyOne = (one, extra = []) =>
+          gitQuiet([
             '-c',
             'core.autocrlf=false',
             'apply',
-            '--reject',
+            ...extra,
             '--whitespace=nowarn',
             '-p1',
             one,
           ])
-          if (r.ok) toStage.push(f.path)
+        for (const f of files.filter(x => x.class === 'modified' || x.class === 'verbatim')) {
+          const one = path.join(workRoot, 'files', `${f.path}.patch`)
+          if (!existsSync(one)) continue
+          if (applyOne(one).ok) {
+            toStage.push(f.path)
+            continue
+          }
+          // The patch's context no longer matches — usually only because the copy's own formatter
+          // sorted the imports differently from the kit's at the old version (#178). A 3-way merge
+          // of the two kit versions into the copy's file resolves most of those outright.
+          const merged = existsSync(path.join(REPO_ROOT, f.path))
+            ? mergeKitChange(f, { kit, from, to, names, workRoot, translate: f.translate })
+            : null
+          if (merged && merged.conflicts === 0) {
+            writeFileSync(path.join(REPO_ROOT, f.path), merged.text)
+            toStage.push(f.path)
+            mergedFiles.push(f.path)
+          } else if (merged && args.threeWay) {
+            writeFileSync(path.join(REPO_ROOT, f.path), merged.text)
+            conflictedFiles.push(f.path)
+          } else if (applyOne(one, ['--reject']).ok) toStage.push(f.path)
           else {
             rejected += 1
             rejectedFiles.push(f.path)
@@ -655,11 +739,18 @@ function main(argv) {
         else keptDeletes.push(f.path)
       }
     }
+    const patched = patches.length - rejected - conflictedFiles.length - mergedFiles.length
     out(
-      `✔ 6/6 apply     ${addedFiles.length} added, ${patches.length - rejected} patched` +
+      `✔ 6/6 apply     ${addedFiles.length} added, ${patched} patched` +
+        (mergedFiles.length > 0 ? `, ${mergedFiles.length} merged 3-way` : '') +
+        (conflictedFiles.length > 0 ? `, ${conflictedFiles.length} with conflict markers` : '') +
         (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '')
     )
-    if (rejected === 0) {
+    // What `--continue` checks before it stamps: a conflict leaves no `.rej` to look for.
+    plan.applied = { merged: mergedFiles, conflicted: conflictedFiles, rejected: rejectedFiles }
+    write('plan.json', `${JSON.stringify(plan, null, 2)}\n`)
+    const outstanding = rejected + conflictedFiles.length
+    if (outstanding === 0) {
       stampUpgrade(manifest, plan)
       toStage.push(MANIFEST)
     }
@@ -667,20 +758,29 @@ function main(argv) {
     out(
       `  staged      ${toStage.length} file(s)${removed.length > 0 ? ` and ${removed.length} deletion(s)` : ''}` +
         ' — `git diff --cached` is the upgrade' +
-        (rejectedFiles.length > 0
-          ? `; ${rejectedFiles.length} file(s) with rejects left unstaged until you resolve them`
+        (outstanding > 0
+          ? `; ${outstanding} file(s) with rejects or conflicts left unstaged until you resolve them`
           : '')
     )
+    for (const m of mergedFiles)
+      out(`  merged      ${m} — the patch did not apply; a 3-way merge did`)
+    for (const c of conflictedFiles) {
+      warn(`conflict: ${c} — resolve the <<<<<<< / >>>>>>> blocks, then \`git add\` it`)
+    }
     for (const k of keptDeletes) {
       warn(
         `warning: ${k} — the kit deleted it, but \`git rm\` refused (local edits?); left in place`
       )
     }
-    if (rejected > 0) {
+    if (outstanding > 0) {
       warn(
-        `note: ${MANIFEST} is not stamped while rejects remain. Resolve each *.rej by hand, delete`,
-        `it, then run \`pnpm kit:upgrade --to ${plan.to.ref} --continue\`.`
+        `note: ${MANIFEST} is not stamped while rejects or conflicts remain. Resolve each *.rej by`,
+        'hand and delete it, resolve each conflict block, then run',
+        `\`pnpm kit:upgrade --to ${plan.to.ref} --continue\`.`
       )
+      if (rejected > 0 && !args.threeWay) {
+        warn('A rejected file can also be retried as a 3-way merge with conflict markers: --3way.')
+      }
     }
   } else {
     out(`✔ 6/6 apply     not applied (re-run with --apply)`)
@@ -699,14 +799,103 @@ function main(argv) {
 
   out(
     'Verify (the gate):',
-    ...(rejected > 0 ? ['  git add <each file you resolved>'] : []),
+    ...(rejected + conflictedFiles.length > 0 ? ['  git add <each file you resolved>'] : []),
     '  pnpm install && pnpm gate',
     ...(files.some(f => f.class === 'migration-derived')
       ? ["  pnpm db:generate   your OWN migration for the kit schema change — never copy the kit's"]
       : [])
   )
-  if (rejected > 0) return 4
+  if (rejected + conflictedFiles.length > 0) return 4
   return 0
+}
+
+/**
+ * Run the target release's `upgrade.mjs` in place of this one, when it differs and knows how to be
+ * handed a checkout. Its script and `lib/` are extracted from the mirror into `.upgrade/tool/`,
+ * translated as the rename translated this copy's (a file the rename skips stays verbatim), and run
+ * with the same arguments plus `--to`, `--no-fetch`. Returns its exit code, or null to carry on
+ * here.
+ */
+function handOver(kit, to, names, argv) {
+  const local = readFileSync(path.join(HERE, 'upgrade.mjs'), 'utf8')
+  const shown = kit.tryShow(to, UPGRADER_FILES.script)
+  const decision = upgraderHandoff({ local, target: shown.ok ? shown.out : null })
+  if (decision === 'same') return null
+  if (decision === 'too-old') {
+    warn(
+      `note: ${to}'s upgrader differs from this copy's but predates the hand-over, so this copy's`,
+      'plans the jump: upgrader fixes released in between do not apply to it. If the plan looks',
+      'wrong, upgrade in two steps.'
+    )
+    return null
+  }
+  const toolRoot = path.join(REPO_ROOT, WORK_DIR, 'tool', /^\d+\.\d+\.\d+$/.test(to) ? to : 'ref')
+  rmSync(toolRoot, { recursive: true, force: true })
+  const files = [UPGRADER_FILES.script, ...kit.listFiles(to, UPGRADER_FILES.lib)]
+  kit.prefetch(to, files)
+  for (const rel of files) {
+    const body = kit.show(to, rel)
+    const dest = path.join(toolRoot, rel)
+    mkdirSync(path.dirname(dest), { recursive: true })
+    writeFileSync(dest, isExcluded(rel) ? body : applyNames(body, names))
+  }
+  const script = path.join(toolRoot, UPGRADER_FILES.script)
+  out(
+    `  upgrader    ${to}'s, not this copy's (${path.relative(REPO_ROOT, script)}) — it knows every fix up to ${to}`
+  )
+  const forwarded = argv.filter(
+    (a, i) => a !== '--no-fetch' && a !== '--to' && argv[i - 1] !== '--to'
+  )
+  const r = spawnSync(process.execPath, [script, ...forwarded, '--to', to, '--no-fetch'], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+    env: { ...process.env, [UPGRADE_ROOT_ENV]: REPO_ROOT, [UPGRADE_DELEGATED_ENV]: '1' },
+  })
+  if (r.error) throw r.error
+  return r.status ?? 1
+}
+
+/** A line `git merge-file` writes around a conflict. */
+const CONFLICT_MARKER = /^(<{7}|>{7}) /m
+
+/**
+ * The kit's change to `f` merged into this copy's file: `git merge-file` with base = the file at
+ * `from`, theirs = at `to` (both through the token map when the file's body is translated) and
+ * ours = the file here. `{ text, conflicts }`, or null when git cannot merge it at all. Reads and
+ * writes nothing in the tree: the three inputs are staged under the run's work directory.
+ */
+function mergeKitChange(f, { kit, from, to, names, workRoot, translate }) {
+  const base = kit.tryShow(from, f.path)
+  const theirs = kit.tryShow(to, f.path)
+  if (!base.ok || !theirs.ok) return null
+  const dir = path.join(workRoot, 'merge-input', f.path)
+  mkdirSync(dir, { recursive: true })
+  const inputs = {
+    ours: readFileSync(path.join(REPO_ROOT, f.path), 'utf8'),
+    base: translate ? applyNames(base.out, names) : base.out,
+    theirs: translate ? applyNames(theirs.out, names) : theirs.out,
+  }
+  for (const [k, v] of Object.entries(inputs)) writeFileSync(path.join(dir, k), v)
+  const r = spawnSync(
+    'git',
+    [
+      'merge-file',
+      '-p',
+      '-L',
+      `${f.path} (this app)`,
+      '-L',
+      `kit ${from}`,
+      '-L',
+      `kit ${to}`,
+      path.join(dir, 'ours'),
+      path.join(dir, 'base'),
+      path.join(dir, 'theirs'),
+    ],
+    { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }
+  )
+  // The exit status is the number of conflicts (capped at 127); a negative one is an error.
+  if (r.error || r.status === null || r.status < 0 || r.status > 127) return null
+  return { text: r.stdout, conflicts: r.status }
 }
 
 /** The token map applied to a whole file — only for files whose body is translated. */
@@ -757,7 +946,15 @@ function report(plan, notes, applicable, { dryRun, applied, applyDeletes, remove
   ]
   if (manual.length > 0) {
     lines.push('', 'Decide these yourself (the kit version is under reference/):')
-    for (const f of manual) lines.push(`  ${f.path} — ${f.reason}`)
+    for (const f of manual) {
+      lines.push(`  ${f.path} — ${f.reason}`)
+      if (f.merge) {
+        lines.push(
+          `    a 3-way merge to start from: ${f.merge.path} ` +
+            (f.merge.conflicts === 0 ? '(merged cleanly)' : `(${f.merge.conflicts} conflict(s))`)
+        )
+      }
+    }
   }
   const migrations = bucket('migration-derived')
   if (migrations.length > 0) {

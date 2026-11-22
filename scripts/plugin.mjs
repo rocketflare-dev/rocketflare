@@ -118,6 +118,7 @@ import {
   pluginPlatformProblems,
   pluginRoots,
   pluginSkillDirs,
+  pruneWorkerFirst,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
@@ -1712,6 +1713,27 @@ function cmdUpgrade(args, host) {
 
   writeWranglerTomls(routed)
 
+  // API prefixes the installed release declared and the target does not — and no other installed
+  // plugin still needs — come out of `run_worker_first`, or they stay there for ever beside the
+  // kit's own entries (analytics 3.4.x's `/mcp`, #178). Provisioning only ever adds patterns.
+  const droppedPrefixes = targetManifest
+    ? (installedManifest.apiPrefixes ?? []).filter(
+        p =>
+          !(targetManifest.apiPrefixes ?? []).includes(p) &&
+          !others.some(o => (o.apiPrefixes ?? []).includes(p))
+      )
+    : []
+  const prunedPatterns = new Set()
+  if (droppedPrefixes.length > 0) {
+    writeWranglerTomls(
+      transformWranglerTomls(text => {
+        const pruned = pruneWorkerFirst(text, droppedPrefixes)
+        for (const p of pruned.removed) prunedPatterns.add(p)
+        return pruned.text
+      })
+    )
+  }
+
   // What this upgrade wrote, in the host's layout: translation lengthens names (an app slug longer
   // than the kit's pushes a line past the column limit, or reorders imports), so an upgrade that
   // skipped this failed the copy's `pnpm lint` on files nobody had touched. A file with a reject
@@ -1743,6 +1765,12 @@ function cmdUpgrade(args, host) {
     ...(settings.changed ? [`✔ Claude Code hooks replaced in ${CLAUDE_SETTINGS_FILE}`] : []),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
     ...coreEditWarnings.map(w => `  warning: ${w}`),
+    ...(prunedPatterns.size > 0
+      ? [
+          `✔ run_worker_first: removed ${[...prunedPatterns].join(', ')} from both tomls — ` +
+            'API prefixes this release no longer declares',
+        ]
+      : []),
     ...(installs + removals > 0
       ? [`✔ dependencies: ${installs} installed or re-ranged, ${removals} removed`]
       : []),

@@ -11,10 +11,13 @@ import { describe, expect, it } from 'vitest'
 import { GATE_STEPS, gateList, parseGateArgs } from '../../../../scripts/lib/gate-lib.mjs'
 import type { TestPlan } from '../../../../scripts/lib/test-plan.d.mts'
 import {
+  DEFAULT_TEST_PORTS,
+  envTestDatabasePort,
   PROXY_URL,
   planSuites,
   planTests,
   resolveTarget,
+  testPorts,
 } from '../../../../scripts/lib/test-plan.mjs'
 
 const REPO = path.resolve(__dirname, '../../../..')
@@ -217,5 +220,39 @@ describe('pnpm test <suite…>: the inner loop', () => {
       'error'
     )
     expect(planSuites({}, { suites: ['nope'], files: [], kitOnly: true })).toHaveProperty('error')
+  })
+})
+
+describe('the test ports are read, never assumed (#178)', () => {
+  it("reads the kit's own compose file and .env.test as :5433 / :4433, and they agree", () => {
+    const compose = readFileSync(path.join(REPO, 'apps/web/docker-compose.test.yml'), 'utf8')
+    const envTest = readFileSync(path.join(REPO, 'apps/web/.env.test'), 'utf8')
+    expect(testPorts(compose)).toEqual(DEFAULT_TEST_PORTS)
+    expect(envTestDatabasePort(envTest)).toBe(DEFAULT_TEST_PORTS.postgres)
+  })
+
+  it("a copy's moved ports win, and the proxy URL follows them into the plan", () => {
+    const compose = [
+      'services:',
+      '  postgres-test:',
+      '    ports:',
+      '      - "5633:5432"',
+      '  neon-proxy-test:',
+      '    ports:',
+      '      - "127.0.0.1:4633:4444"',
+    ].join('\n')
+    const ports = testPorts(compose)
+    expect(ports).toEqual({ postgres: 5633, proxy: 4633 })
+    const p = planTests({}, { kitOnly: false, proxy: `http://localhost:${ports.proxy}` })
+    if ('error' in p) throw new Error(p.error)
+    expect(p.steps.at(-1)?.env.NEON_LOCAL_PROXY).toBe('http://localhost:4633')
+  })
+
+  it("falls back to the kit's ports when the file does not say, and reads a URL port", () => {
+    expect(testPorts('')).toEqual(DEFAULT_TEST_PORTS)
+    expect(testPorts('services: [')).toEqual(DEFAULT_TEST_PORTS)
+    expect(envTestDatabasePort('DATABASE_URL=postgresql://t:t@localhost:5633/x_test\n')).toBe(5633)
+    expect(envTestDatabasePort('DATABASE_URL=postgresql://t:t@localhost/x_test\n')).toBe(5432)
+    expect(envTestDatabasePort('NODE_ENV=test\n')).toBeNull()
   })
 })

@@ -252,8 +252,6 @@
     "docs/ADAPTING.md",
     ".claude/skills/rf-adapt/**",
     "scripts/rename.mjs",
-    "scripts/lib/rename-lib.mjs",
-    "scripts/lib/rename-lib.d.mts",
     "apps/web/wrangler.toml",
     "apps/web/wrangler.staging.toml",
     "apps/web/.dev.vars.example",

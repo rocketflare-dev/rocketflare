@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DEFAULT_TEST_PORTS, envTestDatabasePort } from './lib/test-plan.mjs'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const COMPOSE_FILE = path.join(ROOT, 'apps/web/docker-compose.security.yml')
@@ -38,9 +39,21 @@ function run(command, args, options = {}) {
   return result.status ?? 1
 }
 
+/**
+ * The port the sandbox's Postgres listens on: the one `.env.test` connects to, because the runner
+ * reaches it on localhost through that file. A copy that moved its test database off :5433 would
+ * otherwise get a sandbox whose every test waits on a port nothing listens on (#178).
+ */
+function sandboxDatabasePort() {
+  const file = path.join(ROOT, 'apps/web/.env.test')
+  const port = fs.existsSync(file) ? envTestDatabasePort(fs.readFileSync(file, 'utf8')) : null
+  return port ?? DEFAULT_TEST_PORTS.postgres
+}
+const DB_PORT = sandboxDatabasePort()
+
 function compose(args, extraEnv = {}, project = PROJECT) {
   return run('docker', ['compose', '-f', COMPOSE_FILE, '-p', project, ...args], {
-    env: dockerEnv(extraEnv),
+    env: dockerEnv({ SECURITY_PG_PORT: String(DB_PORT), ...extraEnv }),
   })
 }
 
@@ -139,7 +152,7 @@ const ALLOWED = new Set(['HOME','TMPDIR','CI','NPM_CONFIG_OFFLINE','XDG_CACHE_HO
   const checks = {
     'external IP unreachable': !(await connect('1.1.1.1', 443)),
     'DNS for a public name fails': await dns.lookup('example.com').then(() => false, () => true),
-    'Postgres reachable on localhost:5433': await connect('127.0.0.1', 5433),
+    'Postgres reachable on localhost:${DB_PORT}': await connect('127.0.0.1', ${DB_PORT}),
     'source is read-only': !writable('/src/package.json.probe'),
     'root filesystem is read-only': !writable('/etc/probe'),
     'scratch is writable': writable('/scratch/.probe'),
