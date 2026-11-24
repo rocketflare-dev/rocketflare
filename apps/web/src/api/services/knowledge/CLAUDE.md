@@ -5,7 +5,7 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 
 | File | What |
 |---|---|
-| `types.ts` · `registry.ts` · `entity-types.ts` · `resolve.ts` | `EntityTypeRegistration`, `knowledgeEntityTypes()` (app + plugin types, validated; a test registers fixture types with `overrideKnowledgeEntityTypesForTests`, never `vi.mock`), `APP_ENTITY_TYPES` (empty in the kit), `resolverFor` / `defaultEntityResolver` |
+| `types.ts` · `registry.ts` · `entity-types.ts` · `resolve.ts` | `EntityTypeRegistration`, `knowledgeEntityTypes()` (app + plugin types, validated; a test registers fixture types with `overrideKnowledgeEntityTypesForTests`, never `vi.mock`), `APP_ENTITY_TYPES` (empty in the kit), `resolverFor` / `defaultEntityResolver` (which row IS this name — extraction, `lookup_facts`), `mentionFinderFor` / `defaultMentionFinder` (which rows does this QUERY name — the facts block; rows with facts only), `rowSearchFor` / `defaultRowSearch` (what a person typing finds — the Promote picker) |
 | `enqueue.ts` | `enqueueKnowledgeExtraction` — flag + registered types, never throws (reached lazily from `ai/ingest.ts`) |
 | `extract.ts` | `extractDocumentFacts(db, cfg, env, input, deps)` — the `knowledge.extract` job body; `deps.types` overrides the registry (the eval) |
 | `entities.ts` | `resolveMention` — domain resolver → staging trigram → staging embedding → new staging entity; `chooseCandidate` and the thresholds; `findEntitiesByName` / `entitiesMentionedIn` for the readers (through the reader's scope) |
@@ -14,7 +14,8 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
 | `judgements.ts` | `knowledge_value_judgements`: `loadJudged` (→ `JudgedPair`), `storeJudgements`, `moveJudgements` (merge / promote) |
 | `facts-sql.ts` | the SQL every reader shares: `restoredStateSql` / `restoredState` (what a fact returns to with no conflict), `visibleConflictsSql(scope)`, `entityVisibleSql(scope)`, `supersededOutOfViewSql(scope)` / `stateInViewSql(scope, states)` (a fact superseded only by a hidden one) |
 | `facts-read.ts` | the reader's view: `selectFacts` (inner join `documents` + `visibleDocuments`), `readVisibleFact`, `getEntityCard`, `listReviewItems` |
-| `review.ts` | `reviewFact` (confirm / reject / prefer), `mergeEntity`, `promoteEntity`, `keepEntitySeparate` (each nudges after commit), `recomputeKey` |
+| `review.ts` | `reviewFact` (confirm / reject / prefer), `mergeEntity`, `promoteEntity`, `keepEntitySeparate` (each nudges after commit), `promoteCandidates` (the picker), `recomputeKey` |
+| `notify.ts` | `nudgeKnowledgeChange` (the two nudges) and the reviewer reads behind it: `reviewersOfFacts`, `reviewersOfEntity`, `reviewersOfDocument` |
 | `lookup.ts` | `lookupFacts` (the `lookup_facts` tool) and `factsForQuery` (`search_knowledge`'s facts block) |
 | `values.ts` · `dates.ts` · `quotes.ts` | value coercion against a key's schema · the date resolver · the verbatim-quote verifier — all pure |
 
@@ -48,12 +49,20 @@ and why: `docs/CONCEPTS.md` §9 "Knowledge facts".
   confidence, validity — never `state`, `confirmed_*` or `conflicts_with`). What the run did not
   re-read is deleted at the end unless a section failed. Never move this to memory: a retried run
   must still find the decisions (tests: `knowledge-extract.test.ts` "a person’s decision survives")
-- **Nudge after the write**: a review action (`review.ts`, `realtime?` trailing) and an
-  extraction run that wrote or removed facts (`deps.realtime`; the job passes
-  `collectingRealtime` and flushes) send `entity.changed { entity: 'knowledge' }` — the UI's one
-  query-key root for review items, the badge and entity pages
-- **Tenant**: every query carries `tenant_id = input.tenantId`; a resolver gets
-  `{ access: fullAccessScope(tenantId) }` and must keep it
+- **Nudge after the write, through `notify.ts`**: a review action (`review.ts`, `realtime?`
+  trailing) and an extraction run that wrote or removed facts (`deps.realtime`; the job passes
+  `collectingRealtime` and flushes) send `entity.changed { entity: 'knowledge' }` tenant-wide —
+  the review list, entity pages, browse views — AND `knowledge-review-count` to the reviewers of
+  the rows they touched, never tenant-wide: every member has the badge mounted, so a tenant-wide
+  count nudge is a refetch per member per settle. Extraction reads the reviewers of the document
+  and of its conflicts BEFORE removing the old reading and again after the new one
+- **Tenant**: every query carries `tenant_id = input.tenantId`; a resolver or mention finder gets
+  `{ access: fullAccessScope(tenantId) }` and must keep it; the Promote picker hands its search
+  the READER's scope, so a resolver that honours visibility shows a row only to who may see it
+- **Linking and searching are different questions.** The resolver must not let a part-name win
+  ("Marcus" is not automatically "Marcus Bell" — that is the judge's call), so it scores
+  `similarity`; the picker answers a person typing, so it also takes `word_similarity(q, label)`.
+  Never reuse the picker's search to link a mention
 - **Cost**: every call is a `knowledge.extraction` row (`recordKnowledgeUsage`), name embeddings
   `knowledge.embeddings`; `knowledgeExtractionAllowed` is checked before each document, and the
   cap re-enqueues the job for the next UTC day rather than failing it

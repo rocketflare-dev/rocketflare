@@ -31,7 +31,8 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   `FactDoubt` — the inline "Is this still right?" —, `useCanSettle`), `PossibleMatch`,
   `ReviewItem`, `EntityFactsCard` (the chat card). Markdown-free, NOT in the eager barrel: only
   lazy pages (documents, knowledge, chat via `ChatBubble`) import them. Hooks: `useKnowledge.ts`,
-  all under `['knowledge']`, which the server nudges.
+  all under `['knowledge']`, which the server nudges — except the nav badge's count,
+  `['knowledge-review-count']`, nudged to the affected reviewers only.
 - `components/` — the shell: `Layout` (slots `headerStart` = `OrgSwitcher`, `headerCenter` =
   the `center` plugin header items, `headerEnd` = the `end` plugin header items +
   `NotificationsBell` + `UserMenu`, `sidebarFooter`; `PluginHeaderSlot` renders a placement's

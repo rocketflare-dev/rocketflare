@@ -57,6 +57,15 @@ AFTER the rest have started), and `agents runs list [--batch <id>] [--parent <ru
 [--agent-version <n>]` (children are left out unless `--parent`). `agents inspect <runId>` prints
 `GET /runs/:id/timeline` (`agentRunTimelineSchema`): versions, spend vs budget, children, every record by time.
 
+Knowledge (D43): `docs list [--status]`, `docs search <query> [--limit] [--document]`, `docs
+ingest <file> [--title] [--source]` (a TEXT file only — `.txt`, `.md`, `.csv`… up to
+`INGEST_TEXT_MAX_CHARS`, read locally and sent to `POST /api/ai/documents/ingest`, always
+tenant-wide; anything else is refused before a request, because only the web upload converts a PDF)
+and `docs retry <id>`. `facts review [--mine] [--kind]` lists the review items; `facts
+confirm|reject|prefer <factId>` settles a fact. A possible match is listed but settled in the web
+app, where both entities' facts are side by side. `feature_disabled` becomes "Knowledge facts are
+not turned on for this organisation".
+
 Groups (D29) are READ-only here: `groups list` and `groups members <id>`. Creating or deleting a
 group is a decision about who sees what, and the confirmation the web UI gives before a delete
 narrows access has no honest one-line equivalent in a CLI.

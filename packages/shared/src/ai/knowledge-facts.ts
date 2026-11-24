@@ -490,6 +490,25 @@ export type MergeEntityRequest = z.infer<typeof mergeEntityRequestSchema>
 export const promoteEntityRequestSchema = z.object({ id: z.string().trim().min(1).max(200) })
 export type PromoteEntityRequest = z.infer<typeof promoteEntityRequestSchema>
 
+/**
+ * `GET /api/knowledge/entities/:id/promote-candidates?q=` — the Promote picker: rows of the staging
+ * entity's registered type matching `q` (default: the entity's own name), best first.
+ */
+export const promoteCandidatesQuerySchema = z.object({
+  q: z.string().trim().max(200).optional(),
+})
+export type PromoteCandidatesQuery = z.infer<typeof promoteCandidatesQuerySchema>
+
+/** At most this many rows answer one picker query. */
+export const PROMOTE_CANDIDATES_MAX = 10
+
+export const promoteCandidatesResponseSchema = z.object({
+  /** What was searched: `q`, or the entity's name when `q` was empty. */
+  query: z.string(),
+  candidates: z.array(entityCandidateSchema).max(PROMOTE_CANDIDATES_MAX),
+})
+export type PromoteCandidatesResponse = z.infer<typeof promoteCandidatesResponseSchema>
+
 /** What merge, promote and keep-separate answer: the staging entity as it now stands. */
 export const entityActionResponseSchema = z.object({
   entity: knowledgeEntitySchema,

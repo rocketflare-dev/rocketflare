@@ -3,10 +3,12 @@
  * items for the Knowledge nav badge, an entity page (`GET /entities/:type/:id`), the browse reads
  * (a document's facts, `GET /documents/:id/facts`; the Facts view, `GET /entities`), and the actions
  * that settle an item — `POST /facts/:id/review { confirm | reject | prefer }`, and
- * `POST /entities/:id/merge | promote | keep-separate`.
+ * `POST /entities/:id/merge | promote | keep-separate` (with the Promote picker's search,
+ * `GET /entities/:id/promote-candidates?q=`).
  *
  * Everything sits under the one `['knowledge']` root, which the server nudges after every action
- * and every extraction run — so nothing here polls, and a settled item simply updates in place
+ * and every extraction run, except the badge count — its own `['knowledge-review-count']` root,
+ * nudged to the reviewers whose items moved — so nothing here polls, and a settled item simply updates in place
  * when the family is invalidated. **No success toasts**: the item changing is the answer. A 409
  * (somebody settled it first, or it is now in conflict) is not an error to shout about: the hook
  * refetches and the caller shows `alert-info`; anything else toasts.
@@ -27,6 +29,7 @@ import {
   knowledgeEntityListSchema,
   knowledgeReviewListSchema,
   mentionedFactsResponseSchema,
+  promoteCandidatesResponseSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, api, showToast } from '@/ui/lib/api-client'
@@ -58,7 +61,7 @@ export function useReviewItems(filters: ReviewFilters, enabled = true) {
 /** My open items, for the nav badge: one row fetched, the total read. Fed by the nudge. */
 export function useMyReviewCount(enabled = true) {
   return useQuery({
-    queryKey: queryKeys.knowledge.reviewCount,
+    queryKey: queryKeys.knowledgeReviewCount.all,
     queryFn: () =>
       api.get('/api/knowledge/review?mine=true&pageSize=1', { schema: knowledgeReviewListSchema }),
     enabled,
@@ -78,12 +81,34 @@ export function useEntityCard(type: string | undefined, id: string | undefined, 
   })
 }
 
+/**
+ * The Promote picker: rows of the entity's type matching `q` — an empty `q` searches the entity's
+ * own name, so the likely row is offered before anyone types. The caller debounces `q`.
+ */
+export function usePromoteCandidates(entityId: string, q: string, enabled = true) {
+  const query = q.trim()
+  return useQuery({
+    queryKey: queryKeys.knowledge.promoteCandidates(entityId, query),
+    queryFn: () =>
+      api.get(
+        `/api/knowledge/entities/${encodeURIComponent(entityId)}/promote-candidates${toSearchParams(cleanFilters({ q: query }))}`,
+        { schema: promoteCandidatesResponseSchema }
+      ),
+    enabled,
+    placeholderData: keepPreviousData,
+  })
+}
+
 /** A 409 means the item moved under us: refetch and let the caller say so, quietly. */
 export const isStaleItem = (error: unknown) => error instanceof ApiError && error.status === 409
 
 function useKnowledgeMutation<V, R>(mutationFn: (vars: V) => Promise<R>) {
   const queryClient = useQueryClient()
-  const refresh = () => queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.all })
+  const refresh = () =>
+    Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledge.all }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.knowledgeReviewCount.all }),
+    ])
   return useMutation({
     mutationFn,
     onSuccess: refresh,

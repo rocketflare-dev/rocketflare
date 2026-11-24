@@ -8,7 +8,9 @@ import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
 import { runAgentRunsList, runAgentsInspect, runAgentsList, runAgentsRun } from './commands/agents'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
+import { runDocsIngest, runDocsList, runDocsRetry, runDocsSearch } from './commands/docs'
 import { runEvalsPromote } from './commands/evals'
+import { runFactsReview, runFactsSettle } from './commands/facts'
 import { runFeaturesList } from './commands/features'
 import { runFeedbackList } from './commands/feedback'
 import { runGroupMembers, runGroupsList } from './commands/groups'
@@ -227,6 +229,53 @@ traces
   .description('print one trace as a span tree — <id> is a trace id, agent run id or message id')
   .option('--full', 'print tool/model content unclipped')
   .action(action((ctx, cmd) => runTracesShow(ctx, cmd.args[0] ?? '', cmd.opts())))
+
+const docs = program.command('docs').description('the knowledge base: documents and search')
+docs
+  .command('list')
+  .description('list the documents you can see, newest first')
+  .option('--status <status>', 'pending | indexed | failed')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runDocsList(ctx, cmd.opts())))
+docs
+  .command('search <query>')
+  .description('search the knowledge base (the same hybrid search chat uses)')
+  .option('--limit <n>', 'passages to return (max 20)', positiveInt('--limit'))
+  .option('--document <id>', 'search one document only')
+  .action(action((ctx, cmd) => runDocsSearch(ctx, cmd.args[0] ?? '', cmd.opts())))
+docs
+  .command('ingest <file>')
+  .description('add a text file (.txt, .md, .csv…) to the knowledge base, shared with everyone')
+  .option('--title <title>', 'document title (default: the file name)')
+  .option('--source <source>', 'where it came from (default: upload)')
+  .action(action((ctx, cmd) => runDocsIngest(ctx, cmd.args[0] ?? '', cmd.opts())))
+docs
+  .command('retry <id>')
+  .description('index a failed document again (yours, or any as admin+)')
+  .action(action((ctx, cmd) => runDocsRetry(ctx, cmd.args[0] ?? '')))
+
+const facts = program
+  .command('facts')
+  .description('knowledge facts read from documents: what is waiting for a person')
+facts
+  .command('review')
+  .description('list open items — facts that are unsure or disagree, and names that may be one')
+  .option('--mine', 'only items addressed to me (an admin sees everyone’s otherwise)')
+  .option('--kind <kind>', 'fact | possibleMatch')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runFactsReview(ctx, cmd.opts())))
+for (const [verb, help] of [
+  ['confirm', 'the fact is right'],
+  ['reject', 'the fact is wrong'],
+  ['prefer', 'this side of a disagreement is right; the others are rejected'],
+] as const) {
+  facts
+    .command(`${verb} <factId>`)
+    .description(help)
+    .action(action((ctx, cmd) => runFactsSettle(ctx, verb, cmd.args[0] ?? '')))
+}
 
 const feedback = program
   .command('feedback')

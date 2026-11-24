@@ -33,16 +33,18 @@
  * an AGENT tool would need, and none is exposed. Nothing here writes a domain column — promoting
  * records `promoted_type` / `promoted_id` on the staging row and re-points the facts.
  *
- * **Every action nudges** `entity.changed { entity: 'knowledge', id }` tenant-wide after its
- * transaction commits (`realtime`, trailing), so the review badge, the list and an open entity
- * page refetch. The payload is an id; what a reader then sees is what their own refetch returns.
+ * **Every action nudges** after its transaction commits (`realtime`, trailing; `notify.ts`):
+ * `entity.changed { entity: 'knowledge', id }` tenant-wide, so the list and an open entity page
+ * refetch, and `knowledge-review-count` to the reviewers of what moved, so their badge does. The payload is an id; what a reader then sees is what their own refetch returns.
  */
-import type {
-  EntityActionResponse,
-  EntityTarget,
-  FactReviewAction,
-  FactReviewResponse,
-  FactState,
+import {
+  type EntityActionResponse,
+  type EntityTarget,
+  type FactReviewAction,
+  type FactReviewResponse,
+  type FactState,
+  PROMOTE_CANDIDATES_MAX,
+  type PromoteCandidatesResponse,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { and, asc, eq, getTableColumns, inArray, isNull, sql } from 'drizzle-orm'
@@ -56,7 +58,7 @@ import {
   NotFoundError,
 } from '../../utils/core/errors'
 import type { AccessScope } from '../access'
-import { nudge, type Realtime, realtimeEvent } from '../realtime'
+import type { Realtime } from '../realtime'
 import { normaliseName } from './entities'
 import {
   type EntityRef,
@@ -70,16 +72,31 @@ import {
 } from './facts-read'
 import { restoredStateSql } from './facts-sql'
 import { loadJudged, moveJudgements } from './judgements'
+import { nudgeKnowledgeChange, reviewersOfEntity, reviewersOfFacts } from './notify'
 import { knowledgeEntityType } from './registry'
-import { resolverFor } from './resolve'
+import { resolverFor, rowSearchFor } from './resolve'
 import { decideFactState, type HeldFact } from './state'
 import { factCompareKey } from './values'
 
 const ANSWERABLE: readonly FactState[] = ['accepted', 'unconfirmed', 'conflicting']
 
-/** The one nudge every action sends — `knowledge` is the UI's query-key root for all of it. */
-function nudgeKnowledge(realtime: Realtime | undefined, tenantId: string, id: string) {
-  nudge(realtime, realtimeEvent('entity.changed', tenantId, { entity: 'knowledge', id }))
+/**
+ * The nudges every action sends (`notify.ts`): `knowledge` tenant-wide for the pages, and the
+ * badge count to the reviewers of what moved.
+ */
+async function nudgeAfter(
+  db: Database,
+  realtime: Realtime | undefined,
+  tenantId: string,
+  id: string,
+  reviewers: { factIds?: readonly string[]; entity?: EntityRef; users?: (string | null)[] }
+) {
+  // No hub, nobody to nudge: skip the reviewer reads too.
+  if (!realtime?.env.NOTIFICATIONS_HUB) return
+  const users = [...(reviewers.users ?? [])]
+  if (reviewers.factIds) users.push(...(await reviewersOfFacts(db, tenantId, reviewers.factIds)))
+  if (reviewers.entity) users.push(...(await reviewersOfEntity(db, tenantId, reviewers.entity)))
+  nudgeKnowledgeChange(realtime, tenantId, users, id)
 }
 
 function assertMayReview(reader: ReviewReader, reviewerUserId: string | null) {
@@ -230,7 +247,7 @@ export async function reviewFact(
       .where(and(eq(knowledgeFacts.tenantId, scope.tenantId), eq(knowledgeFacts.id, factId)))
     return ids
   })
-  nudgeKnowledge(realtime, scope.tenantId, factId)
+  await nudgeAfter(db, realtime, scope.tenantId, factId, { factIds: [...touched] })
 
   const after = await selectFacts(db, scope, inArray(knowledgeFacts.id, [...touched]))
   const fact = after.find(f => f.row.id === factId)
@@ -443,6 +460,36 @@ async function domainRowExists(
   return false
 }
 
+/**
+ * `GET /api/knowledge/entities/:id/promote-candidates?q=` — the Promote picker: the type's rows
+ * matching `q`, or the entity's own name when `q` is empty, best first. Same gate as promoting
+ * (`settleableEntity`: visible, open, and the reader's item or a manager's). The search runs in
+ * the READER's scope, so a resolver that honours visibility shows a row only to who may see it.
+ */
+export async function promoteCandidates(
+  db: Database,
+  reader: ReviewReader,
+  entityId: string,
+  q: string | undefined
+): Promise<PromoteCandidatesResponse> {
+  const entity = await settleableEntity(db, reader, entityId)
+  const reg = knowledgeEntityType(entity.type)
+  const search = reg ? rowSearchFor(reg) : null
+  if (!search) {
+    throw new BadRequestError(
+      `Entity type ${entity.type} has no table or resolver to promote to`,
+      ERROR_CODES.entityTypeNotPromotable
+    )
+  }
+  const query = q?.trim() || entity.name
+  const candidates = await search(query, {
+    db,
+    access: reader.scope,
+    limit: PROMOTE_CANDIDATES_MAX,
+  })
+  return { query, candidates: candidates.slice(0, PROMOTE_CANDIDATES_MAX) }
+}
+
 /** `POST /api/knowledge/entities/:id/promote`. */
 export async function promoteEntity(
   db: Database,
@@ -492,7 +539,10 @@ export async function promoteEntity(
     )
     return { entity: toKnowledgeEntity(row), into: to, movedFacts: moved, recomputedKeys }
   })
-  nudgeKnowledge(realtime, tenantId, entity.id)
+  await nudgeAfter(db, realtime, tenantId, entity.id, {
+    entity: to,
+    users: [entity.reviewerUserId],
+  })
   return result
 }
 
@@ -563,7 +613,10 @@ export async function mergeEntity(
     )
     return { entity: toKnowledgeEntity(row), into: to, movedFacts: moved, recomputedKeys }
   })
-  nudgeKnowledge(realtime, tenantId, entity.id)
+  await nudgeAfter(db, realtime, tenantId, entity.id, {
+    entity: to,
+    users: [entity.reviewerUserId],
+  })
   return result
 }
 
@@ -586,6 +639,8 @@ export async function keepEntitySeparate(
     )
     .returning()
   if (!row) throw new NotFoundError('Entity not found')
-  nudgeKnowledge(realtime, reader.scope.tenantId, entity.id)
+  await nudgeAfter(db, realtime, reader.scope.tenantId, entity.id, {
+    users: [entity.reviewerUserId],
+  })
   return { entity: toKnowledgeEntity(row), into: null, movedFacts: 0, recomputedKeys: [] }
 }

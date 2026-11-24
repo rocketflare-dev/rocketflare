@@ -4,11 +4,15 @@
  * onto the row and the shared keys decided again — and NO domain column written. The registered
  * type here is `team`, backed by the kit's own `groups` table (`labelColumn: groups.name`), so the
  * row is real and tenant-scoped without a fixture table. Then the domain row's entity card, and
- * `lookup_facts` finding the row by the staging entity's old name.
+ * `lookup_facts` finding the row by the staging entity's old name. Then the Promote picker
+ * (`GET /entities/:id/promote-candidates`) and the facts block finding a domain row named in a
+ * query with no staging entity behind it (`GET /mentioned`).
  */
 import {
   entityActionResponseSchema,
   entityCardSchema,
+  mentionedFactsResponseSchema,
+  promoteCandidatesResponseSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { and, eq } from 'drizzle-orm'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -189,5 +193,136 @@ describe('promote', () => {
       where: and(eq(knowledgeEntities.tenantId, tenantId), eq(knowledgeEntities.id, staging.id)),
     })
     expect(row?.promotedId).toBeNull()
+  })
+})
+
+describe('the Promote picker', () => {
+  /** A staging entity is visible through its facts' documents, so each one gets a fact. */
+  const stagingWithFact = async (name: string, reviewerUserId?: string) => {
+    const e = await seedEntity(db, { tenantId, type: 'team', name, reviewerUserId })
+    await seedFact(db, {
+      tenantId,
+      entityType: 'team',
+      entityId: e.id,
+      documentId: docId,
+      value: 1,
+    })
+    return e
+  }
+  const candidates = (id: string, q?: string, cookie = adminCookie) =>
+    request(
+      `/api/knowledge/entities/${id}/promote-candidates${q === undefined ? '' : `?q=${encodeURIComponent(q)}`}`,
+      { headers: cookie },
+      { env }
+    )
+
+  it("searches the entity's own name until something is typed, and finds a part-typed one", async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Kestrel Plumbing Supplies')
+    const staging = await stagingWithFact('Kestrel Plumbing')
+
+    const first = promoteCandidatesResponseSchema.parse(await json(await candidates(staging.id)))
+    expect(first.query).toBe('Kestrel Plumbing')
+    expect(first.candidates[0]).toMatchObject({ id: row.id, label: 'Kestrel Plumbing Supplies' })
+
+    const typed = promoteCandidatesResponseSchema.parse(
+      await json(await candidates(staging.id, 'Kestr'))
+    )
+    expect(typed.candidates.map(c => c.id)).toContain(row.id)
+  })
+
+  it("never offers another tenant's row", async () => {
+    const other = await createTestTenant(db)
+    const [otherType] = await db
+      .insert(groupTypes)
+      .values({ tenantId: other.id, name: 'Customers' })
+      .returning()
+    const foreign = await teamRow(other.id, otherType?.id ?? '', 'Osprey Joinery')
+    const staging = await stagingWithFact('Osprey Joinery')
+    const body = promoteCandidatesResponseSchema.parse(await json(await candidates(staging.id)))
+    expect(body.candidates.map(c => c.id)).not.toContain(foreign.id)
+  })
+
+  it('is 401 signed out, 403 for somebody else’s item, and 404 for an unknown entity', async () => {
+    const staging = await stagingWithFact('Heron Electrical', adminId)
+    expect(
+      (await request(`/api/knowledge/entities/${staging.id}/promote-candidates`, {}, { env }))
+        .status
+    ).toBe(401)
+
+    const member = await createTestUser(db)
+    await linkUserToTenant(db, member.id, tenantId, 'member')
+    const memberCookie = sessionCookieHeader(await createTestSession(db, member.id, tenantId))
+    const refused = await candidates(staging.id, undefined, memberCookie)
+    expect(refused.status).toBe(403)
+    expect(await json(refused)).toMatchObject({ statusCode: 403 })
+
+    expect((await candidates(crypto.randomUUID())).status).toBe(404)
+  })
+})
+
+describe("search_knowledge's facts block over domain rows", () => {
+  const mentioned = (q: string) =>
+    request(
+      `/api/knowledge/mentioned?q=${encodeURIComponent(q)}`,
+      { headers: adminCookie },
+      { env }
+    )
+
+  it('finds a row named in the query that never had a staging entity', async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Wrenfield Garden Centre')
+    await seedFact(db, {
+      tenantId,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: row.id,
+      documentId: docId,
+      value: 240,
+    })
+    // A row named the same way in another tenant, with a fact of its own there.
+    const other = await createTestTenant(db)
+    const [otherType] = await db
+      .insert(groupTypes)
+      .values({ tenantId: other.id, name: 'Customers' })
+      .returning()
+    const foreign = await teamRow(other.id, otherType?.id ?? '', 'Wrenfield Garden Centre')
+    const otherDoc = await seedDocument(db, { tenantId: other.id, title: 'Theirs' })
+    await seedFact(db, {
+      tenantId: other.id,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: foreign.id,
+      documentId: otherDoc.id,
+      value: 999,
+    })
+
+    const body = mentionedFactsResponseSchema.parse(
+      await json(await mentioned('What do we charge Wrenfield Garden Centre each month?'))
+    )
+    expect(body.entities.map(e => e.entity)).toEqual([
+      expect.objectContaining({
+        kind: 'domain',
+        type: 'team',
+        id: row.id,
+        name: 'Wrenfield Garden Centre',
+      }),
+    ])
+    expect(body.entities[0]?.facts.map(f => f.value)).toEqual([240])
+  })
+
+  it('leaves out a row with no facts, and a row only partly named', async () => {
+    await teamRow(tenantId, groupTypeId, 'Larkspur Veterinary Practice')
+    const row = await teamRow(tenantId, groupTypeId, 'Thistledown Removals and Storage')
+    await seedFact(db, {
+      tenantId,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: row.id,
+      documentId: docId,
+      value: 50,
+    })
+    const body = mentionedFactsResponseSchema.parse(
+      await json(await mentioned('Larkspur Veterinary Practice and Thistledown'))
+    )
+    expect(body.entities).toEqual([])
   })
 })

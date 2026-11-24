@@ -11,6 +11,7 @@
  * - `GET /documents/:id/facts` — the facts read from one document (the document viewer).
  * - `GET /entities` — entities with current facts, counts and filters (the Knowledge Facts view).
  * - `POST /entities/:id/merge` `{ into }` · `/promote` `{ id }` · `/keep-separate`.
+ * - `GET /entities/:id/promote-candidates?q=` — the Promote picker (the type's rows matching `q`).
  *
  * Who: `read KnowledgeFact` to read, `update KnowledgeFact` to act — and acting on an item is its
  * reviewer's or a manager's (403 otherwise). What: a fact is read through its document's
@@ -26,6 +27,7 @@ import {
   type MentionedFactsResponse,
   mentionedFactsQuerySchema,
   mergeEntityRequestSchema,
+  promoteCandidatesQuerySchema,
   promoteEntityRequestSchema,
 } from '@rocketflare/shared/ai/knowledge-facts'
 import { can, guardPermission } from '../middleware/permissions'
@@ -42,6 +44,7 @@ import { factsForQuery } from '../services/knowledge/lookup'
 import {
   keepEntitySeparate,
   mergeEntity,
+  promoteCandidates,
   promoteEntity,
   reviewFact,
 } from '../services/knowledge/review'
@@ -116,6 +119,18 @@ knowledgeRouter.get('/entities', validate('query', knowledgeEntityListQuerySchem
   const body: KnowledgeEntityList = { ...paginated(items, total, query), facets }
   return c.json(body)
 })
+
+// Before `/entities/:type/:id`, which would otherwise read this as type = id, id = the word.
+knowledgeRouter.get(
+  '/entities/:id/promote-candidates',
+  validate('query', promoteCandidatesQuerySchema),
+  async c => {
+    const { db } = withAuthAndDb(c)
+    guardPermission(c, 'update', 'KnowledgeFact')
+    const { q } = c.req.valid('query')
+    return c.json(await promoteCandidates(db, readerOf(c), uuidParam(c, 'id'), q))
+  }
+)
 
 knowledgeRouter.get('/entities/:type/:id', validate('param', entityCardParamSchema), async c => {
   const { db } = withAuthAndDb(c)
