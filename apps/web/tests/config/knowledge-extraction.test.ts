@@ -7,6 +7,7 @@
 import { isPreferredOver, preferredFact } from '@rocketflare/shared/ai/knowledge-facts'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { secondsUntilNextUtcDay } from '@/api/services/ai/usage'
 import { resolveDatePhrase } from '@/api/services/knowledge/dates'
 import {
   chooseCandidate,
@@ -17,7 +18,6 @@ import {
   buildSections,
   documentReviewer,
   documentSourceKind,
-  secondsUntilNextUtcDay,
 } from '@/api/services/knowledge/extract'
 import { cleanQuote, locateQuote } from '@/api/services/knowledge/quotes'
 import { decideFactState, type HeldFact, windowOrder } from '@/api/services/knowledge/state'

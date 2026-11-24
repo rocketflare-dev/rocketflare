@@ -74,6 +74,13 @@ per environment. Work over ~30 s or with multiple steps is a Workflow, not a job
   hash moved on, and at the tenant's `KNOWLEDGE_TENANT_DAILY_COST_USD` cap re-enqueues ITSELF with a
   delay to the next UTC day (≤ 12 h a hop) instead of throwing. Re-extraction replaces the
   document's facts, so a redelivery is idempotent
+- `document.contextualize` (`{ tenantId, documentId, contentHash? }`, `knowledge-context` flag)
+  writes each passage's situating context and re-embeds it (`contextualizeDocument`,
+  `services/ai/contextualize.ts`). Enqueued by `afterTextIndexed` beside `knowledge.extract`
+  (flag on, text changed) and by `POST /api/ai/documents/contextualize` (the backfill). Gates ack
+  (document gone, not indexed or changed since, flag off, no chat model, nothing left); the daily
+  cap re-enqueues ITSELF for the next UTC day; a provider failure throws and the retry asks only
+  the passages still without a context
 - `document.reembed` (`{ tenantId, model }`) is a self-continuing chain: ONE bounded batch of the
   tenant's stale documents per message (`reembedBatch`, `services/ai/reindex.ts`), then the same
   payload re-enqueued while any remain — the stale predicate is the cursor, so a retry resumes. A

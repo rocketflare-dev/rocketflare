@@ -226,10 +226,11 @@ export async function knowledgeSpendToday(
 }
 
 /**
- * May fact extraction (phase 2) spend on one more document today? True when no cap is set
- * (`KNOWLEDGE_TENANT_DAILY_COST_USD` unset) or the tenant's knowledge spend today is under it.
- * Extraction calls this before each document and, on false, waits for tomorrow. Indexing and
- * search never call it: they count toward the cap but never pause on it.
+ * May an optional knowledge job — fact extraction, or writing passages' situating context — spend
+ * on one more document today? True when no cap is set (`KNOWLEDGE_TENANT_DAILY_COST_USD` unset) or
+ * the tenant's knowledge spend today is under it. Both jobs call this before each document and,
+ * on false, wait for tomorrow. Indexing and search never call it: they count toward the cap but
+ * never pause on it.
  */
 export async function knowledgeExtractionAllowed(
   db: Database,
@@ -241,6 +242,19 @@ export async function knowledgeExtractionAllowed(
   if (usd === undefined) return true
   const cap = Math.round(usd * MICROCENTS_PER_USD)
   return (await knowledgeSpendToday(db, tenantId, now)) < cap
+}
+
+/** The longest a re-enqueue may wait (the queue's own maximum). */
+const MAX_DELAY_SECONDS = 12 * 60 * 60
+
+/**
+ * Seconds until the next UTC midnight (plus a minute), capped at the queue's maximum delay — how
+ * long a knowledge job paused by the daily cap waits before it runs again.
+ */
+export function secondsUntilNextUtcDay(now: Date): number {
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
+  const seconds = Math.ceil((next - now.getTime()) / 1000) + 60
+  return Math.min(MAX_DELAY_SECONDS, Math.max(60, seconds))
 }
 
 export type UsageTap = (usage: TokenUsage, result: ChatResult) => void | Promise<void>

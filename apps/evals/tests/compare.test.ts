@@ -122,6 +122,10 @@ describe('parseArgs', () => {
       rerank: 'fireworks',
     })
     expect(() => parseArgs(['--rerank', 'cohere'])).toThrow('--rerank is one of none, fireworks')
+    expect(parseArgs(['retrieval', '--context'])).toMatchObject({
+      filters: ['retrieval'],
+      context: true,
+    })
   })
 })
 

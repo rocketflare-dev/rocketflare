@@ -99,6 +99,22 @@ export const CORE_FEATURE_FLAGS = {
     environmentGated: false,
   },
   /**
+   * Contextual chunk prefixes (#148, Anthropic's Contextual Retrieval): after a document's text is
+   * indexed, a model writes a line situating each passage in its document, and the passage is
+   * embedded and keyword-indexed with it. Opt-in — one model call per passage — so OFF until an
+   * admin rolls it out or overrides it for a tenant.
+   */
+  'knowledge-context': {
+    label: 'Contextual search',
+    description:
+      'After a document is indexed, a model writes a short line placing each passage in its ' +
+      'document (whose contract, which section), so search finds passages that never name what ' +
+      'they are about. Costs one model call per passage, metered as knowledge.context.',
+    defaultState: 'off',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: false,
+  },
+  /**
    * The MCP server and its settings page. Environment-gated: a deployment ships it only when
    * `FEATURES_ENABLED` names `mcp`; where it ships it is ON for every tenant unless a global admin
    * narrows the rollout, and each organisation's admins still turn it on for themselves.

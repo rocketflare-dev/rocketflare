@@ -17,6 +17,7 @@ export const KNOWLEDGE_USAGE_FEATURES = {
   embeddings: 'knowledge.embeddings',
   rerank: 'knowledge.rerank',
   extraction: 'knowledge.extraction',
+  context: 'knowledge.context',
 } as const
 export type KnowledgeUsageFeature =
   (typeof KNOWLEDGE_USAGE_FEATURES)[keyof typeof KNOWLEDGE_USAGE_FEATURES]

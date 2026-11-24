@@ -79,19 +79,42 @@ export function headingPathLabel(path: readonly string[]): string | null {
   return path.length > 0 ? path.join(HEADING_PATH_SEPARATOR) : null
 }
 
+/** Longest model-written context (`chunks.context`) put in front of a passage. */
+export const SITUATING_CONTEXT_MAX_CHARS = 600
+
 /**
- * What gets EMBEDDED for a chunk: heading path, then table header, then the text — context the
- * stored slice lacks. `chunks.search_vector` indexes the same three, in the same order. The
- * context is cut to `EMBEDDING_CONTEXT_MAX_CHARS`; the text never is.
+ * What gets EMBEDDED for a chunk: the situating context (`chunks.context`, model-written, when the
+ * `knowledge-context` flag wrote one), heading path, then table header, then the text — context
+ * the stored slice lacks. `chunks.search_vector` indexes the same four, in the same order. The
+ * heading/header context is cut to `EMBEDDING_CONTEXT_MAX_CHARS` and the situating context to
+ * `SITUATING_CONTEXT_MAX_CHARS`; the text never is.
  */
 export function embeddingInput(
-  chunk: Pick<TextChunk, 'text' | 'headingPath' | 'tableHeader'>
+  chunk: Pick<TextChunk, 'text' | 'headingPath' | 'tableHeader'>,
+  situating?: string | null
 ): string {
-  const context = [headingPathLabel(chunk.headingPath), chunk.tableHeader]
+  return storedEmbeddingInput({
+    text: chunk.text,
+    headingPath: headingPathLabel(chunk.headingPath),
+    tableHeader: chunk.tableHeader,
+    context: situating ?? null,
+  })
+}
+
+/** `embeddingInput` over a stored `chunks` row (heading path already a label). */
+export function storedEmbeddingInput(row: {
+  text: string
+  headingPath: string | null
+  tableHeader: string | null
+  context: string | null
+}): string {
+  const structural = [row.headingPath, row.tableHeader]
     .filter((part): part is string => Boolean(part))
     .join('\n\n')
     .slice(0, EMBEDDING_CONTEXT_MAX_CHARS)
-  return context ? `${context}\n\n${chunk.text}` : chunk.text
+  const situating = row.context?.slice(0, SITUATING_CONTEXT_MAX_CHARS) ?? ''
+  const prefix = [situating, structural].filter(Boolean).join('\n\n')
+  return prefix ? `${prefix}\n\n${row.text}` : row.text
 }
 
 /** The last ~`chars` characters of `text`, starting at a word boundary (never mid-word). */
