@@ -223,6 +223,9 @@ describe('AgentRunWorkflow', () => {
       ['status', 'running'],
       ['step', 'answer', 'running'],
       ['tool.start', 'submit_answer'],
+      // The model call the runtime records itself, inside the agent's own pair.
+      ['tool.start', 'fake-model'],
+      ['tool.end', 'fake-model'],
       ['tool.end', 'submit_answer'],
       ['step', 'answer', 'done'],
       ['artifact', undefined],

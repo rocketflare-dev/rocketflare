@@ -2,7 +2,8 @@
  * `summarize-text` — the single-call example agent, shaped like the simplest real
  * definition: exclusive per tenant, a precheck, ONE terminal tool (`submit_summary`) forced through
  * `callStructuredTool`, output persisted by the runtime, usage ledgered by the runtime's meter under
- * `feature: 'agent:summarize-text'` (the agent writes no usage row itself). Emits `step` / `tool.start` / `tool.end` / `text` events and
+ * `feature: 'agent:summarize-text'` (the agent writes no usage row itself). Emits `step` and `text`
+ * events — the model call's own row (model, tokens, the answer's shape) the runtime records — and
  * polls for cancellation before and after the model call. With `input.index: true` it also stores
  * the summary as a searchable document through `ingestText` — the reason retrieval is never dead
  * code — wrapped in `ctx.once` so a retried attempt replays the recorded document instead
@@ -76,10 +77,7 @@ export const summarizeTextAgent: AgentDefinition<SummarizeTextInput, SummarizeTe
     const result = await ctx.once('summary', async () => {
       await ctx.step('summarize', 'Summarising', 'running')
       const system = await ctx.prompt({ style: input.style })
-      await ctx.emit({
-        type: 'tool.start',
-        data: { name: SUBMIT_SUMMARY_TOOL, style: input.style },
-      })
+      // No `tool.start`/`tool.end` of our own: the runtime records this call inside the step.
       const summary = await callStructuredTool(ctx.chat.client, {
         model: ctx.chat.model,
         maxTokens: ctx.chat.maxOutputTokens,
@@ -90,10 +88,6 @@ export const summarizeTextAgent: AgentDefinition<SummarizeTextInput, SummarizeTe
           description: 'Submit the summary and its key points. Call exactly once.',
           schema: submitSummarySchema,
         },
-      })
-      await ctx.emit({
-        type: 'tool.end',
-        data: { name: SUBMIT_SUMMARY_TOOL, keyPoints: summary.keyPoints.length },
       })
       await ctx.emit({ type: 'text', data: { text: summary.summary } })
       await ctx.step('summarize', 'Summarising', 'done', `${summary.keyPoints.length} key points`)

@@ -228,10 +228,13 @@ describe('RunPage', () => {
     expect(await screen.findByText('Summarising')).toBeInTheDocument()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/agents')
-    // Two stages, each a disclosure; the tool call and the text live inside the one that is open.
-    expect(screen.getByRole('button', { name: /Checking the input/ })).toHaveAttribute(
+    // Two stages. One recorded nothing inside it, so it is a plain line, not a disclosure; the
+    // tool call and the text live inside the other, which is open.
+    expect(screen.getByText('Checking the input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Checking the input/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Summarising/ })).toHaveAttribute(
       'aria-expanded',
-      'false'
+      'true'
     )
     expect(screen.getByText('Bold').tagName).toBe('STRONG')
     expect(screen.getByText('Submit summary')).toBeInTheDocument()
@@ -381,11 +384,13 @@ describe('RunPage', () => {
     expect(link.closest('[data-document]')).toHaveTextContent('3 passages')
   })
 
-  it('expands a collapsed stage on click and keeps the choice', async () => {
+  it('collapses an open stage on click and keeps the choice', async () => {
     mount()
-    const header = await screen.findByRole('button', { name: /Checking the input/ })
-    fireEvent.click(header)
+    const header = await screen.findByRole('button', { name: /Summarising/ })
     expect(header).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(header)
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Submit summary')).toBeNull()
   })
 
   it('shows the output as JSON once settled when the agent registers no typed view', async () => {

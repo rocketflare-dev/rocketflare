@@ -167,12 +167,26 @@ describe('research-topic agent', () => {
     expect(offered.slice(0, 3)).toEqual(['search_knowledge', 'get_document', 'list_documents'])
     expect(offered.slice(-3)).toEqual(['ask_human', 'index_finding', 'submit_answer'])
     const events = await listEvents(db, tenant.id, runId)
-    const toolNames = events
-      .filter(e => e.type === 'tool.start' || e.type === 'tool.end')
+    const toolRows = events.filter(e => e.type === 'tool.start' || e.type === 'tool.end')
+    const toolNames = toolRows
+      .filter(e => (e.data as { kind?: string }).kind !== 'model')
       .map(e => (e.data as { name: string }).name)
     // One start + one end for the real tool; the TERMINAL tool emits nothing (its call is the
     // answer, which the output panel renders — emitting it showed the answer three times over).
     expect(toolNames).toEqual(['search_knowledge', 'search_knowledge'])
+    // …and each of the two model turns is a recorded model call around them, paired by its id.
+    const modelRows = toolRows
+      .filter(e => (e.data as { kind?: string }).kind === 'model')
+      .map(e => [e.type, (e.data as { toolCallId: string }).toolCallId])
+    const first = modelRows[0]?.[1]
+    expect(first).toMatch(/^model:0\.[0-9a-f]{8}:1$/)
+    const second = first?.replace(/:1$/, ':2')
+    expect(modelRows).toEqual([
+      ['tool.start', first],
+      ['tool.end', first],
+      ['tool.start', second],
+      ['tool.end', second],
+    ])
     expect(events.some(e => e.type === 'text')).toBe(false)
 
     // One row per turn, each billed to the run under the agent's feature key.

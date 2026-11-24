@@ -99,6 +99,7 @@ import { type Decision, decideWithShapes, questionsHash, toDecision } from './de
 import { withFanout } from './fanout'
 import { approvalsForRun } from './interrupts'
 import { attemptKeys, effectKey } from './keys'
+import { loopEventSink } from './recording'
 import type { AgentContext, AgentEvent, AgentInterruptAnswer, AnyAgentDefinition } from './registry'
 import { AgentCancelledError, errorMessage } from './runs'
 import type { RuntimeEnv } from './runtime'
@@ -463,7 +464,13 @@ async function replayInside(
     },
     tools,
     checkpoint: { load: async () => null, save: async () => {} },
-    journal: journal.journal,
+    // The runtime's default loop rows too, so a loop with no `onEvent` replays its timeline whole.
+    journal: {
+      ...journal.journal,
+      onEvent: loopEventSink(async event => {
+        events.push(event)
+      }),
+    },
     once: async (label, fn, onceOptions) => {
       // The runtime's own key and its own guard: a key reused in one attempt fails here too.
       const key = onceKeys.claim(await effectKey(label, onceOptions?.inputs))
