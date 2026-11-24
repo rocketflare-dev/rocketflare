@@ -157,23 +157,34 @@ const CORE_QUERY_KEYS = {
     facets: ['documents', 'facets'] as const,
   },
   /**
-   * `/api/knowledge/*` — knowledge facts (D43): the review list, the "for me" count on the
-   * Knowledge nav item, and entity pages. ONE root on purpose: every review action and every
+   * `/api/knowledge/*` — knowledge facts (D43): the review list, entity pages and the browse
+   * views (the nav badge's count is `knowledgeReviewCount`, below). ONE root on purpose: every review action and every
    * extraction run nudges `entity.changed { entity: 'knowledge' }`, and `access.changed` names it
    * too (a fact is read through its document), so all of it refreshes with no socket code here.
    */
   knowledge: {
     all: ['knowledge'] as const,
     review: (filters: object = {}) => ['knowledge', 'review', filters] as const,
-    /** `GET /review?mine=true&pageSize=1` → `pagination.total`. Never polled. */
-    reviewCount: ['knowledge', 'review-count'] as const,
     entity: (type: string, id: string) => ['knowledge', 'entity', type, id] as const,
     /** The facts about the entities a search query names (`GET /mentioned?q=`). */
     mentioned: (q: string) => ['knowledge', 'mentioned', q] as const,
     /** The facts read from one document (`GET /documents/:id/facts`). */
     documentFacts: (documentId: string) => ['knowledge', 'document-facts', documentId] as const,
+    /** The Promote picker's rows for one staging entity (`GET /entities/:id/promote-candidates`). */
+    promoteCandidates: (entityId: string, q: string) =>
+      ['knowledge', 'promote-candidates', entityId, q] as const,
     /** The Facts view's entity list (`GET /entities`). */
     entities: (filters: object = {}) => ['knowledge', 'entities', filters] as const,
+  },
+  /**
+   * The "for me" count on the Knowledge nav item (`GET /api/knowledge/review?mine=true&pageSize=1`
+   * → `pagination.total`). Its OWN root on purpose: every member has the badge mounted, so under
+   * `['knowledge']` the tenant-wide nudge would refetch it for every member on every settle. The
+   * server nudges `entity.changed { entity: 'knowledge-review-count' }` to the reviewers whose
+   * items moved only (`services/knowledge/notify.ts`). Never polled.
+   */
+  knowledgeReviewCount: {
+    all: ['knowledge-review-count'] as const,
   },
   /** `/api/chat/*` — MY conversations (the route filters by user) and their messages */
   chat: {

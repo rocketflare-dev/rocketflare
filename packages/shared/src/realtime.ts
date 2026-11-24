@@ -53,8 +53,15 @@ const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   // Sent to the affected people only (`nudgeUsers`): their ability to see content changed, so the
   // session (which carries their groups), both visibility-bearing resources and the groups view
   // are all stale at once.
-  // `knowledge`: a fact is read through its document, so the review items and entity pages move too.
-  'access.changed': [['auth'], ['documents'], ['groups'], ['knowledge']],
+  // `knowledge` (and its badge count): a fact is read through its document, so the review items,
+  // the count and the entity pages move too.
+  'access.changed': [
+    ['auth'],
+    ['documents'],
+    ['groups'],
+    ['knowledge'],
+    ['knowledge-review-count'],
+  ],
   // Features ride the session, so the session is what has to be re-fetched; `features` covers the
   // read-only list the CLI and the debugging surface use.
   'features.changed': [['auth'], ['features']],

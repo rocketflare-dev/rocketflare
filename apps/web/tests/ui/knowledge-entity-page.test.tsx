@@ -267,6 +267,10 @@ describe('Entity page', () => {
       [`POST /api/knowledge/entities/${ENTITY}/merge`]: action,
       [`POST /api/knowledge/entities/${ENTITY}/keep-separate`]: { ...action, into: null },
       [`POST /api/knowledge/entities/${ENTITY}/promote`]: action,
+      [`/api/knowledge/entities/${ENTITY}/promote-candidates`]: {
+        query: 'Harbour View Dental',
+        candidates: [{ id: 'cust-42', label: 'Harbour View Dental plc', score: 0.9 }],
+      },
     })
     fireEvent.click(
       await screen.findByRole('button', {
@@ -295,8 +299,12 @@ describe('Entity page', () => {
     expect(reviewUrl).toContain(`entityId=${ENTITY}`)
     expect(reviewUrl).toContain('kind=possibleMatch')
 
-    fireEvent.change(screen.getByLabelText('Customer id'), { target: { value: 'cust-42' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Promote' }))
+    // The picker searches the entity's own name before anything is typed, and offers each row.
+    fireEvent.click(await screen.findByRole('button', { name: 'Link to Harbour View Dental plc' }))
+    const pickerUrl = fetchMock.mock.calls
+      .map(([u]) => String(u))
+      .find(u => u.includes('/promote-candidates'))
+    expect(pickerUrl).toBe(`/api/knowledge/entities/${ENTITY}/promote-candidates`)
     await waitFor(() =>
       expect(requestBody(fetchMock, `POST /api/knowledge/entities/${ENTITY}/promote`)).toEqual({
         id: 'cust-42',
@@ -306,9 +314,12 @@ describe('Entity page', () => {
   })
 
   it('offers no Promote for a type that cannot be promoted', async () => {
-    mount()
+    const fetchMock = mount()
     await screen.findByRole('heading', { name: 'Harbour View Dental' })
-    expect(screen.queryByRole('button', { name: 'Promote' })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Find a/)).not.toBeInTheDocument()
+    expect(fetchMock.mock.calls.some(([u]) => String(u).includes('/promote-candidates'))).toBe(
+      false
+    )
   })
 
   it('says where a merged entity went', async () => {

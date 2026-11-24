@@ -1150,7 +1150,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   deleted when the run ends, unless a section failed (an incomplete reading is no evidence), and
   because the decisions wait in the table rather than in memory a retried run still finds them.
   No decisions table, no migration. A run that wrote or removed facts nudges
-  `entity.changed { entity: 'knowledge' }` tenant-wide (the job sends it before it returns,
+  `entity.changed { entity: 'knowledge' }` tenant-wide and `knowledge-review-count` to the
+  reviewers whose items it moved — the document's, and those of every fact in conflict with its
+  old or new reading (`services/knowledge/notify.ts`; the job sends both before it returns,
   `collectingRealtime`). **Cost**: every call is a `knowledge.extraction` row (name embeddings
   `knowledge.embeddings`); `knowledgeExtractionAllowed` is checked before each document, and at the
   cap the job re-enqueues itself for the next UTC day. On the kit fixture (`pnpm eval facts`,
@@ -1217,8 +1219,14 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   doing the same would need, and none is exposed. Each action writes an `activity_events` row
   (`knowledge.fact.reviewed`, `knowledge.entity.merged|promoted|kept_separate`) and, after its
   transaction commits, nudges `entity.changed { entity: 'knowledge', id }` tenant-wide (an id,
-  nothing else; `access.changed` also invalidates `['knowledge']`, since a fact is read through its
-  document). A fact review item names its entity (`entity { kind, type, id, name }`); the card
+  nothing else) and `entity.changed { entity: 'knowledge-review-count' }` to the reviewers of the
+  facts and entities it moved only (`access.changed` also invalidates `['knowledge']` and
+  `['knowledge-review-count']`, since a fact is read through its document). `GET
+  /entities/:id/promote-candidates?q=` is the Promote picker: the type's rows matching `q` — the
+  entity's own name when empty — by `similarity` or `word_similarity(q, label)` ≥ 0.3, so a
+  part-typed name finds its row (`defaultRowSearch`; a type with a custom `resolve` and no
+  `labelColumn` is searched by that resolver), at most 10, in the READER's scope, behind the same
+  gate as promoting. A fact review item names its entity (`entity { kind, type, id, name }`); the card
   says whether the entity can be promoted (`promotable`) and who settles it (`reviewerUserId`); a
   possible match is counted in `pagination.total` only when the reader can see a candidate.
   **UI** (React; everything behind `KNOWLEDGE_FACTS_GUARD` = the flag AND `read KnowledgeFact`,
@@ -1226,7 +1234,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   `/knowledge/entities/:type/:id` (`entityPath`) — facts grouped by key, current first (value,
   state, validity, the source document linked to the passage, the verbatim quote), superseded and
   rejected as the key's history, both sides of a conflict together; a possible match with Merge /
-  Keep separate; Promote (a row id of the type) where `promotable`; a merged or promoted entity
+  Keep separate; Promote — a search over the type's rows, each with its own Link button — where
+  `promotable`; a merged or promoted entity
   says where it went. **Inline doubt** on every open fact, there and in the review list: "Is this
   still right?" — Confirm and Not right, or Use this one and Not right on a conflicting fact —
   shown only to the item's reviewer or a manager (anyone else reads one sentence). The **review
@@ -1239,7 +1248,9 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   (`?tab=facts`): the document's facts by entity, each with its quote and "Show in document",
   which opens `?tab=document&offset=&end=` and marks exactly that span in the Plain view. The
   **badge** on the Knowledge nav item counts MY open items (`GET /review?mine=true&pageSize=1` →
-  total), fed by the nudge and never polled. In **chat**, a turn that used `lookup_facts` or the
+  total) under its own query-key root, `['knowledge-review-count']`, fed by the nudge sent to
+  reviewers and never polled — every member has the badge mounted, so under `['knowledge']` each
+  settle would refetch it for all of them. In **chat**, a turn that used `lookup_facts` or the
   `search_knowledge` facts block shows a compact card per entity (name, type, the facts the tool
   returned with state badges, a link to its page): `CUSTOM kit.entity` while streaming, the same
   pure mapper (`entityCardsFromToolCalls`) over the persisted `toolCalls` afterwards. No success
@@ -1249,7 +1260,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   passes `auth.features` — else the tenant's): `lookup_facts { entity?, type?, key?, asOf? }`
   (entities by name: staging trigram, the better of `similarity` and `word_similarity` ≥ 0.5, a
   promoted one as its row, then each registered type's resolver) and a `facts` block on
-  `search_knowledge` for the entities the query names (`word_similarity(name, query)` ≥ 0.7).
+  `search_knowledge` for the entities the query names (`word_similarity(name, query)` ≥ 0.7):
+  staging entities, and each registered type's DOMAIN rows through its mention finder
+  (`mentionFinderFor`: the registration's `mentions`, else the same test over its label and alias
+  columns, over rows some non-rejected fact is about), so a row that never had a staging entity is
+  found by being named; at most 3 entities, counted among those with a fact the reader can see.
   Both answer `factHitGroupSchema`s: facts grouped by entity, each with its state in the reader's
   view, `preferred` (`preferredFact` over the visible sides), the document title and quote, and
   validity; `rejected` never, `superseded` only when `asOf` falls in its window. The chat prompt
@@ -1378,13 +1393,15 @@ alarm on the fixture (18 % over five Haiku runs, 0–24 % run to run; 10 % was t
 misread values; an entity's NAME is the first document's wording, so one created from a
 group-restricted document keeps that name once a tenant-visible document links to it, aliases
 stored by an earlier release stay on their entity, and entity resolution (not the prompt) still
-compares a mention with every staging entity of the tenant; Promote asks for the domain row's id
-(there is no picker searching the type's rows); `search_knowledge`'s facts block finds only entities with a staging row
-(a domain row that never had one is reached through `lookup_facts`' resolver, not by being named
-in a query); a person's decision survives re-extraction when the new reading repeats the fact's
+compares a mention with every staging entity of the tenant; the Promote picker and a domain
+row's mention finder scan the type's table (no index serves `word_similarity`), the finder only
+the rows some fact names; a type with a custom `resolve`, no `labelColumn` and no `mentions` is not
+found by being named in a search (only through `lookup_facts`); a person's decision survives re-extraction when the new reading repeats the fact's
 entity, key and value, or a value a decision model already judged the same — a pair never judged
 (the re-read document is the only one stating it) or an entity resolved differently comes back as
-a new open item; a nudge carries no reviewer, so every member's badge refetches on any settle; the default
+a new open item; the badge nudge reaches the reviewers of the facts and entities a write touched
+— a reviewer whose possible match only LISTS an entity that was merged away sees the count move on
+their next page load; the default
 resolver matches domain rows by trigram only (no embedding — a domain table carries none); two
 extractions of one tenant running at once can each miss the other's facts (no per-tenant
 serialisation), so a conflict between them goes unflagged until one is re-extracted; the
@@ -1536,7 +1553,8 @@ a second copy of the contract (D26). `api.ts` is the only `fetch` site. Config l
 `feedback list` is the thumbs queue and `evals promote <id> --dataset <name>` appends a draft eval
 case to `apps/evals/datasets/` (D33, both admin+). `agents list`, `agents run <key> --input x.json |
 --batch x.jsonl` (chunks of 100, failed lines reported, exit 1) and `agents runs list [--batch id]`
-start and follow runs (D39). Exit codes: 0 ok · 1 error · 2 not logged in ·
+start and follow runs (D39). `docs list|search|ingest|retry` reach the knowledge base and `facts
+review` / `facts confirm|reject|prefer <factId>` the knowledge-facts review items (D43). Exit codes: 0 ok · 1 error · 2 not logged in ·
 3 forbidden.
 No command prints a full key. Human output shows server text as inert text: `renderTable` cells,
 free-text lines and the logger drop terminal control characters, and colour is applied after that
@@ -1544,8 +1562,9 @@ free-text lines and the logger drop terminal control characters, and colour is a
 Detail: `.claude/rules/cli.md`.
 
 **Known gaps:** no device-code flow; one profile at a time; `logout` does not revoke the key; no
-shell completion; not published; no knowledge commands (documents, search and fact review are
-the API and the UI only).
+shell completion; not published; `docs ingest` takes a text file only (a PDF or Word file goes
+through the web upload, which converts it) and always shares it tenant-wide; `facts review` lists
+possible matches but they are settled in the web app (no merge or promote command).
 
 ## 12. Shared package
 

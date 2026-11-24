@@ -218,14 +218,42 @@ export async function lookupFacts(
   return result
 }
 
-/** `search_knowledge`'s `facts` block: the facts about the entities the query names. */
+/**
+ * `search_knowledge`'s `facts` block: the facts about the entities the query names — staging
+ * entities and registered types' domain rows (`entitiesMentionedIn`). Candidates are read best
+ * first and the cap applies to entities WITH a visible answerable fact, so a named row with
+ * nothing to say for this reader never crowds out one that has.
+ */
 export async function factsForQuery(
   db: Database,
   scope: AccessScope,
   query: string
 ): Promise<FactHitGroup[]> {
-  const found = await entitiesMentionedIn(db, scope, query, SEARCH_FACTS_MAX_ENTITIES)
+  const found = await entitiesMentionedIn(
+    db,
+    scope,
+    query,
+    SEARCH_FACTS_MAX_ENTITIES * 2,
+    knowledgeEntityTypes()
+  )
   if (found.length === 0) return []
-  const { facts } = await readFor(db, scope, refWhere(found), null, SEARCH_FACTS_MAX_FACTS)
-  return toGroups(db, scope, facts, namesOf(found))
+  const { facts } = await readFor(db, scope, refWhere(found), null, SEARCH_FACTS_MAX_FACTS * 2)
+  const order = new Map(found.map((e, i) => [refKey(e), i]))
+  const ranked = [
+    ...new Set(
+      facts.map(f => refKey({ kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }))
+    ),
+  ]
+    .sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0))
+    .slice(0, SEARCH_FACTS_MAX_ENTITIES)
+  const keep = new Set(ranked)
+  const kept = facts
+    .filter(f =>
+      keep.has(refKey({ kind: f.row.entityKind, type: f.row.entityType, id: f.row.entityId }))
+    )
+    .slice(0, SEARCH_FACTS_MAX_FACTS)
+  const groups = await toGroups(db, scope, kept, namesOf(found))
+  return groups.sort(
+    (a, b) => (order.get(refKey(a.entity)) ?? 0) - (order.get(refKey(b.entity)) ?? 0)
+  )
 }

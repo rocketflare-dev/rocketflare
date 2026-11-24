@@ -79,7 +79,7 @@ import {
 import { tenantFeatures } from '../features'
 import { enqueueJob, type JobsQueue } from '../jobs'
 import { resolvePrompt } from '../prompts'
-import { nudge, type Realtime, realtimeEvent } from '../realtime'
+import type { Realtime } from '../realtime'
 import { resolveDatePhrase } from './dates'
 import {
   commitPlanned,
@@ -99,6 +99,7 @@ import {
   type ValueQuestion,
 } from './judge'
 import { judgedPairId, loadJudged, storeJudgements } from './judgements'
+import { nudgeKnowledgeChange, reviewersOfDocument } from './notify'
 import { locateQuote } from './quotes'
 import { knowledgeEntityTypes } from './registry'
 import { decidedSql, removeDocumentFacts, removeFacts } from './remove'
@@ -610,8 +611,9 @@ export interface ExtractDeps {
   types?: readonly EntityTypeRegistration[]
   now?: () => Date
   /**
-   * Where the `entity.changed { entity: 'knowledge' }` nudge goes once the run has written (a job
-   * passes `collectingRealtime(env)` and awaits its flush). Omitted: no nudge.
+   * Where the nudges go once the run has written (`notify.ts`: `knowledge` tenant-wide, the badge
+   * count to the reviewers it moved; a job passes `collectingRealtime(env)` and awaits its
+   * flush). Omitted: no nudge, and no reviewer reads.
    */
   realtime?: Realtime
   /** Replace the decision model (`knowledgeJudgeFor`) — tests pass a scripted one. */
@@ -743,6 +745,10 @@ async function runExtraction(
 
   const report: ExtractionReport = emptyReport('extracted')
   report.model = chat.model
+  // Whose badge this run can move: the reviewers of the old reading and of its conflicts, read
+  // before it goes; `finish` adds the new reading's.
+  const nudging = Boolean(deps.realtime?.env.NOTIFICATIONS_HUB)
+  const reviewersBefore = nudging ? await reviewersOfDocument(db, tenantId, documentId) : []
   report.replaced = await removeDocumentFacts(db, tenantId, documentId, { keepDecided: true })
   const decided = await decidedFactsOf(db, tenantId, documentId)
   const kept = new Set<string>()
@@ -755,8 +761,13 @@ async function runExtraction(
     if (stale.length > 0 && report.failedSections === 0) {
       report.replaced += await removeFacts(db, tenantId, inArray(knowledgeFacts.id, stale))
     }
-    if (report.replaced > 0 || report.factIds.length > 0) {
-      nudge(deps.realtime, realtimeEvent('entity.changed', tenantId, { entity: 'knowledge' }))
+    if (nudging && (report.replaced > 0 || report.factIds.length > 0)) {
+      const reviewersAfter = await reviewersOfDocument(db, tenantId, documentId)
+      nudgeKnowledgeChange(deps.realtime, tenantId, [
+        ...reviewersBefore,
+        ...reviewersAfter,
+        documentReviewer(doc),
+      ])
     }
     return report
   }

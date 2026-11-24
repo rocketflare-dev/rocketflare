@@ -6,7 +6,7 @@
  * sit together under their key, each with its source and "Use this one".
  *
  * A staging entity also shows its possible match (Merge / Keep separate, from
- * `GET /review?kind=possibleMatch&entityId=`) and, where its type can be promoted, a Promote form;
+ * `GET /review?kind=possibleMatch&entityId=`) and, where its type can be promoted, a Promote picker;
  * a merged or promoted one says where it went. Guard: `KNOWLEDGE_FACTS_GUARD` (the flag AND
  * `read KnowledgeFact`); everything here refreshes on the `['knowledge']` nudge.
  */
@@ -17,14 +17,16 @@ import {
   type Fact,
   type FactState,
 } from '@rocketflare/shared/ai/knowledge-facts'
-import { type FormEvent, useState } from 'react'
+import { useState } from 'react'
 import { Link, useParams } from 'react-router'
 import { FactItem, factKeyLabel, useCanSettle } from '@/ui/components/knowledge/FactParts'
 import { PossibleMatch } from '@/ui/components/knowledge/PossibleMatch'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
+import { useDebounce } from '@/ui/hooks/useDebounce'
 import {
   isStaleItem,
   useEntityCard,
+  usePromoteCandidates,
   usePromoteEntity,
   useReviewItems,
 } from '@/ui/hooks/useKnowledge'
@@ -219,7 +221,11 @@ function EntityView({
   )
 }
 
-/** "This is that row of ours": the row's id in the type's own table. Reviewer or manager only. */
+/**
+ * "This is that record of ours": a search over the type's rows (`usePromoteCandidates`, the
+ * entity's own name until something is typed), each match with its own Link button. Reviewer or
+ * manager only.
+ */
 function PromotePanel({
   entityId,
   typeLabel,
@@ -230,43 +236,59 @@ function PromotePanel({
   reviewerUserId: string | null
 }) {
   const canSettle = useCanSettle()
+  const allowed = canSettle(reviewerUserId)
   const promote = usePromoteEntity()
-  const [rowId, setRowId] = useState('')
+  const [search, setSearch] = useState('')
+  const q = useDebounce(search, 250)
+  const candidates = usePromoteCandidates(entityId, q, allowed)
   // A control only where the save would succeed; nobody else is shown a form they cannot use.
-  if (!canSettle(reviewerUserId)) return null
-  const submit = (e: FormEvent) => {
-    e.preventDefault()
-    const id = rowId.trim()
-    if (id) promote.mutate({ entityId, id }, { onSuccess: () => setRowId('') })
-  }
+  if (!allowed) return null
+  const rows = candidates.data?.candidates ?? []
   return (
     <SectionPanel
       className="mb-6"
       title={`Link to an existing record (${typeLabel})`}
-      description="If this is one you already keep, give its id: the facts move onto that record. Nothing in the record itself is changed."
+      description="If this is one you already keep, pick it: the facts move onto that record. Nothing in the record itself is changed."
     >
-      <form onSubmit={submit} className="flex flex-wrap items-end gap-2">
-        <div>
-          <label htmlFor="promote-id" className="label text-sm font-medium">
-            {typeLabel} id
-          </label>
-          <input
-            id="promote-id"
-            className="input input-sm w-72"
-            value={rowId}
-            maxLength={200}
-            onChange={e => setRowId(e.target.value)}
-            disabled={promote.isPending}
-          />
-        </div>
-        <button
-          type="submit"
-          className="btn btn-sm btn-outline"
-          disabled={promote.isPending || rowId.trim() === ''}
-        >
-          Promote
-        </button>
-      </form>
+      <div className="mb-3">
+        <label htmlFor="promote-search" className="label text-sm font-medium">
+          Find a {typeLabel.toLowerCase()}
+        </label>
+        <input
+          id="promote-search"
+          type="search"
+          className="input input-sm w-72"
+          value={search}
+          maxLength={200}
+          placeholder={candidates.data?.query}
+          onChange={e => setSearch(e.target.value)}
+          disabled={promote.isPending}
+        />
+      </div>
+      {candidates.isPending ? (
+        <SkeletonRows rows={2} />
+      ) : rows.length === 0 ? (
+        <p className="text-sm text-muted">
+          No {typeLabel.toLowerCase()} matches “{candidates.data?.query ?? q}”.
+        </p>
+      ) : (
+        <ul className="divide-y divide-[color:var(--border-subtle)]">
+          {rows.map(row => (
+            <li key={row.id} className="flex items-center justify-between gap-3 py-2">
+              <span className="text-sm">{row.label}</span>
+              <button
+                type="button"
+                className="btn btn-sm btn-outline"
+                aria-label={`Link to ${row.label}`}
+                disabled={promote.isPending}
+                onClick={() => promote.mutate({ entityId, id: row.id })}
+              >
+                Link
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {promote.isError && isStaleItem(promote.error) && (
         <p role="status" className="alert alert-info text-xs mt-2 py-1.5">
           {promote.error.message} — showing it as it stands now.

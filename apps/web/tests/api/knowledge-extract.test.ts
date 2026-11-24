@@ -5,7 +5,7 @@
  * every row of the state table, validity → superseded, entity resolution (a registered resolver's
  * row, a staging entity, a possible match), tenant isolation, the daily cap's delayed re-enqueue,
  * re-extraction replacing a document's facts while a person's decisions on them survive, and the
- * `entity.changed { entity: 'knowledge' }` nudge a run sends. The pure halves are
+ * `entity.changed { entity: 'knowledge' }` nudge a run sends (and the badge count to its reviewers). The pure halves are
  * `tests/config/knowledge-extraction.test.ts`.
  */
 
@@ -785,9 +785,13 @@ describe('the nudge', () => {
   const knowledgeNudges = (tenantId: string) =>
     stubs(env)
       .hub.broadcasts.filter(b => b.tenantId === tenantId)
-      .map(b => b.args[1] as { type: string; payload?: unknown })
+      .map(b => ({
+        method: b.args[0],
+        to: b.args.length > 2 ? b.args[1] : undefined,
+        event: b.args.at(-1) as { type: string; payload?: unknown },
+      }))
 
-  it('a run that wrote facts nudges entity.changed { entity: knowledge } once, after it is done', async () => {
+  it('a run that wrote facts nudges the pages tenant-wide and the badge to its reviewer only, once', async () => {
     const w = await world()
     const a = await addDoc(w, HVD)
     model([{ key: 'monthly_fee_gbp', value: 285, quote: 'Monthly Fee: £285' }])
@@ -795,7 +799,22 @@ describe('the nudge', () => {
     await extract(w, a, { realtime })
     await realtime.flush()
     expect(knowledgeNudges(w.tenantId)).toEqual([
-      expect.objectContaining({ type: 'entity.changed', payload: { entity: 'knowledge' } }),
+      {
+        method: 'broadcast',
+        to: undefined,
+        event: expect.objectContaining({
+          type: 'entity.changed',
+          payload: { entity: 'knowledge' },
+        }),
+      },
+      {
+        method: 'broadcastToUsers',
+        to: [w.userId],
+        event: expect.objectContaining({
+          type: 'entity.changed',
+          payload: { entity: 'knowledge-review-count' },
+        }),
+      },
     ])
   })
 
@@ -818,7 +837,10 @@ describe('the nudge', () => {
       payload: { tenantId: w.tenantId, documentId: a },
     })
     await handleKnowledgeExtract(job as never, { env, config: cfg, logger: fakeLogger(), db })
-    expect(knowledgeNudges(w.tenantId)).toHaveLength(1)
+    expect(knowledgeNudges(w.tenantId).map(n => n.method)).toEqual([
+      'broadcast',
+      'broadcastToUsers',
+    ])
   })
 })
 

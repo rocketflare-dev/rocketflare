@@ -4,7 +4,7 @@
  * (`tests/helpers/knowledge-facts.ts`) rather than extracted — extraction is
  * `knowledge-extract.test.ts`. Promote needs a registered type with a table, so it lives in the
  * isolated `knowledge-promote.test.ts`; what restricted documents do to all of this is
- * `knowledge-facts-visibility.test.ts`. Every action nudges `entity.changed { entity: 'knowledge' }`
+ * `knowledge-facts-visibility.test.ts`. Every action nudges `entity.changed { entity: 'knowledge' }` (and `knowledge-review-count` to the reviewers)
  * after it commits; a refused one sends nothing.
  */
 import type {
@@ -620,6 +620,15 @@ describe('the realtime nudge', () => {
         payload: { entity: 'knowledge', id: fact.id },
       }),
     ])
+    // The badge count goes to the fact's reviewer only — never tenant-wide.
+    const counts = stubs(env).hub.broadcasts.filter(
+      b =>
+        b.tenantId === tenantId &&
+        (b.args.at(-1) as { payload?: { entity?: string } }).payload?.entity ===
+          'knowledge-review-count'
+    )
+    expect(counts.at(-1)?.args.slice(0, 2)).toEqual(['broadcastToUsers', [reviewer.userId]])
+    expect(counts.every(b => b.args[0] === 'broadcastToUsers')).toBe(true)
   })
 
   it('merge and keep-separate nudge with the entity id; a refused action sends nothing', async () => {

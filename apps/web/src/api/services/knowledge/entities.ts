@@ -31,7 +31,7 @@ import type { Database } from '../../../db/client'
 import { knowledgeEntities } from '../../../db/schema'
 import { type AccessScope, fullAccessScope } from '../access'
 import { entityVisibleSql } from './facts-sql'
-import { resolverFor } from './resolve'
+import { mentionFinderFor, resolverFor } from './resolve'
 import type { EntityTypeRegistration } from './types'
 
 /** At or above: one candidate links. */
@@ -529,17 +529,26 @@ export async function findEntitiesByName(
 }
 
 /**
- * Staging entities a free-text query MENTIONS — for `search_knowledge`'s facts block: a name or
- * alias that appears in the query (`word_similarity(name, query)` — the share of the NAME found
- * in some stretch of the query — at or above `MENTION_MIN_SCORE`, which a whole name passes and a
- * passing word of a long one does not). Promoted ones answer as their domain row. Only entities
- * the reader may see (`entityVisibleSql`).
+ * Entities a free-text query MENTIONS — for `search_knowledge`'s facts block.
+ *
+ * - **Staging**: a name or alias that appears in the query (`word_similarity(name, query)` — the
+ *   share of the NAME found in some stretch of the query — at or above `MENTION_MIN_SCORE`, which
+ *   a whole name passes and a passing word of a long one does not). Promoted ones answer as their
+ *   domain row. Only entities the reader may see (`entityVisibleSql`).
+ * - **Domain rows** of each registered type (`registrations`), through its mention finder
+ *   (`mentionFinderFor`: the registration's `mentions`, else the same test over its label and
+ *   alias columns, over rows some fact is about) — so a row that never had a staging entity is
+ *   found by being named. The finder runs as the tenant (`fullAccessScope`), like a resolver: a
+ *   row is not a document, and its facts are still read through their documents' visibility.
+ *
+ * Best first, at most `limit` of each source; the caller caps the merged list.
  */
 export async function entitiesMentionedIn(
   db: Database,
   scope: AccessScope,
   query: string,
-  limit: number
+  limit: number,
+  registrations: readonly EntityTypeRegistration[] = []
 ): Promise<FoundEntity[]> {
   const { tenantId } = scope
   const text = query.trim()
@@ -577,5 +586,13 @@ export async function entitiesMentionedIn(
       score: Math.min(1, Number(r.score)),
     })
   }
-  return [...found.values()]
+  for (const reg of registrations) {
+    const finder = mentionFinderFor(reg)
+    if (!finder) continue
+    const candidates = await finder(text, { db, access: fullAccessScope(tenantId), limit })
+    for (const c of candidates) {
+      addFound(found, { kind: 'domain', type: reg.type, id: c.id, name: c.label, score: c.score })
+    }
+  }
+  return [...found.values()].sort((a, b) => b.score - a.score)
 }

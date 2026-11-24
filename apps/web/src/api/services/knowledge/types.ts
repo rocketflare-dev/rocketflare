@@ -48,6 +48,11 @@ export type EntityResolver = (
  *   built and never text from a registration. The table must have a `tenantId` column.
  * - `resolve` — replaces the default (trigram similarity over label + aliases, tenant-filtered)
  *   when a type needs its own matching ("order 1042" → the order NUMBER column).
+ * - `mentions` — the reverse question, for `search_knowledge`'s facts block: which rows does a
+ *   free-text QUERY name? Given the whole query, it answers rows whose name appears in it. The
+ *   default (a table with a `labelColumn`) is `word_similarity` of the label and aliases against
+ *   the query, over rows that carry facts. A type with a custom `resolve` and no `labelColumn` has
+ *   none unless it brings one; its rows are then reached only through `lookup_facts`.
  */
 export interface EntityTypeRegistration<F extends EntityFactsSchema = EntityFactsSchema>
   extends EntityTypeDeclaration<F> {
@@ -56,4 +61,5 @@ export interface EntityTypeRegistration<F extends EntityFactsSchema = EntityFact
   labelColumn?: AnyPgColumn
   aliasColumns?: readonly AnyPgColumn[]
   resolve?: EntityResolver
+  mentions?: EntityResolver
 }
