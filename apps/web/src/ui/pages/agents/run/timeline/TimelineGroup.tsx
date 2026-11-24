@@ -53,6 +53,46 @@ export function TimelineGroup({
     )
   }
 
+  const header = (
+    <>
+      <GroupIcon status={group.status} />
+      <span className="min-w-0 flex-1">
+        <span className={group.status === 'done' ? 'font-medium text-secondary' : 'font-medium'}>
+          {group.step.label}
+        </span>
+        {group.step.detail && <span className="text-muted"> · {group.step.detail}</span>}
+        {group.durationMs !== undefined && (
+          <span className="text-muted tabular-nums"> · {formatDuration(group.durationMs)}</span>
+        )}
+        {!expanded && group.modelCount > 0 && (
+          <span className="text-muted">
+            {' '}
+            · {group.modelCount} model call{group.modelCount === 1 ? '' : 's'}
+          </span>
+        )}
+        {!expanded && group.toolCount > 0 && (
+          <span className="text-muted">
+            {' '}
+            · {group.toolCount} tool{group.toolCount === 1 ? '' : 's'}
+          </span>
+        )}
+      </span>
+      <time className="text-xs text-muted tabular-nums shrink-0" dateTime={group.at.toISOString()}>
+        {time(group.at)}
+      </time>
+    </>
+  )
+
+  // Nothing recorded inside the stage: a plain row. A chevron that turns and opens nothing reads
+  // as broken; a running stage becomes a button the moment its first row arrives.
+  if (group.rows.length === 0) {
+    return (
+      <li className="space-y-2" data-group-key={group.key}>
+        <div className="flex w-full items-start gap-2.5 text-sm">{header}</div>
+      </li>
+    )
+  }
+
   return (
     <li className="space-y-2" data-group-key={group.key}>
       <button
@@ -61,34 +101,13 @@ export function TimelineGroup({
         aria-expanded={expanded}
         onClick={onToggle}
       >
-        <GroupIcon status={group.status} />
-        <span className="min-w-0 flex-1">
-          <span className={group.status === 'done' ? 'font-medium text-secondary' : 'font-medium'}>
-            {group.step.label}
-          </span>
-          {group.step.detail && <span className="text-muted"> · {group.step.detail}</span>}
-          {group.durationMs !== undefined && (
-            <span className="text-muted tabular-nums"> · {formatDuration(group.durationMs)}</span>
-          )}
-          {!expanded && group.toolCount > 0 && (
-            <span className="text-muted">
-              {' '}
-              · {group.toolCount} tool{group.toolCount === 1 ? '' : 's'}
-            </span>
-          )}
-        </span>
-        <time
-          className="text-xs text-muted tabular-nums shrink-0"
-          dateTime={group.at.toISOString()}
-        >
-          {time(group.at)}
-        </time>
+        {header}
         <ChevronRightIcon
           className={`w-4 h-4 mt-0.5 shrink-0 text-muted transition-transform ${expanded ? 'rotate-90' : ''}`}
           aria-hidden="true"
         />
       </button>
-      {expanded && group.rows.length > 0 && rows}
+      {expanded && rows}
     </li>
   )
 }

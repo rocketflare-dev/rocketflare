@@ -409,6 +409,12 @@ export const agentToolStartEventDataSchema = z
      * the day two calls to the same tool run in one turn.
      */
     toolCallId: z.string().optional(),
+    /**
+     * `'model'`: a MODEL call the runtime recorded (`services/agents/recording.ts`) — `name` is
+     * the model, `input` counts what was sent. Not a tool the model called: the AG-UI projection
+     * and the evals export skip it. Absent: a tool call.
+     */
+    kind: z.literal('model').optional(),
   })
   .passthrough()
 export type AgentToolStartEventData = z.infer<typeof agentToolStartEventDataSchema>
@@ -419,6 +425,8 @@ export const agentToolEndEventDataSchema = z
     result: z.unknown().optional(),
     isError: z.boolean().optional(),
     toolCallId: z.string().optional(),
+    /** As on `tool.start`. */
+    kind: z.literal('model').optional(),
   })
   .passthrough()
 export type AgentToolEndEventData = z.infer<typeof agentToolEndEventDataSchema>

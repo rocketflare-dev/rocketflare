@@ -156,7 +156,10 @@ export function transcriptFromRunEvents(
       result?: unknown
       isError?: boolean
       toolCallId?: string
+      kind?: string
     }
+    // A model call the runtime recorded is not a tool call the agent's scorers grade.
+    if (data.kind === 'model') return
     if (row.type === 'tool.start' && data.name) {
       const call: TranscriptToolCall = {
         id: data.toolCallId ?? `call_${index}`,

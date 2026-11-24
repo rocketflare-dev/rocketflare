@@ -68,6 +68,7 @@ import { withFanout } from './fanout'
 import { askTiming, notifyApprovers } from './hitl'
 import { approvalsForRun, expireInterrupts, requestInterrupt } from './interrupts'
 import { attemptKeys, EffectKeyConflictError, effectKey } from './keys'
+import { loopEventSink, recordingChatClient } from './recording'
 import type { AgentEvent, AgentRunEnv } from './registry'
 import { getAgent } from './registry'
 import {
@@ -381,11 +382,16 @@ export async function executeRun(
       },
       async trace => {
         trace.setAttributes(runConversation(runId))
-        // Metered OUTSIDE the trace wrapper, so a call the budget refuses opens no span.
+        // Metered OUTSIDE the trace wrapper, so a call the budget refuses opens no span; recorded
+        // outside the meter, so a refused call still shows on the timeline as the failure it was.
         const client = abortableChatClient(
-          meterChatClient(
-            traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
-            meter
+          recordingChatClient(
+            meterChatClient(
+              traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
+              meter
+            ),
+            emit,
+            { invocation: `${options.round ?? 0}.${crypto.randomUUID().slice(0, 8)}` }
           ),
           cancel.signal
         )
@@ -426,7 +432,7 @@ export async function executeRun(
             const key = onceKeys.claim(await effectKey(label, onceOptions?.inputs))
             return runOnce(db, tenantId, runId, key, fn)
           },
-          journal: createTurnJournal(db, tenantId, runId),
+          journal: { ...createTurnJournal(db, tenantId, runId), onEvent: loopEventSink(emit) },
           spawn: (key, agentKey, input) => spawnOf(spawner).spawn(key, agentKey, input),
           approvals,
           interrupt: async ask => {

@@ -209,6 +209,67 @@ describe('groupTimeline', () => {
   })
 })
 
+describe('runtime-recorded model calls', () => {
+  const model = (seq: number, type: 'tool.start' | 'tool.end', id: string, extra = {}) =>
+    ev(seq, type, { name: 'claude-x', kind: 'model', toolCallId: id, ...extra })
+
+  it('are rows marked model, counted apart from tools in the stage', () => {
+    const groups = groupTimeline(
+      buildTimeline([
+        ev(1, 'step', { key: 's', label: 'Summarising', status: 'running' }),
+        model(2, 'tool.start', 'model:0.a:1'),
+        model(3, 'tool.end', 'model:0.a:1', {
+          result: { usage: { inputTokens: 5, outputTokens: 2 } },
+        }),
+        ev(4, 'tool.start', { name: 'lookup', toolCallId: 't1' }),
+        ev(5, 'tool.end', { name: 'lookup', toolCallId: 't1' }),
+        ev(6, 'step', { key: 's', label: 'Summarising', status: 'done' }),
+      ])
+    )
+    expect(groups[0]).toMatchObject({ toolCount: 1, modelCount: 1 })
+    expect(groups[0].rows[0]).toMatchObject({ kind: 'tool', model: true, done: true })
+    expect(groups[0].rows[1]).not.toHaveProperty('model')
+  })
+
+  it('a retry stops what the earlier invocation left open; a later answer under its id still closes it', () => {
+    const rows = buildTimeline([
+      ev(1, 'step', { key: 'r', label: 'Researching', status: 'running' }),
+      model(2, 'tool.start', 'model:0.a:1'),
+      ev(3, 'tool.start', { name: 'lookup', toolCallId: 'toolu_1' }),
+      ev(4, 'error', { message: 'database blip', willRetry: true }),
+      // The retry: a new model call id, and the journaled tool call finished under ITS id.
+      model(5, 'tool.start', 'model:0.b:1'),
+      model(6, 'tool.end', 'model:0.b:1'),
+      ev(7, 'tool.end', { name: 'lookup', toolCallId: 'toolu_1' }),
+    ])
+    const tools = rows.filter(row => row.kind === 'tool')
+    expect(tools.map(row => [row.toolCallId, row.done, row.stopped ?? false])).toEqual([
+      ['model:0.a:1', false, true],
+      ['toolu_1', true, false],
+      ['model:0.b:1', true, false],
+    ])
+  })
+
+  it('are counted as model calls with their tokens, never as tool calls', () => {
+    const stats = selectWorkStats(
+      buildTimeline([
+        model(1, 'tool.start', 'm1'),
+        model(2, 'tool.end', 'm1', { result: { usage: { inputTokens: 10, outputTokens: 4 } } }),
+        model(3, 'tool.start', 'm2'),
+        model(4, 'tool.end', 'm2', { isError: true, result: { error: 'no' } }),
+      ])
+    )
+    expect(stats).toMatchObject({
+      toolCalls: 0,
+      tools: [],
+      modelCalls: 2,
+      failedModelCalls: 1,
+      inputTokens: 10,
+      outputTokens: 4,
+    })
+  })
+})
+
 describe('selectWorkStats', () => {
   it('counts what the rows genuinely know', () => {
     const stats = selectWorkStats(

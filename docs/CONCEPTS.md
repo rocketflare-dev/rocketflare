@@ -918,7 +918,18 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   projection (`/agui`), also streamed live by tailing `seq` (`/agui/stream`, #7). A read-stream
   failure emits no `RUN_ERROR` (clients reconnect); `id:` goes on the last frame of a row's group,
   and reconciliation runs once before the first frame. Payloads never go over the tenant-wide DO,
-  because run visibility is per run.
+  because run visibility is per run. **The runtime records what a step did** (#117,
+  `services/agents/recording.ts`): every call through `ctx.chat.client` is a `tool.start` /
+  `tool.end` pair marked `kind: 'model'` (named for the model; the forced tool, usage, stop reason,
+  the tools called and a forced answer's SHAPE — counts, never text), its end written even on a
+  throw; a `runToolLoop` that passes `ctx.journal` and no `onEvent` gets a row per text block, tool
+  call and result through `ctx.journal.onEvent` (terminal tool skipped), and a loop with its own
+  `onEvent` owns its rows. Served work (`ctx.once`, a journaled turn) makes no call and writes no
+  row; ids name the `execute` invocation (`model:<round>.<tag>:<n>`), because a Workflows step
+  retry keeps `run.attempt`; the timeline shows a call an earlier invocation left open as stopped
+  once a `willRetry` error lands. Model rows count apart from tools (stage header, Usage tab) and
+  are skipped by the AG-UI projection and the evals export. A stage with no rows is a plain line,
+  not a disclosure (#116).
 - **Knowledge (D18)**: `documents` + `chunks` (pgvector HNSW). Text is ingested inline or by job;
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Every text write strips NUL and
   the other C0 controls except tab / LF / CR (`stripControlChars`, `api/utils/core/text.ts`) —

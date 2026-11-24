@@ -177,8 +177,9 @@ async function caseFromRun(db: Database, tenantId: string, runId: string): Promi
     .from(agentRunEvents)
     .where(and(eq(agentRunEvents.tenantId, tenantId), eq(agentRunEvents.runId, runId)))
     .orderBy(asc(agentRunEvents.seq))
+  // Tool calls only: a model call the runtime recorded (`kind: 'model'`) is not an expected tool.
   const tools = events
-    .filter(e => e.type === 'tool.start')
+    .filter(e => e.type === 'tool.start' && (e.data as AgentToolStartEventData).kind !== 'model')
     .map(e => (e.data as AgentToolStartEventData).name)
     .filter((name): name is string => typeof name === 'string')
   const context = mergeContext(

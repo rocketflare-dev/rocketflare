@@ -187,6 +187,9 @@ export function createRunProjector(run: AgentRun): RunProjector {
           break
         }
         case 'tool.start': {
+          // A model call the runtime recorded is not a tool call: in AG-UI the model IS the run.
+          // Zero frames is a legal projection of a row (see `push`).
+          if (data.kind === 'model') break
           const { name: toolName, toolCallId: modelCallId, ...rest } = data
           const name = asString(toolName) ?? 'tool'
           // Pair on the MODEL's call id where the runtime recorded one, and on the tool name only
@@ -211,6 +214,7 @@ export function createRunProjector(run: AgentRun): RunProjector {
           break
         }
         case 'tool.end': {
+          if (data.kind === 'model') break
           const name = asString(data.name) ?? 'tool'
           const key = asString(data.toolCallId) ?? name
           // The EMITTED id stays `event.id` of the start row: "the event row ids ARE the AG-UI

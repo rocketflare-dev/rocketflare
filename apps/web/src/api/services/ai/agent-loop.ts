@@ -543,6 +543,13 @@ export interface ToolLoopJournal {
    * two loops cannot silently share a record. Loads what is recorded under it.
    */
   open(key: string): Promise<ToolLoopRecord>
+  /**
+   * The run's default timeline for a loop that passes no `onEvent` of its own: every text block,
+   * tool call and tool result, with the same served-turn rule (a served event is not re-emitted
+   * unless `reemitServed`). The terminal tool is skipped. A loop WITH `onEvent` owns its rows and
+   * this is never called.
+   */
+  onEvent?: (event: ToolLoopEvent) => void | Promise<void>
 }
 
 export interface ToolLoopRecord {
@@ -879,6 +886,17 @@ export async function runToolLoop(
   const ceiling = opts.maxTurns ?? 8
   const maxTurns = policy?.maxTurns ? Math.min(ceiling, policy.maxTurns) : ceiling
   const byName = new Map(opts.tools.map(t => [t.name, t]))
+  // The loop's own `onEvent` owns its timeline; without one, the journal's default sink records
+  // it — minus the terminal tool, whose "call" IS the answer the run's output already shows.
+  const journalSink = opts.journal?.onEvent
+  const onEvent =
+    opts.onEvent ??
+    (journalSink
+      ? (event: ToolLoopEvent) =>
+          event.kind !== 'text' && byName.has(event.name) && !byName.get(event.name)?.handler
+            ? undefined
+            : journalSink(event)
+      : undefined)
   const definitions = opts.tools.map(toToolDefinition)
   const toolNames = opts.tools.map(t => t.name)
   // Opened before anything else: a second loop under the same key in this attempt throws here,
@@ -1198,7 +1216,7 @@ export async function runToolLoop(
             // Served from the journal: the attempt that recorded it already put it on the timeline.
             if (outcome.served && !record?.reemitServed) continue
             try {
-              await opts.onEvent?.({
+              await onEvent?.({
                 kind: 'tool_result',
                 turn,
                 toolUseId: block.id,
@@ -1406,10 +1424,10 @@ export async function runToolLoop(
     // A served turn's events were emitted by the attempt that paid for it.
     const emits = !served || record?.reemitServed === true
 
-    if (opts.onEvent && emits) {
+    if (onEvent && emits) {
       for (const block of result.content) {
         if (block.type === 'text' && block.text.trim()) {
-          await opts.onEvent({ kind: 'text', turn: turns, text: block.text })
+          await onEvent({ kind: 'text', turn: turns, text: block.text })
         }
       }
     }
@@ -1420,9 +1438,9 @@ export async function runToolLoop(
       terminal: Boolean(terminal),
       ...(served ? { served: true } : {}),
     })
-    if (opts.onEvent && emits) {
+    if (onEvent && emits) {
       for (const block of toolUses) {
-        await opts.onEvent({
+        await onEvent({
           kind: 'tool_call',
           turn: turns,
           toolUseId: block.id,
@@ -1457,7 +1475,7 @@ export async function runToolLoop(
           content: `Invalid input for ${terminal.name}: ${issues}`,
         },
       ]
-      await opts.onEvent?.({
+      await onEvent?.({
         kind: 'tool_result',
         turn: turns,
         toolUseId: terminal.id,
