@@ -24,6 +24,7 @@ import type { AppBindings } from '../types'
 import type { Logger } from '../utils/core/logger'
 import { handleActivityRecord } from './handlers/activity-record'
 import { handleChatCompact } from './handlers/chat-compact'
+import { handleDocumentContextualize } from './handlers/document-contextualize'
 import { handleDocumentConvert } from './handlers/document-convert'
 import { handleDocumentIndex } from './handlers/document-index'
 import { handleDocumentReembed } from './handlers/document-reembed'
@@ -75,6 +76,7 @@ const coreHandlers: { [T in CoreJobType]: JobHandler<T> } = {
   'tenant.purge': handleTenantPurge,
   'event.deliver': handleEventDeliver,
   'knowledge.extract': handleKnowledgeExtract,
+  'document.contextualize': handleDocumentContextualize,
 }
 
 /**

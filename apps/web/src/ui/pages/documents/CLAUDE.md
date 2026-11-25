@@ -106,6 +106,13 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   indexed with a different model…"); `can('manage', 'Document')` gets "Re-index now"
   (`useReembedDocuments` → `POST /reembed`), others a sentence. After it, the facets poll
   (`facetsPollInterval`, pure) until the count is 0 and the notice goes — no success toast.
+- Missing context (`knowledge-context` flag): `facets.withoutContext > 0` shows a second
+  `alert-info` notice ("N documents have no search context yet…") to `can('manage', 'Document')`
+  ONLY — search still works for everyone, so nobody else is told. "Add context" →
+  `useContextualizeDocuments` → `POST /contextualize`, repeated while `remaining > 0` (at most
+  `CONTEXTUALIZE_MAX_CALLS`); the facets then poll (`facetsPollInterval`) until the count is 0.
+  The count is documents with no context on ANY passage, so a passage the model left empty never
+  keeps the notice up. No success toast.
 - `lexical: 'no_terms'` with no hits → the empty state says the word is too common
   (`tooCommonMessage`); the server decides, the UI holds no stopword list.
 - States: skeleton while searching, an EmptyState prompt before the first search, "No matches"

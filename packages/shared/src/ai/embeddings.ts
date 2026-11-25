@@ -84,6 +84,20 @@ export const reembedResponseSchema = z.object({
 })
 export type ReembedResponse = z.infer<typeof reembedResponseSchema>
 
+/** Documents one `POST /api/ai/documents/contextualize` enqueues at most; call again for more. */
+export const CONTEXTUALIZE_BACKFILL_MAX = 200
+
+/**
+ * `POST /api/ai/documents/contextualize` (admin+, `knowledge-context` flag) → `202`: one
+ * `document.contextualize` job per indexed document that has a passage with no context yet, at most
+ * `CONTEXTUALIZE_BACKFILL_MAX`. `remaining` counts the ones left for the next call.
+ */
+export const contextualizeBackfillResponseSchema = z.object({
+  enqueued: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+})
+export type ContextualizeBackfillResponse = z.infer<typeof contextualizeBackfillResponseSchema>
+
 /**
  * `POST /api/ai/documents/:id/retry` (owner or admin+) → `202` with the document, now `pending`:
  * an upload with no text yet goes back to `document.convert`, anything with text to
@@ -173,6 +187,11 @@ export const documentFacetsSchema = z.object({
    * resolves today — found by keyword only until `POST /reembed` rebuilds them. 0 with no embedder.
    */
   staleEmbeddings: z.number().int().nonnegative(),
+  /**
+   * Of those documents, how many have no passage with a contextual prefix yet — what
+   * `POST /contextualize` would fill. 0 unless the tenant has the `knowledge-context` flag.
+   */
+  withoutContext: z.number().int().nonnegative(),
 })
 export type DocumentFacets = z.infer<typeof documentFacetsSchema>
 

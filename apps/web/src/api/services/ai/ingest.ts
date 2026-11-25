@@ -236,6 +236,11 @@ export async function indexDocument(
   })
   if (!row) throw new Error(`documents: ${documentId} not found in tenant`)
   const pieces = options.chunks ?? chunkText(row.content ?? '')
+  // A re-index of the SAME text (a re-embed, a retry) keeps each passage's situating context: it
+  // was written against this text, and losing it would silently undo a paid-for improvement. A
+  // passage is matched by position and exact text; new text gets none until
+  // `document.contextualize` writes it.
+  const kept = await keptContexts(db, tenantId, row, pieces)
   // Tokens the provider was sent, batch by batch — recorded as `knowledge.embeddings` whether the
   // index then succeeds or not (a batch that answered was billed).
   let embeddedTokens = 0
@@ -253,7 +258,7 @@ export async function indexDocument(
           embeddedTokens += counted.inputTokens
           return counted.vectors
         }),
-      pieces.map(p => embeddingInput(p))
+      pieces.map((p, i) => embeddingInput(p, kept[i]?.context))
     )
     const [updated] = await db.transaction(async tx => {
       await tx
@@ -275,6 +280,8 @@ export async function indexDocument(
             page: p.page,
             charStart: p.charStart,
             charEnd: p.charEnd,
+            context: kept[i]?.context ?? null,
+            contextModel: kept[i]?.contextModel ?? null,
           }))
         )
       }
@@ -310,6 +317,42 @@ export async function indexDocument(
       ])
     }
   }
+}
+
+/**
+ * For each new piece, the context its predecessor row carried — only when the document's text is
+ * the one those rows were cut from (`contentHash` unchanged) and the row at the same `seq` holds
+ * the same text. Anything else (an edit, a re-chunk) starts with none.
+ */
+async function keptContexts(
+  db: Database,
+  tenantId: string,
+  row: DocumentRow,
+  pieces: readonly TextChunk[]
+): Promise<({ context: string; contextModel: string | null } | undefined)[]> {
+  if (!row.contentHash || row.contentHash !== (await contentHash(row.content ?? ''))) return []
+  const old = await db
+    .select({
+      seq: chunks.seq,
+      text: chunks.text,
+      context: chunks.context,
+      contextModel: chunks.contextModel,
+    })
+    .from(chunks)
+    .where(
+      and(
+        eq(chunks.tenantId, tenantId),
+        eq(chunks.documentId, row.id),
+        sql`${chunks.context} is not null`
+      )
+    )
+  if (old.length === 0) return []
+  const bySeq = new Map(old.map(o => [o.seq, o]))
+  return pieces.map(p => {
+    const prior = bySeq.get(p.seq)
+    if (!prior?.context || prior.text !== stripControlChars(p.text)) return undefined
+    return { context: prior.context, contextModel: prior.contextModel }
+  })
 }
 
 /**
@@ -397,10 +440,11 @@ async function indexOrEnqueue(
 }
 
 /**
- * Enqueue knowledge-fact extraction (D43) for a document whose TEXT just changed and indexed —
- * never after a re-embed, an unchanged upsert or a dedupe. The module is loaded at call time so
- * this file, which `@/plugins/api` reaches, gets no static path to the plugin barrel; it never
- * throws (`services/knowledge/enqueue.ts`).
+ * Enqueue knowledge-fact extraction and passage contextualising for a document whose TEXT just
+ * changed and indexed — never after a re-embed, an unchanged upsert or a dedupe. Each runs only
+ * when its flag is on for the tenant. The modules are loaded at call time so this file, which
+ * `@/plugins/api` reaches, gets no static path to the plugin barrel; neither throws
+ * (`services/knowledge/enqueue.ts`, `./contextualize.ts`).
  */
 export async function afterTextIndexed(
   db: Database,
@@ -409,12 +453,17 @@ export async function afterTextIndexed(
   document: Pick<DocumentRow, 'id' | 'tenantId' | 'status' | 'contentHash'>
 ): Promise<void> {
   if (document.status !== 'indexed' || !document.tenantId) return
-  const { enqueueKnowledgeExtraction } = await import('../knowledge/enqueue')
-  await enqueueKnowledgeExtraction(db, cfg, jobs, {
+  const input = {
     tenantId: document.tenantId,
     documentId: document.id,
     contentHash: document.contentHash,
-  })
+  }
+  const [{ enqueueKnowledgeExtraction }, { enqueueContextualize }] = await Promise.all([
+    import('../knowledge/enqueue'),
+    import('./contextualize'),
+  ])
+  await enqueueKnowledgeExtraction(db, cfg, jobs, input)
+  await enqueueContextualize(db, cfg, jobs, input)
 }
 
 /**

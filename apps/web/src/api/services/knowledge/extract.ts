@@ -75,6 +75,7 @@ import {
   knowledgeExtractionAllowed,
   recordKnowledgeUsage,
   recordUsage,
+  secondsUntilNextUtcDay,
 } from '../ai/usage'
 import { tenantFeatures } from '../features'
 import { enqueueJob, type JobsQueue } from '../jobs'
@@ -127,9 +128,6 @@ const KNOWN_ENTITY_LIMIT = 40
 const OTHER_ENTITY_LIMIT = 80
 /** Accepted facts shown per mentioned entity. */
 const FACTS_PER_ENTITY = 15
-/** The longest a re-enqueue may wait (the queue's own maximum). */
-const MAX_DELAY_SECONDS = 12 * 60 * 60
-
 const SUBMIT_FACTS_TOOL = 'submit_facts'
 
 const scalar = z.union([z.string(), z.number(), z.boolean(), z.null()])
@@ -643,13 +641,6 @@ const emptyReport = (status: ExtractionReport['status'], reason?: ExtractionRepo
     judged: { entitiesLinked: 0, entitiesNew: 0, valuePairs: 0, valuesAgreed: 0 },
     usage: { ...ZERO_USAGE },
   }) satisfies ExtractionReport
-
-/** Seconds until the next UTC midnight (plus a minute), capped at the queue's maximum delay. */
-export function secondsUntilNextUtcDay(now: Date): number {
-  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
-  const seconds = Math.ceil((next - now.getTime()) / 1000) + 60
-  return Math.min(MAX_DELAY_SECONDS, Math.max(60, seconds))
-}
 
 /**
  * Extract a document's facts. Never throws for a gate (the report says which); throws for a

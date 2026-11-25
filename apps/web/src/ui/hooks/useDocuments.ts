@@ -9,6 +9,8 @@
  * the vectors never reach the browser; only the sanitised `documents` row does.
  */
 import {
+  type ContextualizeBackfillResponse,
+  contextualizeBackfillResponseSchema,
   DOCUMENT_WINDOW_CHARS,
   type DocumentCard,
   type DocumentContent,
@@ -240,24 +242,73 @@ export function useRetryDocument() {
 export const REEMBED_POLL_MS = 3000
 
 /**
- * The pure polling decision for the facets: only while a re-index THIS page started is still owed
- * (`reindexing`) and documents are still stale — never otherwise, and never once it reaches 0.
+ * The pure polling decision for the facets: only while work THIS page started is still owed — a
+ * re-index (`reindexing`) with documents still stale, or a context backfill (`contextualizing`)
+ * with documents still without a context — never otherwise, and never once both reach 0.
  */
-export function facetsPollInterval(reindexing: boolean, stale: number | undefined): number | false {
-  return reindexing && (stale ?? 0) > 0 ? REEMBED_POLL_MS : false
+export function facetsPollInterval(
+  reindexing: boolean,
+  stale: number | undefined,
+  contextualizing = false,
+  withoutContext: number | undefined = 0
+): number | false {
+  return (reindexing && (stale ?? 0) > 0) || (contextualizing && (withoutContext ?? 0) > 0)
+    ? REEMBED_POLL_MS
+    : false
 }
 
 /**
  * `GET /api/ai/documents/facets` — the sources and types the Search filters offer, and how many
  * visible documents are embedded by another model (`staleEmbeddings`).
  */
-export function useDocumentFacets({ reindexing = false }: { reindexing?: boolean } = {}) {
+export function useDocumentFacets({
+  reindexing = false,
+  contextualizing = false,
+}: {
+  reindexing?: boolean
+  contextualizing?: boolean
+} = {}) {
   return useQuery({
     queryKey: queryKeys.documents.facets,
     queryFn: () => api.get('/api/ai/documents/facets', { schema: documentFacetsSchema }),
-    refetchInterval: q => facetsPollInterval(reindexing, q.state.data?.staleEmbeddings),
+    refetchInterval: q =>
+      facetsPollInterval(
+        reindexing,
+        q.state.data?.staleEmbeddings,
+        contextualizing,
+        q.state.data?.withoutContext
+      ),
   })
 }
+
+/**
+ * `POST /api/ai/documents/contextualize` (`manage Document`, `knowledge-context` flag) → 202: the
+ * contextual-prefix backfill. The server enqueues at most `CONTEXTUALIZE_BACKFILL_MAX` documents a
+ * call, so this calls again while `remaining > 0` and answers the LAST response. Errors toast;
+ * success toasts nothing — the notice counting down is the answer.
+ */
+export function useContextualizeDocuments() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async () => {
+      let response: ContextualizeBackfillResponse
+      let calls = 0
+      do {
+        response = await api.post<ContextualizeBackfillResponse>(
+          '/api/ai/documents/contextualize',
+          undefined,
+          { schema: contextualizeBackfillResponseSchema }
+        )
+        calls += 1
+      } while (response.remaining > 0 && response.enqueued > 0 && calls < CONTEXTUALIZE_MAX_CALLS)
+      return response
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
+  })
+}
+
+/** Backfill calls one click makes at most (× 200 documents each); a larger corpus clicks again. */
+export const CONTEXTUALIZE_MAX_CALLS = 25
 
 /**
  * `POST /api/ai/documents/reembed` (`manage Document`) → 202: re-embed every stale document with

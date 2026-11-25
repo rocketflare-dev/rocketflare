@@ -19,7 +19,9 @@
  * state; a failed search toasts (the mutation's default) and leaves a neutral "try again". A
  * search the server reports as `lexical: 'no_terms'` (only stopwords) that found nothing says the
  * word is too common. When `/facets` counts visible documents embedded by another model, a notice
- * says meaning-based search cannot find them yet, with "Re-index now" for `manage Document`.
+ * says meaning-based search cannot find them yet, with "Re-index now" for `manage Document`; when
+ * it counts documents with no contextual prefix yet (`knowledge-context` flag), a reader who may
+ * `manage Document` gets "Add context" (the backfill) — nobody else is shown it, since search works.
  */
 import {
   ArrowPathIcon,
@@ -27,6 +29,7 @@ import {
   FunnelIcon,
   InformationCircleIcon,
   MagnifyingGlassIcon,
+  SparklesIcon,
 } from '@heroicons/react/24/outline'
 import {
   type Document,
@@ -53,6 +56,7 @@ import {
   SkeletonRows,
 } from '@/ui/components/shared'
 import {
+  useContextualizeDocuments,
   useDocumentFacets,
   useDocuments,
   useReembedDocuments,
@@ -123,7 +127,9 @@ export default function SearchPage() {
   const documents = useDocuments({ pageSize: 100 })
   // Set once this reader starts a re-index; the facets poll until nothing is stale.
   const [reindexing, setReindexing] = useState(false)
-  const facets = useDocumentFacets({ reindexing })
+  // Set once this reader starts the context backfill; the facets poll until every document has one.
+  const [contextualizing, setContextualizing] = useState(false)
+  const facets = useDocumentFacets({ reindexing, contextualizing })
   const canAccess = useNavGuard()
   const [query, setQuery] = useState(state.query)
   const [issue, setIssue] = useState<string | undefined>()
@@ -212,6 +218,11 @@ export default function SearchPage() {
         stale={facets.data?.staleEmbeddings ?? 0}
         reindexing={reindexing}
         onStarted={enqueued => setReindexing(enqueued)}
+      />
+      <ContextBackfillNotice
+        missing={facets.data?.withoutContext ?? 0}
+        contextualizing={contextualizing}
+        onStarted={() => setContextualizing(true)}
       />
 
       {emptyBase ? (
@@ -640,6 +651,47 @@ function StaleEmbeddingsNotice({
           {reindexing ? 'Re-indexing' : 'Re-index now'}
         </button>
       )}
+    </div>
+  )
+}
+
+/**
+ * Documents indexed before the `knowledge-context` flag was on (or before a backfill) have no
+ * contextual prefix, so search finds their passages less well. Only a reader who may
+ * `manage Document` is told — search still works for everyone — with "Add context"
+ * (`POST /contextualize`, repeated while documents remain). The count falls as the facets poll;
+ * no success toast.
+ */
+function ContextBackfillNotice({
+  missing,
+  contextualizing,
+  onStarted,
+}: {
+  missing: number
+  contextualizing: boolean
+  onStarted: () => void
+}) {
+  const { can } = usePermissions()
+  const backfill = useContextualizeDocuments()
+  if (missing === 0 || !can('manage', 'Document')) return null
+  const busy = contextualizing || backfill.isPending
+  return (
+    <div role="status" className="alert alert-info alert-soft mb-4 text-sm">
+      <SparklesIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
+      <span>
+        {missing === 1 ? '1 document has' : `${missing} documents have`} no search context yet, so
+        search finds {missing === 1 ? 'its' : 'their'} passages less well.
+        {busy && ' Adding context…'}
+      </span>
+      <button
+        type="button"
+        className="btn btn-sm gap-1.5"
+        disabled={busy}
+        onClick={() => backfill.mutate(undefined, { onSuccess: () => onStarted() })}
+      >
+        <SparklesIcon className={`w-4 h-4 ${busy ? 'animate-pulse' : ''}`} aria-hidden="true" />
+        {busy ? 'Adding context' : 'Add context'}
+      </button>
     </div>
   )
 }

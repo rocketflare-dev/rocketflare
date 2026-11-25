@@ -26,6 +26,13 @@ export const EVAL_JUDGE_PROVIDER = evalProvider(process.env.EVAL_JUDGE_PROVIDER)
  * add noise; `fireworks` writes a tenant `rerank` row (`useRerank`) on FIREWORKS_API_KEY.
  */
 export const EVAL_RERANK = evalReranker(process.env.EVAL_RERANK)
+/**
+ * `--context`: the corpus tenant gets the `knowledge-context` flag and every document's passages
+ * are contextualised (`contextualizeDocument`, the target model on prompt key `knowledge-context`)
+ * before any case runs — so a retrieval run with and without it compares contextual prefixes and
+ * nothing else. Costs one model call per passage, once per process.
+ */
+export const EVAL_CONTEXT = process.env.EVAL_CONTEXT === '1'
 
 /** Why suites cannot run here, or null when both the target's and the judge's models resolve. */
 export function evalSkipReason(): string | null {

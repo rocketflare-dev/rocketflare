@@ -82,6 +82,7 @@ const FACETS = {
   oldest: now,
   newest: now,
   staleEmbeddings: 0,
+  withoutContext: 0,
 }
 
 function mount(routes: RouteTable = {}, route = '/search', session = makeSession()) {
@@ -442,5 +443,49 @@ describe('Search page', () => {
     await waitFor(() =>
       expect(screen.queryByText(/indexed with a different model/)).not.toBeInTheDocument()
     )
+  })
+
+  it('missing context: a member is shown nothing — search still works for them', async () => {
+    mount(
+      { '/api/ai/documents/facets': { ...FACETS, withoutContext: 3 } },
+      '/search',
+      makeSession({ tenant: makeTenant({ role: 'member' }) })
+    )
+    await screen.findByRole('button', { name: 'Search' })
+    await waitFor(() => expect(screen.queryByText(/no search context yet/)).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Add context' })).not.toBeInTheDocument()
+  })
+
+  it('missing context: an admin adds it, calling again while documents remain, and the notice goes', async () => {
+    let missing = 250
+    let calls = 0
+    const fetchMock = mount(
+      {
+        '/api/ai/documents/facets': () => ({ ...FACETS, withoutContext: missing }),
+        'POST /api/ai/documents/contextualize': () => {
+          calls += 1
+          const body =
+            calls === 1 ? { enqueued: 200, remaining: 50 } : { enqueued: 50, remaining: 0 }
+          if (calls === 2) missing = 0
+          return new Response(JSON.stringify(body), {
+            status: 202,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        },
+      },
+      '/search',
+      makeSession({ tenant: makeTenant({ role: 'admin' }) })
+    )
+    expect(await screen.findByText(/250 documents have no search context yet/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Add context' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(
+          ([input, init]) =>
+            String(input).includes('/api/ai/documents/contextualize') && init?.method === 'POST'
+        )
+      ).toHaveLength(2)
+    )
+    await waitFor(() => expect(screen.queryByText(/no search context yet/)).not.toBeInTheDocument())
   })
 })

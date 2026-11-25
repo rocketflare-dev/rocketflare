@@ -109,6 +109,16 @@ wrong hit is possible. Put one anywhere under `datasets/` (the kit's own fixture
   Every answer-key passage scored ≥ 0.18 on that reranker, so `RERANK_MIN_SCORE=0.15` keeps all
   of them and drops about 73 % of the other hits; the scale is per model, so the kit leaves the
   threshold off and an app sets it from its own run.
+- **`--context`** measures contextual prefixes (`docs/CONCEPTS.md` §9): the corpus tenant gets
+  the `knowledge-context` flag and every passage is contextualised (`contextualizeDocument`, the
+  `--model` on prompt key `knowledge-context`) before any case runs, so a run with and without it
+  differs in that alone. It costs one model call per passage, once per process (54 on the kit
+  fixture), and the run file's header records `context: true`. Compare ≥ 3 runs a side.
+  On the kit fixture (2026-11-24, Gemini embeddings, contexts by `claude-haiku-5-5`, no reranker,
+  3 runs a side, 60 queries): R@5 0.88 → 0.94, R@10 0.97 → 0.98, MRR 0.68 → 0.73 (0.71–0.76 —
+  each run writes its contexts afresh, so the side with them varies more), ContextPrecision 0.87
+  either way; the contexts cost about $0.0002 a passage (1.3 ¢ for the fixture), most of the
+  input read from the prompt cache.
 - **`knowledge · facts`** (`suites/knowledge/facts.eval.ts`, `kit/facts.ts`, `pnpm eval facts`) runs
   over every corpus with a `facts.jsonl`. It registers the corpus's entity types itself
   (`corpusEntityTypes` — staging-only, each key with a `.describe()`, never the app's registry),

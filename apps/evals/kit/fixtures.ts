@@ -9,7 +9,9 @@
  */
 import type { EvalCase } from '@rocketflare/shared/ai/evals'
 import { and, eq } from 'drizzle-orm'
+import { contextualizeDocument } from '@/api/services/ai/contextualize'
 import { ingestText } from '@/api/services/ai/ingest'
+import { setTenantOverride } from '@/api/services/features'
 import { agentModels, documents, messages } from '@/db/schema'
 import {
   createTestSession,
@@ -19,7 +21,14 @@ import {
 import { setupTestDatabase } from '../../web/tests/helpers/db'
 import type { TestEnv } from '../../web/tests/mocks/bindings'
 import type { Corpus } from './corpus'
-import { EVAL_MODEL, EVAL_PROVIDER, EVAL_RERANK, evalConfig, evalWorkerEnv } from './env'
+import {
+  EVAL_CONTEXT,
+  EVAL_MODEL,
+  EVAL_PROVIDER,
+  EVAL_RERANK,
+  evalConfig,
+  evalWorkerEnv,
+} from './env'
 import { useEmbeddings, useProvider, useRerank } from './providers'
 
 export const evalDb = () => setupTestDatabase()
@@ -118,12 +127,13 @@ export function corpusWorld(corpus: Corpus, promptKeys: readonly string[]): Prom
     await useProvider(db, cfg, tenant.id, EVAL_PROVIDER, EVAL_MODEL)
     await useEmbeddings(db, cfg, tenant.id)
     await useRerank(db, cfg, tenant.id, EVAL_RERANK)
-    if (EVAL_MODEL) {
+    if (EVAL_CONTEXT) await setTenantOverride(db, 'knowledge-context', tenant.id, true, user.id)
+    // `--context` situates passages with the target model too.
+    const keys = EVAL_CONTEXT ? [...new Set([...promptKeys, 'knowledge-context'])] : promptKeys
+    if (EVAL_MODEL && keys.length > 0) {
       await db
         .insert(agentModels)
-        .values(
-          promptKeys.map(promptKey => ({ tenantId: tenant.id, promptKey, model: EVAL_MODEL }))
-        )
+        .values(keys.map(promptKey => ({ tenantId: tenant.id, promptKey, model: EVAL_MODEL })))
     }
     const docIdOf = new Map<string, string>()
     const documentIdOf = new Map<string, string>()
@@ -157,6 +167,20 @@ export function corpusWorld(corpus: Corpus, promptKeys: readonly string[]): Prom
         .where(and(eq(documents.id, document.id), eq(documents.tenantId, tenant.id)))
       docIdOf.set(document.id, doc.id)
       documentIdOf.set(doc.id, document.id)
+    }
+    // `--context`: the queued `document.contextualize` jobs run here, before any case reads.
+    if (EVAL_CONTEXT) {
+      for (const [documentId, docId] of docIdOf) {
+        const report = await contextualizeDocument(db, cfg, env, {
+          tenantId: tenant.id,
+          documentId,
+        })
+        if (report.status !== 'contextualized' || report.written < report.pending) {
+          throw new Error(
+            `corpus ${corpus.name}: ${docId} was not contextualised (${report.status}${report.reason ? `: ${report.reason}` : ''}, ${report.written}/${report.pending})`
+          )
+        }
+      }
     }
     return {
       db,

@@ -4,7 +4,8 @@
  * `vector(EMBEDDING_DIM)` (1024, matching `@cf/baai/bge-m3`); changing the dimension is a NEW
  * table, not an `ALTER`. Dense retrieval is cosine (`<=>`) over the HNSW index, limited to the
  * chunks `embedding_model` says were embedded by the query vector's model. The lexical half reads
- * `search_vector`, a GENERATED tsvector over heading path + table header + text with a GIN index;
+ * `search_vector`, a GENERATED tsvector over context + heading path + table header + text with a
+ * GIN index;
  * its `'english'` is `SEARCH_TEXT_CONFIG` (`services/ai/retrieval.ts`), pinned by
  * `tests/config/search-text-config.test.ts`. `text` is an exact slice of `documents.content` at
  * `[char_start, char_end)` (null only on rows written before 0.37.0). Every query carries the
@@ -57,9 +58,18 @@ export const chunks = pgTable(
     /** `text` is `documents.content.slice(charStart, charEnd)` (JS UTF-16 offsets). */
     charStart: integer('char_start'),
     charEnd: integer('char_end'),
-    /** The lexical index: heading path + table header + text, in `SEARCH_TEXT_CONFIG`. */
+    /**
+     * A model-written line placing the passage in its document (`knowledge-context` flag,
+     * `services/ai/contextualize.ts`); null until the `document.contextualize` job writes it, and
+     * for a tenant without the flag. Embedded and keyword-indexed WITH the passage, never shown as
+     * the passage's text and never quoted.
+     */
+    context: text('context'),
+    /** The model that wrote `context` (null with it). */
+    contextModel: text('context_model'),
+    /** The lexical index: context + heading path + table header + text, in `SEARCH_TEXT_CONFIG`. */
     searchVector: tsvector('search_vector').generatedAlwaysAs(
-      sql`to_tsvector('english', coalesce(heading_path, '') || ' ' || coalesce(table_header, '') || ' ' || text)`
+      sql`to_tsvector('english', coalesce(context, '') || ' ' || coalesce(heading_path, '') || ' ' || coalesce(table_header, '') || ' ' || text)`
     ),
     ...timestamps(),
   },

@@ -591,11 +591,23 @@ is how many chunks go to the reranker: its latency grows with it. Verify: `curl 
 localhost:3001/api/ai/config/readiness` → `"rerank":{"ready":true,…}`, and a `POST
 /api/ai/documents/search` hit carries a `rerankScore`.
 
-**Knowledge spend**: every embedding, rerank and fact-extraction call is an `ai_usage` row
-(`knowledge.embeddings`, `knowledge.rerank`, `knowledge.extraction`), shown on Settings → Usage.
-`KNOWLEDGE_TENANT_DAILY_COST_USD=` (blank = no cap) caps what one tenant's knowledge work may spend
-per UTC day; only fact extraction pauses at it (it resumes the next UTC day), indexing and search
-never do. Deployed, put it in BOTH tomls' `[vars]`.
+**Knowledge spend**: every embedding, rerank, fact-extraction and contextual-prefix call is an
+`ai_usage` row (`knowledge.embeddings`, `knowledge.rerank`, `knowledge.extraction`,
+`knowledge.context`), shown on Settings → Usage. `KNOWLEDGE_TENANT_DAILY_COST_USD=` (blank = no
+cap) caps what one tenant's knowledge work may spend per UTC day; only fact extraction and
+contextual prefixes pause at it (they resume the next UTC day), indexing and search never do.
+Deployed, put it in BOTH tomls' `[vars]`.
+
+**Contextual search** (`docs/CONCEPTS.md` §9 "Contextual prefixes" — a model writes a line placing
+each passage in its document, so search finds passages that never name what they are about): off
+until the `knowledge-context` flag is on for the tenant (**Admin → Feature flags → Contextual
+search**, §2.8). New and changed documents are then contextualised by a `document.contextualize`
+job — one call per passage to the model assigned to the `knowledge-context` prompt in Settings →
+agent models (point it at a cheap one), else the tenant's chat model. Existing documents: as an
+admin, open **Search** — a notice counts the documents with no context yet — and click **Add
+context** (or `POST /api/ai/documents/contextualize`, up to 200 a call, `remaining` says how many
+are left). Verify: Settings → Usage shows
+`knowledge.context` rows, and `pnpm eval retrieval --context` measures what it does on the fixture.
 
 **Knowledge facts** (D43, `docs/CONCEPTS.md` §9 — typed facts read from documents, with conflicts
 and doubtful facts sent to a person for review): off until two things are true.

@@ -57,7 +57,7 @@ export function extractCases(report) {
 
 /**
  * The header `pnpm eval` stamps on every run file, next to vitest's own keys.
- * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, provider?: string, judgeProvider?: string, rerank?: string, cases: any[] }} opts
+ * @param {{ sha?: string, dirty?: boolean, createdAt: string, filters?: string[], model?: string | null, judgeModel?: string | null, provider?: string, judgeProvider?: string, rerank?: string, context?: boolean, cases: any[] }} opts
  */
 export function runHeader({
   sha,
@@ -69,6 +69,7 @@ export function runHeader({
   provider,
   judgeProvider,
   rerank,
+  context,
   cases,
 }) {
   const promptHashes = {}
@@ -90,6 +91,7 @@ export function runHeader({
     modelsObserved: [...models].sort(),
     judgeProvider: judgeProvider ?? 'anthropic',
     rerank: rerank ?? 'none',
+    context: Boolean(context),
     judgeModel: judgeModel ?? null,
     promptHashes,
   }
@@ -284,7 +286,7 @@ export function renderComparison({ regressions, improvements }, threshold) {
   return lines.join('\n')
 }
 
-/** `run [filters] [--model x] [--judge-model y] [--rerank none|fireworks] [--compare [target]] [--threshold n] [--case ids] [--concurrency n]` */
+/** `run [filters] [--model x] [--judge-model y] [--rerank none|fireworks] [--context] [--compare [target]] [--threshold n] [--case ids] [--concurrency n]` */
 export function parseArgs(argv) {
   const out = { filters: [], compare: null, threshold: 0.1 }
   for (let i = 0; i < argv.length; i++) {
@@ -310,6 +312,9 @@ export function parseArgs(argv) {
         if (!EVAL_RERANKERS.includes(out.rerank)) {
           throw new Error(`--rerank is one of ${EVAL_RERANKERS.join(', ')}`)
         }
+        break
+      case '--context':
+        out.context = true
         break
       case '--judge-provider':
         out.judgeProvider = next()

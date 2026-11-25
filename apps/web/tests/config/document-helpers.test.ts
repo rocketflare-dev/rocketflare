@@ -232,4 +232,12 @@ describe('facetsPollInterval', () => {
     expect(facetsPollInterval(true, undefined)).toBe(false)
     expect(facetsPollInterval(false, 3)).toBe(false)
   })
+
+  it('polls while a context backfill this page started still has documents without one', async () => {
+    const { facetsPollInterval, REEMBED_POLL_MS } = await import('@/ui/hooks/useDocuments')
+    expect(facetsPollInterval(false, 0, true, 4)).toBe(REEMBED_POLL_MS)
+    expect(facetsPollInterval(false, 0, true, 0)).toBe(false)
+    expect(facetsPollInterval(false, 0, false, 4)).toBe(false)
+    expect(facetsPollInterval(true, 2, true, 0)).toBe(REEMBED_POLL_MS)
+  })
 })

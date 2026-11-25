@@ -24,6 +24,7 @@ describe("the kit's core", () => {
       | 'tenant.purge'
       | 'event.deliver'
       | 'knowledge.extract'
+      | 'document.contextualize'
     >()
   })
 })

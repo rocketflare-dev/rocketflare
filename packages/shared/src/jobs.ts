@@ -55,6 +55,20 @@ export const documentIndexPayloadSchema = z.object({
 })
 export type DocumentIndexPayload = z.infer<typeof documentIndexPayloadSchema>
 
+/**
+ * Write the contextual prefix of every passage of one indexed document (`knowledge-context`
+ * flag), then re-embed those passages with it. Enqueued after an index whose text changed, and by
+ * the backfill (`POST /api/ai/documents/contextualize`); the handler checks the flag again.
+ * `contentHash` is the text the enqueue saw: a document edited since is skipped — its newer index
+ * enqueues its own.
+ */
+export const documentContextualizePayloadSchema = z.object({
+  tenantId: z.string().uuid(),
+  documentId: z.string().uuid(),
+  contentHash: z.string().min(1).max(128).optional(),
+})
+export type DocumentContextualizePayload = z.infer<typeof documentContextualizePayloadSchema>
+
 /** Convert an uploaded file (R2 original → text via Workers AI `toMarkdown`) then index it. */
 export const documentConvertPayloadSchema = z.object({
   tenantId: z.string().uuid(),
@@ -149,6 +163,10 @@ export const CORE_JOB_VARIANTS = [
   z.object({ type: z.literal('tenant.purge'), payload: tenantPurgePayloadSchema }),
   z.object({ type: z.literal('event.deliver'), payload: eventDeliverPayloadSchema }),
   z.object({ type: z.literal('knowledge.extract'), payload: knowledgeExtractPayloadSchema }),
+  z.object({
+    type: z.literal('document.contextualize'),
+    payload: documentContextualizePayloadSchema,
+  }),
 ] as const
 
 type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]

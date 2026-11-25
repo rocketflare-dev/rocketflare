@@ -90,7 +90,7 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   not by a migration file (`pg_trgm` likewise — the trigram index on `knowledge_entities.name`;
   migration 0028 also creates it). Every chunk records its `embedding_model`, and each dense leg filters on
   the query vector's model — a chunk row written without one is invisible to dense search. Lexical
-  search reads `chunks.search_vector`, a GENERATED tsvector (heading path + table header + text) with
+  search reads `chunks.search_vector`, a GENERATED tsvector (context + heading path + table header + text) with
   a GIN index; its `'english'` literal must equal `SEARCH_TEXT_CONFIG` (`retrieval.ts`), which
   `tests/config/search-text-config.test.ts` pins. `chunks.text` is an exact slice of
   `documents.content` at `[char_start, char_end)` — chunk through `chunkText`, never by hand

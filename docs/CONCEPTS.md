@@ -951,7 +951,7 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   stored and embedded text grow with the document. Headings and table delimiter rows are found
   by a linear scan of each line, never a backtracking regex. `page` is always null (see gaps).
   Search is hybrid dense + lexical (the lexical half matches ANY query word against
-  `chunks.search_vector` — a GENERATED tsvector over heading path + table header + text with a GIN
+  `chunks.search_vector` — a GENERATED tsvector over context + heading path + table header + text with a GIN
   index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
   words cannot veto it) with RRF, scoped by `AccessScope` (§1). **Each dense leg reads only chunks
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
@@ -983,11 +983,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   465 ms per search over 20 candidates; 50 candidates scored the same at 810 ms, because every
   answer passage was already in the fused top 20, hence the default (`docs/EVALS.md`). **Metering**: every embedding (index, re-embed, query) and
   rerank call is an `ai_usage` row, `knowledge.embeddings` / `knowledge.rerank`, and every fact
-  extraction call a `knowledge.extraction` row, with the provider's token count or a 4-chars
+  extraction call a `knowledge.extraction` row (a contextual prefix a `knowledge.context` row), with the provider's token count or a 4-chars
   estimate; a ledger failure is logged and never fails an ingest or a search (the search route
-  writes it in `waitUntil`). `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap) bounds the three
-  per UTC day through `knowledgeExtractionAllowed`, which only extraction consults: indexing and
-  search never pause. **Content hash**: `documents.content_hash` is sha-256 of the
+  writes it in `waitUntil`). `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap) bounds them
+  per UTC day through `knowledgeExtractionAllowed`, which only extraction and contextual prefixes
+  consult: indexing and search never pause. **Content hash**: `documents.content_hash` is sha-256 of the
   normalised text (CRLF → LF, trimmed). A plain ingest — or a text upload — whose hash matches a
   non-failed document of the same tenant and `source` answers THAT document (`200`,
   `deduplicated: true`, nothing stored), only when both are tenant-wide so a dedupe never reveals a
@@ -1007,6 +1007,32 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   document_not_failed` otherwise), and the Documents page offers it as Retry. Inline indexing is
   an `ingest document` span — under the active span, else a root on the request tracer — with
   its embeddings batches nested.
+  **Contextual prefixes** (`knowledge-context` flag, off by default, tenant rollout;
+  `services/ai/contextualize.ts` — Anthropic's "Contextual Retrieval"): a passage cut from its
+  document often never names what it is about ("the fee rises to £300 from April"). After an
+  index whose text changed (`afterTextIndexed`, beside fact extraction), the
+  `document.contextualize` job asks a model — prompt key `knowledge-context`, point it at a cheap
+  one — for one or two sentences placing each passage in its document, with the document (or,
+  past 48 000 characters, the window the passage falls in) as the cached system prompt and the
+  passage as the user turn. The answer is cleaned and bounded to `SITUATING_CONTEXT_MAX_CHARS`,
+  stored in `chunks.context` (+ `context_model`), and the passage is re-embedded with it in front
+  of the heading path (`embeddingInput`); `search_vector` reads the column too, so keyword search
+  finds it. The stored text, offsets, citations and everything a reader is shown are unchanged.
+  Progress is per window and only passages without a context are asked, so a retry resumes; a row
+  is written only while the document still has the text the job read. A re-index of the SAME text
+  (a re-embed, a retry) keeps each passage's context, matched by `seq` and exact text; new text
+  starts with none until its own job runs. Every call is a `knowledge.context` usage row and the
+  re-embed `knowledge.embeddings`; the daily knowledge cap pauses the job for the next UTC day
+  like extraction. Existing documents: the Search page tells a `manage Document` reader how many
+  visible documents have no context on any passage (`/facets` `withoutContext`, 0 without the
+  flag) and offers "Add context", which calls `POST /api/ai/documents/contextualize` (admin+,
+  flag on, 202 `{ enqueued, remaining }`, ≤ 200 per call) until nothing remains, then polls the
+  count down. The document's text is
+  untrusted: the prompt tells the model to ignore instructions in it, and a context is only ever
+  a retrieval aid — never shown, quoted or fed to another document's processing.
+  `pnpm eval retrieval --context` measures it (`docs/EVALS.md`): on the kit fixture, without a
+  reranker, recall@5 0.88 → 0.94 and MRR 0.68 → 0.73 over 3 runs a side, at about $0.0002 a
+  passage on Haiku.
   `document-content.ts` is the one text reader behind both
   the viewer and `get_document`. Agent tools resolve the requester's access at execute time.
   **External ids (D34)**: `documents.external_id` is unique per `(tenant_id, source)` (partial
@@ -1378,6 +1404,10 @@ stream cursor; a cancelled CHAT turn emits nothing rather than AG-UI 1.0's `RUN_
 not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
 lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
+contextual prefixes: contexts are
+not rewritten when the `knowledge-context` prompt or model changes (only new text gets new ones),
+one model call per passage with no batching, and no query rewriting — chat's `search_knowledge`
+query is already model-written;
 reranking: the Workers AI `bge-reranker-base` default is not yet measured against the fixture —
 neither recall nor latency at 20 candidates, nor whether its 512-token input limit truncates an
 800-token chunk (`pnpm eval retrieval --rerank workers-ai` needs a Cloudflare API token) — and its
@@ -1750,8 +1780,8 @@ The full gate stays green at every step. `SETUP.md` is the walkthrough.
   `environmentGated` flags. Then the admin rollout: tenant override → `on`/`off` → `rollout`
   percentage → registry default.
 - **Keys are code** (`FEATURES` + metadata). No migration is needed to add one; orphaned rows are
-  inert. Core ships two: `knowledge-facts` (§9, a rollout flag, off by default) and `mcp` (§19,
-  environment-gated, on wherever the deployment ships it); `example-feature`'s belongs to its
+  inert. Core ships three: `knowledge-facts` and `knowledge-context` (§9, rollout flags, off by
+  default) and `mcp` (§19, environment-gated, on wherever the deployment ships it); `example-feature`'s belongs to its
   plugin.
 - **`featureBucket` is a wire format**: FNV-1a over `"<key>:<unit>"` mod 100, with golden vectors
   in `features.test.ts`. It is monotonic (the percentage is never hashed) and independent across

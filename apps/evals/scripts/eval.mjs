@@ -3,7 +3,7 @@
  * `pnpm eval` — run the eval suites locally, outside the gate.
  *
  *   pnpm eval [suite…] [--provider anthropic|fireworks|gemini] [--model x] [--judge-provider p]
- *             [--judge-model y] [--rerank none|fireworks|workers-ai] [--case id,id] [--compare [baseline|<run.json>]]
+ *             [--judge-model y] [--rerank none|fireworks|workers-ai] [--context] [--case id,id] [--compare [baseline|<run.json>]]
  *             [--threshold 0.1] [--concurrency 2]
  *   pnpm eval:baseline [suite…] [--from <run.json>]   write baselines/<suite>.json from a run (default: latest)
  *   pnpm eval:view [a.json [b.json]] [--compare …]    print the score diff, then the vitest-evals report UI
@@ -106,6 +106,7 @@ function run(opts) {
   if (opts.rerank === 'workers-ai' && !(env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN)) {
     console.warn('! --rerank workers-ai needs CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN.')
   }
+  if (opts.context) env.EVAL_CONTEXT = '1'
   if (opts.cases) env.EVAL_CASE = opts.cases
   if (opts.concurrency) env.EVAL_CONCURRENCY = opts.concurrency
   const keyFor = {
@@ -155,6 +156,7 @@ function run(opts) {
     provider: opts.provider,
     judgeProvider: opts.judgeProvider,
     rerank: opts.rerank,
+    context: opts.context,
     cases,
   })
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`)
