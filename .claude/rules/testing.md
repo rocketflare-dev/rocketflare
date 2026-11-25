@@ -402,8 +402,10 @@ the whole rule, and it is why neither half duplicates the other.
   `scripts/lib/plugin-lib.mjs` were silently substring-matching: `workerExports` over raw source,
   satisfied by a class named only in a comment; `onTenantDeleted` through `.includes(...)`, which
   passed on a fixture that plainly broke the rule; `isolationEvidence` through regexes a header
-  paragraph or a commented-out `createTestTenant(db)` satisfied. `stripComments` runs first in all
-  three now, and each requires a real DECLARATION (`declaresProperty`) rather than a mention
+  paragraph or a commented-out `createTestTenant(db)` satisfied. All three parse
+  with the TypeScript AST now (`typescript6`, never `typescript`), so neither a comment nor a
+  string satisfies them, and each requires a real DECLARATION (`declaresProperty`) rather than a
+  mention. The newer regex checks still run `stripComments` first; a new check should parse
 - **A plugin's api test MUST carry a tenant-isolation case.** Its tables are tenant-scoped like any
   other and the kit's own suites cannot see them:
   `src/plugins/example-feature/tests/api/example-feature.test.ts` is the template — tenant B can

@@ -2646,9 +2646,9 @@ function cmdCheck(args, host) {
       })
     }
 
-    // **Plugin imports resolve without error.** When a plugin imports a dependency that is not
-    // installed or resolvable, TypeScript degrades types to `any`, creating false passes on
-    // type-level audits. Fail closed explicitly on TS2307.
+    // **Plugin imports resolve.** An import that resolves to nothing types as `any`, and every
+    // type-level check over it then passes without checking anything — so an unresolved import
+    // fails here instead (and a tree with no node_modules fails as one: run `pnpm install`).
     const pluginSourceFiles = surfaceDirectories(s)
       .filter(d => existsSync(abs(d)))
       .flatMap(d => walk(abs(d)).map(f => `${d}/${f}`))

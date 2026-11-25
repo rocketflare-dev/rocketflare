@@ -25,12 +25,12 @@ import { compareVersions, isVendored } from './upgrade-lib.mjs'
 const require = createRequire(import.meta.url)
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
-/** @type {import('typescript') | null} */
+/** @type {import('typescript6') | null} */
 let cachedTs = null
 
 /** The TypeScript parser, loaded on first use. */
 function typescript() {
-  if (!cachedTs) cachedTs = require('typescript')
+  if (!cachedTs) cachedTs = require('typescript6')
   return cachedTs
 }
 
@@ -2849,6 +2849,24 @@ export function workerExportNames(source, fileName = 'worker-exports.ts') {
   return { names: [...names], opaque }
 }
 
+/**
+ * A source with its comments removed.
+ *
+ * **Shared by every check that SCANS source**, because the failure mode is one and it is
+ * invisible: a check a comment can talk its way past reports SUCCESS. The fixture written to prove
+ * the `onTenantDeleted` rule carried the sentence "declares no `hooks.onTenantDeleted`" in its own
+ * doc comment and passed on it. Prose about a rule is not the rule being kept. The checks that
+ * matter most (`workerExportNames`, `declaresProperty`, `isolationEvidence`) parse instead.
+ */
+function stripComments(source) {
+  return (
+    String(source)
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      // `[^:]` so a `https://…` inside a string is not mistaken for a line comment.
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+  )
+}
+
 const SECOND_TENANT_RE = /\b(?:other|second|another|foreign)[A-Za-z]*[Tt]enant|\btenantB\b/
 
 /**
@@ -3042,8 +3060,13 @@ export function loadProjectCompilerOptions(tsconfigPath, options = {}) {
 }
 
 /**
- * Determines the appropriate tsconfig.json for a given file by walking up from the
- * file's directory to the repository root. Defaults to apps/web/tsconfig.json.
+ * The tsconfig.json of the workspace package a file belongs to (`apps/web`, `apps/cli`,
+ * `packages/shared`): the nearest directory up from the file that holds a `package.json`.
+ * Defaults to apps/web/tsconfig.json.
+ *
+ * Keyed on `package.json` rather than the nearest tsconfig: a plugin that ships its own
+ * `tsconfig.json` inside its tree would otherwise be resolved without the host's `@/*` aliases,
+ * and every one of its host imports would read as missing.
  */
 export function findProjectTsconfig(filePath, repoRoot = REPO_ROOT) {
   const normFile = path.resolve(repoRoot, filePath).replace(/\\/g, '/')
@@ -3052,7 +3075,7 @@ export function findProjectTsconfig(filePath, repoRoot = REPO_ROOT) {
 
   while (dir.startsWith(resolvedRepoRoot)) {
     const candidate = path.posix.join(dir, 'tsconfig.json')
-    if (fs.existsSync(candidate)) {
+    if (fs.existsSync(path.posix.join(dir, 'package.json')) && fs.existsSync(candidate)) {
       return candidate
     }
     const parent = path.posix.dirname(dir)
@@ -3076,7 +3099,9 @@ export function findProjectTsconfig(filePath, repoRoot = REPO_ROOT) {
  */
 function resolvePathAlias(specifier, compilerOptions) {
   if (!compilerOptions.paths) return []
-  const baseUrl = compilerOptions.baseUrl ?? '.'
+  // No `baseUrl` since TypeScript 7: `./`-relative `paths` resolve from the tsconfig that
+  // declared them, which the parser records as `pathsBasePath`.
+  const baseUrl = compilerOptions.baseUrl ?? compilerOptions.pathsBasePath ?? '.'
   const matches = []
   for (const [pattern, substitutions] of Object.entries(compilerOptions.paths)) {
     const starIdx = pattern.indexOf('*')
@@ -3102,7 +3127,7 @@ function resolvePathAlias(specifier, compilerOptions) {
 
 function fileOrHostExists(filePath, host, isVirtual, virtualMap) {
   const norm = path.resolve(filePath)
-  if (isVirtual && virtualMap && virtualMap.has(norm)) return true
+  if (isVirtual && virtualMap?.has(norm)) return true
   return (
     fs.existsSync(norm) || (host && typeof host.fileExists === 'function' && host.fileExists(norm))
   )
@@ -3129,7 +3154,7 @@ function makeHost(compilerOptions, virtualMap, ts) {
     directoryExists: directoryName => {
       const norm = path.resolve(directoryName)
       for (const k of virtualMap.keys()) {
-        if (k.startsWith(norm + path.sep) || k.startsWith(norm + '/')) return true
+        if (k.startsWith(`${norm}${path.sep}`) || k.startsWith(`${norm}/`)) return true
       }
       return typeof baseHost.directoryExists === 'function'
         ? baseHost.directoryExists(directoryName)
