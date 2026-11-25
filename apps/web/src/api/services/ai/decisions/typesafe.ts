@@ -1,5 +1,5 @@
 /**
- * TypeSafe's System One API (Jev) behind the `DecisionClient` seam (D37). Plain `fetch`, no SDK:
+ * TypeSafe's System One API (Jev) behind the `DecisionClient` seam. Plain `fetch`, no SDK:
  * `@typesafe-ai/sdk` targets Node ≥ 20 and the Worker needs nothing it adds.
  *
  *   POST {baseUrl}/v1/systemone   Authorization: Bearer <key>

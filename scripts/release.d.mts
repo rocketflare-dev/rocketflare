@@ -57,3 +57,10 @@ export function resolveDefaultPlugin(
     lsRemote?: (repo: string, ref: string) => boolean
   }
 ): ResolvedDefaultPlugin
+
+/** The paths where a change deserves a security audit before a kit release. */
+export const AUDIT_CADENCE_GLOBS: readonly string[]
+/** The changed paths `AUDIT_CADENCE_GLOBS` (or `globs`) match, in input order. */
+export function auditCadencePaths(changed: readonly string[] | null | undefined, globs?: readonly string[]): string[]
+/** The warning lines `pnpm kit:release` prints for those paths; [] when there are none. */
+export function auditCadenceWarning(paths: readonly string[], previous: string): string[]

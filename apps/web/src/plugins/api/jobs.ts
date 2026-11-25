@@ -1,7 +1,7 @@
 /**
- * Background work: `JobCtx` for a queue handler, `CronCtx` for a scheduled task (D7, D31).
+ * Background work: `JobCtx` for a queue handler, `CronCtx` for a scheduled task.
  *
- * Both are the kit's own contexts with methods bolted on, and both keep the kit's two hard rules:
+ * Both are the core contexts with methods bolted on, and both keep the two hard core rules:
  *
  * - **Await everything. There is no `waitUntil` in a queue consumer.** A handler that defers work
  *   and returns has told the platform the message succeeded while the work is still running — and
@@ -23,6 +23,7 @@ import { tenantFeatures } from '../../api/services/features'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import type { StorageService } from '../../api/services/storage'
 import { agentRunStarter, type StartAgentRunInput, type StartedAgentRun } from './agent-runs'
+import { type Emit, eventEmitter } from './emit'
 import { createStepRealtimeFor } from './realtime-step'
 import { filesStorage } from './storage'
 import type { PluginContext } from './types'
@@ -55,7 +56,7 @@ export interface BackgroundMethods {
     key?: string
   ): DurableObjectStub<T>
   /**
-   * The feature keys one organisation has (D30) — what `auth.features` is on a request, resolved
+   * The feature keys one organisation has — what `auth.features` is on a request, resolved
    * here for a tenant named per call. A cron that fans out across every organisation reads this to
    * skip the ones whose flag is off; there is no user, so a user-bucketed rollout answers on the
    * tenant's override and the platform state alone.
@@ -77,6 +78,12 @@ export interface BackgroundMethods {
    * no such method.
    */
   startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+  /**
+   * Emit a declared plugin event (D42) for one organisation: validated against the declaration
+   * (400), recorded in `plugin_events`, one delivery queued per subscriber; never runs a handler.
+   * Pass an `idempotencyKey` naming the thing (`submission:<id>`) so a redelivered job emits once.
+   */
+  emit: Emit
 }
 
 /**
@@ -85,10 +92,19 @@ export interface BackgroundMethods {
  * declared, so a declared variant with no handler is a type error in the plugin rather than a
  * dispatch failure in the host.
  */
-export interface JobCtx extends PluginContext, BackgroundMethods {}
+export interface JobCtx extends PluginContext, BackgroundMethods {
+  /**
+   * Which background context this is. A brand as much as a field: the few methods that only a
+   * job or a cron task may call (`ingestPlatformDocument`) take `JobCtx | CronCtx`, and the
+   * structurally identical `EmailCtx` / `PublicCtx` carry no `kind`, so passing one is a type error.
+   */
+  readonly kind: 'job'
+}
 
 /** One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one. */
 export interface CronCtx extends PluginContext, BackgroundMethods {
+  /** See `JobCtx.kind`. */
+  readonly kind: 'cron'
   waitUntil(promise: Promise<unknown>): void
 }
 
@@ -108,12 +124,14 @@ export function backgroundMethods(ctx: PluginContext): BackgroundMethods {
     features: tenantId => tenantFeatures(db, config, tenantId),
     storage: () => filesStorage(env),
     startAgentRun: agentRunStarter(ctx),
+    emit: eventEmitter(ctx),
   }
 }
 
-/** Adapt the kit's `JobContext`. The only place a plugin's job half names a kit internal. */
+/** Adapt the core `JobContext`. The only place a plugin's job half names a core internal. */
 export function jobCtx(ctx: JobContext): JobCtx {
   return {
+    kind: 'job',
     db: ctx.db,
     config: ctx.config,
     logger: ctx.logger,
@@ -122,9 +140,10 @@ export function jobCtx(ctx: JobContext): JobCtx {
   }
 }
 
-/** Adapt the kit's `TaskContext`. */
+/** Adapt the core `TaskContext`. */
 export function cronCtx(ctx: TaskContext): CronCtx {
   return {
+    kind: 'cron',
     db: ctx.db,
     config: ctx.config,
     logger: ctx.logger,

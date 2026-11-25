@@ -1,5 +1,5 @@
 /**
- * `storage()` — the one body behind every plugin context's method of that name (D23, D31).
+ * `storage()` — the one body behind every plugin context's method of that name.
  *
  * `RequestCtx`, the background contexts (`JobCtx`, `CronCtx`, `EmailCtx`, `PublicCtx`), `AgentCtx`
  * and `ToolCtx` all answer the same `StorageService` over the `FILES` bucket, so a plugin's own

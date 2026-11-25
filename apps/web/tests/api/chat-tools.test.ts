@@ -1,7 +1,5 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
- * Chat with the knowledge tools (D18). The one that matters is the FIRST test: the tools are built
+ * Chat with the knowledge tools. The one that matters is the FIRST test: the tools are built
  * from the STREAM's database client, not the request's. The request's client is closed in
  * `waitUntil` the moment the Response is returned — before the stream body runs — so building them
  * from it makes every `search_knowledge` fail after the first frame, as an error frame,
@@ -15,10 +13,11 @@
 import { KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import { CHAT_MAX_TOOL_TURNS, conversationSchema } from '@rocketflare/shared/ai/chat'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { SEARCH_KNOWLEDGE_TOOL } from '@/api/services/agents/tools'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { loadConfig } from '@/config'
 import { aiSpans, messages } from '@/db/schema'
 import { aguiFrames, aguiTypes, customEvent, FakeChatClient, type FakeScript } from '../helpers/ai'
@@ -32,20 +31,15 @@ const state: {
   provider: 'anthropic_compatible' | 'workers_ai'
 } = { client: null, provider: 'anthropic_compatible' }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: state.provider,
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: state.provider,
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 
@@ -131,7 +125,7 @@ describe('chat with the knowledge tools', () => {
       'TOOL_CALL_ARGS',
       'TOOL_CALL_END',
       'TOOL_CALL_RESULT',
-      // `CUSTOM kit.document` follows the result it was derived from (D18).
+      // `CUSTOM kit.document` follows the result it was derived from.
       'CUSTOM',
       'TEXT_MESSAGE_START',
       'TEXT_MESSAGE_CONTENT',
@@ -154,7 +148,9 @@ describe('chat with the knowledge tools', () => {
     // The result is the tool's own JSON, and it contains REAL rows — the proof the tools are
     // bound to a live client rather than the request's, which is already closed by now.
     const result = frames.find(f => f.type === 'TOOL_CALL_RESULT')
-    const payload = JSON.parse(result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}')
+    const content = result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}'
+    expect(typeof content).toBe('string')
+    const payload = JSON.parse(content as string)
     expect(payload.error).toBeUndefined()
     expect(payload.documents?.[0]).toMatchObject({ title: 'Volcanoes' })
     expect(payload.documents[0].passages[0].text).toContain('volcano')
@@ -176,8 +172,8 @@ describe('chat with the knowledge tools', () => {
       },
     })
 
-    // The tool definitions and the chat turn cap reached the model. The kit's three lead and an
-    // installed plugin's tools (D31) follow, so this is a prefix rather than the whole list.
+    // The tool definitions and the chat turn cap reached the model. The three built-in tools lead and an
+    // installed plugin's tools follow, so this is a prefix rather than the whole list.
     expect(client.calls[0]?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
       'get_document',
@@ -194,7 +190,7 @@ describe('chat with the knowledge tools', () => {
       isError: false,
     })
 
-    // D32: the turn is one trace in `ai_spans`, written by the stream's flush on its OWN client
+    // The turn is one trace in `ai_spans`, written by the stream's flush on its OWN client
     // (the request's and the stream's are both closed by then), and the assistant row points at it.
     expect(assistant?.traceId).toMatch(/^[0-9a-f]{32}$/)
     const spans = await db

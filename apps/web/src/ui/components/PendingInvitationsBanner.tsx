@@ -1,10 +1,11 @@
 /**
- * Invitations waiting for the signed-in email, across tenants (D9) — so a member of one org can
+ * Invitations waiting for the signed-in email, across tenants — so a member of one org can
  * join another without hunting for the email. Renders nothing when there are none. Links to
  * `/invite/<token>` when the server includes the token (see `pendingInvitationSchema`).
  */
 import { EnvelopeIcon } from '@heroicons/react/24/outline'
-import { Link } from 'react-router-dom'
+import { roleLabel } from '@rocketflare/shared/tenants'
+import { Link } from 'react-router'
 import { usePendingInvitations } from '@/ui/hooks/useInvitations'
 
 export function PendingInvitationsBanner({ className = '' }: { className?: string }) {
@@ -25,7 +26,7 @@ export function PendingInvitationsBanner({ className = '' }: { className?: strin
               <EnvelopeIcon className="w-5 h-5 shrink-0 text-info" />
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium">You've been invited to join {orgName}</div>
-                <div className="text-xs text-secondary capitalize">as {invite.role}</div>
+                <div className="text-xs text-secondary">as {roleLabel(invite.role)}</div>
               </div>
               {invite.token ? (
                 <Link

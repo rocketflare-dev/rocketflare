@@ -1,5 +1,5 @@
 /**
- * The test kit's own contract (D31).
+ * The test kit's own contract.
  *
  * Two things are worth pinning here and nothing else is. **The builders refuse a `db` the
  * integration harness did not hand out** — the rule the whole of `@testkit/unit` exists to enforce,
@@ -59,7 +59,7 @@ describe('the fake request context', () => {
     expect(() => owner.guard('manage', 'Tenant')).not.toThrow()
   })
 
-  it('reads features from the ARRAY, never from the ability (D30)', () => {
+  it('reads features from the ARRAY, never from the ability', () => {
     // A global admin holds `manage all`, which in CASL covers `access` on every `Feature:` subject.
     // `hasFeature` must still answer no — that disagreement is the incident in CONCEPTS §15.
     const admin = makeRequestCtx({ ...base, db, isGlobalAdmin: true, features: [] })

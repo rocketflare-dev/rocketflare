@@ -4,7 +4,7 @@
  */
 import { ShieldCheckIcon } from '@heroicons/react/24/outline'
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 import { LogoMark } from './shared/LogoMark'
 import ThemeToggle from './ThemeToggle'

@@ -1,5 +1,5 @@
 /**
- * `/api/ai/prompts` (D17): the registry lists with effective text; PUT overrides (admin+), DELETE
+ * `/api/ai/prompts`: the registry lists with effective text; PUT overrides (admin+), DELETE
  * reverts; `resolvePrompt` interpolates `{{vars}}` from override or default; unknown key → 404;
  * member 403 on writes; tenant isolation (an override in A is invisible in B).
  */
@@ -33,17 +33,12 @@ describe('/api/ai/prompts', () => {
     let list = promptListResponseSchema.parse(
       await json(await request('/api/ai/prompts', { headers: a.cookie }))
     )
-    // The kit's own prompts, in order; an installed plugin's follow them (D31).
+    // The core prompts, in order; an installed plugin's follow them.
     const core: readonly string[] = Object.keys(CORE_PROMPT_REGISTRY)
-    expect(list.items.map(i => i.definition.key).filter(key => core.includes(key))).toEqual([
-      'chat',
-      'summarize-text',
-      'chat-compaction',
-      'research-topic',
-      'agent-decide',
-      'triage-research',
-      'evals-judge',
-    ])
+    expect(list.items.map(i => i.definition.key).filter(key => core.includes(key))).toEqual(core)
+    // `chat` leads; the rest are pinned by name, never an example agent's (an app may delete one).
+    expect(core[0]).toBe('chat')
+    expect(core).toEqual(expect.arrayContaining(['chat-compaction', 'agent-decide']))
     expect(list.items[0]).toMatchObject({
       isOverridden: false,
       override: null,

@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import InviteAccept from '@/ui/pages/InviteAccept'
 import {
@@ -72,7 +72,7 @@ describe('InviteAccept', () => {
       [`POST /api/invite/${TOKEN}/accept`]: makeSession({ tenant: beta, tenants: [beta] }),
     })
     expect(await screen.findByText('Beta Corp')).toBeInTheDocument()
-    expect(screen.getByText('admin')).toBeInTheDocument()
+    expect(screen.getByText('Admin')).toBeInTheDocument()
     expect(screen.getByText('Bea Boss')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Accept invitation' }))

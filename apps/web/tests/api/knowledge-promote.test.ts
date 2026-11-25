@@ -1,0 +1,328 @@
+/**
+ * `POST /api/knowledge/entities/:id/promote` and merge-into-a-domain-row (D43): a staging entity
+ * becomes a row of its registered type — `promoted_type` / `promoted_id` recorded, its facts moved
+ * onto the row and the shared keys decided again — and NO domain column written. The registered
+ * type here is `team`, backed by the kit's own `groups` table (`labelColumn: groups.name`), so the
+ * row is real and tenant-scoped without a fixture table. Then the domain row's entity card, and
+ * `lookup_facts` finding the row by the staging entity's old name. Then the Promote picker
+ * (`GET /entities/:id/promote-candidates`) and the facts block finding a domain row named in a
+ * query with no staging entity behind it (`GET /mentioned`).
+ */
+import {
+  entityActionResponseSchema,
+  entityCardSchema,
+  mentionedFactsResponseSchema,
+  promoteCandidatesResponseSchema,
+} from '@rocketflare/shared/ai/knowledge-facts'
+import { and, eq } from 'drizzle-orm'
+import { beforeAll, describe, expect, it } from 'vitest'
+import { z } from 'zod'
+import { buildAgentTools } from '@/api/services/agents/tools'
+import { setTenantOverride } from '@/api/services/features'
+import { overrideKnowledgeEntityTypesForTests } from '@/api/services/knowledge/registry'
+import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
+import { loadConfig } from '@/config'
+import { groups, groupTypes, knowledgeEntities, knowledgeFacts } from '@/db/schema'
+import {
+  createTestSession,
+  createTestTenant,
+  createTestUser,
+  linkUserToTenant,
+  sessionCookieHeader,
+} from '../helpers/auth'
+import { setupTestDatabase } from '../helpers/db'
+import { seedDocument, seedEntity, seedFact } from '../helpers/knowledge-facts'
+import { json, request } from '../helpers/request'
+import { createTestEnv } from '../mocks/bindings'
+
+const team: EntityTypeRegistration = {
+  type: 'team',
+  label: 'Team',
+  table: groups,
+  labelColumn: groups.name,
+  facts: z.object({ monthly_fee_gbp: z.number(), visit_day: z.string() }),
+}
+
+overrideKnowledgeEntityTypesForTests(() => [team])
+
+const db = setupTestDatabase()
+const env = createTestEnv()
+const cfg = loadConfig(env)
+
+let tenantId: string
+let groupTypeId: string
+let adminCookie: Record<string, string>
+let adminId: string
+let docId: string
+
+const post = (path: string, body: unknown) =>
+  request(path, { method: 'POST', headers: adminCookie }, { env, json: body })
+
+async function teamRow(tenant: string, typeId: string, name: string) {
+  const [row] = await db
+    .insert(groups)
+    .values({ tenantId: tenant, groupTypeId: typeId, name })
+    .returning()
+  if (!row) throw new Error('no group')
+  return row
+}
+
+beforeAll(async () => {
+  tenantId = (await createTestTenant(db)).id
+  const user = await createTestUser(db)
+  adminId = user.id
+  await linkUserToTenant(db, user.id, tenantId, 'admin')
+  adminCookie = sessionCookieHeader(await createTestSession(db, user.id, tenantId))
+  await setTenantOverride(db, 'knowledge-facts', tenantId, true, user.id)
+  const [type] = await db.insert(groupTypes).values({ tenantId, name: 'Customers' }).returning()
+  groupTypeId = type?.id ?? ''
+  docId = (await seedDocument(db, { tenantId, title: 'Contract' })).id
+})
+
+describe('promote', () => {
+  it('records promotedTo, moves the facts, decides shared keys, and writes no domain column', async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Brightside Bakery Ltd')
+    const held = await seedFact(db, {
+      tenantId,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: row.id,
+      documentId: docId,
+      value: 100,
+      observedAt: new Date('2025-01-01T00:00:00Z'),
+    })
+    const staging = await seedEntity(db, { tenantId, type: 'team', name: 'Brightside' })
+    const moved = await seedFact(db, {
+      tenantId,
+      entityType: 'team',
+      entityId: staging.id,
+      documentId: docId,
+      value: 120,
+      observedAt: new Date('2026-01-01T00:00:00Z'),
+    })
+
+    // A registered type with a table: the staging card offers Promote, until it is promoted.
+    const cardOf = async (id: string) =>
+      entityCardSchema.parse(
+        await json(
+          await request(`/api/knowledge/entities/team/${id}`, { headers: adminCookie }, { env })
+        )
+      )
+    expect((await cardOf(staging.id)).entity.promotable).toBe(true)
+
+    const res = await post(`/api/knowledge/entities/${staging.id}/promote`, { id: row.id })
+    expect(res.status).toBe(200)
+    expect((await cardOf(staging.id)).entity.promotable).toBe(false)
+    const body = entityActionResponseSchema.parse(await json(res))
+    expect(body).toMatchObject({
+      entity: { promotedTo: { type: 'team', id: row.id } },
+      into: { kind: 'domain', type: 'team', id: row.id },
+      movedFacts: 1,
+      recomputedKeys: ['monthly_fee_gbp'],
+    })
+
+    const facts = await db.query.knowledgeFacts.findMany({
+      where: and(eq(knowledgeFacts.tenantId, tenantId), eq(knowledgeFacts.entityId, row.id)),
+    })
+    expect(new Map(facts.map(f => [f.id, f.state]))).toEqual(
+      new Map([
+        [held.id, 'conflicting'],
+        [moved.id, 'conflicting'],
+      ])
+    )
+    expect(facts.every(f => f.entityKind === 'domain')).toBe(true)
+    // The domain row is untouched.
+    const after = await db.query.groups.findFirst({ where: eq(groups.id, row.id) })
+    expect(after?.name).toBe('Brightside Bakery Ltd')
+
+    // The row's card: its label, the staging name as an alias, both facts.
+    const card = entityCardSchema.parse(
+      await json(
+        await request(`/api/knowledge/entities/team/${row.id}`, { headers: adminCookie }, { env })
+      )
+    )
+    expect(card.entity).toMatchObject({
+      kind: 'domain',
+      typeLabel: 'Team',
+      name: 'Brightside Bakery Ltd',
+      aliases: ['Brightside'],
+    })
+    expect(card.facts).toHaveLength(2)
+
+    // lookup_facts finds the row by the staging entity's name.
+    const tools = await buildAgentTools({
+      db,
+      cfg,
+      env,
+      scope: { tenantId, userId: adminId, groupIds: [], bypass: true },
+      features: ['knowledge-facts'],
+    })
+    const lookup = tools.find(t => t.name === 'lookup_facts')
+    const result = JSON.parse((await lookup?.handler?.({ entity: 'Brightside' } as never)) ?? '{}')
+    expect(result.entities[0].entity).toMatchObject({ kind: 'domain', type: 'team', id: row.id })
+    expect(result.entities[0].facts).toHaveLength(2)
+  })
+
+  it('merge into a domain row is a promote', async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Harbour View Dental')
+    const staging = await seedEntity(db, { tenantId, type: 'team', name: 'HVD' })
+    const res = await post(`/api/knowledge/entities/${staging.id}/merge`, {
+      into: { kind: 'domain', id: row.id },
+    })
+    expect(res.status).toBe(200)
+    const entity = await db.query.knowledgeEntities.findFirst({
+      where: and(eq(knowledgeEntities.tenantId, tenantId), eq(knowledgeEntities.id, staging.id)),
+    })
+    expect(entity).toMatchObject({ promotedType: 'team', promotedId: row.id, mergedInto: null })
+  })
+
+  it('refuses a row that does not exist, or exists in another tenant', async () => {
+    const other = await createTestTenant(db)
+    const [otherType] = await db
+      .insert(groupTypes)
+      .values({ tenantId: other.id, name: 'Customers' })
+      .returning()
+    const foreign = await teamRow(other.id, otherType?.id ?? '', 'Foreign Bakery')
+    const staging = await seedEntity(db, { tenantId, type: 'team', name: 'Foreign Bakery' })
+    for (const id of [crypto.randomUUID(), foreign.id]) {
+      const res = await post(`/api/knowledge/entities/${staging.id}/promote`, { id })
+      expect(res.status).toBe(400)
+      expect(await json(res)).toMatchObject({ statusCode: 400, code: 'entity_target_not_found' })
+    }
+    const row = await db.query.knowledgeEntities.findFirst({
+      where: and(eq(knowledgeEntities.tenantId, tenantId), eq(knowledgeEntities.id, staging.id)),
+    })
+    expect(row?.promotedId).toBeNull()
+  })
+})
+
+describe('the Promote picker', () => {
+  /** A staging entity is visible through its facts' documents, so each one gets a fact. */
+  const stagingWithFact = async (name: string, reviewerUserId?: string) => {
+    const e = await seedEntity(db, { tenantId, type: 'team', name, reviewerUserId })
+    await seedFact(db, {
+      tenantId,
+      entityType: 'team',
+      entityId: e.id,
+      documentId: docId,
+      value: 1,
+    })
+    return e
+  }
+  const candidates = (id: string, q?: string, cookie = adminCookie) =>
+    request(
+      `/api/knowledge/entities/${id}/promote-candidates${q === undefined ? '' : `?q=${encodeURIComponent(q)}`}`,
+      { headers: cookie },
+      { env }
+    )
+
+  it("searches the entity's own name until something is typed, and finds a part-typed one", async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Kestrel Plumbing Supplies')
+    const staging = await stagingWithFact('Kestrel Plumbing')
+
+    const first = promoteCandidatesResponseSchema.parse(await json(await candidates(staging.id)))
+    expect(first.query).toBe('Kestrel Plumbing')
+    expect(first.candidates[0]).toMatchObject({ id: row.id, label: 'Kestrel Plumbing Supplies' })
+
+    const typed = promoteCandidatesResponseSchema.parse(
+      await json(await candidates(staging.id, 'Kestr'))
+    )
+    expect(typed.candidates.map(c => c.id)).toContain(row.id)
+  })
+
+  it("never offers another tenant's row", async () => {
+    const other = await createTestTenant(db)
+    const [otherType] = await db
+      .insert(groupTypes)
+      .values({ tenantId: other.id, name: 'Customers' })
+      .returning()
+    const foreign = await teamRow(other.id, otherType?.id ?? '', 'Osprey Joinery')
+    const staging = await stagingWithFact('Osprey Joinery')
+    const body = promoteCandidatesResponseSchema.parse(await json(await candidates(staging.id)))
+    expect(body.candidates.map(c => c.id)).not.toContain(foreign.id)
+  })
+
+  it('is 401 signed out, 403 for somebody else’s item, and 404 for an unknown entity', async () => {
+    const staging = await stagingWithFact('Heron Electrical', adminId)
+    expect(
+      (await request(`/api/knowledge/entities/${staging.id}/promote-candidates`, {}, { env }))
+        .status
+    ).toBe(401)
+
+    const member = await createTestUser(db)
+    await linkUserToTenant(db, member.id, tenantId, 'member')
+    const memberCookie = sessionCookieHeader(await createTestSession(db, member.id, tenantId))
+    const refused = await candidates(staging.id, undefined, memberCookie)
+    expect(refused.status).toBe(403)
+    expect(await json(refused)).toMatchObject({ statusCode: 403 })
+
+    expect((await candidates(crypto.randomUUID())).status).toBe(404)
+  })
+})
+
+describe("search_knowledge's facts block over domain rows", () => {
+  const mentioned = (q: string) =>
+    request(
+      `/api/knowledge/mentioned?q=${encodeURIComponent(q)}`,
+      { headers: adminCookie },
+      { env }
+    )
+
+  it('finds a row named in the query that never had a staging entity', async () => {
+    const row = await teamRow(tenantId, groupTypeId, 'Wrenfield Garden Centre')
+    await seedFact(db, {
+      tenantId,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: row.id,
+      documentId: docId,
+      value: 240,
+    })
+    // A row named the same way in another tenant, with a fact of its own there.
+    const other = await createTestTenant(db)
+    const [otherType] = await db
+      .insert(groupTypes)
+      .values({ tenantId: other.id, name: 'Customers' })
+      .returning()
+    const foreign = await teamRow(other.id, otherType?.id ?? '', 'Wrenfield Garden Centre')
+    const otherDoc = await seedDocument(db, { tenantId: other.id, title: 'Theirs' })
+    await seedFact(db, {
+      tenantId: other.id,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: foreign.id,
+      documentId: otherDoc.id,
+      value: 999,
+    })
+
+    const body = mentionedFactsResponseSchema.parse(
+      await json(await mentioned('What do we charge Wrenfield Garden Centre each month?'))
+    )
+    expect(body.entities.map(e => e.entity)).toEqual([
+      expect.objectContaining({
+        kind: 'domain',
+        type: 'team',
+        id: row.id,
+        name: 'Wrenfield Garden Centre',
+      }),
+    ])
+    expect(body.entities[0]?.facts.map(f => f.value)).toEqual([240])
+  })
+
+  it('leaves out a row with no facts, and a row only partly named', async () => {
+    await teamRow(tenantId, groupTypeId, 'Larkspur Veterinary Practice')
+    const row = await teamRow(tenantId, groupTypeId, 'Thistledown Removals and Storage')
+    await seedFact(db, {
+      tenantId,
+      entityKind: 'domain',
+      entityType: 'team',
+      entityId: row.id,
+      documentId: docId,
+      value: 50,
+    })
+    const body = mentionedFactsResponseSchema.parse(
+      await json(await mentioned('Larkspur Veterinary Practice and Thistledown'))
+    )
+    expect(body.entities).toEqual([])
+  })
+})

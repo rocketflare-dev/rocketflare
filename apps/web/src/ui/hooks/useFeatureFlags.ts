@@ -1,5 +1,5 @@
 /**
- * Feature flags for the global-admin area (D30).
+ * Feature flags for the global-admin area.
  *
  * Two layers are visible here and the page has to keep them apart: `availableInEnvironment` is
  * config (a redeploy moves it), everything else is rollout state (a click moves it). A flag that is

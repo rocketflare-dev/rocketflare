@@ -3,7 +3,8 @@ name: CI
 # The quality gate, in ONE job: the secrets scan, then `pnpm gate` — lint, typecheck, test, build,
 # the same command a person runs before committing and Launch's ship gate runs in a sandbox
 # (docs/CONCEPTS.md §4). The workflow adds no check of its own beyond gitleaks, so what passes
-# here is exactly what passes on a laptop; `tests/config/ci-workflows.test.ts` holds it to that.
+# here is exactly what passes on a laptop. Keep it that way; `scripts/kit-check.mjs` checks the
+# Launch contract (the required check, the gate-verified variable).
 #
 # `pnpm test` (the gate's `test` step) starts the test Postgres and the Neon proxy from
 # `apps/web/docker-compose.test.yml` itself, runs the suite under `postgres`, then the `driver`
@@ -13,7 +14,7 @@ name: CI
 #
 # deploy.yml calls this same file (`workflow_call`) before deploying a tag whose commit has no
 # green CI run yet, so a commit is gated once and the gate never drifts between main and deploy.
-# The kit's OWN checks (a renamed copy, the default plugins, the porting note) are kit.yml, which a
+# The kit's OWN checks (a renamed copy, the CI plugins, the porting note) are kit.yml, which a
 # copy never carries.
 #
 # Verified once (opt-in, for an app shipped by Launch): with the repository variable
@@ -39,6 +40,7 @@ jobs:
   gate:
     name: Gate
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     # The lookup reads check runs and a commit's pull requests; nothing in this job writes. deploy.yml's
     # `ci` job grants the same three: a called workflow may not ask for more than its caller grants.
     permissions:
@@ -46,8 +48,9 @@ jobs:
       checks: read
       pull-requests: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0 # full history for the gitleaks scan
       # Was this tree already gated by Launch? Skipped outright without LAUNCH_GATE_APP_ID. Which
       # tree is compared: the CHECKED-OUT commit's — on a pull request GitHub's merge commit, the
@@ -75,8 +78,8 @@ jobs:
             > "$RUNNER_TEMP/pull.log" 2>&1 &
       # pnpm version comes from `packageManager` in the root package.json. Must precede setup-node
       # so `cache: pnpm` can find the store.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -86,9 +89,15 @@ jobs:
       # secret committed and then removed is still caught. The binary directly (the marketplace
       # action needs a licence for org repos).
       - name: gitleaks
+        shell: bash
+        env:
+          GITLEAKS_SHA256: 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c
         run: |
-          curl -sSL "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz" \
-            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          gitleaks_tgz="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl -sSfL -o "$gitleaks_tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz"
+          echo "$GITLEAKS_SHA256  $gitleaks_tgz" | sha256sum --check --strict
+          tar -xzf "$gitleaks_tgz" -C "$RUNNER_TEMP" gitleaks
           "$RUNNER_TEMP/gitleaks" git --redact --exit-code 1 --verbose .
 
       # Launch's sandbox already passed lint, typecheck and test on this tree; build is the step it

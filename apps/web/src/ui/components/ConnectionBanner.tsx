@@ -1,5 +1,5 @@
 /**
- * Degraded-realtime banner (D8): shown once the socket has been away from `open` for longer than
+ * Degraded-realtime banner: shown once the socket has been away from `open` for longer than
  * `DEGRADED_AFTER_MS` while signed in with a tenant. Lists stay correct (the DB is the truth and
  * every mutation invalidates), they just stop refreshing live — so the copy says exactly that.
  */

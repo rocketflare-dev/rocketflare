@@ -10,7 +10,7 @@
  * written justification, in `packages/shared/CLAUDE.md` and the root `CLAUDE.md`.
  *
  * The second half of this file is a different rule with the same shape: **`src/plugins/**` may not
- * import one of the five composers AT RUNTIME** (D31). Those five read the plugin barrel to open
+ * import one of the five composers AT RUNTIME**. Those five read the plugin barrel to open
  * their closed sets, so a plugin module importing one back closes a cycle through
  * `plugins/index.ts` — and two zod modules in a cycle do not fail to compile, they crash at module
  * evaluation with one side holding `undefined`. Nothing but a source scan can see it, because with
@@ -29,7 +29,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import ts from 'typescript6'
 import { describe, expect, it } from 'vitest'
 
 const SHARED_ROOT = path.resolve(__dirname, '../../../../packages/shared')
@@ -149,7 +149,7 @@ describe('packages/shared imports', () => {
   })
 })
 
-// ---- the plugin runtime-import rule (D31) -------------------------------------------------------
+// ---- the plugin runtime-import rule ------------------------------------------------------------
 
 interface RelativeImport {
   /** Resolved against the importing file, so `./types` from `src/plugins/` is `src/plugins/types`. */

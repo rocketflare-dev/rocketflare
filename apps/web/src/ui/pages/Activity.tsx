@@ -1,4 +1,4 @@
-/** `/activity` (D13): the tenant's audit log, admin-level, paginated. */
+/** `/activity`: the tenant's audit log, admin-level, paginated. */
 import { ClockIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 import {

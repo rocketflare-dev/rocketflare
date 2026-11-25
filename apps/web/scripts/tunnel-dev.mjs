@@ -13,41 +13,43 @@
 //      `PUBLIC_URL=… pnpm dev`.
 //
 // Neither .dev.vars nor the tomls are touched; a plain `pnpm dev` still uses http://localhost:3000.
+// `--var` beats `.dev.vars`; why the flag carries no `--` is in lib/tunnel-dev.mjs.
 import { spawn } from 'node:child_process'
+import { tunnelChildren } from './lib/tunnel-dev.mjs'
 
-const publicUrl = process.env.PUBLIC_URL
-if (!publicUrl) {
-  console.error(
-    '[tunnel-dev] PUBLIC_URL is not set — run this via `pnpm dev:tunnel` (cfld injects it), not directly.'
+main()
+
+function main() {
+  const publicUrl = process.env.PUBLIC_URL
+  if (!publicUrl) {
+    console.error(
+      '[tunnel-dev] PUBLIC_URL is not set — run this via `pnpm dev:tunnel` (cfld injects it), not directly.'
+    )
+    process.exit(1)
+  }
+
+  console.log(`[tunnel-dev] APP_URL → ${publicUrl}`)
+
+  const children = tunnelChildren(publicUrl).map(([cmd, args]) =>
+    spawn(cmd, args, { stdio: 'inherit', env: process.env })
   )
-  process.exit(1)
+
+  let exiting = false
+  function shutdown(code, signal) {
+    if (exiting) return
+    exiting = true
+    for (const c of children) if (c.exitCode === null) c.kill(signal ?? 'SIGTERM')
+    // cfld owns the process tree and stops it on Ctrl-C; mirror the first child's exit.
+    if (signal) process.kill(process.pid, signal)
+    else process.exit(code ?? 0)
+  }
+
+  for (const child of children) {
+    child.on('exit', (code, signal) => shutdown(code, signal))
+    child.on('error', err => {
+      console.error(`[tunnel-dev] failed to start: ${err.message}`)
+      shutdown(1)
+    })
+  }
+  for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => shutdown(0, sig))
 }
-
-console.log(`[tunnel-dev] APP_URL → ${publicUrl}`)
-
-const children = [
-  spawn('pnpm', ['dev:api', '--', '--var', `APP_URL:${publicUrl}`], {
-    stdio: 'inherit',
-    env: process.env,
-  }),
-  spawn('pnpm', ['dev:ui'], { stdio: 'inherit', env: process.env }),
-]
-
-let exiting = false
-function shutdown(code, signal) {
-  if (exiting) return
-  exiting = true
-  for (const c of children) if (c.exitCode === null) c.kill(signal ?? 'SIGTERM')
-  // cfld owns the process tree and stops it on Ctrl-C; mirror the first child's exit.
-  if (signal) process.kill(process.pid, signal)
-  else process.exit(code ?? 0)
-}
-
-for (const child of children) {
-  child.on('exit', (code, signal) => shutdown(code, signal))
-  child.on('error', err => {
-    console.error(`[tunnel-dev] failed to start: ${err.message}`)
-    shutdown(1)
-  })
-}
-for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => shutdown(0, sig))

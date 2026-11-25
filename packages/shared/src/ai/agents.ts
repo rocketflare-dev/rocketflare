@@ -1,5 +1,5 @@
 /**
- * Agent runtime contracts (D7, D17): the agent roster, the run lifecycle, the `agent_runs` row the
+ * Agent runtime contracts: the agent roster, the run lifecycle, the `agent_runs` row the
  * API returns, the request/list/event shapes, and the one example agent's input/output schemas.
  * The server's registry (`apps/web/src/api/services/agents/registry.ts`) attaches a `run()` to
  * each `AgentMeta`; the UI only ever needs what is here. "DB is the truth": progress is durable in
@@ -20,14 +20,14 @@ import {
 } from './interrupts'
 import { promptKeySchema } from './prompts'
 
-/** Stable identifier for each agent the KIT ships. Append LAST; an app extends this list. */
+/** Stable identifier for each built-in agent. Append LAST; an app extends this list. */
 export const CORE_AGENT_KEYS = ['summarize-text', 'research-topic', 'triage-research'] as const
 
 type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'agentKeys'>>[number]
 
 /**
- * Core keys plus every installed plugin's (D31). `z.enum` needs a non-empty tuple and gets one
- * because the kit's own keys lead the list; iterate the widened barrel to build the tail (an EMPTY
+ * Core keys plus every installed plugin's. `z.enum` needs a non-empty tuple and gets one
+ * because the core keys lead the list; iterate the widened barrel to build the tail (an EMPTY
  * tuple indexes to `never`, and `never.agentKeys` is a type error), then restore what the tuple
  * says those elements are.
  */
@@ -56,13 +56,13 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
   title: string
   description: string
   /** Output type `Input` — the raw (`unknown`) side may carry defaults/coercions. */
-  inputSchema: z.ZodType<Input, z.ZodTypeDef, unknown>
-  outputSchema: z.ZodType<Output, z.ZodTypeDef, unknown>
+  inputSchema: z.ZodType<Input, unknown>
+  outputSchema: z.ZodType<Output, unknown>
   /** Registry prompt (and `agent_models` assignment key) the agent runs with. */
   promptKey: z.infer<typeof promptKeySchema>
   exclusive: boolean
   /**
-   * Who may answer this agent's interrupts (issue #17). `'requester'` (the default) is "whoever
+   * Who may answer this agent's interrupts. `'requester'` (the default) is "whoever
    * may cancel this run may answer it" — the SAME rule `visible()` already implements, so there is
    * one mental model rather than two. `'admin'` is the opt-in for agents that touch money,
    * customers or deletion. It is not a new CASL subject: an app wanting approvals on its own axis
@@ -70,22 +70,70 @@ export interface AgentMeta<Input = unknown, Output = unknown> {
    */
   approvers?: z.infer<typeof agentApproversSchema>
   /**
-   * D39: what ONE run of this agent may spend, overriding `AGENT_RUN_MAX_TOKENS` /
+   * What ONE run of this agent may spend, overriding `AGENT_RUN_MAX_TOKENS` /
    * `AGENT_RUN_MAX_COST_USD`. Checked before every model call and decision the run makes; a run
-   * over it fails with event code `agent_budget_exceeded`. Decision engines with no price
-   * (TypeSafe) count toward `maxTokens` only.
+   * over it fails with event code `agent_budget_exceeded`. Tokens include prompt-cache reads and
+   * writes. Decision engines with no price (TypeSafe) count toward `maxTokens` only; a chat model
+   * with no known price is refused while a cost cap applies.
    */
   budget?: AgentBudget
   /**
-   * D39: how far ONE run's tool loop may go, and what happens when it runs out. Enforced by
+   * How far ONE run's tool loop may go, and what happens when it runs out. Enforced by
    * `runToolLoop` when the agent passes it (`policy: meta.policy`); `AGENT_MAX_TURNS` stays the
    * ceiling a policy cannot raise. Absent, a loop behaves exactly as before: it stops at the turn
    * cap and hands back no answer.
    */
   policy?: AgentPolicy
+  /**
+   * The agent's version, `1` when absent. **Bump it when a change would move what a run in
+   * flight already recorded**: its `once` / `decide` / `interrupt` / `spawn` keys or their order,
+   * its input or output schema, its tools. A prompt edit does not need one — model turns are
+   * recorded by what was asked (`request_hash`), not by where. Every run records the version it
+   * runs under (`agent_runs.agent_version`); a run that resumes under another meets
+   * {@link AgentMeta.onVersionChange}, and the gate's recorded-run replay fails a key-order change
+   * that did not bump it.
+   */
+  version?: number
+  /**
+   * Keys from ORDER, not data: a repeated `ctx.once` label is the next occurrence (`label@2`)
+   * rather than a conflict. Only sound when a run never meets another version of the code, so a
+   * pinned agent's `onVersionChange` is always `fail`.
+   */
+  pinned?: boolean
+  /**
+   * What a run does when it resumes (a retry, or an answered ask) under a different
+   * {@link AgentMeta.version} than the one it recorded. `continue` (the default): carry on —
+   * sound because keys come from recorded data. `fail`: settle it `failed`, code
+   * `agent_version_changed` (forced for `pinned`). `rerun`: cancel it and start a new run of the
+   * same input under today's version (the new run's id is on the old run's `status` event).
+   */
+  onVersionChange?: AgentVersionChangePolicy
+  /** Human-in-the-loop timing for this agent's asks. */
+  hitl?: AgentHitl
 }
 
-/** D39: a per-run spending cap. Either side may be absent — the deployment's default applies. */
+export const AGENT_VERSION_CHANGE_POLICIES = ['continue', 'fail', 'rerun'] as const
+export type AgentVersionChangePolicy = (typeof AGENT_VERSION_CHANGE_POLICIES)[number]
+
+/**
+ * `remindAfter` (a Workflows duration, `'1 day'`): the assignees of an ask still pending after it
+ * are reminded ONCE, by the sweeper. `onTimeout` is what an ask that expired means: `expire` (the
+ * default) cancels the run; `reject` answers it as a rejection and the run carries on — an
+ * approval gate with `onReject: 'tell_model'` then tells the model, any other ask cancels. Never
+ * approve-by-default: silence is not consent.
+ */
+export interface AgentHitl {
+  /**
+   * How long an ask stays open (a Workflows duration), capped at `AGENT_INTERRUPT_TIMEOUT` —
+   * the Workflow's own wait. Set it SHORTER than that for `onTimeout: 'reject'`: the sweeper
+   * (every 10 minutes) applies it, and at the cap the Workflow's wait ends first and cancels.
+   */
+  timeout?: string
+  remindAfter?: string
+  onTimeout?: 'expire' | 'reject'
+}
+
+/** A per-run spending cap. Either side may be absent — the deployment's default applies. */
 export interface AgentBudget {
   maxTokens?: number
   maxCostUsd?: number
@@ -95,7 +143,7 @@ export const AGENT_EXHAUSTION_MODES = ['final-answer', 'fail'] as const
 export type AgentExhaustionMode = (typeof AGENT_EXHAUSTION_MODES)[number]
 
 /**
- * D39: a tool loop's limits, every one counted across ALL attempts of the run — the turns and
+ * A tool loop's limits, every one counted across ALL attempts of the run — the turns and
  * the active time ride the checkpoint, the tool calls and the failures are read back out of the
  * transcript — so a retried step never gets a fresh allowance. Time spent parked on a person is
  * not active time.
@@ -127,11 +175,11 @@ export const agentInfoSchema = z.object({
   promptKey: promptKeySchema,
   exclusive: z.boolean(),
   approvers: agentApproversSchema.default('requester'),
-  /** D39: the agent's tool-loop policy, when it declares one — the Agents page shows it. */
+  /** The agent's tool-loop policy, when it declares one — the Agents page shows it. */
   policy: agentPolicySchema.optional(),
   /**
    * The agent's `inputSchema` as JSON Schema, produced server-side by `toolInputSchema()`
-   * (`services/ai/kit.ts`). Three reasons it is this and not zod: the conversion already exists;
+   * (`services/ai/agent-loop.ts`). Three reasons it is this and not zod: the conversion already exists;
    * it keeps zod off the client, which is what holds the zod-3/zod-4 boundary; and it is the SAME
    * shape `Interrupt.responseSchema` carries, so ONE renderer serves both the run form and the
    * `form` interrupt kind — which is why that kind costs almost nothing.
@@ -147,9 +195,9 @@ export type AgentListResponse = z.infer<typeof agentListResponseSchema>
 
 /**
  * `queued` = row exists, Workflow instance created, not yet claimed; `running` = claimed by the
- * execute step; `awaiting_input` = parked on a human decision (issue #17), which is a real
+ * execute step; `awaiting_input` = parked on a human decision, which is a real
  * lifecycle state and not a terminal one. Terminal: `succeeded` / `failed` / `cancelled` (a
- * status, never a message — see 09 §4.1 on why a cancel must not be a `failed` row with prose).
+ * status, never a message — a cancel must not be a `failed` row with prose).
  *
  * Appended LAST because it is a `z.enum` mirrored by a text column.
  */
@@ -202,13 +250,26 @@ export const agentRunSchema = z.object({
   cancelRequestedAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
   /**
-   * D39: whether this run held its agent's exclusive slot — copied from `meta.exclusive` at enqueue,
+   * Whether this run held its agent's exclusive slot — copied from `meta.exclusive` at enqueue,
    * so the database predicate does not depend on the code that is deployed today. Defaulted for a
-   * response from a server older than D39.
+   * response from an older server.
    */
   exclusive: z.boolean().default(true),
-  /** D39: the `POST /runs/batch` call that created this run; null for a single enqueue. */
+  /** The `POST /runs/batch` call that created this run; null for a single enqueue. */
   batchId: z.string().uuid().nullable().default(null),
+  /**
+   * The plugin event that started this run (D42) — an agent `trigger` or a `bindable` start — e.g.
+   * `sites.form.submitted`; null for a run a person or a job started. Defaulted for an older server.
+   */
+  triggerEvent: z.string().nullable().default(null),
+  /** That event's `plugin_events` id. The row is pruned after the retention window; this is not. */
+  triggerEventId: z.string().uuid().nullable().default(null),
+  /** The `meta.version` the run executes under. Defaulted for an older server. */
+  agentVersion: z.number().int().positive().default(1),
+  /** The Worker deployment the run last executed on, when the deployment says. */
+  workerVersionId: z.string().nullable().default(null),
+  /** The run that spawned this one (`ctx.spawn`); null for a top-level run. */
+  parentRunId: z.string().uuid().nullable().default(null),
 })
 export type AgentRun = z.infer<typeof agentRunSchema>
 
@@ -221,8 +282,14 @@ export type CreateAgentRunResponse = z.infer<typeof createAgentRunResponseSchema
 export const agentRunListQuerySchema = paginationQuerySchema.extend({
   agentKey: agentKeySchema.optional(),
   status: agentRunStatusSchema.optional(),
-  /** D39: only the runs one batch created. */
+  /** Only the runs one batch created. */
   batchId: z.string().uuid().optional(),
+  /** The children one run spawned. Without it the list holds top-level runs only. */
+  parentRunId: z.string().uuid().optional(),
+  /** Created at or after this instant. */
+  since: z.coerce.date().optional(),
+  /** Runs that recorded this `meta.version` — the ones a version change affects. */
+  agentVersion: z.coerce.number().int().positive().optional(),
 })
 export type AgentRunListQuery = z.infer<typeof agentRunListQuerySchema>
 
@@ -233,7 +300,28 @@ export const createAgentRunRequestSchema = z.object({
 })
 export type CreateAgentRunRequest = z.infer<typeof createAgentRunRequestSchema>
 
-// ---- Batch enqueue (D39) -------------------------------------------------------------------------
+// ---- Bindable agents (D42) -------------------------------------------------------------------
+
+/**
+ * `GET /api/agents/bindable?event=` — the agents that opt in (`bindable`) to being started by one
+ * plugin event when a subject names them: the list behind a no-code "On submit, start" picker.
+ */
+export const bindableAgentListQuerySchema = z.object({
+  event: z.string().min(1).max(200),
+})
+export type BindableAgentListQuery = z.infer<typeof bindableAgentListQuerySchema>
+
+export const bindableAgentSchema = z.object({
+  key: agentKeySchema,
+  title: z.string(),
+  description: z.string(),
+})
+export type BindableAgent = z.infer<typeof bindableAgentSchema>
+
+export const bindableAgentListResponseSchema = z.object({ items: z.array(bindableAgentSchema) })
+export type BindableAgentListResponse = z.infer<typeof bindableAgentListResponseSchema>
+
+// ---- Batch enqueue -------------------------------------------------------------------------
 
 /** Most inputs one `POST /api/agents/runs/batch` takes — the Workflows `createBatch` ceiling. */
 export const AGENT_RUN_BATCH_MAX = 100
@@ -321,6 +409,12 @@ export const agentToolStartEventDataSchema = z
      * the day two calls to the same tool run in one turn.
      */
     toolCallId: z.string().optional(),
+    /**
+     * `'model'`: a MODEL call the runtime recorded (`services/agents/recording.ts`) — `name` is
+     * the model, `input` counts what was sent. Not a tool the model called: the AG-UI projection
+     * and the evals export skip it. Absent: a tool call.
+     */
+    kind: z.literal('model').optional(),
   })
   .passthrough()
 export type AgentToolStartEventData = z.infer<typeof agentToolStartEventDataSchema>
@@ -331,6 +425,8 @@ export const agentToolEndEventDataSchema = z
     result: z.unknown().optional(),
     isError: z.boolean().optional(),
     toolCallId: z.string().optional(),
+    /** As on `tool.start`. */
+    kind: z.literal('model').optional(),
   })
   .passthrough()
 export type AgentToolEndEventData = z.infer<typeof agentToolEndEventDataSchema>
@@ -358,7 +454,7 @@ export const agentErrorEventDataSchema = z
      * produced no call — `{ reason, stopReason, text }` with what the model actually said.
      */
     details: z.unknown().optional(),
-    /** A machine-readable reason, when there is one — `agent_budget_exceeded` (D39). */
+    /** A machine-readable reason, when there is one — `agent_budget_exceeded`. */
     code: z.string().optional(),
   })
   .passthrough()
@@ -400,9 +496,9 @@ export const agentRunWithEventsSchema = agentRunSchema.extend({
   interrupts: z.array(agentRunInterruptSchema).default([]),
   /** What the run produced that a person opens, keyed by `key` and upserted as it is redrafted. */
   artifacts: z.array(agentArtifactSchema).default([]),
-  /** Every typed question the run asked (D37) — answers, probabilities, the engine that gave them. */
+  /** Every typed question the run asked — answers, probabilities, the engine that gave them. */
   decisions: z.array(agentRunDecisionSchema).default([]),
-  /** D39: what the run spent, every attempt included — its `ai_usage` rows, summed. */
+  /** What the run spent, every attempt included — its `ai_usage` rows, summed. */
   usage: z
     .object({
       calls: z.number().int().nonnegative(),
@@ -414,6 +510,48 @@ export const agentRunWithEventsSchema = agentRunSchema.extend({
     .optional(),
 })
 export type AgentRunWithEvents = z.infer<typeof agentRunWithEventsSchema>
+
+// ---- Per-agent stats (GET /api/agents/stats) -----------------------------------------------------
+
+export const agentStatsQuerySchema = z.object({
+  /** The window, in days back from now. */
+  days: z.coerce.number().int().min(1).max(365).default(30),
+})
+export type AgentStatsQuery = z.infer<typeof agentStatsQuerySchema>
+
+/**
+ * One agent's runs in the window, as the caller may see them (a member: their own; admin+: all) —
+ * child runs included, since they are runs of that agent. `lastRun` is the newest top-level run
+ * the caller may see, in or out of the window.
+ */
+export const agentStatsSchema = z.object({
+  agentKey: agentKeySchema,
+  runs: z.number().int().nonnegative(),
+  succeeded: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  /** Queued, running or awaiting input now. */
+  active: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+  /** Priced calls only; an unpriced model counts in `tokens` alone. */
+  costUsd: z.number().nonnegative(),
+  /** Mean wall-clock of the window's settled runs; null when none settled. */
+  avgDurationMs: z.number().nonnegative().nullable(),
+  lastRun: z
+    .object({
+      id: z.string().uuid(),
+      status: agentRunStatusSchema,
+      createdAt: z.coerce.date(),
+      finishedAt: z.coerce.date().nullable(),
+    })
+    .nullable(),
+})
+export type AgentStats = z.infer<typeof agentStatsSchema>
+
+export const agentStatsResponseSchema = z.object({
+  since: z.coerce.date(),
+  items: z.array(agentStatsSchema),
+})
+export type AgentStatsResponse = z.infer<typeof agentStatsResponseSchema>
 
 // ---- Suspend / resume ----------------------------------------------------------------------------
 
@@ -532,7 +670,7 @@ export const researchTopicOutputSchema = z.object({
 })
 export type ResearchTopicOutput = z.infer<typeof researchTopicOutputSchema>
 
-// ---- The decisions example agent (D37) ----------------------------------------------------------
+// ---- The decisions example agent ----------------------------------------------------------
 
 /** Longest question `triage-research` accepts (characters). */
 export const TRIAGE_RESEARCH_MAX_CHARS = 2_000

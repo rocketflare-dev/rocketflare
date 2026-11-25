@@ -52,7 +52,7 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   `FEATURES_ENABLED = ""` (D30: keys this deployment ships at all; blank is fail-closed, and the key
   must ALSO be in `.dev.vars.example` — `wrangler dev` reads `[vars]` from `wrangler.toml`, so a
   feature shipped dark in production would otherwise be dark on every laptop),
-  `OBSERVABILITY_CAPTURE_CONTENT = "true"`, `OBSERVABILITY_SPAN_RETENTION_DAYS = "14"` (D32);
+  `OBSERVABILITY_CAPTURE_CONTENT = "false"`, `OBSERVABILITY_SPAN_RETENTION_DAYS = "14"` (D32);
   `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
   `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT` default in
   `config.ts` and are added to BOTH files only when used (the parity test compares `[vars]` keys;
@@ -74,7 +74,10 @@ an `<object>`/`<iframe>` embed and an `<a download>` click are navigations too �
 missing from `run_worker_first` is silently served the app shell for exactly those requests. No test
 of the Hono app can see this (they never reach the asset router), so the list is derived from
 `API_PREFIXES` (`api/utils/routes/api-prefixes.ts`) and `wrangler-parity.test.ts` asserts both tomls
-equal it. Add a top-level route prefix → add it there. `apps/web/tests/config/wrangler-parity.test.ts` enforces
+equal it. Add a top-level route prefix → add it there. While a plugin declares `publicSites` the
+value is `["/*", "!/assets/*", "!/site-assets/*"]` and `not_found_handling` is `"none"` instead (a
+miss under either prefix is a 404, never the shell): the catch-all in `api/index.ts` fetches the
+shell for a navigation. `apps/web/tests/config/wrangler-parity.test.ts` enforces
 this; `REQUIRE_PROVISIONED=1` additionally forbids `<PLACEHOLDER>` values (CI sets it before deploy).
 
 ## Account-scoped names
@@ -94,9 +97,11 @@ The one place a name leaks into code is the queue consumer: `batch.queue` is the
 **prefix** — `isJobsQueue()` / `JOBS_QUEUE_NAME_PREFIX` in `apps/web/src/api/services/jobs.ts` —
 and `ackAll()`s any queue it does not know. Renaming the queue = both tomls (`[[queues.producers]]`
 + `[[queues.consumers]]`) + that one constant (`tests/api/queue-dispatch.test.ts` pins both names).
-Prefix matching also means a `rocketflare-jobs-dlq` would be dispatched to the SAME consumer if you
-ever bound a consumer to it — a dead-letter queue you want to inspect rather than reprocess needs a
-name outside the prefix or its own branch in `queue.ts`.
+Prefix matching also means the jobs dead-letter queue (`rocketflare-jobs-dlq` /
+`rocketflare-jobs-dlq-staging`, `dead_letter_queue` on both consumers, created by `pnpm provision
+cloudflare`) would be dispatched to the SAME consumer if you ever bound a consumer to it — it is
+deliberately unconsumed (inspected from the dashboard); one you want to drain needs a name outside
+the prefix or its own branch in `queue.ts` (`wrangler-parity.test.ts` refuses a consumer on it).
 
 ## `[limits] cpu_ms` is per step
 
@@ -195,7 +200,7 @@ turn was investigated and rejected (`docs/CONCEPTS.md` §9 Known gaps): steps do
 
 ## Bundle size (the analytics plugin's caveat)
 
-`pnpm build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows;
+`pnpm web build:api` (`wrangler deploy --dry-run --outdir dist/api`) is where the Worker's size shows;
 `gzip -c dist/api/worker.js | wc -c` is the number. **No figure is written down here or in any other
 doc, deliberately** — it moves with every dependency bump, so a quoted one is wrong almost
 immediately and reads as a budget nobody is holding. Measure it when you need it.
@@ -214,7 +219,8 @@ is the thing to look at, not the absolute.**
 ## Plugins and the tomls (D31)
 
 **A plugin never edits a wrangler toml; `pnpm provision cloudflare <env>` does it for you, from the
-plugin's own `plugin.json`.** Four declarations, and the phase writes the first four rows into BOTH
+plugin's own `plugin.json`** (the one thing `pnpm plugin add` writes itself is the `publicSites`
+`run_worker_first` widening and `not_found_handling = "none"`, both kept and restored by `remove`, which marks a restored list lacking prefixes provisioned since `# rocketflare:reprovision` until `provision cloudflare` puts them back; `pnpm provision urls` writes its hosts' routes). Four declarations, and the phase writes the first four rows into BOTH
 tomls before it creates anything — the ordinary parity test compares binding names, `[vars]` keys,
 crons and `run_worker_first` across the two files on every `pnpm test`, so patching only one would
 leave the gate red until somebody remembered the other.
@@ -258,13 +264,18 @@ meaning loses a namespace and everything stored in it.
 
 Allowed and used: `Buffer`, `AsyncLocalStorage`, `node:crypto` hashing, `process.env` **inside
 dependencies only**. Banned in `apps/web/src/`: `pg`, `pg-boss`, `ws`, `node:fs`, `node:child_process`,
-`node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, any `setInterval` at module scope,
-`process.env` (read config via `loadConfig(env)`). `pnpm build:api` (dry-run `wrangler deploy`) is
+`node:http`, `@hono/node-server`, `@opentelemetry/sdk-node`, `process.env` (read config via
+`loadConfig(env)`). **Nothing refused in global scope**: no `crypto.randomUUID()` /
+`getRandomValues()`, `setTimeout` / `setInterval` or `fetch` while a module loads — Cloudflare
+evaluates the top level at upload and fails the deploy (error 10021), while `wrangler dev` and the
+tests allow all of them. Make the value on first use (`let id; … id ??= crypto.randomUUID()`).
+`tests/config/global-scope.test.ts` loads `src/worker.ts`, every installed plugin included, with
+them made to throw. `pnpm web build:api` (dry-run `wrangler deploy`) is
 the check `tsc` cannot do — run it before pushing a new dependency.
 
 ## Local testing of the non-HTTP entry points
 
-`wrangler dev` (`pnpm dev:api`, :3001) emulates KV, Queues, DO, R2 and Workflows locally and reads
+`wrangler dev` (`pnpm web dev:api`, :3001; always with `--infer-origin-from-routes=false`, or a toml with `routes` makes every local request look like its first route) emulates KV, Queues, DO, R2 and Workflows locally and reads
 the database from `.dev.vars` (`DATABASE_DRIVER=postgres` + `DATABASE_URL`, or `neon` +
 `NEON_LOCAL_PROXY` after `pnpm dev:db:up --neon`; a copy with a `[[hyperdrive]]` block also gets its
 `localConnectionString`). **Start and stop the stack through the scripts, never by
@@ -279,7 +290,7 @@ process is a tree that can be killed, and it lets the script own the output) —
 they boot, then ONE ready line with the Vite URL, then only app logs, warnings and errors
 (wrangler's twice-printed bindings table, its Local-Explorer banner and its copies of requests the
 app already logged are filtered; `DEV_VERBOSE=1` or `--verbose` prints every raw line, and
-`pnpm dev:api` / `pnpm dev:ui` run either server unfiltered). Ctrl-C, SIGTERM and a child that
+`pnpm web dev:api` / `pnpm web dev:ui` run either server unfiltered). Ctrl-C, SIGTERM and a child that
 dies during boot all go through one `shutdown` — children signalled, then the repo swept, so no
 `workerd` is orphaned; a child that dies AFTER ready restarts in 2 s. `pnpm dev:stop` kills the
 tree supervisor-FIRST and loops (SIGTERM pass, then SIGKILL passes) until the repo is quiet — a
@@ -313,10 +324,10 @@ curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # the an
 pnpm --filter @rocketflare/web exec wrangler workflows instances describe rocketflare-agent-run <runId>
 # Workers AI: `wrangler dev` proxies the `AI` binding to Cloudflare (a logged-in account; the calls are
 # real). Tests never touch it — `RecordingAi` answers deterministic vectors (.claude/rules/testing.md).
-# Offline switch: `pnpm bootstrap --offline` / `--online` (toggleAiBlock in scripts/lib/bootstrap-lib.mjs
-# comments the [ai] block out of BOTH tomls, or restores it, text-level — parity stays green because
-# the block is absent from both). `pnpm typecheck` then regenerates worker-configuration.d.ts without
-# `AI`: never commit that diff — run `--online` first.
+# Offline switch: `DEV_WORKERS_AI=off` in .dev.vars (`pnpm bootstrap --offline`; `--online` sets `on`).
+# Every local wrangler dev launch then runs from apps/web/.wrangler.offline.toml, a git-ignored copy of
+# wrangler.toml without [ai] (scripts/lib/dev-ai.mjs). The tracked tomls and worker-configuration.d.ts
+# never change for it — never comment the [ai] block out to go offline.
 ```
 
 `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml]` streams deployed logs; `[observability.logs]` is on.
@@ -330,7 +341,9 @@ different existing id refused unless `--force`) is the one writer of ids, `APP_U
 the `routes` line and the database driver (`DATABASE_DRIVER` plus the `[[hyperdrive]]` block, added
 under `postgres` and removed under `neon`, in BOTH tomls — `pnpm provision cloudflare <env> --driver
 neon|postgres`, D35) — `cf-provision.sh --apply` calls it; nobody hand-types an id. (The only other
-programmatic toml writer is `toggleAiBlock` above, same byte-preserving rule.) Worker secrets go in
+programmatic toml writer is `toggleAiBlock`, same byte-preserving rule: the bootstrap uses it only to
+restore an `[ai]` block an older release commented out, and `dev-ai.mjs` to write the git-ignored
+offline copy.) Worker secrets go in
 over stdin (`wrangler secret put NAME` reads stdin when it is not a TTY — never `--body`, never
 `secret bulk`), including a `neon` Worker's `DATABASE_URL` (the pooled Neon URI, put by `secrets`
 and `deploy`; `--rotate` re-puts it where `postgres` updates the Hyperdrive config); the vendor tokens are read from the environment first, then `apps/web/.provision.env`

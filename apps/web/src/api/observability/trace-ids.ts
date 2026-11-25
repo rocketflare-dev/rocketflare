@@ -1,5 +1,5 @@
 /**
- * OTLP identifiers (D32): a trace id is 16 bytes and a span id 8, both lowercase hex on the wire.
+ * OTLP identifiers: a trace id is 16 bytes and a span id 8, both lowercase hex on the wire.
  *
  * An agent run's steps execute as SEPARATE Worker invocations — `execute#0`, a retry, `execute#1`
  * after a park, `finish` — and nothing is carried between them but the run row. So the run's trace

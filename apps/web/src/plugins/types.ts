@@ -1,5 +1,5 @@
 /**
- * The Worker half of a plugin (D31): what a plugin contributes to the server and to the UI.
+ * The Worker half of a plugin: what a plugin contributes to the server and to the UI.
  *
  * Both interfaces are generic over the plugin's `SharedPlugin` so that `jobHandlers`, `agents` and
  * `prompts` are checked for exhaustiveness against the keys that same plugin declared — one
@@ -23,14 +23,20 @@ import type { EffectiveRole } from '@rocketflare/shared/permissions'
 import type { AgentKeyOf, JobTypeOf, PromptKeyOf, SharedPlugin } from '@rocketflare/shared/plugins'
 import type { Hono, MiddlewareHandler } from 'hono'
 import type { ComponentType, LazyExoticComponent } from 'react'
+import type { PluginLoginMethodDeclaration } from '../api/auth/plugin-login-methods'
+import type { SsoPolicy } from '../api/auth/sso-policy'
 import type { EmailHandler } from '../api/email'
 import type { JobHandler } from '../api/queues/jobs'
 import type { ScheduledTask } from '../api/scheduled'
 import type { VisibilityResource } from '../api/services/access'
+import type { AccessScope } from '../api/services/access-sql'
 import type { AnyAgentDefinition } from '../api/services/agents/registry'
 import type { AgentToolContext } from '../api/services/agents/tools'
-import type { Tool } from '../api/services/ai/kit'
+import type { Tool } from '../api/services/ai/agent-loop'
+import type { EventHandler } from '../api/services/events/types'
+import type { EntityTypeRegistration } from '../api/services/knowledge/types'
 import type { AppBindings, AppEnv } from '../api/types'
+import type { AppConfig } from '../config'
 import type { Database } from '../db/client'
 import type { Tenant } from '../db/schema'
 import type { RoleGrant } from '../permissions/abilities'
@@ -38,17 +44,107 @@ import type { NavItem } from '../ui/components/SideNav'
 import type { TabConfig } from '../ui/components/shared'
 import type { NavGuard } from '../ui/hooks/useNavGuard'
 import type { AgentForm } from '../ui/pages/agents/forms'
-import type { QuickLink } from '../ui/pages/Home'
+import type { QuickLink } from '../ui/pages/home-links'
 
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 
 /**
- * One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads
- * `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or
+ * How the host guards one public mount before its router runs. Both are applied by the HOST
+ * (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is throttled
+ * and size-capped by default.
+ */
+export interface PluginPublicMountOptions {
+  /**
+   * Per-IP KV sliding window, its bucket named after the prefix (no two mounts share one).
+   * Omitted → `PUBLIC_MOUNT_RATE_LIMIT` (120 / 60 s / IP). `false` turns it off — for a webhook
+   * sender with fixed IPs that batches, where the handler's proof of the caller is the gate.
+   * A no-op without the `RATE_LIMIT_KV` binding, like every kit rate limit.
+   */
+  rateLimit?: { max: number; windowSeconds: number } | false
+  /**
+   * Replaces the global 1 MB body cap for everything beneath this prefix, whatever the content
+   * type (JSON, `application/x-www-form-urlencoded`, `application/scim+json`…). At most
+   * `MAX_PUBLIC_MOUNT_BODY_BYTES` (10 MB) — the config test refuses more, the host clamps.
+   */
+  bodyLimitBytes?: number
+}
+
+/**
+ * One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate
+ * reads `auth.features` and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or
  * beneath it; handlers build `publicCtx(c)` and prove who is calling before they touch a row.
  */
-export type PluginPublicMount = readonly [string, Hono<AppEnv>]
+export type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
+
+export interface PublicSiteFormPath {
+  /** Exact path, e.g. `/forms/contact`. POST only. */
+  path: string
+  /** Own body cap. At most `MAX_PUBLIC_MOUNT_BODY_BYTES`; default 64 KiB. */
+  bodyLimitBytes?: number
+  /** Per-IP window; own bucket. Default `PUBLIC_MOUNT_RATE_LIMIT`. */
+  rateLimit?: { max: number; windowSeconds: number }
+}
+
+/** Developer-declared additions to the strict public CSP. Inline script stays banned. */
+export interface PublicSiteCsp {
+  scriptSrc?: readonly string[]
+  frameSrc?: readonly string[]
+  imgSrc?: readonly string[]
+  connectSrc?: readonly string[]
+  /** An origin, or a path of this site (`/submit`), which is pinned to the request's origin. */
+  formAction?: readonly string[]
+}
+
+/**
+ * A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`).
+ * The host owns the request's order: cache lookup, rate limit (misses only), router, cache put. It
+ * does NOT resolve a tenant, render anything or know what a page is: all of that is the router's.
+ */
+export interface PublicSitesDeclaration {
+  /**
+   * Hosts this plugin answers (lowercase, no port). `null` means DORMANT: the plugin's config is
+   * bad, so every host other than APP_URL's and loopback gets a plain, uncached 503.
+   */
+  hosts: (config: AppConfig) => readonly string[] | null
+  /**
+   * Answers everything on a matching host, so `/api/*`, `/auth/*` and `/ws` never reach core
+   * there. On a cacheable request it receives the URL WITHOUT its query string: what is stored is
+   * shared by every visitor to that path, so it must not depend on anything one of them sent.
+   */
+  router: Hono<AppEnv>
+  /**
+   * CSP additions for a host. Synchronous: it runs on cache hits too. A single page that needs
+   * more sets `PUBLIC_SITE_PAGE_CSP_HEADER` on its own response instead; `pathname` is for a path
+   * that must get less than the rest of the host, which a per-page addition cannot do.
+   */
+  csp?: (host: string, config: AppConfig, pathname: string) => PublicSiteCsp
+  forms?: readonly PublicSiteFormPath[]
+  /** Omitted = no caching. `generation` must not touch Postgres; null = do not cache this request. */
+  cache?: {
+    generation: (env: AppBindings, config: AppConfig) => Promise<string | null>
+    /** A function receives the request's pathname, for a path that may live longer than a page. */
+    ttlSeconds: number | ((pathname: string) => number)
+    /**
+     * Stored separately for each value: a format negotiated from `Accept`, for example. Return
+     * `null` for no variant. Keep the set of values small and fixed, because each is its own entry.
+     */
+    variant?: (request: Request) => string | null
+    /**
+     * The request headers `variant` reads. A response whose `Vary` names anything else is not
+     * stored, nor is any `Vary` on a request with no variant; `Accept-Encoding` is always allowed.
+     */
+    variantHeaders?: readonly string[]
+    /**
+     * How long one isolate may reuse the last `generation` it read, in seconds; omitted or 0 = read
+     * it on every request. Past that age the memo is still served once more while a fresh read
+     * runs in the background (up to `GENERATION_STALE_FACTOR` times the age; older is awaited), so
+     * a publish shows within roughly this window. A function receives the config, for a window
+     * that only production uses.
+     */
+    generationMaxAgeSeconds?: number | ((config: AppConfig) => number)
+  }
+}
 
 /** What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest. */
 export interface PluginRequires {
@@ -60,8 +156,9 @@ export interface PluginRequires {
   plugins?: readonly string[]
 }
 
-/** Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`). */
+/** Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given. */
 export interface PluginSeedContext {
+  /** The seeded tenant (`acme`, or the single tenant). */
   tenantId: string
   ownerId: string
   /**
@@ -70,6 +167,12 @@ export interface PluginSeedContext {
    */
   demoId: (key: string) => string
   log: (line: string) => void
+  /**
+   * Turn a registered feature flag on (default) or off for one organisation — `tenantId`, or the
+   * seeded tenant — as a per-tenant override, the same row `/admin/feature-flags` writes. An
+   * unknown key throws. How a plugin behind its own flag shows up after plain `pnpm seed`.
+   */
+  setFeature: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>
 }
 
 export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
@@ -78,22 +181,53 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention. */
   mounts?: readonly PluginMount[]
   /**
-   * Routes a third party calls with no session or key — an admin-consent callback, a webhook
-   * (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under
+   * Routes a third party calls with no session or key — an admin-consent callback, a webhook.
+   * Mounted BEFORE the authed mounts and without `authMiddleware`, under
    * `/api/hooks/<id>` only (`tests/config/plugins.test.ts` enforces it), so the unauthenticated
    * surface stays enumerable. Already under `/api`, so no `apiPrefixes` or toml edit is needed.
    */
   publicMounts?: readonly PluginPublicMount[]
   /**
+   * Whole websites on hostnames of their own: on a claimed host this router answers every path and
+   * core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`
+   * (`publicSiteIssues`); at runtime a bad claim is ignored and logged. The host caches, throttles
+   * and sets the public CSP (`api/middleware/public-sites.ts`).
+   */
+  publicSites?: PublicSitesDeclaration
+  /**
+   * Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may
+   * decide: a dev-only method, one per configured connection). Each button navigates to its
+   * `startPath`, which MUST be under this plugin's `/api/hooks/<id>/` (`tests/config/plugins.test.ts`;
+   * a stray one is dropped at runtime). The host renders and namespaces them; it does NOT run the
+   * flow — the plugin's public route does, and finishes it with `identityFor(c, id).signIn(...)`.
+   */
+  loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+  /**
+   * "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain):
+   * answer `{ required: true, methodId }` — `methodId` one of THIS plugin's `loginMethods(cfg)` ids,
+   * where the login page sends the person — or `null` for an address it does not claim. Asked once
+   * per sign-in attempt (`api/auth/sso-policy.ts`), never per request, with every installed
+   * plugin's policy in parallel: keep it to one indexed lookup on the email's domain.
+   *
+   * The HOST enforces it on every kit method — the magic-link request (a token-free "use single
+   * sign-on" email instead of a link, still 202) and verify, the Google / Microsoft / OIDC callback,
+   * dev login — and on every OTHER plugin's `identityFor().signIn`; a claiming plugin's own `signIn`
+   * passes. A THROW fails closed for that email (logged), and `BOOTSTRAP_ADMIN_EMAILS` are exempt
+   * (break-glass). The host does NOT verify the domain (that is the plugin's proof), revoke sessions
+   * that already exist, or apply it to `provisionFor` (SCIM mints no session).
+   */
+  ssoPolicy?: SsoPolicy
+  /**
    * Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under
    * one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to
-   * `run_worker_first` in both tomls by hand; the parity test is what catches a forgotten one.
+   * `run_worker_first` in both tomls (`pnpm provision cloudflare` does it from `plugin.json`); the
+   * parity test is what catches a forgotten one.
    */
   apiPrefixes?: readonly string[]
   /**
    * `type` → handler, covering EXACTLY the job variants `shared.jobs` declares. Merged into the
    * consumer's dispatch table; each handler gets its own DB client and awaits everything, like the
-   * kit's own (there is no `waitUntil` in a queue consumer).
+   * core handlers (there is no `waitUntil` in a queue consumer).
    */
   jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
   /** Agent definitions, one per key in `shared.agentKeys`. */
@@ -101,17 +235,46 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Prompt registry entries, one per key in `shared.promptKeys`. */
   prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
   /**
-   * Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's
-   * access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May be
-   * async, and may return `[]` — that is how a tool is offered only to the tenants that turned it
-   * on (read the plugin's own settings row for `ctx.scope.tenantId`). A builder that throws is
-   * logged and skipped, never fatal to the run.
+   * Tools added beside the built-in knowledge tools, on every surface each tool names
+   * (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`).
+   * Bound to the caller's access scope, so a plugin tool reads what its REQUESTER may read and
+   * nothing more. May be async, and may return `[]` — that is how a tool is offered only to the
+   * tenants that turned it on (read the plugin's own settings row for `ctx.scope.tenantId`). A
+   * builder that throws is logged and skipped, never fatal to the run.
+   */
+  tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+  /**
+   * DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is
+   * absent, and `pnpm plugin check` warns on it. A later kit release removes it.
+   *
+   * @deprecated Use `tools`.
    */
   agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
   /**
-   * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs
-   * are appended after the kit's). A cron the kit does NOT run must also be added to `[triggers]`
-   * in BOTH tomls by hand — the parity test is what catches a forgotten one.
+   * PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's
+   * `search_knowledge` tool also searches for this reader — chat and every agent run. Unioned
+   * across plugins and passed as `platformSources`; a source not namespaced `<id>:` is dropped
+   * with a warning, a throw is logged and contributes nothing. May be async and may depend on the
+   * scope (`[]` for a tenant without the plugin's feature). The host does NOT make platform
+   * documents readable through `get_document` or `list_documents` — those stay tenant-only.
+   */
+  knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
+  /**
+   * Knowledge entity types (D43) whose rows extraction may attach facts to — composed with the
+   * app's own (`api/services/knowledge/entity-types.ts`) by `knowledgeEntityTypes()`. Each `type`
+   * is `<plugin id>.<name>`; fact keys are snake_case and every value schema renders as JSON
+   * schema; `table` (optional — without one the type lives only as staging entities) is one of
+   * THIS plugin's tables, with `labelColumn` for the default trigram resolver or a `resolve` of its
+   * own that filters by `scope.access.tenantId`. A bad registration throws at composition
+   * (`tests/config/knowledge-entity-types.test.ts` runs it over the installed set). The host does
+   * NOT write a fact into the plugin's columns: applying one is an approved action, never automatic.
+   */
+  knowledgeEntityTypes?: readonly EntityTypeRegistration[]
+  /**
+   * Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs
+   * are appended after core's). A cron core does NOT run is declared in `plugin.json`
+   * `crons`; `pnpm provision cloudflare <env>` writes it into both tomls' `[triggers]`, and the
+   * parity check fails a deploy that lacks it.
    */
   scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
   /**
@@ -124,8 +287,43 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * is a Cloudflare dashboard (or API) step per zone; nothing here or in a toml declares it.
    */
   emailHandlers?: readonly EmailHandler[]
-  /** Per-role CASL rules, applied after the kit's own matrix — additive, never a replacement. */
+  /**
+   * Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's,
+   * named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN queued
+   * `event.deliver` job per event (`handler:<id>:<name>`), so one failing handler retries alone.
+   * The handler receives the event, re-read from `plugin_events` and re-validated, and the job's
+   * context; `eventCtx(ctx)` adapts it to a context BOUND to the event's tenant (`startAgentRun`,
+   * `startBoundAgent`, `storage`, `features`, `emit`, `enqueue`). The host does NOT dedupe a
+   * redelivery — be idempotent on `event.id` — and acknowledges a 4xx refusal rather than retrying
+   * it. `tests/config/plugins.test.ts` refuses an undeclared event and a duplicated `name`.
+   */
+  eventHandlers?: readonly EventHandler[]
+  /**
+   * Feature keys this plugin's own CONFIG switches on for the deployment, unioned with
+   * `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a
+   * second, drifting var of its own. Pure, and it must not read the database: it runs on every
+   * request's auth path. The flag's rollout state still decides per tenant.
+   */
+  deploymentFeatures?: (config: AppConfig) => readonly string[]
+  /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
+  /**
+   * Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB
+   * (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one keeps the
+   * 1 MB cap. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route
+   * mounts its own `bodyLimit` at the file size it takes (at most 10 MB plus multipart overhead).
+   */
+  uploadPaths?: readonly string[]
+  /**
+   * EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`,
+   * each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and
+   * `tests/config/plugins.test.ts` refuses more), under `/api/<id>/`. Checked before `uploadPaths`
+   * and the 1 MB cap, for that path alone — a sibling path is untouched; a JSON body there keeps
+   * 1 MB. The cap is the transport's (plus 64 KB multipart overhead): the route still mounts its
+   * own `bodyLimit` and checks each file. The Worker holds the body in memory, so ask for what the
+   * largest real file needs, not a round number.
+   */
+  uploadLimits?: Readonly<Record<string, number>>
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */
   rlsExcludedTables?: readonly string[]
   /**
@@ -133,13 +331,13 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
    * a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is correct.
    */
   unscopedAllowlist?: Readonly<Record<string, string>>
-  /** D29: rows of this plugin that a group may restrict. Read by `services/access.ts`. */
+  /** Rows of this plugin that a group may restrict. Read by `services/access.ts`. */
   visibilityResources?: readonly VisibilityResource[]
   hooks?: {
     /**
-     * Post-commit, best-effort, per plugin try/caught — exactly like the kit's own hooks were.
+     * Post-commit, best-effort, per plugin try/caught — exactly like the core hooks.
      *
-     * `features` is the set this DEPLOYMENT ships (D30), passed because a plugin that seeds rows
+     * `features` is the set this DEPLOYMENT ships, passed because a plugin that seeds rows
      * for a gated surface must not seed them where the surface does not exist: a hook that CREATES
      * rows is the sharpest feature door there is, and it has no nav entry to hide behind.
      */
@@ -151,12 +349,12 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
     ) => Promise<void>
     /**
      * A tenant has been deleted: drop whatever of its state lives OUTSIDE Postgres. Run from the
-     * `tenant.purge` job (D7), per plugin, each in its own try/catch — post-commit, idempotent and
+     * `tenant.purge` job, per plugin, each in its own try/catch — post-commit, idempotent and
      * best-effort, exactly like `onTenantCreated`. There is no `Tenant` to hand over: the row and
      * everything `tenantRef()` cascades from it are already gone, which is why this takes the id.
      *
      * A plugin's TABLES need nothing here — the cascade took them. What needs this is R2 objects
-     * (the kit purges its own `tenants/<id>/` prefix), KV keys and Durable Object state.
+     * (core purges its own `tenants/<id>/` prefix), KV keys and Durable Object state.
      *
      * **Durable Object state is purgeable only because instance names are derived.** There is no
      * API that enumerates the instances of a namespace, so state is reachable only where the KEYS
@@ -173,19 +371,41 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
      * through it, never through a module-level global.
      */
     onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void>
-    /** `pnpm seed --demo`, after the kit's own block. Fixed ids + `onConflictDoNothing`. */
+    /**
+     * A global admin suspended (`'suspended'`) or reactivated (`'active'`) a tenant. Run after the
+     * status update has committed, per plugin, each in its own try/catch — best-effort like the
+     * other two, with a failure logged as a warning and swallowed, so the admin's action stands.
+     *
+     * For a plugin that caches or serves the tenant's content where the auth middleware does not
+     * look — a public page, an edge cache, a KV copy — and must stop serving it, or start again.
+     * Idempotent: it may hear the same status twice.
+     */
+    onTenantStatusChanged?: (
+      db: Database,
+      tenantId: string,
+      status: 'active' | 'suspended',
+      env: AppBindings
+    ) => Promise<void>
+    /**
+     * Every `pnpm seed` (with or without `--demo`), after the core accounts and before any demo
+     * data: reference data the plugin needs to be usable at all (rooms, rates, a default
+     * catalogue) and the per-organisation flag that shows it (`ctx.setFeature`). Idempotent —
+     * fixed ids (`ctx.demoId`) + `onConflictDoNothing` — because the seed is re-run freely.
+     */
+    seed?: (db: Database, ctx: PluginSeedContext) => Promise<void>
+    /** `pnpm seed --demo`, after the core block. Fixed ids + `onConflictDoNothing`. */
     seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void>
   }
   /**
-   * Cross-plugin registries (D31 decision 6): the analytics plugin reads `extensions.cubes` and
+   * Cross-plugin registries: the analytics plugin reads `extensions.cubes` and
    * friends from every installed plugin and narrows them with zod, failing loudly on anything it
-   * cannot parse. `unknown[]` at the core boundary is the point — the kit stays ignorant of what
+   * cannot parse. `unknown[]` at the core boundary is the point — the host stays ignorant of what
    * any plugin means by a "cube".
    */
   extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
-export type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+export type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 
 export interface PluginRoute {
   /** A path under the tier's router — `/approvals`, `/approvals/:id`. */
@@ -197,8 +417,64 @@ export interface PluginRoute {
   Component: LazyExoticComponent<ComponentType>
   /** The SAME guard its nav item uses, so a link never points at a page its reader cannot open. */
   guard?: NavGuard
-  /** Default `shell` — inside `Layout`, signed in with a tenant. */
+  /**
+   * Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a
+   * page that wants the whole space: the nav collapses to its icon rail, `<main>` has no padding
+   * and the page fills the viewport under the header (`h-full`), scrolling only its own panes.
+   */
   tier?: PluginRouteTier
+}
+
+/** Where in the top bar a plugin header item sits. */
+export type PluginHeaderPlacement = 'center' | 'end'
+
+/**
+ * One item in the app's top bar — a search box, a help button. Rendered by the shell inside
+ * `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN `Suspense`
+ * (fallback: nothing) and error boundary (fallback: nothing, logged), so a slow or crashing item
+ * never takes the header down with it.
+ *
+ * The host does NOT reserve space, de-duplicate or collapse items on a narrow screen: the header is
+ * one row at every width, so an item is a compact control (an icon button below `sm`, say) and
+ * anything big it opens — a palette, a drawer — is its own lazy chunk loaded on first use.
+ */
+export interface PluginHeaderItem {
+  /** Unique within the plugin; the React key is `<plugin id>:<id>`. */
+  id: string
+  /** `lazy(() => import('./ui/header/X'))` and nothing else, exactly like a route's `Component`. */
+  Component: LazyExoticComponent<ComponentType>
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+  /** Ascending, default 0; ties break on plugin id, then item id — so the order never depends on install order. */
+  order?: number
+  /**
+   * Default `end`: the right-hand cluster, before the kit's own widgets (status, bell, user
+   * menu). `center`: the flexible middle of the bar, where a search box goes.
+   */
+  placement?: PluginHeaderPlacement
+}
+
+/**
+ * One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is
+ * asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and isolates
+ * each card (`PluginHomeCards`: its own `Suspense` and error boundary); a card with nothing to ask
+ * renders `null`. Lazy, like a header item, so Home's eager chunk carries none of its code.
+ */
+export interface PluginHomeCard {
+  /** Unique within the plugin; the React key is `<plugin id>:<id>`. */
+  id: string
+  /** `lazy(() => import('./ui/home/X'))` and nothing else, exactly like a route's `Component`. */
+  Component: LazyExoticComponent<ComponentType>
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
+  /** Ascending, default 0; ties break on plugin id, then card id — never on install order. */
+  order?: number
+}
+
+/** One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it. */
+export interface PluginSettingsTab extends TabConfig {
+  /** The same guard semantics as a nav item or route (`useNavGuard`); hidden when it fails. */
+  guard?: NavGuard
 }
 
 /** A nav group, placed relative to a named core group ("Organisation" by default). */
@@ -213,10 +489,15 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
   shared: S
   routes: readonly PluginRoute[]
   nav?: readonly PluginNavGroup[]
-  /** Extra `/settings?tab=` tabs, appended after the kit's. `can` is the caller's ability. */
-  settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
   /**
-   * Quick links for the Home page, merged AHEAD of the kit's own (D31). A feature somebody reaches
+   * Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A
+   * tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host with
+   * `useNavGuard` — `{ feature: 'x' }` hides the tab in an organisation without the feature, which
+   * `can` alone cannot do (a plugin's grants hold in every organisation).
+   */
+  settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
+  /**
+   * Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches
    * from Home is one they were told about; a plugin that only adds a nav item is one they have to
    * find. Each link carries the SAME guard object as its route, so Home can never offer a door the
    * page refuses — `useNavGuard` filters these exactly as it filters the nav.
@@ -224,6 +505,17 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * The host does NOT de-duplicate or re-order: two plugins offering the same `to` show twice.
    */
   homeLinks?: readonly QuickLink[]
+  /**
+   * Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged
+   * across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense` and error
+   * boundary (`PluginHomeCards`).
+   */
+  homeCards?: readonly PluginHomeCard[]
+  /**
+   * Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id,
+   * rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
+   */
+  header?: readonly PluginHeaderItem[]
   /** Families merged into `queryKeys`; every root must start with `<id>:`. */
   queryKeys?: Readonly<Record<string, unknown>>
   /**
@@ -231,6 +523,14 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
    * falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
    */
   agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+  /**
+   * Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another
+   * plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from
+   * `@/plugins/api/ui`) and narrows them with its own schema. Keys are the OWNING plugin's
+   * (`global-search.commands`), so a contributor names it without importing that plugin. This
+   * object ships in the main bundle: plain data only, never a component.
+   */
+  extensions?: Readonly<Record<string, readonly unknown[]>>
 }
 
 /** The element type of the barrels — a plugin whose shared half is not narrowed. */

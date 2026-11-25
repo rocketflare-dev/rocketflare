@@ -1,12 +1,13 @@
 /**
- * Authentication middleware (D10, D12, D25). Applied PER MOUNT in `index.ts`, never inside a
+ * Authentication middleware. Applied PER MOUNT in `index.ts`, never inside a
  * route file. Two credentials:
  *   - `Authorization: Bearer <api key>` → the key's tenant, acting as the key's creator (its
- *     GROUPS too, re-read per request — D29)
+ *     GROUPS too, re-read per request)
  *   - `__Host-session` cookie → `resolveSession` (one LATERAL query), sliding expiry via waitUntil
  * Builds `AuthContext` (`buildAbility({ role, isGlobalAdmin, features })`, the features resolved by
- * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows — D30) and `c.set('auth')`.
- * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended`. A valid session
+ * `permissions/features.ts` from `[vars]` plus the tenant's rollout rows) and `c.set('auth')`.
+ * Errors are envelopes: 401 `unauthorized`; 403 `blocked` / `tenant_suspended` /
+ * `insufficient_scope` (a Bearer key whose scopes do not allow the method). A valid session
  * with NO tenant passes with `tenantId: null` — `withAuthAndDb` turns that into 403 `no_tenant` /
  * `pending_approval`, while tenant-free routes (`withAuth`) keep working.
  *
@@ -14,8 +15,14 @@
  * by design — the only cross-tenant auth path.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
+import type { FeatureFlagEvaluation } from '@rocketflare/shared/features'
+import type { GroupRef } from '@rocketflare/shared/groups'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { createMiddleware } from 'hono/factory'
+import type { AppConfig } from '../../config'
+import type { User } from '../../db/schema'
 import { buildAbility, resolveFeatures } from '../../permissions'
+import { API_KEY_SESSION_PREFIX, isApiKeySession } from '../auth/api-key-session'
 import { touchApiKeyUsage, validateApiKey } from '../auth/api-keys'
 import { readSessionToken } from '../auth/cookies'
 import {
@@ -31,11 +38,7 @@ import type { AppContext, AppEnv, AuthContext } from '../types'
 import { ForbiddenError, UnauthorizedError } from '../utils/core/errors'
 import { deferOrAwait } from './database'
 
-export const API_KEY_SESSION_PREFIX = 'api-key:'
-
-export function isApiKeySession(auth: Pick<AuthContext, 'session'>): boolean {
-  return auth.session.id.startsWith(API_KEY_SESSION_PREFIX)
-}
+export { API_KEY_SESSION_PREFIX, isApiKeySession }
 
 /** Fire-and-forget side effect: `waitUntil` when available, awaited inline otherwise; never throws. */
 export function fireAndForget(c: AppContext, work: () => Promise<unknown>, what: string): void {
@@ -83,7 +86,7 @@ export async function resolveCookieAuth(
     fireAndForget(c, () => touchTenantAccess(db, membership.tenantId), 'touch tenant access')
   }
 
-  const features = resolveFeatures(c.get('config'), resolved.flagRows, {
+  const features = await resolveFeatures(c.get('config'), resolved.flagRows, {
     tenantId: membership?.tenantId ?? null,
     userId: user.id,
   })
@@ -116,6 +119,12 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
   if (result.tenant.status === 'suspended') {
     throw new ForbiddenError('Organisation is suspended', ERROR_CODES.tenantSuspended)
   }
+  if (!apiKeyScopesAllow(result.key.scopes, c.req.method)) {
+    throw new ForbiddenError(
+      "This API key's scopes do not allow this request",
+      ERROR_CODES.insufficientScope
+    )
+  }
   fireAndForget(c, () => touchApiKeyUsage(db, result.key.id), 'touch API key usage')
   fireAndForget(c, () => touchTenantAccess(db, result.tenant.id), 'touch tenant access')
   // The cookie path gets both of these out of `resolveSession`'s one query; a Bearer request has no
@@ -124,29 +133,69 @@ async function resolveBearerAuth(c: AppContext, plaintext: string): Promise<Auth
     listUserGroups(db, result.tenant.id, result.user.id),
     listFeatureFlagRows(db, result.tenant.id),
   ])
-  const features = resolveFeatures(c.get('config'), flagRows, {
-    tenantId: result.tenant.id,
-    userId: result.user.id,
+  // A tenant key carries its CREATOR's groups, re-read on every request: removing someone
+  // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
+  // re-read the same way, so a rollout reaches API-key callers on their next request too.
+  return tenantAuthContext(c.get('config'), {
+    user: result.user,
+    tenant: result.tenant,
+    role: result.role,
+    groups,
+    flagRows,
+    sessionId: `${API_KEY_SESSION_PREFIX}${result.key.id}`,
+    isGlobalAdmin: result.user.isGlobalAdmin,
+  })
+}
+
+export interface TenantAuthInput {
+  user: User
+  tenant: { id: string; name: string; slug: string }
+  role: MembershipRole
+  groups: GroupRef[]
+  flagRows: readonly FeatureFlagEvaluation[]
+  /** What `AuthContext.session.id` reads — a credential without a session row names itself. */
+  sessionId: string
+  /** The person's platform flag — or `false` for a credential that must act as the member only. */
+  isGlobalAdmin: boolean
+}
+
+/**
+ * The `AuthContext` of a credential bound to ONE tenant (an API key, an MCP access token): the
+ * membership role, groups and features as read for this request, and the ability built from them
+ * exactly as the cookie path builds it. One assembly, so no credential can drift from the others.
+ */
+export async function tenantAuthContext(
+  cfg: AppConfig,
+  input: TenantAuthInput
+): Promise<AuthContext> {
+  const features = await resolveFeatures(cfg, input.flagRows, {
+    tenantId: input.tenant.id,
+    userId: input.user.id,
   })
   return {
-    user: result.user,
-    tenantId: result.tenant.id,
-    tenantUser: { role: result.role },
-    tenant: { id: result.tenant.id, name: result.tenant.name, slug: result.tenant.slug },
-    session: { id: `${API_KEY_SESSION_PREFIX}${result.key.id}` },
-    ability: buildAbility({
-      role: result.role,
-      isGlobalAdmin: result.user.isGlobalAdmin,
-      features,
-    }),
-    isGlobalAdmin: result.user.isGlobalAdmin,
+    user: input.user,
+    tenantId: input.tenant.id,
+    tenantUser: { role: input.role },
+    tenant: { id: input.tenant.id, name: input.tenant.name, slug: input.tenant.slug },
+    session: { id: input.sessionId },
+    ability: buildAbility({ role: input.role, isGlobalAdmin: input.isGlobalAdmin, features }),
+    isGlobalAdmin: input.isGlobalAdmin,
     features,
-    // A tenant key carries its CREATOR's groups, re-read on every request (D29): removing someone
-    // from a group narrows their keys on the next call, with nothing to revoke. Feature flags are
-    // re-read the same way, so a rollout reaches API-key callers on their next request too.
-    groups,
+    groups: input.groups,
     accessRequestStatus: null,
   }
+}
+
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * A key's scopes limit what it may do: reads need `read`, `write` or `*`; everything else needs
+ * `write` or `*`. Enforced here, once, for every Bearer request; the CASL check on the creator's
+ * role still applies on top of it.
+ */
+function apiKeyScopesAllow(scopes: string[], method: string): boolean {
+  if (scopes.includes('*') || scopes.includes('write')) return true
+  return READ_METHODS.has(method.toUpperCase()) && scopes.includes('read')
 }
 
 function bearerToken(c: AppContext): string | undefined {

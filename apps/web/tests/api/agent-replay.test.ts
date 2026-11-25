@@ -1,7 +1,5 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the chat and decisions seams), so this file needs its own module registry.
 /**
- * Replay (D38): a `triage-research` run recorded through the real runtime, then replayed with the
+ * Replay: a `triage-research` run recorded through the real runtime, then replayed with the
  * current code — and with candidates that change one thing each — inside a read-only transaction.
  * The contract: a faithful replay matches and writes nothing; a reworded decision is `drift`; a new
  * one is a `decide` miss; a model call nothing recorded is a `chat` miss; a refused write is listed;
@@ -14,17 +12,24 @@ import { count, eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { decideWithShapes } from '@/api/services/agents/decisions'
 import { triageResearchAgent } from '@/api/services/agents/examples/triage-research'
+import { effectKey } from '@/api/services/agents/keys'
 import type { AgentContext, AnyAgentDefinition } from '@/api/services/agents/registry'
 import {
   diffJson,
   listReplayableRuns,
   liveReplayWarnings,
+  orderDriftOf,
   replayRun,
+  verdictOf,
 } from '@/api/services/agents/replay'
 import { enqueueRun, getRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
+import {
+  overrideResolveChatForTests,
+  overrideResolveDecisionsForTests,
+} from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import { recordUsage } from '@/api/services/ai/usage'
 import type { Logger } from '@/api/utils/core/logger'
@@ -49,41 +54,37 @@ const state: { client: ChatClient | null; decide: Decider | null; asks: number }
   asks: 0,
 }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible' as const,
-        model: 'fake-model',
-        source: 'tenant' as const,
-        maxOutputTokens: 2048,
-      }
-    }),
-    resolveDecisions: vi.fn(async () => ({
-      client: {
-        provider: 'typesafe' as const,
-        method: 'typesafe' as const,
-        ask: async (req: DecisionRequest) => {
-          state.asks += 1
-          if (!state.decide) throw new AiError('auth', 'typesafe', 'no decider scripted')
-          return {
-            answers: state.decide(req),
-            usage: { inputTokens: 40, outputTokens: 4 },
-            model: 'jev-1.13.0',
-          }
-        },
-      },
-      provider: 'typesafe' as const,
-      model: 'jev-latest',
-      method: 'typesafe' as const,
-      source: 'platform' as const,
-    })),
+    client: state.client,
+    provider: 'anthropic_compatible' as const,
+    model: 'fake-model',
+    source: 'tenant' as const,
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
+
+overrideResolveDecisionsForTests(async () => ({
+  client: {
+    provider: 'typesafe' as const,
+    method: 'typesafe' as const,
+    ask: async (req: DecisionRequest) => {
+      state.asks += 1
+      if (!state.decide) throw new AiError('auth', 'typesafe', 'no decider scripted')
+      return {
+        answers: state.decide(req),
+        usage: { inputTokens: 40, outputTokens: 4 },
+        model: 'jev-1.13.0',
+      }
+    },
+  },
+  provider: 'typesafe' as const,
+  model: 'jev-latest',
+  method: 'typesafe' as const,
+  source: 'platform' as const,
+}))
 
 const db = setupTestDatabase()
 
@@ -180,7 +181,7 @@ beforeEach(() => {
   state.asks = 0
 })
 
-describe('replay (D38)', () => {
+describe('replay', () => {
   it('strict: the current code over its own record matches and writes nothing', async () => {
     const env = createTestEnv()
     const { row, tenantId } = await recordedRun(env)
@@ -283,7 +284,8 @@ describe('replay (D38)', () => {
       logger: fakeLogger(),
     })
     expect(result.replayStatus).toBe('miss')
-    expect(result.misses).toContainEqual({ kind: 'chat', key: 'chat' })
+    // The miss names the loop turn nothing recorded — research-topic's first.
+    expect(result.misses).toContainEqual({ kind: 'chat', key: 'tool-loop turn 1' })
   })
 
   it('a write the agent makes is refused and listed; uncaught, it fails the replay', async () => {
@@ -361,7 +363,7 @@ describe('replay (D38)', () => {
     ])
     expect(result.verdict).toBe('differs')
     expect(result.liveUsage?.inputTokens).toBe(100)
-    // No write was even attempted: the ledger is the runtime's meter (D39), which a replay has not.
+    // No write was even attempted: the ledger is the runtime's meter, which a replay has not.
     expect(result.writes).toEqual([])
   })
 })
@@ -387,6 +389,37 @@ describe('liveReplayWarnings', () => {
 })
 
 describe('diffJson', () => {
+  it('order drift: the keys both sides asked, in a different order', () => {
+    expect(orderDriftOf(['once:a', 'decide:b', 'once:c'], ['once:a', 'decide:b', 'once:c'])).toBe(
+      undefined
+    )
+    // A key only one side has is a miss or an unused decision, not a move.
+    expect(orderDriftOf(['once:a', 'once:gone', 'once:c'], ['once:a', 'once:c', 'once:new'])).toBe(
+      undefined
+    )
+    expect(
+      orderDriftOf(['once:a', 'decide:b', 'once:c'], ['decide:b', 'once:a', 'once:c'])
+    ).toEqual({
+      recorded: ['once:a', 'decide:b', 'once:c'],
+      replayed: ['decide:b', 'once:a', 'once:c'],
+    })
+    // A moved key makes an otherwise identical replay differ.
+    expect(
+      verdictOf('succeeded', 'succeeded', [], [], 0, {
+        turns: [],
+        orderDrift: { recorded: ['once:a', 'once:b'], replayed: ['once:b', 'once:a'] },
+      })
+    ).toBe('differs')
+  })
+
+  it('effectKey: the label alone, or label#hash over the inputs in a fixed key order', async () => {
+    expect(await effectKey('search')).toBe('search')
+    const one = await effectKey('search', { q: 'alpha', limit: 3 })
+    expect(one).toMatch(/^search#[0-9a-f]{12}$/)
+    expect(await effectKey('search', { limit: 3, q: 'alpha' })).toBe(one)
+    expect(await effectKey('search', { q: 'beta', limit: 3 })).not.toBe(one)
+  })
+
   it('reports paths, compares dates as JSON and caps the list', () => {
     expect(diffJson({ a: 1, b: [1, 2] }, { a: 1, b: [1, 3, 4] })).toEqual([
       { path: '$.b[1]', recorded: 2, replayed: 3 },

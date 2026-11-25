@@ -1,6 +1,6 @@
 /**
  * `pnpm web agent:replay <agentKey> --tenant <id|slug>` — replay an agent's settled runs with the
- * code in this working tree (D38, `src/api/services/agents/replay.ts`), and say what would change.
+ * code in this working tree (`src/api/services/agents/replay.ts`), and say what would change.
  *
  *   --tenant <id|slug>   required; without it, the tenants that have runs of this agent are listed
  *   --since <7d|24h|ISO> only runs created since then          --limit <n>  newest n (default 20)
@@ -13,17 +13,25 @@
  *   --candidate <file>   replay a module's default-exported agent instead of the registry's
  *                        (same `meta.key`) — how `rf-agent-tune` proves a compiled variant
  *   --db-url <url>       another database (default: DATABASE_URL from .dev.vars)
+ *   --record <dir>       ALSO write each run as a recording (`<dir>/<agent>-<runId>.json`) — what
+ *                        the gate replays to catch a key change without a `meta.version` bump
+ *                        (`tests/agent-recordings/`). A recording holds the run's input, output
+ *                        and answers: record from development or a seeded tenant, and read it
+ *                        before you commit it
  *
  * Read-only by construction: every run replays inside a READ ONLY transaction. Exit 0 when every
  * run matches, 1 when any differs or could not be replayed, 2 on a usage error.
  */
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { AGENT_KEYS, type AgentKey } from '@rocketflare/shared/ai/agents'
 import { count, desc, eq, or } from 'drizzle-orm'
+import { devWorkersAiMode } from '../../../scripts/lib/dev-ai.mjs'
+import { readDevVarsFile } from '../../../scripts/lib/dev-ports.mjs'
 import { type AnyAgentDefinition, getAgent, isAgentKey } from '../src/api/services/agents/registry'
 import {
+  exportRunRecording,
   listReplayableRuns,
   liveReplayWarnings,
   type ReplayMode,
@@ -38,6 +46,7 @@ import { agentRuns, tenants } from '../src/db/schema'
 
 const USAGE = `usage: pnpm web agent:replay <agentKey> --tenant <id|slug> [--since 7d] [--limit 20]
                              [--run <id>] [--live] [--candidate <file>] [--json] [--db-url <url>]
+                             [--record <dir>]
 agents: ${AGENT_KEYS.join(', ')}`
 
 function parseArgs(argv: string[]) {
@@ -92,12 +101,14 @@ async function loadCandidate(file: string, key: AgentKey): Promise<AnyAgentDefin
   return agent
 }
 
-/** Does the Worker have Workers AI? (`[ai]` uncommented — `pnpm bootstrap --offline` removes it.) */
+/**
+ * Does the local Worker have Workers AI? `[ai]` in the toml, and not switched off for local dev
+ * (`DEV_WORKERS_AI=off` in the shell or `.dev.vars` — `pnpm bootstrap --offline` writes it).
+ */
 function workerHasAi(): boolean {
   try {
-    return /^\[ai\]\s*$/m.test(
-      readFileSync(resolve(import.meta.dirname, '../wrangler.toml'), 'utf8')
-    )
+    const toml = readFileSync(resolve(import.meta.dirname, '../wrangler.toml'), 'utf8')
+    return /^\[ai\]\s*$/m.test(toml) && devWorkersAiMode(process.env, readDevVarsFile()) === 'on'
   } catch {
     return false
   }
@@ -133,12 +144,20 @@ function line(result: ReplayResult): string {
     .filter(d => d.status !== 'served')
     .map(d => `${d.key}:${d.status}${d.changed?.length ? `(${d.changed.length} changed)` : ''}`)
   const misses = result.misses.map(m => `${m.kind}:${m.key}`)
+  const moved = result.turns.filter(t => t.status !== 'served')
+  const turns = result.turns.length
+    ? `turns ${result.turns.length - moved.length}/${result.turns.length} served${
+        moved.length ? ` (${moved.map(t => `${t.loop}#${t.turn}:${t.status}`).join(' ')})` : ''
+      }`
+    : ''
   return [
     result.verdict.padEnd(10),
     result.runId.slice(0, 8),
     `${result.recordedStatus} → ${result.replayStatus}`.padEnd(24),
     `diff ${result.outputDiff.length}`.padEnd(8),
     decisions.length ? `decisions ${decisions.join(' ')}` : '',
+    turns,
+    result.orderDrift ? `order drift (${result.orderDrift.replayed.join(' → ')})` : '',
     misses.length ? `misses ${misses.join(' ')}` : '',
     result.writes.length ? `refused ${result.writes.length} write(s)` : '',
     result.error ? `— ${result.error}` : '',
@@ -229,6 +248,13 @@ async function main() {
       })
       results.push(result)
       if (!flags.json) console.log(line(result))
+      if (typeof flags.record === 'string') {
+        const dir = resolve(flags.record)
+        mkdirSync(dir, { recursive: true })
+        const file = resolve(dir, `${agentKey}-${run.id}.json`)
+        writeFileSync(file, `${JSON.stringify(await exportRunRecording(db, run), null, 2)}\n`)
+        if (!flags.json) console.log(`  recorded → ${file}`)
+      }
     }
 
     if (flags.json) console.log(JSON.stringify(results, null, 2))

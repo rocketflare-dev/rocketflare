@@ -1,7 +1,7 @@
 /**
- * The CLI plugin API (D31) — what a plugin's command module imports from the kit.
+ * The CLI plugin API — what a plugin's command module imports from the CLI.
  *
- * The rule a plugin's CLI half keeps is the one every kit command keeps: **it owns no second copy
+ * The rule a plugin's CLI half keeps is the one every built-in command keeps: **it owns no second copy
  * of the contract.** It calls the plugin's own routes through `requireClient(ctx).request(...)` and
  * parses the response with the same `@rocketflare/shared` schema the server validated with. It
  * builds no envelopes, constructs no URLs by hand, and never calls `fetch`.
@@ -36,9 +36,18 @@ export {
  * Output helpers. Human output is chalk tables on stdout, diagnostics go to stderr, and `--json`
  * switches the whole `Output` to JSON only — so a list command pipes into `jq` without a flag per
  * command. **Never print a full API key**: prefix and four characters, as `whoami` does.
+ * `renderTable` makes its cells inert for the terminal; a command printing free text of its own
+ * runs each server value through `neutralise`, and puts colour in a column's `style`.
  */
 export type { Column, Output } from '../utils/output'
-export { formatCell, formatDate, formatJson, formatPagination, renderTable } from '../utils/output'
+export {
+  formatCell,
+  formatDate,
+  formatJson,
+  formatPagination,
+  neutralise,
+  renderTable,
+} from '../utils/output'
 
 /** The plugin interface, and the `action()` wrapper a plugin registers with. */
 export type { ActionWrapper, AnyCliPlugin, CliPlugin } from './types'

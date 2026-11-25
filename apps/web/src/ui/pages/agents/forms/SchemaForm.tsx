@@ -1,5 +1,5 @@
 /**
- * The middle rung of `formFor` (issue #17): a form built from the agent's own `inputJsonSchema`,
+ * The middle rung of `formFor`: a form built from the agent's own `inputJsonSchema`,
  * for an agent that has no hand-written entry but whose input IS one flat object of the five field
  * types. Below a registered form, above the JSON textarea.
  *
@@ -30,6 +30,7 @@ export function schemaForm(schema: JsonSchema | null | undefined): AgentForm<Dra
   const fields = fieldsFromJsonSchema(schema)
   if (!fields || fields.length === 0) return null
 
+  // biome-ignore lint/correctness/noComponentHookFactories: built once per agent; RunAgentModal holds it in useState
   function Component({ value, onChange, issues, disabled }: AgentFormProps<Draft>) {
     return (
       <FieldSet

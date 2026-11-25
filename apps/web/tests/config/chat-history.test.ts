@@ -1,5 +1,5 @@
 /**
- * The history window and the compaction watermark (D17) — pure, so the `config` project, no
+ * The history window and the compaction watermark — pure, so the `config` project, no
  * database. These two functions are the reason a long thread degrades predictably instead of
  * either overflowing the model or losing its beginning without saying so, and the route and the
  * `chat.compact` job both call them, which is what keeps their idea of "the window" identical.

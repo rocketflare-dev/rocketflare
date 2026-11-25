@@ -1,6 +1,6 @@
 /**
- * Permission checks as a hook (D10): `can`/`cannot` over the session ability plus the three level
- * checks the kit's chrome needs. Level checks read the ability, not the role string, so a global
+ * Permission checks as a hook: `can`/`cannot` over the session ability plus the three level
+ * checks the app's chrome needs. Level checks read the ability, not the role string, so a global
  * admin visiting as `support` and a real owner answer the same way the server would.
  */
 import type { Actions, FeatureName, Subjects } from '@rocketflare/shared/permissions'
@@ -28,7 +28,7 @@ export function usePermissions() {
 }
 
 /**
- * Is a feature on for this session (D30)? Reads `session.features` — the array the server resolved
+ * Is a feature on for this session? Reads `session.features` — the array the server resolved
  * — and NEVER the ability: `manage all` covers `access` on every `Feature:` subject, so an ability
  * check would answer "on" for a global admin whatever the deployment ships, while the server 404s
  * the routes underneath. A flag is configuration; no role overrides it.

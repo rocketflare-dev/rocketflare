@@ -1,5 +1,5 @@
-/** Membership role chip (D10). Classes come from a finite prop → safelisted in index.css. */
-import type { MembershipRole } from '@rocketflare/shared/tenants'
+/** Membership role chip. Classes come from a finite prop → safelisted in index.css. */
+import { type MembershipRole, roleLabel } from '@rocketflare/shared/tenants'
 
 const ROLE_CLASS: Record<MembershipRole, string> = {
   owner: 'badge-primary',
@@ -10,6 +10,6 @@ const ROLE_CLASS: Record<MembershipRole, string> = {
 
 export function RoleBadge({ role, className = '' }: { role: MembershipRole; className?: string }) {
   return (
-    <span className={`badge badge-sm capitalize ${ROLE_CLASS[role]} ${className}`}>{role}</span>
+    <span className={`badge badge-sm ${ROLE_CLASS[role]} ${className}`}>{roleLabel(role)}</span>
   )
 }

@@ -1,5 +1,5 @@
 /**
- * Request id + hono-pino request logging (D16, 04 §4). Runs FIRST (before config) so every
+ * Request id + hono-pino request logging. Runs FIRST (before config) so every
  * later failure — including config validation — carries a `requestId`. Because it precedes
  * `configMiddleware` it calls `loadConfig(c.env)` itself; if that throws it falls back to a
  * plain `info` logger and lets `configMiddleware` raise the real error one step later.
@@ -32,6 +32,14 @@ export function rootLoggerFor(env: object): Logger {
   return logger
 }
 
+/**
+ * The path as it goes into a log line: the token in `/api/invite/:token` is a credential until the
+ * invitation is accepted, so it never reaches the logs.
+ */
+export function requestLogPath(path: string): string {
+  return path.replace(/^\/api\/invite\/[^/]+/, '/api/invite/[redacted]')
+}
+
 /** `hono/request-id`: honours an incoming `X-Request-Id`, else `crypto.randomUUID()`; echoed on the response. */
 export const requestIdMiddleware: MiddlewareHandler<AppEnv> = requestId()
 
@@ -42,7 +50,7 @@ export const requestLogger = pinoLogger({
     // hono-pino reads `requestId` from context (set by requestIdMiddleware just before).
     referRequestIdKey: 'requestId',
     // One compact line per request; the defaults dump every request/response header.
-    onReqBindings: c => ({ req: { method: c.req.method, url: c.req.path } }),
+    onReqBindings: c => ({ req: { method: c.req.method, url: requestLogPath(c.req.path) } }),
     onResBindings: c => ({ res: { status: c.res.status } }),
   },
 }) as unknown as MiddlewareHandler<AppEnv>

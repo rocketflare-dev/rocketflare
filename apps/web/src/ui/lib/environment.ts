@@ -1,6 +1,6 @@
 /**
  * Environment helpers. The SPA bundle is byte-identical across deployments, so the
- * environment comes from the server (`/api/health` → `env`, mirroring `APP_ENV`, D4) — never
+ * environment comes from the server (`/api/health` → `env`, mirroring `APP_ENV`) — never
  * from the hostname or a `VITE_*` build flag.
  */
 export const APP_ENVS = ['development', 'staging', 'production'] as const

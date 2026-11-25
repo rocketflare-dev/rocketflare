@@ -1,5 +1,5 @@
 /**
- * Global-admin operations (D9, D10, D25) — the ONLY cross-tenant service module, reached solely
+ * Global-admin operations — the ONLY cross-tenant service module, reached solely
  * through `globalAdminMiddleware`. Access-request decisions, tenant list/detail/suspend, support
  * enter/leave (a REAL `support` membership row, not a hidden bypass), users, global-admin flag
  * (the last one cannot be demoted), block (which deletes every session).
@@ -17,12 +17,14 @@ import type {
   AdminUserListItem,
   AdminUserListQuery,
 } from '@rocketflare/shared/admin'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { NON_MEMBER_ROLES } from '@rocketflare/shared/tenants'
 import { and, asc, desc, eq, ilike, inArray, isNotNull, or, sql } from 'drizzle-orm'
-import type { AppConfig } from '../../config'
+import { type AppConfig, isIdpManaged } from '../../config'
 import type { Database } from '../../db/client'
 import {
   accessRequests,
+  agentRuns,
   oauthProviders,
   tenants,
   tenantUsers,
@@ -30,17 +32,29 @@ import {
   userSessions,
   users,
 } from '../../db/schema'
-import { deleteUserSessions, updateSelectedTenant } from '../auth/sessions'
-import { ConflictError, NotFoundError } from '../utils/core/errors'
+import { deleteUserSessions, updateSelectedTenant, userTenantIds } from '../auth/sessions'
+import type { AppBindings } from '../types'
+import { ConflictError, isUniqueViolation, NotFoundError } from '../utils/core/errors'
 import type { Logger } from '../utils/core/logger'
-import { createTenantForUser } from '../utils/db/tenant-helpers'
+import { createTenantForUser, runTenantStatusChangedHooks } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
+import { requestCancel } from './agents/runs'
 import { nameFromEmail } from './auth'
 import { accessRequestDecidedEmail } from './email'
 import { platformFeatures } from './features'
+import { revokeEveryInvitationIssuedBy } from './invitations'
 import { enqueueJob, type JobsQueue } from './jobs'
+import { revokeMcpGrantsOf } from './mcp/connections'
+import { endSupportMemberships } from './members'
 import { notify } from './notifications'
+import {
+  closeTenantSockets,
+  closeUserSockets,
+  nudge,
+  type Realtime,
+  realtimeEvent,
+} from './realtime'
 
 type AdminLogger = Pick<Logger, 'info' | 'warn' | 'error'>
 
@@ -180,7 +194,7 @@ export async function decideAccessRequest(
       data: { accessRequestId: request.id },
     })
   }
-  // The decision email is queued (D7): the row is already decided, delivery can lag and retry.
+  // The decision email is queued: the row is already decided, delivery can lag and retry.
   const message = accessRequestDecidedEmail(cfg, request.email, {
     approved: input.decision.decision === 'approve',
     tenantName,
@@ -222,6 +236,7 @@ function toAdminTenant(row: typeof tenants.$inferSelect, memberCount: number): A
     seedDataCreated: row.seedDataCreated,
     lastAccessedAt: row.lastAccessedAt,
     createdAt: row.createdAt,
+    externalOrgId: row.externalOrgId,
   }
 }
 
@@ -251,6 +266,7 @@ export async function listAdminTenants(db: Database, query: AdminTenantListQuery
 
 export async function getAdminTenant(
   db: Database,
+  cfg: AppConfig,
   tenantId: string,
   adminUserId: string
 ): Promise<AdminTenantDetail> {
@@ -278,29 +294,122 @@ export async function getAdminTenant(
     ...toAdminTenant(row.tenant, Number(row.memberCount)),
     members,
     supportAccess: members.some(m => m.userId === adminUserId && m.role === 'support'),
+    idpManaged: isIdpManaged(cfg),
   }
 }
 
-export async function setTenantSuspended(
+/**
+ * Link a tenant to the OIDC issuer's org, or unlink it (null). Linking is how a tenant made in the
+ * app before IdP-managed tenancy (or by hand) becomes the one that org's sign-ins reconcile into;
+ * left unlinked, the first sign-in with that org creates a second tenant. The next sign-in adopts
+ * its `manual` admin and member rows; unlinking leaves the `idp` rows for the next sign-in to
+ * remove. 409 `external_org_taken` when another tenant holds the org.
+ */
+export async function setTenantExternalOrg(
   db: Database,
   tenantId: string,
-  suspended: boolean,
+  externalOrgId: string | null,
   admin: User
 ) {
+  const holder = externalOrgId
+    ? await db.query.tenants.findFirst({ where: eq(tenants.externalOrgId, externalOrgId) })
+    : undefined
+  if (holder && holder.id !== tenantId) throw externalOrgTaken(holder)
+  const before = await db.query.tenants.findFirst({ where: eq(tenants.id, tenantId) })
+  if (!before) throw new NotFoundError('Organisation not found')
+  if (before.externalOrgId === externalOrgId) return before
+  let row: typeof tenants.$inferSelect | undefined
+  try {
+    ;[row] = await db
+      .update(tenants)
+      .set({ externalOrgId })
+      .where(eq(tenants.id, tenantId))
+      .returning()
+  } catch (err) {
+    if (!isUniqueViolation(err) || !externalOrgId) throw err
+    const taken = await db.query.tenants.findFirst({
+      where: eq(tenants.externalOrgId, externalOrgId),
+    })
+    throw externalOrgTaken(taken)
+  }
+  if (!row) throw new NotFoundError('Organisation not found')
+  await recordActivity(db, {
+    tenantId,
+    userId: admin.id,
+    type: externalOrgId ? 'tenant.idp_linked' : 'tenant.idp_unlinked',
+    subjectType: 'Tenant',
+    subjectId: tenantId,
+    metadata: { from: before.externalOrgId, to: externalOrgId },
+  })
+  return row
+}
+
+function externalOrgTaken(holder: { name: string; slug: string } | undefined) {
+  return new ConflictError(
+    holder
+      ? `${holder.name} (@${holder.slug}) is already linked to that org; unlink it first`
+      : 'Another organisation is already linked to that org',
+    ERROR_CODES.externalOrgTaken
+  )
+}
+
+export interface SetTenantSuspendedInput {
+  tenantId: string
+  suspended: boolean
+  admin: User
+  env: AppBindings
+  logger: AdminLogger
+  realtime?: Realtime
+}
+
+/**
+ * Suspend or reactivate an organisation. Suspending also ends the runs that are not executing —
+ * `queued` and `awaiting_input` settle `cancelled` — and a running one stops at its next cancel
+ * poll, so a suspended organisation runs no agents. Either way every plugin's
+ * `onTenantStatusChanged` runs last, best-effort.
+ */
+export async function setTenantSuspended(db: Database, input: SetTenantSuspendedInput) {
+  const { tenantId, suspended } = input
   const [row] = await db
     .update(tenants)
     .set({ status: suspended ? 'suspended' : 'active' })
     .where(eq(tenants.id, tenantId))
     .returning()
   if (!row) throw new NotFoundError('Organisation not found')
+  if (suspended) {
+    closeTenantSockets(input.realtime, tenantId)
+    await cancelIdleRuns(db, tenantId, input)
+  }
   await recordActivity(db, {
     tenantId,
-    userId: admin.id,
+    userId: input.admin.id,
     type: suspended ? 'tenant.suspended' : 'tenant.reactivated',
     subjectType: 'Tenant',
     subjectId: tenantId,
   })
+  await runTenantStatusChangedHooks(db, tenantId, row.status, input.env, input.logger)
   return row
+}
+
+/** Cancel the tenant's queued and parked runs. Best effort per run: the runtime re-checks anyway. */
+async function cancelIdleRuns(
+  db: Database,
+  tenantId: string,
+  input: Pick<SetTenantSuspendedInput, 'env' | 'logger' | 'realtime'>
+) {
+  const idle = await db
+    .select({ id: agentRuns.id })
+    .from(agentRuns)
+    .where(
+      and(eq(agentRuns.tenantId, tenantId), inArray(agentRuns.status, ['queued', 'awaiting_input']))
+    )
+  for (const run of idle) {
+    try {
+      await requestCancel(db, tenantId, run.id, input.realtime, input.env)
+    } catch (err) {
+      input.logger.warn({ err, tenantId, runId: run.id }, 'suspend: could not cancel a run')
+    }
+  }
 }
 
 /** Mint (or keep) a `support` membership and point the admin's session at the tenant. */
@@ -325,7 +434,13 @@ export async function enterSupport(db: Database, tenantId: string, admin: User, 
 }
 
 /** Remove the `support` row (a real membership is left alone) and unpin the session. */
-export async function leaveSupport(db: Database, tenantId: string, admin: User, sessionId: string) {
+export async function leaveSupport(
+  db: Database,
+  tenantId: string,
+  admin: User,
+  sessionId: string,
+  realtime?: Realtime
+) {
   const removed = await db
     .delete(tenantUsers)
     .where(
@@ -344,6 +459,7 @@ export async function leaveSupport(db: Database, tenantId: string, admin: User, 
       subjectType: 'TenantMember',
       subjectId: admin.id,
     })
+    closeUserSockets(realtime, tenantId, admin.id)
   }
   await db
     .update(userSessions)
@@ -366,6 +482,7 @@ function toAdminUser(row: User, tenantCount: number): AdminUserListItem {
     emailVerifiedAt: row.emailVerifiedAt,
     lastLoginAt: row.lastLoginAt,
     blockedAt: row.blockedAt,
+    blockedSource: row.blockedAt ? (row.blockedSource ?? 'manual') : null,
     tenantCount,
     createdAt: row.createdAt,
   }
@@ -435,7 +552,7 @@ export async function getAdminUser(db: Database, userId: string): Promise<AdminU
 
 export async function setGlobalAdmin(
   db: Database,
-  input: { userId: string; isGlobalAdmin: boolean; actor: User }
+  input: { userId: string; isGlobalAdmin: boolean; actor: User; realtime?: Realtime }
 ) {
   const target = await db.query.users.findFirst({ where: eq(users.id, input.userId) })
   if (!target) throw new NotFoundError('User not found')
@@ -448,22 +565,71 @@ export async function setGlobalAdmin(
       throw new ConflictError('At least one global admin must remain', 'last_global_admin')
     }
   }
-  const [updated] = await db
-    .update(users)
-    .set({ isGlobalAdmin: input.isGlobalAdmin })
-    .where(eq(users.id, input.userId))
-    .returning()
+  if (target.isGlobalAdmin === input.isGlobalAdmin) return target
+  // A grant made here is `manual`, so a sign-in without the issuer's global-admin claim never
+  // clears it.
+  const { updated, endedTenantIds } = await db.transaction(async tx => {
+    const [row] = await tx
+      .update(users)
+      .set({
+        isGlobalAdmin: input.isGlobalAdmin,
+        globalAdminSource: input.isGlobalAdmin ? 'manual' : null,
+      })
+      .where(eq(users.id, input.userId))
+      .returning()
+    const ended = input.isGlobalAdmin
+      ? []
+      : await endSupportMemberships(tx as unknown as Database, {
+          userId: input.userId,
+          actorUserId: input.actor.id,
+        })
+    return { updated: row, endedTenantIds: ended }
+  })
+  closeUserSockets(input.realtime, endedTenantIds, input.userId)
   return updated ?? target
 }
 
-/** Blocking deletes every session — the account is out immediately, not at the next expiry. */
-export async function setUserBlocked(db: Database, input: { userId: string; blocked: boolean }) {
-  const [updated] = await db
-    .update(users)
-    .set({ blockedAt: input.blocked ? new Date() : null })
-    .where(eq(users.id, input.userId))
-    .returning()
-  if (!updated) throw new NotFoundError('User not found')
-  if (input.blocked) await deleteUserSessions(db, input.userId)
+/**
+ * Blocking deletes every session — the account is out immediately, not at the next expiry. A block
+ * set here is `manual`, so an identity provider's reactivation (`provisionFor().setMembership`)
+ * never lifts it; it also turns an IdP's block into a manual one. Unblocking clears either.
+ * Blocking also revokes every pending invitation the person issued, in the same transaction;
+ * unblocking restores none.
+ */
+export async function setUserBlocked(
+  db: Database,
+  input: { userId: string; blocked: boolean; realtime?: Realtime }
+) {
+  const { updated, revoked } = await db.transaction(async tx => {
+    const [row] = await tx
+      .update(users)
+      .set(
+        input.blocked
+          ? { blockedAt: new Date(), blockedSource: 'manual' }
+          : { blockedAt: null, blockedSource: null }
+      )
+      .where(eq(users.id, input.userId))
+      .returning()
+    if (!row) throw new NotFoundError('User not found')
+    // A blocked person issues nothing: their pending invitations end with the block.
+    const revoked = input.blocked
+      ? await revokeEveryInvitationIssuedBy(tx as unknown as Database, input.userId)
+      : []
+    // ...and so do their AI-client connections, in every organisation. Unblocking restores none.
+    if (input.blocked) {
+      await revokeMcpGrantsOf(tx as unknown as Database, {
+        userId: input.userId,
+        reason: 'blocked',
+      })
+    }
+    return { updated: row, revoked }
+  })
+  for (const tenantId of new Set(revoked.map(r => r.tenantId))) {
+    nudge(input.realtime, realtimeEvent('invitation.changed', tenantId))
+  }
+  if (input.blocked) {
+    await deleteUserSessions(db, input.userId)
+    closeUserSockets(input.realtime, await userTenantIds(db, input.userId), input.userId)
+  }
   return updated
 }

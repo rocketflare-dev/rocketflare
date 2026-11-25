@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Developer-run eval suites for the kit's chat and agents (vitest-evals on vitest 4, in-process targets over apps/web). Run locally with `pnpm eval`; never part of the gate.",
+  "description": "Developer-run eval suites for the app's chat and agents (vitest-evals on vitest 4, in-process targets over apps/web). Run locally with `pnpm eval`; never part of the gate.",
   "type": "module",
   "scripts": {
     "eval": "node scripts/eval.mjs run",
@@ -14,16 +14,17 @@
   },
   "dependencies": {
     "@rocketflare/shared": "workspace:*",
-    "drizzle-orm": "^0.45.2",
-    "zod": "^3.25.76"
+    "drizzle-orm": "^0.45.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@neondatabase/serverless": "^1.1.0",
-    "@types/node": "^24.0.0",
-    "dotenv": "^17.4.2",
-    "tsx": "^4.23.13",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
+    "@neondatabase/serverless": "^1.2.0",
+    "@types/node": "^26.6.6",
+    "dotenv": "^18.0.9",
+    "postgres": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12",
     "vitest-evals": "^0.17.0"
   }
 }

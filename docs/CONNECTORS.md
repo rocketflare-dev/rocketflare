@@ -12,8 +12,8 @@ and not built.
 
 ## 1. Logging in is not connecting
 
-The kit already signs people in with Google and Microsoft through arctic (§2). Login asks for
-`openid email profile` (plus `User.Read` for Microsoft) on the `common` authority. It stores one
+The kit already signs people in with Google and Microsoft through `openid-client` (§2). Login asks
+for `openid email profile` (plus `User.Read` for Microsoft) on the `common` authority. It stores one
 `oauth_providers` row per **user**, never refreshes it, and reads nothing beyond who the person is.
 Nothing described here changes login.
 
@@ -215,7 +215,11 @@ This is also done **once per deployment**. Create the project now: Google's quot
    permission list, and **Accept**. That's all.
    - The consent URL is `https://login.microsoftonline.com/organizations/v2.0/adminconsent?client_id=…&scope=https://graph.microsoft.com/.default&redirect_uri=…&state=<signState>`.
    - The callback receives `tenant=<guid>&admin_consent=True`. `verifyState` recovers the kit
-     tenant and the user who started it.
+     tenant and the user who started it, and `memberCan` re-reads that user's permission.
+   - That redirect is a claim, not proof. The callback sends the admin through OpenID Connect
+     sign-in at the claimed tenant, and the connection activates only on a verified `id_token`
+     for that tenant whose `wids` holds Global Administrator or Privileged Role Administrator.
+     The app registration must include directory roles in the ID token.
 3. *(Optional, phase 3: scoped mail.)* Run the generated **RBAC for Applications** script:
    `New-ServicePrincipal`, then `New-ManagementScope` (or an Administrative Unit), then
    `New-ManagementRoleAssignment -Role "Application Mail.Read"`, then

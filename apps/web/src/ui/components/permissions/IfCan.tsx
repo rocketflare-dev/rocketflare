@@ -1,5 +1,5 @@
 /**
- * Declarative ability gates (D10). Cosmetic — the server enforces; these only keep controls a
+ * Declarative ability gates. Cosmetic — the server enforces; these only keep controls a
  * reader cannot use out of the way.
  */
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'

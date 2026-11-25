@@ -1,8 +1,8 @@
 /**
- * AI usage ledger (D18): `recordUsage` writes one `ai_usage` row from a provider's usage report,
+ * AI usage ledger: `recordUsage` writes one `ai_usage` row from a provider's usage report,
  * `tapUsage` wraps a `ChatClient` so every generation reports through one callback (the chat
  * route records), and `summarizeUsage` answers `GET /api/ai/usage/summary`. An agent run meters
- * its own client instead (`services/agents/budget.ts`, D39): one row per call, carrying the run
+ * its own client instead (`services/agents/budget.ts`): one row per call, carrying the run
  * id, awaited — because the next call's budget check has to see it. `runSpend` and
  * `tenantAgentSpendToday` are the two reads that check runs on.
  *
@@ -15,12 +15,19 @@
  */
 import type { TokenUsage } from '@rocketflare/shared/ai/chat'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
-import { estimateCostMicrocents } from '@rocketflare/shared/ai/pricing'
-import type { AiUsageRowSummary, AiUsageSummary } from '@rocketflare/shared/ai/usage'
-import { and, eq, gte, isNotNull, lt, sql } from 'drizzle-orm'
+import { estimateCostMicrocents, MICROCENTS_PER_USD } from '@rocketflare/shared/ai/pricing'
+import {
+  type AiUsageRowSummary,
+  type AiUsageSummary,
+  KNOWLEDGE_USAGE_FEATURES,
+  type KnowledgeUsageFeature,
+} from '@rocketflare/shared/ai/usage'
+import { and, eq, gte, inArray, isNotNull, lt, sql } from 'drizzle-orm'
+import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import { aiUsage } from '../../../db/schema'
-import type { ChatClient, ChatResult } from './types'
+import { estimateTokens } from './chunking'
+import type { ChatClient, ChatResult, EmbeddingsClient } from './types'
 
 export interface UsageInput {
   tenantId: string
@@ -30,7 +37,7 @@ export interface UsageInput {
   model: string
   usage: TokenUsage
   costMicrocents?: number | null
-  /** D39: the agent run this call was billed to — set by the run's meter, never by an agent. */
+  /** The agent run this call was billed to — set by the run's meter, never by an agent. */
   agentRunId?: string | null
 }
 
@@ -54,36 +61,55 @@ export async function recordUsage(db: Database, input: UsageInput): Promise<numb
   return cost
 }
 
-/** What a run has spent so far, over every attempt — one row per metered call (D39). */
+/** What a run has spent so far, over every attempt — one row per metered call. */
 export interface RunSpend {
   calls: number
   inputTokens: number
   outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
   /** Priced calls only; an unpriced call (a TypeSafe decision) counts in the tokens alone. */
   costMicrocents: number
 }
 
-export async function runSpend(db: Database, tenantId: string, runId: string): Promise<RunSpend> {
+export async function runSpend(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  /** Also every run this one spawned, and theirs (`agent_runs.parent_run_id`, D44). */
+  options: { descendants?: boolean } = {}
+): Promise<RunSpend> {
   const [row] = await db
     .select({
       calls: sql<number>`count(*)::int`,
       inputTokens: sql<number>`coalesce(sum(${aiUsage.inputTokens}), 0)::bigint`,
       outputTokens: sql<number>`coalesce(sum(${aiUsage.outputTokens}), 0)::bigint`,
+      cacheReadTokens: sql<number>`coalesce(sum(${aiUsage.cacheReadTokens}), 0)::bigint`,
+      cacheWriteTokens: sql<number>`coalesce(sum(${aiUsage.cacheWriteTokens}), 0)::bigint`,
       costMicrocents: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint`,
     })
     .from(aiUsage)
-    .where(and(eq(aiUsage.tenantId, tenantId), eq(aiUsage.agentRunId, runId)))
+    .where(
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        options.descendants
+          ? sql`${aiUsage.agentRunId} IN (WITH RECURSIVE tree(id) AS (SELECT ${runId}::uuid UNION ALL SELECT r.id FROM agent_runs r JOIN tree t ON r.parent_run_id = t.id WHERE r.tenant_id = ${tenantId}) SELECT id FROM tree)`
+          : eq(aiUsage.agentRunId, runId)
+      )
+    )
   return {
     calls: Number(row?.calls ?? 0),
     inputTokens: Number(row?.inputTokens ?? 0),
     outputTokens: Number(row?.outputTokens ?? 0),
+    cacheReadTokens: Number(row?.cacheReadTokens ?? 0),
+    cacheWriteTokens: Number(row?.cacheWriteTokens ?? 0),
     costMicrocents: Number(row?.costMicrocents ?? 0),
   }
 }
 
 /**
  * What a tenant's agent runs have spent since the start of the UTC day `now` falls in, in
- * microcents (D39, `AGENT_TENANT_DAILY_COST_USD`). Agent rows only — chat has its own surface — and
+ * microcents (`AGENT_TENANT_DAILY_COST_USD`). Agent rows only — chat has its own surface — and
  * priced rows only, so an unpriced model never trips the cap.
  */
 export async function tenantAgentSpendToday(
@@ -91,14 +117,144 @@ export async function tenantAgentSpendToday(
   tenantId: string,
   now: Date = new Date()
 ): Promise<number> {
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
   const [row] = await db
     .select({ cost: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint` })
     .from(aiUsage)
     .where(
-      and(eq(aiUsage.tenantId, tenantId), gte(aiUsage.at, dayStart), isNotNull(aiUsage.agentRunId))
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        gte(aiUsage.at, utcDayStart(now)),
+        isNotNull(aiUsage.agentRunId)
+      )
     )
   return Number(row?.cost ?? 0)
+}
+
+// ---- Knowledge metering --------------------------------------------------------------------------
+
+/** Start of the UTC day `now` falls in. */
+const utcDayStart = (now: Date) =>
+  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()))
+
+/**
+ * Embed `texts` and count what it cost: the provider's own token count when the client reports one
+ * (`embedWithUsage` → OpenAI's `usage.prompt_tokens`), else a character estimate
+ * (`estimateTokens`, 4 chars per token) — Workers AI and a test fake report nothing.
+ */
+export async function embedCounted(
+  client: EmbeddingsClient,
+  texts: string[]
+): Promise<{ vectors: number[][]; inputTokens: number; estimated: boolean }> {
+  if (client.embedWithUsage) {
+    const { vectors, inputTokens } = await client.embedWithUsage(texts)
+    if (inputTokens !== null) return { vectors, inputTokens, estimated: false }
+    return { vectors, inputTokens: estimateTexts(texts), estimated: true }
+  }
+  const vectors = await client.embed(texts)
+  return { vectors, inputTokens: estimateTexts(texts), estimated: true }
+}
+
+const estimateTexts = (texts: readonly string[]) =>
+  texts.reduce((n, text) => n + estimateTokens(text), 0)
+
+export interface KnowledgeUsageInput {
+  tenantId: string
+  userId?: string | null
+  feature: KnowledgeUsageFeature
+  provider: AiProvider
+  model: string
+  inputTokens: number
+}
+
+/**
+ * Record knowledge-base calls (`knowledge.embeddings` / `knowledge.rerank` /
+ * `knowledge.extraction`) — one `ai_usage` row each, input tokens only, priced from the shared
+ * table. NEVER throws: an ingest or a search must not fail because the ledger could not be
+ * written, so a failed insert is logged and swallowed. Rows with no tokens are skipped.
+ */
+export async function recordKnowledgeUsage(
+  db: Database,
+  rows: readonly KnowledgeUsageInput[]
+): Promise<void> {
+  for (const row of rows) {
+    if (row.inputTokens <= 0) continue
+    try {
+      await recordUsage(db, {
+        tenantId: row.tenantId,
+        userId: row.userId ?? null,
+        feature: row.feature,
+        provider: row.provider,
+        model: row.model,
+        usage: { inputTokens: Math.round(row.inputTokens), outputTokens: 0 },
+      })
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          msg: 'knowledge usage not recorded',
+          feature: row.feature,
+          tenantId: row.tenantId,
+          error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
+        })
+      )
+    }
+  }
+}
+
+const KNOWLEDGE_FEATURE_NAMES = Object.values(KNOWLEDGE_USAGE_FEATURES)
+
+/**
+ * What a tenant's knowledge base has spent since the start of the UTC day `now` falls in, in
+ * microcents — the three `knowledge.*` features, priced rows only (an unpriced model never trips
+ * the cap). The `KNOWLEDGE_TENANT_DAILY_COST_USD` read.
+ */
+export async function knowledgeSpendToday(
+  db: Database,
+  tenantId: string,
+  now: Date = new Date()
+): Promise<number> {
+  const [row] = await db
+    .select({ cost: sql<number>`coalesce(sum(${aiUsage.costMicrocents}), 0)::bigint` })
+    .from(aiUsage)
+    .where(
+      and(
+        eq(aiUsage.tenantId, tenantId),
+        gte(aiUsage.at, utcDayStart(now)),
+        inArray(aiUsage.feature, KNOWLEDGE_FEATURE_NAMES)
+      )
+    )
+  return Number(row?.cost ?? 0)
+}
+
+/**
+ * May an optional knowledge job — fact extraction, or writing passages' situating context — spend
+ * on one more document today? True when no cap is set (`KNOWLEDGE_TENANT_DAILY_COST_USD` unset) or
+ * the tenant's knowledge spend today is under it. Both jobs call this before each document and,
+ * on false, wait for tomorrow. Indexing and search never call it: they count toward the cap but
+ * never pause on it.
+ */
+export async function knowledgeExtractionAllowed(
+  db: Database,
+  cfg: Pick<AppConfig, 'KNOWLEDGE_TENANT_DAILY_COST_USD'>,
+  tenantId: string,
+  now: Date = new Date()
+): Promise<boolean> {
+  const usd = cfg.KNOWLEDGE_TENANT_DAILY_COST_USD
+  if (usd === undefined) return true
+  const cap = Math.round(usd * MICROCENTS_PER_USD)
+  return (await knowledgeSpendToday(db, tenantId, now)) < cap
+}
+
+/** The longest a re-enqueue may wait (the queue's own maximum). */
+const MAX_DELAY_SECONDS = 12 * 60 * 60
+
+/**
+ * Seconds until the next UTC midnight (plus a minute), capped at the queue's maximum delay — how
+ * long a knowledge job paused by the daily cap waits before it runs again.
+ */
+export function secondsUntilNextUtcDay(now: Date): number {
+  const next = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
+  const seconds = Math.ceil((next - now.getTime()) / 1000) + 60
+  return Math.min(MAX_DELAY_SECONDS, Math.max(60, seconds))
 }
 
 export type UsageTap = (usage: TokenUsage, result: ChatResult) => void | Promise<void>

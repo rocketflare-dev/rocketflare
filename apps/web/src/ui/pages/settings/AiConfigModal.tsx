@@ -1,5 +1,5 @@
 /**
- * Add / edit one AI provider row (D17). Provider → preset chips (`presetsFor`) fill base URL +
+ * Add / edit one AI provider row. Provider → preset chips (`presetsFor`) fill base URL +
  * model; fields follow the catalog's `needsApiKey` / `needsBaseUrl` / `supportsThinking` /
  * `supportsServiceTier`; the API key is write-only ("leave blank to keep"); the body is validated
  * with `upsertAiConfigRequestSchema` plus the three provider rules the schema alone cannot state.
@@ -16,6 +16,7 @@ import {
   defaultModelFor,
   type ProviderPreset,
   presetsFor,
+  sameAiEndpoint,
   type TestAiConfigRequest,
   type TestAiConfigResponse,
   THINKING_ANSWER_HEADROOM,
@@ -40,6 +41,7 @@ const SCOPE_LABEL: Record<AiScope, string> = {
   chat: 'chat',
   embeddings: 'embeddings',
   decisions: 'decisions',
+  rerank: 'reranker',
 }
 
 /** The select's escape hatch to free text. A sentinel, because '' is itself a legal model id. */
@@ -118,10 +120,12 @@ function AiConfigForm({
   const [verdict, setVerdict] = useState<TestAiConfigResponse | null>(null)
 
   const info = infoFor(offered, provider)
-  const presets = presetsFor(provider)
+  // By scope too: a rerank preset (Fireworks, Cohere, Voyage `/rerank`) is no chat endpoint.
+  const presets = presetsFor(provider, scope)
   const isChat = scope === 'chat'
   const providerSwitched = editing !== null && editing.provider !== provider
-  const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched
+  const endpointChanged = editing !== null && !sameAiEndpoint(editing.baseUrl, baseUrl.trim())
+  const keepsKey = Boolean(editing?.hasCredential) && !providerSwitched && !endpointChanged
   // By scope: a chat config must not offer an embeddings model, or the other way round.
   const suggestions = info?.suggestedModels?.[scope] ?? []
   const defaultModel = defaultModelFor(provider, scope)
@@ -203,7 +207,9 @@ function AiConfigForm({
         path: ['apiKey'],
         message: providerSwitched
           ? `The stored key belongs to ${editing?.provider}; enter one for ${info.name}`
-          : 'An API key is required',
+          : endpointChanged
+            ? 'The stored key was entered for another base URL; enter it again for this one'
+            : 'An API key is required',
       })
     }
     if (isChat && thinkingEnabled && !(Number.parseInt(thinkingBudget, 10) > 0)) {

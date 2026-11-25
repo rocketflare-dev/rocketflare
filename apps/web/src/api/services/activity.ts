@@ -1,5 +1,5 @@
 /**
- * Activity log writer (D19). Every write route appends one row through `defer(() =>
+ * Activity log writer. Every write route appends one row through `defer(() =>
  * recordActivity(...))` — fire-and-forget via `waitUntil`, so a failed audit write is logged, never
  * surfaced. Also called inside transactions (tenant create) where the caller passes the `tx`.
  */

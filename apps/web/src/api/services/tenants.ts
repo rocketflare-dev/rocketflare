@@ -1,8 +1,9 @@
 /**
- * Tenant, tenant settings and per-user preferences (D13, D25). Every function takes the tenant id
+ * Tenant, tenant settings and per-user preferences. Every function takes the tenant id
  * from the auth context — never from the request.
  */
 
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import type {
   TenantSettings as TenantSettingsDto,
   UpdateTenantSettingsRequest,
@@ -13,11 +14,44 @@ import type {
   UserPreferences,
 } from '@rocketflare/shared/user-settings'
 import { and, eq } from 'drizzle-orm'
+import { type AppConfig, isIdpManaged } from '../../config'
 import type { Database } from '../../db/client'
 import { tenantSettings, tenants, tenantUserSettings } from '../../db/schema'
-import { ConflictError, NotFoundError } from '../utils/core/errors'
+import type { AuthContext } from '../types'
+import { ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
 import { enqueueJob, type JobsQueue, requireJobsQueue } from './jobs'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
+
+/**
+ * Why this person may not create an organisation themselves, or null when they may. The ONE rule
+ * `POST /api/tenants` enforces and `GET /auth/session` reports as `canCreateTenant`, so the UI never
+ * offers a button the server refuses. Single mode is the route's own 404 (`requireMultiTenant`).
+ * Under IdP-managed tenancy the issuer decides which organisations exist; a person whose access
+ * request is pending or rejected waits for an admin. The owned-organisation ceiling is checked at
+ * creation, where the count is read under the lock.
+ */
+export function tenantCreationRefusal(
+  cfg: AppConfig,
+  auth: Pick<AuthContext, 'isGlobalAdmin' | 'tenantId' | 'accessRequestStatus'>
+): ConflictError | ForbiddenError | null {
+  if (isIdpManaged(cfg)) {
+    return new ConflictError(
+      'Organisations are managed by your identity provider.',
+      ERROR_CODES.idpManaged
+    )
+  }
+  if (
+    !auth.isGlobalAdmin &&
+    auth.tenantId === null &&
+    (auth.accessRequestStatus === 'pending' || auth.accessRequestStatus === 'rejected')
+  ) {
+    return new ForbiddenError(
+      'Your access request has not been approved',
+      ERROR_CODES.pendingApproval
+    )
+  }
+  return null
+}
 
 export function toTenantDto(row: typeof tenants.$inferSelect): TenantDto {
   return {
@@ -66,8 +100,8 @@ export async function updateTenant(
 /**
  * Cascades through every `tenantRef` FK — one statement removes the organisation's world INSIDE
  * Postgres — then enqueues `tenant.purge` for everything outside it (R2 objects, a plugin's own
- * out-of-database state). The cascade was the whole story until this job existed, which is why a
- * deleted tenant's uploads used to live on in the bucket for ever.
+ * out-of-database state). The cascade alone would leave a deleted tenant's uploads in the
+ * bucket for ever.
  *
  * Two orderings are load-bearing. The queue binding is proved BEFORE the delete, because the purge
  * is the only thing that can ever reach a deleted tenant's state and a misconfigured deployment

@@ -1,13 +1,13 @@
 /**
- * Inbound email dispatcher (D31): the Worker's `email` handler, reached through Cloudflare Email
- * Routing when a rule's action is "Send to a Worker". The kit handles no address itself — every
+ * Inbound email dispatcher: the Worker's `email` handler, reached through Cloudflare Email
+ * Routing when a rule's action is "Send to a Worker". Core handles no address itself — every
  * handler comes from an installed plugin's `ServerPlugin.emailHandlers`, keyed by the LOCAL PART of
  * the recipient (`receipts` takes `receipts@…` and `receipts+anything@…`), with `*` as the
  * catch-all. A message no handler claims is rejected with a permanent SMTP error, so a typo'd
  * address bounces rather than vanishing.
  *
- * The context is the cron's `TaskContext` shape on purpose — config validated as `fetch` does it
- * (D3), one DB client per message closed in `waitUntil`, a logger tagged with the handler — so a
+ * The context is the cron's `TaskContext` shape on purpose — config validated as `fetch` does it,
+ * one DB client per message closed in `waitUntil`, a logger tagged with the handler — so a
  * plugin adapts it with `emailCtx` exactly as it adapts a cron with `cronCtx`. Keep the handler
  * itself short: store the raw message, write a row, enqueue the real work. Email Workers run under
  * the ordinary CPU limit, and a message the handler throws on is retried by the sending server

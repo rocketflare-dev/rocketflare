@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `upgrade-lib.mjs` (the workspace has no `allowJs`). Keep in step with
- * the exports there; `apps/web/tests/config/upgrade-lib.test.ts` is what typechecks against this.
+ * the exports there; `apps/web/tests/kit-only/upgrade-lib.test.ts` is what typechecks against this.
  */
 import type { Names } from './rename-lib.d.mts'
 
@@ -41,6 +41,11 @@ export interface Surface {
    * none of its packages.
    */
   addedDependencies?: Record<string, string[]>
+  /**
+   * `kind: 'plugin'` only: globs over the host files it seeded (`hostFiles`). Not in `paths`,
+   * because `remove` deletes those and these are the developer's.
+   */
+  hostFiles?: string[]
   history?: HistoryEntry[]
 }
 export interface KitBlock {
@@ -93,16 +98,33 @@ export interface Manifest {
 
 export function isKitManifest(manifest: Manifest | null): boolean
 export const KIT_ONLY_PATHS: readonly string[]
+/** Tooling a ported script imports: ported verbatim whatever a copy's `neverPort` says. */
+export const ALWAYS_PORTED_TOOLING: readonly string[]
 export const KIT_ONLY_PROJECT: string
+export const UPGRADE_ROOT_ENV: string
+export const UPGRADE_DELEGATED_ENV: string
+export const UPGRADER_FILES: Readonly<{ script: string; lib: string }>
+export function upgraderHandoff(scripts: {
+  local: string
+  target: string | null
+}): 'same' | 'delegate' | 'too-old'
 export function kitOnlyGlobs(
   manifest: Pick<Manifest, 'kitOnly'> | null | undefined,
   extra?: readonly string[] | null
 ): string[]
-export function stripKitOnlyWiring(packageJsonText: string): {
+export function commandNamesKitOnly(command: unknown, globs: readonly string[]): boolean
+export function stripKitOnlyWiring(
+  packageJsonText: string,
+  globs?: readonly string[]
+): {
   text: string
   removed: string[]
   edited: string[]
 }
+export function stripKitOnlyHooks(
+  settingsText: string,
+  globs: readonly string[]
+): { text: string; removed: string[] }
 export function absentSurfaces(manifest: Manifest, presentPaths: readonly string[]): string[]
 
 export interface Deployability {
@@ -231,6 +253,9 @@ export interface NoteCheckOptions {
  * Everything wrong with one porting note, as sentences — the ONE statement of the note schema,
  * read by `release-check.mjs` and by `upgrade-notes.test.ts`.
  */
+/** A note's length guide: past it the tools warn, they never fail. */
+export const NOTE_LINES_GUIDE: number
+export function noteLengthWarning(text: string, file?: string): string | null
 export function noteProblems(text: string, options?: NoteCheckOptions): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp

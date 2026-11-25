@@ -1,5 +1,5 @@
 /**
- * `/api/me` (D13): the signed-in user's profile and per-tenant preferences. Profile belongs to the
+ * `/api/me`: the signed-in user's profile and per-tenant preferences. Profile belongs to the
  * PERSON (`users`), preferences to the person-in-this-tenant (`tenant_user_settings`).
  */
 import {

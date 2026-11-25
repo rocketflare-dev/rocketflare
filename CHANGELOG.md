@@ -6,6 +6,136 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.44.1 — 2026-11-22
+
+`tests/config/kit-manifest.test.ts` passes in a kit checkout without `apps/web/tests/kit-only/`, which is how plugin CI gates a plugin, so plugin repositories pass against the newest kit again.
+[Porting note](docs/upgrades/0.44.1.md).
+
+## 0.44.0 — 2026-11-22
+
+`kit:upgrade` runs the target release's upgrader and 3-way merges stale patches, `pnpm test` reads its ports from the compose file, plugin upgrades stop duplicating core edits, and plugins gain Home cards, framing and larger upload caps.
+[Porting note](docs/upgrades/0.44.0.md).
+
+## 0.43.0 — 2026-11-22
+
+`pnpm gate --changed` gates only what a branch changed, the full gate is faster (TypeScript 7, shared test registries), and a copy no longer runs the kit's tooling tests.
+[Porting note](docs/upgrades/0.43.0.md).
+
+## 0.42.0 — 2026-11-21
+
+Field-report fixes: new apps start with `/rf-start` and a design conversation (`/rf-design`, rendered by `pnpm design:docs`), `pnpm plugin list --available` shows what already exists, setup handles WSL, and plugins gain four missing seams.
+[Porting note](docs/upgrades/0.42.0.md).
+
+## 0.41.1 — 2026-11-21
+
+Fixes from a field report on a copy built on 0.40.0: the offline switch leaves tracked files alone, `kit:upgrade` honours `--apply-deletes`, ports the vendored plugin and stages its work, and test, docs and migration failures explain themselves.
+[Porting note](docs/upgrades/0.41.1.md).
+
+## 0.41.0 — 2026-11-20
+
+The MCP server's tool seam: one tool list for chat, agent runs and MCP, filtered by `toolsFor(surface, ctx)`, with `Tool.surfaces`, a `Tool.mcp` block, and `ServerPlugin.tools` replacing `agentTools` (still read, with a warning).
+[Porting note](docs/upgrades/0.41.0.md).
+
+## 0.40.0 — 2026-11-19
+
+Knowledge facts are built only from documents a reader may see and settled only by those allowed, invitations follow their issuer, suspended organisations run no queued jobs, the chunker runs in linear bounded work, and security reports publish counts only.
+[Porting note](docs/upgrades/0.40.0.md).
+
+## 0.39.0 — 2026-11-19
+
+Agent runs survive crashes and cancels: the tool loop records each model turn and tool result, so a retry neither re-bills a turn nor re-runs a finished tool; a cancel reaches the call in flight; a cron settles lost runs.
+[Porting note](docs/upgrades/0.39.0.md).
+
+## 0.38.0 — 2026-11-18
+
+Knowledge is easier to explore and its facts more trustworthy: a filtered full-width Search page, facts on each document and in a Facts view, and a decision model judging whether two readings name one entity or value.
+[Porting note](docs/upgrades/0.38.0.md).
+
+## 0.37.0 — 2026-11-18
+
+The knowledge base becomes measurable and structure-aware: eval corpora, structured chunks, model-consistent search with re-embedding, dedupe, retry, reranking, metered spend, and typed knowledge facts extracted from documents behind a `knowledge-facts` flag.
+[Porting note](docs/upgrades/0.37.0.md).
+
+## 0.36.1 — 2026-11-13
+
+0.36.0 copies could not deploy: the public-sites cache made a random id at module load, which Cloudflare refuses; it is now made on first use, a test loads the Worker to catch it, and upgrades finish cleanly after rejects.
+[Porting note](docs/upgrades/0.36.1.md).
+
+## 0.36.0 — 2026-11-13
+
+Provisioning a copy with a public-site plugin now reaches a working production site unaided: zone routes instead of 403-prone custom domains, production-only runs, real deploys, and a public-site cache keyed on the deployment.
+[Porting note](docs/upgrades/0.36.0.md).
+
+## 0.35.0 — 2026-11-11
+
+A new `/rf-security` skill runs a multi-agent security audit of a copy against its own `docs/THREAT-MODEL.md`, with proofs in a Docker sandbox and findings kept outside the repository.
+[Porting note](docs/upgrades/0.35.0.md).
+
+## 0.34.0 — 2026-11-11
+
+Suspended organisations run no agents, invitation and ownership rules hold on every path, API keys stay in their organisation, AI config saves lock their row, decide is metered, sign-in mail counts per mailbox, uploads stay capped, and Microsoft proves addresses.
+[Porting note](docs/upgrades/0.34.0.md).
+
+## 0.33.0 — 2026-11-10
+
+Plugin tools get `ToolCtx.requesterUrls`, the URLs a person typed themselves, and the UI offers "Create organisation" only when the server would allow it.
+[Porting note](docs/upgrades/0.33.0.md).
+
+## 0.32.2 — 2026-11-10
+
+A kit UI test that failed on slow CI runners now waits for the page it navigates to, not for text the page it leaves also contains.
+[Porting note](docs/upgrades/0.32.2.md).
+
+## 0.32.1 — 2026-11-10
+
+Two plugin fixes: `EventPayloadOf` distributes over a union of event names, and a platform document, such as a guide page, no longer shows as a document card that linked to a page that could not open it.
+[Porting note](docs/upgrades/0.32.1.md).
+
+## 0.32.0 — 2026-11-10
+
+Plugins can declare and emit tenant-scoped events that queue one delivery per subscriber, and agents can be triggered by an event or offered as bindable to it.
+[Porting note](docs/upgrades/0.32.0.md).
+
+## 0.31.0 — 2026-11-10
+
+Plugins can ship tenant-less platform knowledge that is always embedded, stream a scoped chat, add header items and palette registries, install Claude Code hooks and seed developer-owned host files.
+[Porting note](docs/upgrades/0.31.0.md).
+
+## 0.30.0 — 2026-11-10
+
+Plugins can serve whole public hosts through a new `publicSites` seam, with a strict per-site CSP, multi-host provisioning, a `workspace` UI route tier and a tenant resolver; an app with no such plugin sees no routing change.
+[Porting note](docs/upgrades/0.30.0.md).
+
+## 0.29.0 — 2026-11-09
+
+Sign-in moves to `openid-client`, three dependency advisories close, and a hardening round tightens roles, sign-in, API key scopes, AI tools and budgets, the plugin identity seam, CLI output and tooling; trace content capture defaults off.
+[Porting note](docs/upgrades/0.29.0.md).
+
+## 0.28.0 — 2026-11-08
+
+The analytics plugin is opt-in: a fresh clone of the kit installs no plugin, and `/rf-plugin add analytics` adds dashboards, cubes and fact tables when an app wants them.
+[Porting note](docs/upgrades/0.28.0.md).
+
+## 0.27.0 — 2026-11-08
+
+A new `/rf-agent-docs` skill audits and fixes the docs an agent loads, and the WCAG contrast gate those docs always promised now exists — two theme tokens that failed it were adjusted.
+[Porting note](docs/upgrades/0.27.0.md).
+
+## 0.26.0 — 2026-11-07
+
+IdP-managed tenancy (`OIDC_MANAGED_TENANCY`) with Cognito fixes, and an identity seam for plugins — sign-in, provisioning, login methods, SSO required per domain and limited public mounts — that works in both tenancy modes.
+[Porting note](docs/upgrades/0.26.0.md).
+
+## 0.25.0 — 2026-11-03
+
+The kit runs on Node 26, React 19, React Router 7, vitest 5, zod 4, AG-UI 1.0, postgres.js 4, CASL 7 and Anthropic API 2026-10-21; every dependency is current; workflows pin Actions by SHA, with timeouts and least-privilege permissions.
+[Porting note](docs/upgrades/0.25.0.md).
+
+## 0.24.0 — 2026-10-30
+
+A renamed copy now carries none of the kit's own machinery: its maintainer scripts, hooks, project files and kit-only tests are removed at the rename, and the example plugin's agent tool and welcome note follow its flag.
+[Porting note](docs/upgrades/0.24.0.md).
+
 ## 0.23.0 — 2026-10-24
 
 Plugins can start agent runs from jobs, crons and inbound email with an idempotency key, agents and tools get `storage()`, converted text with NUL bytes now indexes, and unlabelled plugin nav groups share one block.

@@ -1,5 +1,5 @@
 /**
- * Public probes, mounted at `/api` (04 §1: kept under `/api/` so they never collide with an
+ * Public probes, mounted at `/api` (kept under `/api/` so they never collide with an
  * SPA route). `/health` = liveness (config + version), `/ready` = readiness (SELECT 1 through
  * the request's DB handle; 503 envelope when the database is unreachable).
  */

@@ -1,9 +1,9 @@
 /**
- * pino factory for every context (D16). Request logging goes through hono-pino
+ * pino factory for every context. Request logging goes through hono-pino
  * (`middleware/request-logger.ts`) which wraps a logger from here; queue/scheduled/scripts call
  * `createLogger` directly. Workers have no stdout: pino's `browser` mode writes structured
  * objects via `console.*`, which `[observability.logs]` ships as JSON. In `APP_ENV=development`
- * the `hono-pino/debug-log` writer pretty-prints instead (the Workers reference app's proven config).
+ * the `hono-pino/debug-log` writer pretty-prints instead.
  */
 import { createHandler as debugLog } from 'hono-pino/debug-log'
 import pino from 'pino'

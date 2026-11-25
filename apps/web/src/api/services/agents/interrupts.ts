@@ -1,5 +1,5 @@
 /**
- * `agent_run_interrupts` — the questions an agent run asks a person, and the answers (issue #17).
+ * `agent_run_interrupts` — the questions an agent run asks a person, and the answers.
  *
  * Four properties here are load-bearing, and every one of them is a database constraint rather
  * than a convention:
@@ -30,7 +30,7 @@ import {
 import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type AgentRunInterruptRow, agentRunInterrupts } from '../../../db/schema'
-import { type ToolApproval, toolInputSchema } from '../ai/kit'
+import { type ToolApproval, toolInputSchema } from '../ai/agent-loop'
 
 /** What an agent hands `ctx.interrupt`, and what the runtime turns into a row. */
 export interface RequestInterruptInput {
@@ -41,6 +41,8 @@ export interface RequestInterruptInput {
   spec: AgentInterruptSpec
   toolCallId?: string | null
   expiresAt?: Date | null
+  /** When the sweeper reminds whoever can answer (`meta.hitl.remindAfter`); null = never. */
+  remindAt?: Date | null
 }
 
 export function toAgentRunInterrupt(row: AgentRunInterruptRow): AgentRunInterrupt {
@@ -66,7 +68,7 @@ export function toAgentRunInterrupt(row: AgentRunInterruptRow): AgentRunInterrup
 }
 
 /**
- * The JSON Schema a client with no kit code validates its answer against. Derived from the same
+ * The JSON Schema a client with no app code validates its answer against. Derived from the same
  * `interruptPayloadSchema(spec)` the route enforces, so the published contract and the 400 cannot
  * disagree — and derived rather than stored by hand, because a hand-written copy of a validator is
  * a second validator.
@@ -75,14 +77,14 @@ function responseSchemaFor(spec: AgentInterruptSpec): Record<string, unknown> | 
   try {
     return toolInputSchema(interruptPayloadSchema(spec))
   } catch {
-    // A schema shape `zod-to-json-schema` cannot render is a missing convenience, never a failed
-    // ask: the kit's own UI validates with the zod schema, and the column is nullable for this.
+    // A schema shape `z.toJSONSchema` cannot render is a missing convenience, never a failed
+    // ask: the app's own UI validates with the zod schema, and the column is nullable for this.
     return null
   }
 }
 
 /**
- * Create the ask, or return the one this run already made under that key — the idempotency (T2).
+ * Create the ask, or return the one this run already made under that key — the idempotency.
  * Never updates an existing row: a re-entered attempt must find the ANSWER, not overwrite the
  * question somebody is in the middle of reading.
  */
@@ -105,6 +107,9 @@ export async function requestInterrupt(
       spec: input.spec,
       status: 'pending',
       expiresAt: input.expiresAt ?? null,
+      remindAt: input.remindAt ?? null,
+      assigneeUserIds: input.spec.assignees?.userIds ?? [],
+      assigneeGroupIds: input.spec.assignees?.groupIds ?? [],
     })
     .onConflictDoNothing({ target: [agentRunInterrupts.runId, agentRunInterrupts.key] })
     .returning()
@@ -254,8 +259,10 @@ export async function approvalsForRun(
   for (const row of rows) {
     if (!row.toolCallId) continue
     const payload = (row.payload ?? {}) as { note?: string; editedInput?: unknown }
+    const shown = row.spec.kind === 'approval' ? row.spec.tool : undefined
     approvals.set(row.toolCallId, {
       interruptId: row.id,
+      approvedCall: shown ? { name: shown.name, input: shown.input } : null,
       status: row.status === 'resolved' ? 'resolved' : 'cancelled',
       ...(payload.editedInput !== undefined ? { input: payload.editedInput } : {}),
       ...(payload.note ? { note: payload.note } : {}),
@@ -326,7 +333,7 @@ const JSON_TYPE_OF = (value: unknown): string => {
  *
  * *A client that can edit tool arguments is a client that can call anything*, so an edit is never
  * taken on trust — but this is **defence in depth, not a JSON Schema implementation**: the real
- * gate is `runHandler` (`services/ai/kit.ts`), which re-parses the input with the tool's own zod
+ * gate is `runHandler` (`services/ai/agent-loop.ts`), which re-parses the input with the tool's own zod
  * schema immediately before the handler runs, on both the fresh and the resumed path. What this
  * catches is the class of edit worth a 400 rather than a wasted model turn — a wrong shape, a
  * missing required argument, an unexpected key, a value outside an enum.

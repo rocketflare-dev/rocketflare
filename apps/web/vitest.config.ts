@@ -2,22 +2,30 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
+import { defaultClientConditions } from 'vite'
 import { defineConfig } from 'vitest/config'
-import { isMarkedIsolated, apiTestFiles as listApiTestFiles } from './tests/helpers/isolation'
-import { latencyFactor } from './tests/helpers/latency'
+import {
+  isMarkedFixtureAgents,
+  isMarkedIsolated,
+  apiTestFiles as listApiTestFiles,
+  testDirs,
+  testFiles,
+  uiNeedsIsolation,
+} from './tests/helpers/isolation.ts'
+import { latencyFactor } from './tests/helpers/latency.ts'
 
 const alias = {
-  '@': path.resolve(__dirname, './src'),
+  '@': path.resolve(import.meta.dirname, './src'),
   /**
    * The test kit (D31): `@testkit/integration` is the harness, `@testkit/unit` the context
    * builders. It is registered HERE and in `tsconfig.json`, and deliberately NOT in
    * `vite.config.ts` — so a `src/` file importing it fails the build instead of shipping the
    * harness into the browser bundle. `tests/config/testkit-alias.test.ts` pins all three halves.
    */
-  '@testkit': path.resolve(__dirname, './tests/kit'),
+  '@testkit': path.resolve(import.meta.dirname, './tests/kit'),
   // Worker-only module: DurableObject / WorkflowEntrypoint base classes. Tests run under Node
   // (real Postgres, `app.request(req, env)` with tests/mocks/bindings.ts), not workerd.
-  'cloudflare:workers': path.resolve(__dirname, './tests/mocks/cloudflare-workers.ts'),
+  'cloudflare:workers': path.resolve(import.meta.dirname, './tests/mocks/cloudflare-workers.ts'),
 }
 
 /**
@@ -53,13 +61,11 @@ const LATENCY_FACTOR = latencyFactor(process.env)
 const PROCESS_TEST_TIMEOUT = 20_000 * LATENCY_FACTOR
 
 // Forks are capped because each holds its own Postgres connections (test DB runs
-// max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 6 is where Postgres
-// becomes the bottleneck. See .claude/rules/testing.md.
+// max_connections=300). Floor 3 = what a 2-vCPU CI runner gets; ceiling 10 measured ~10 s off
+// `api-isolated` on a large machine against 6. See .claude/rules/testing.md.
 const MAX_WORKERS =
   Number.parseInt(process.env.TEST_MAX_WORKERS ?? '', 10) ||
-  (EPHEMERAL ? 2 : Math.min(6, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
-
-const API_TEST_DIR = path.resolve(__dirname, './tests/api')
+  (EPHEMERAL ? 2 : Math.min(10, Math.max(3, (os.availableParallelism?.() ?? 4) - 2)))
 
 /**
  * The kit's OWN tests (`docs/CONCEPTS.md` §13): release notes, the version chain, the release and
@@ -68,52 +74,80 @@ const API_TEST_DIR = path.resolve(__dirname, './tests/api')
  * and a copy's gate has nothing kit-only to run (a stray `--project kit-only` then matches nothing,
  * which vitest ignores).
  */
-const KIT_ONLY_DIR = path.resolve(__dirname, './tests/kit-only')
-const PLUGINS_DIR = path.resolve(__dirname, './src/plugins')
+const KIT_ONLY_DIR = path.resolve(import.meta.dirname, './tests/kit-only')
 
 /**
  * A plugin (D31) keeps its tests inside its own directory — `src/plugins/<id>/tests/{api,ui,config}`
- * — so that installing or removing one moves its tests with it and never touches `tests/`. The api
- * ones have to be discovered the same way the kit's are, because the `// @vitest-isolate` marker
- * decides which of the two api projects a file belongs to.
+ * — so that installing or removing one moves its tests with it and never touches `tests/`.
+ * `testDirs` lists the kit's directory and every plugin's, the same list the isolation contract
+ * test walks, because the `// @vitest-isolate` marker decides which api project a file joins.
  */
-function pluginDirs(): string[] {
-  if (!fs.existsSync(PLUGINS_DIR)) return []
-  return fs
-    .readdirSync(PLUGINS_DIR, { withFileTypes: true })
-    .filter(e => e.isDirectory())
-    .map(e => e.name)
-    .sort()
-}
-
-function apiTestFiles(isolated: boolean): string[] {
-  const dirs: Array<{ abs: string; rel: string }> = [
-    { abs: API_TEST_DIR, rel: 'tests/api' },
-    ...pluginDirs().map(id => ({
-      abs: path.join(PLUGINS_DIR, id, 'tests/api'),
-      rel: `src/plugins/${id}/tests/api`,
-    })),
-  ]
-  return dirs.flatMap(dir =>
+function apiTestFiles(project: 'api' | 'api-isolated' | 'api-fixtures'): string[] {
+  const projectOf = (source: string) =>
+    isMarkedIsolated(source)
+      ? 'api-isolated'
+      : isMarkedFixtureAgents(source)
+        ? 'api-fixtures'
+        : 'api'
+  return testDirs(import.meta.dirname, 'api').flatMap(dir =>
     listApiTestFiles(dir.abs)
-      .filter(f => isMarkedIsolated(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
+      .filter(f => projectOf(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === project)
       .map(f => `${dir.rel}/${f}`)
   )
 }
+
+/**
+ * The ui and config tests, kit and plugins alike, split on `uiNeedsIsolation`: a file that mocks a
+ * module or resets the registry gets its own registry (`<kind>-isolated`), every other one shares the
+ * worker's, which imports the app once per worker instead of once per file.
+ */
+function splitTestFiles(kind: 'ui' | 'config', isolated: boolean): string[] {
+  const dirs = testDirs(import.meta.dirname, kind)
+  const pattern = kind === 'ui' ? /\.(test|spec)\.tsx?$/ : /\.(test|spec)\.ts$/
+  return dirs.flatMap(dir =>
+    testFiles(dir.abs, pattern)
+      .filter(f => uiNeedsIsolation(fs.readFileSync(path.join(dir.abs, f), 'utf8')) === isolated)
+      .map(f => `${dir.rel}/${f}`)
+  )
+}
+
+const uiProject = (name: 'ui' | 'ui-isolated') => ({
+  extends: true as const,
+  plugins: [react()],
+  test: {
+    name,
+    environment: 'jsdom' as const,
+    isolate: name === 'ui-isolated',
+    setupFiles: ['./tests/ui/setup.ts'],
+    include: splitTestFiles('ui', name === 'ui-isolated'),
+  },
+  // Without the browser's conditions `react-router` loads as CJS here and an ESM importer such
+  // as `react-router-dom` gets a second copy, so the two halves share no router context.
+  resolve: { alias, conditions: [...defaultClientConditions] },
+})
+
+const configProject = (name: 'config' | 'config-isolated') => ({
+  extends: true as const,
+  test: {
+    name,
+    testTimeout: PROCESS_TEST_TIMEOUT,
+    environment: 'node' as const,
+    isolate: name === 'config-isolated',
+    setupFiles: [
+      './tests/config/setup.ts',
+      ...(name === 'config' ? ['./tests/config/shared-setup.ts'] : []),
+    ],
+    include: splitTestFiles('config', name === 'config-isolated'),
+  },
+  resolve: { alias },
+})
 
 export default defineConfig({
   test: {
     globals: true,
     watch: false,
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        maxForks: MAX_WORKERS,
-        // Pinned EQUAL to maxForks: with `isolate: false` vitest 3 may terminate an idle
-        // worker mid-promise ("Terminating worker thread", vitest-dev/vitest#8564).
-        minForks: MAX_WORKERS,
-      },
-    },
+    maxWorkers: MAX_WORKERS,
     testTimeout: 5_000 * LATENCY_FACTOR,
     hookTimeout: 10_000 * LATENCY_FACTOR,
     teardownTimeout: 5_000 * LATENCY_FACTOR,
@@ -127,21 +161,20 @@ export default defineConfig({
         'src/db/**/*.ts',
       ],
       exclude: ['src/ui/**', '**/*.test.ts', '**/types.ts', '**/schema/**'],
-      all: true,
       clean: true,
       reportsDirectory: './coverage',
     },
     projects: [
       {
-        // Shared module registry. Isolation is turned off on the command line
-        // (`vitest run --project api --no-isolate`) — vitest 3 ignores a per-project `isolate`.
+        // Shared module registry.
         extends: true,
         test: {
           name: 'api',
+          isolate: false,
           environment: 'node',
           globalSetup: ['./tests/setup.ts'],
           setupFiles: ['./tests/api-setup.ts'],
-          include: apiTestFiles(false),
+          include: apiTestFiles('api'),
         },
         resolve: { alias },
       },
@@ -153,7 +186,21 @@ export default defineConfig({
           environment: 'node',
           globalSetup: ['./tests/setup.ts'],
           setupFiles: ['./tests/api-setup.ts'],
-          include: apiTestFiles(true),
+          include: apiTestFiles('api-isolated'),
+        },
+        resolve: { alias },
+      },
+      {
+        // Files marked `// @vitest-fixture-agents`: a shared registry, like `api`, in which the
+        // fixture agents are installed once per worker before the app is first imported.
+        extends: true,
+        test: {
+          name: 'api-fixtures',
+          isolate: false,
+          environment: 'node',
+          globalSetup: ['./tests/setup.ts'],
+          setupFiles: ['./tests/api-fixtures-setup.ts', './tests/api-setup.ts'],
+          include: apiTestFiles('api-fixtures'),
         },
         resolve: { alias },
       },
@@ -170,20 +217,9 @@ export default defineConfig({
         },
         resolve: { alias },
       },
-      {
-        // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
-        extends: true,
-        test: {
-          name: 'config',
-          testTimeout: PROCESS_TEST_TIMEOUT,
-          environment: 'node',
-          include: [
-            'tests/config/**/*.{test,spec}.ts',
-            'src/plugins/*/tests/config/**/*.{test,spec}.ts',
-          ],
-        },
-        resolve: { alias },
-      },
+      // No database: config schema, wrangler parity, pure helpers, and every installed plugin's own.
+      configProject('config'),
+      configProject('config-isolated'),
       ...(fs.existsSync(KIT_ONLY_DIR)
         ? [
             {
@@ -199,20 +235,8 @@ export default defineConfig({
             },
           ]
         : []),
-      {
-        extends: true,
-        plugins: [react()],
-        test: {
-          name: 'ui',
-          environment: 'jsdom',
-          setupFiles: ['./tests/ui/setup.ts'],
-          include: [
-            'tests/ui/**/*.{test,spec}.{ts,tsx}',
-            'src/plugins/*/tests/ui/**/*.{test,spec}.{ts,tsx}',
-          ],
-        },
-        resolve: { alias },
-      },
+      uiProject('ui'),
+      uiProject('ui-isolated'),
     ],
   },
 })

@@ -1,9 +1,10 @@
-/** `pnpm eval`'s pure half (D33): reading a run report, baselines, and the regression compare. */
+/** `pnpm eval`'s pure half: reading a run report, baselines, and the regression compare. */
 import { describe, expect, it } from 'vitest'
 import {
   baselinesFrom,
   compareScores,
   extractCases,
+  medianOf,
   parseArgs,
   renderSummary,
   runHeader,
@@ -44,9 +45,7 @@ const report = (cases: ReturnType<typeof assertion>[]) => ({
 
 describe('reading a run', () => {
   it('keys suites by path under suites/ and reads scores, usage and prompt hashes', () => {
-    expect(suiteId('/x/apps/evals/suites/agents/summarize-text.eval.ts')).toBe(
-      'agents-summarize-text'
-    )
+    expect(suiteId('/x/apps/evals/suites/agents/my-agent.eval.ts')).toBe('agents-my-agent')
     const [c] = extractCases(report([assertion('refund-window', { Rubric: 1, Contains: 0.5 })]))
     expect(c).toMatchObject({
       suite: 'chat-knowledge',
@@ -118,5 +117,22 @@ describe('parseArgs', () => {
     })
     expect(() => parseArgs(['--nope'])).toThrow('unknown flag --nope')
     expect(() => parseArgs(['--model'])).toThrow('--model needs a value')
+    expect(parseArgs(['retrieval', '--rerank', 'fireworks'])).toMatchObject({
+      filters: ['retrieval'],
+      rerank: 'fireworks',
+    })
+    expect(() => parseArgs(['--rerank', 'cohere'])).toThrow('--rerank is one of none, fireworks')
+    expect(parseArgs(['retrieval', '--context'])).toMatchObject({
+      filters: ['retrieval'],
+      context: true,
+    })
+  })
+})
+
+describe('medianOf', () => {
+  it('ignores nulls, rounds an even median, and is null for nothing', () => {
+    expect(medianOf([null, 300, 100, 200])).toEqual({ median: 200, count: 3 })
+    expect(medianOf([100, 201])).toEqual({ median: 151, count: 2 })
+    expect(medianOf([null])).toBeNull()
   })
 })

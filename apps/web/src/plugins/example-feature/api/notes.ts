@@ -1,18 +1,18 @@
 /**
- * Queries behind `/api/example-feature/notes` (D31). A plugin's service obeys the kit's service
+ * Queries behind `/api/example-feature/notes`. A plugin's service obeys the core service
  * rule exactly: a plain module taking `(db, …)`, importing no binding and reading no config global
  * — so the route stays thin and every query is testable without a request.
  *
  * **The tenant predicate is on every statement**, taken from the caller's auth context and never
  * from anything a client sent. `tests/config/unscoped-allowlist.test.ts` scans `src/**`, which
- * includes this file, so a query that forgot one fails the host's suite like a kit one.
+ * includes this file, so a query that forgot one fails the host's suite like a core one.
  */
 
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { CreateExampleNoteRequest } from '@rocketflare/shared/plugins/example-feature/index'
 import { and, desc, eq } from 'drizzle-orm'
 // `Database` is one of the handful of types a plugin NAMES rather than receives: this module is the
-// kit's service shape — a plain `(db, tenantId, …)` function one plugin calls from a route, a job,
+// core service shape — a plain `(db, tenantId, …)` function one plugin calls from a route, a job,
 // a hook and an agent tool alike — and such a function cannot take "whichever context this is".
 import type { Database } from '@/plugins/api'
 import { type ExampleNoteRow, exampleNotes } from '../db/schema'

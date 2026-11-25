@@ -1,0 +1,705 @@
+/**
+ * `scripts/provision/patch-toml.ts` — string-level patching of the wrangler tomls (config project,
+ * no database). Runs against a SNAPSHOT of the kit's shipped tomls (./fixtures/), never the files on
+ * disk: this test travels into every copy, whose tomls Launch's write_config or `pnpm provision`
+ * has already patched. It re-checks the parity test's own invariants on the patched pair. That the
+ * patcher still finds its targets in THIS kit's shipped tomls is kit-only
+ * (`tests/kit-only/patch-toml-shipped.test.ts`).
+ */
+import fs from 'node:fs'
+import path from 'node:path'
+import TOML from '@iarna/toml'
+import { describe, expect, it } from 'vitest'
+import {
+  applyWorkerFirstAll,
+  awaitsReprovision,
+  markReprovision,
+  revertWorkerFirstAll,
+} from '../../../../scripts/lib/plugin-lib.mjs'
+import {
+  DEFAULT_LOCAL_CONNECTION_STRING,
+  hasHyperdriveBlock,
+  hyperdrivePlaceholder,
+  patchToml,
+  readDatabaseDriver,
+  readTomlString,
+  TomlPatchError,
+  tomlPlaceholders,
+} from '../../scripts/provision/patch-toml'
+
+/** The kit's tomls as shipped (a snapshot: ./fixtures/wrangler{,.staging}.toml). */
+const FIXTURES = path.resolve(__dirname, 'fixtures')
+
+/**
+ * The kit's own placeholders. A copy with a plugin installed carries that plugin's KV
+ * placeholder too, so the assertions below name what they are about instead of demanding the
+ * document hold nothing else.
+ */
+const kitPlaceholders = (env: 'staging' | 'production') =>
+  env === 'staging'
+    ? ['<HYPERDRIVE_STAGING_ID>', '<KV_RATE_LIMIT_STAGING_ID>']
+    : ['<HYPERDRIVE_ID>', '<KV_RATE_LIMIT_ID>']
+const shippedStaging = fs.readFileSync(path.join(FIXTURES, 'wrangler.staging.toml'), 'utf8')
+const shippedProd = fs.readFileSync(path.join(FIXTURES, 'wrangler.toml'), 'utf8')
+
+/**
+ * The same files under `DATABASE_DRIVER = "postgres"` — what `pnpm provision cloudflare <env>
+ * --driver postgres` writes before it creates the Hyperdrive config. The id tests below run on
+ * this shape, since only it has a HYPERDRIVE block; a copy already on postgres is unchanged by it.
+ */
+const asPostgres = (text: string, env: 'staging' | 'production') =>
+  patchToml(text, {
+    databaseDriver: 'postgres',
+    hyperdriveBlock: {
+      id: hyperdrivePlaceholder(env),
+      localConnectionString: DEFAULT_LOCAL_CONNECTION_STRING,
+    },
+  })
+const stagingText = asPostgres(shippedStaging, 'staging')
+const prodText = asPostgres(shippedProd, 'production')
+
+// Obviously fake 32-hex ids (the real ones are also 32 hex — that is what the parity test expects).
+const HD_STAGING = '0123456789abcdef0123456789abcdef'
+const KV_STAGING = 'fedcba9876543210fedcba9876543210'
+const HD_PROD = '11111111111111111111111111111111'
+const KV_PROD = '22222222222222222222222222222222'
+
+const commentLines = (text: string) => text.split('\n').filter(l => /^\s*#/.test(l))
+
+describe('patch-toml: the snapshot carries the placeholders this patcher targets', () => {
+  it('staging and production have their four placeholders', () => {
+    expect(tomlPlaceholders(stagingText)).toEqual(
+      expect.arrayContaining(kitPlaceholders('staging'))
+    )
+    expect(tomlPlaceholders(prodText)).toEqual(
+      expect.arrayContaining(kitPlaceholders('production'))
+    )
+  })
+})
+
+describe('patch-toml: ids', () => {
+  it('replaces both placeholders in the staging toml and nothing else', () => {
+    const out = patchToml(stagingText, { hyperdriveId: HD_STAGING, kvId: KV_STAGING })
+    for (const p of kitPlaceholders('staging')) expect(tomlPlaceholders(out)).not.toContain(p)
+    const doc = TOML.parse(out) as any
+    expect(doc.hyperdrive[0].id).toBe(HD_STAGING)
+    expect(doc.kv_namespaces[0].id).toBe(KV_STAGING)
+    // localConnectionString and everything else is untouched.
+    expect(doc.hyperdrive[0].localConnectionString).toBe(
+      (TOML.parse(stagingText) as any).hyperdrive[0].localConnectionString
+    )
+    expect(out.split('\n').length).toBe(stagingText.split('\n').length)
+    expect(commentLines(out)).toEqual(commentLines(stagingText))
+  })
+
+  it('is idempotent: a second run with the same ids is byte-identical', () => {
+    const once = patchToml(stagingText, { hyperdriveId: HD_STAGING, kvId: KV_STAGING })
+    const twice = patchToml(once, { hyperdriveId: HD_STAGING, kvId: KV_STAGING })
+    expect(twice).toBe(once)
+  })
+
+  it('refuses to overwrite a DIFFERENT existing id unless force', () => {
+    const once = patchToml(stagingText, { hyperdriveId: HD_STAGING, kvId: KV_STAGING })
+    expect(() => patchToml(once, { hyperdriveId: HD_PROD })).toThrow(TomlPatchError)
+    expect(() => patchToml(once, { kvId: KV_PROD })).toThrow(/already has id/)
+    const forced = patchToml(once, { hyperdriveId: HD_PROD, force: true })
+    expect((TOML.parse(forced) as any).hyperdrive[0].id).toBe(HD_PROD)
+  })
+
+  it('keeps a real id when a binding is re-declared with its placeholder', () => {
+    // `cloudflare <env>` writes every plugin binding into BOTH tomls, placeholders and all: the
+    // second environment's run must not throw on (or erase) the id the first one wrote.
+    const once = patchToml(stagingText, { kvId: KV_STAGING })
+    const again = patchToml(once, {
+      bindings: [{ type: 'kv', binding: 'RATE_LIMIT_KV', id: '<KV_RATE_LIMIT_STAGING_ID>' }],
+    })
+    expect(again).toBe(once)
+  })
+
+  it('throws when the binding block is missing', () => {
+    expect(() => patchToml('name = "x"\n', { hyperdriveId: HD_PROD })).toThrow(/no `id` line/)
+  })
+})
+
+describe('patch-toml: vars and routes', () => {
+  it('sets APP_URL and EMAIL_FROM, keeping the trailing comment', () => {
+    const out = patchToml(prodText, {
+      appUrl: 'https://app.example.test',
+      emailFrom: 'Example <noreply@mail.example.test>',
+    })
+    const doc = TOML.parse(out) as any
+    expect(doc.vars.APP_URL).toBe('https://app.example.test')
+    expect(doc.vars.EMAIL_FROM).toBe('Example <noreply@mail.example.test>')
+    expect(readTomlString(out, 'APP_URL')).toBe('https://app.example.test')
+    const appUrlLine = out.split('\n').find(l => l.startsWith('APP_URL'))
+    expect(appUrlLine).toMatch(/# public origin/)
+    expect(commentLines(out)).toEqual(commentLines(prodText))
+  })
+
+  it('un-comments the routes line with the host, idempotently, and can re-point it', () => {
+    const out = patchToml(prodText, { routeHost: 'app.example.test' })
+    const doc = TOML.parse(out) as any
+    expect(doc.routes).toEqual([{ pattern: 'app.example.test', custom_domain: true }])
+    expect(patchToml(out, { routeHost: 'app.example.test' })).toBe(out)
+    const moved = patchToml(out, { routeHost: 'www.example.test' })
+    expect((TOML.parse(moved) as any).routes[0].pattern).toBe('www.example.test')
+    // Exactly one comment line (the template) was consumed; every other comment survives.
+    expect(commentLines(out).length).toBe(commentLines(prodText).length - 1)
+  })
+
+  it('inserts a workers_dev note after `name` only when no workers_dev line exists', () => {
+    const noted = patchToml(prodText, {
+      workersDevComment: 'workers_dev = true is the default: served at workers.dev',
+    })
+    expect(noted).toContain('name = "')
+    expect(noted.split('\n')[noted.split('\n').findIndex(l => l.startsWith('name = ')) + 1]).toBe(
+      '# workers_dev = true is the default: served at workers.dev'
+    )
+    expect(TOML.parse(noted)).toEqual(TOML.parse(prodText))
+    // A second run finds the note (it starts with `workers_dev =`) and inserts nothing.
+    expect(patchToml(noted, { workersDevComment: 'served at workers.dev' })).toBe(noted)
+    // The staging toml already declares workers_dev = true → untouched.
+    expect(patchToml(stagingText, { workersDevComment: 'x' })).toBe(stagingText)
+  })
+})
+
+describe('patch-toml: setVars', () => {
+  it('appends an absent var, overwrites a different one, and is idempotent', () => {
+    const added = patchToml(prodText, { setVars: { SITES_HOSTS: 'www.example.test=www' } })
+    expect((TOML.parse(added) as any).vars.SITES_HOSTS).toBe('www.example.test=www')
+    const changed = patchToml(added, { setVars: { SITES_HOSTS: 'shop.example.test=shop' } })
+    expect((TOML.parse(changed) as any).vars.SITES_HOSTS).toBe('shop.example.test=shop')
+    expect(patchToml(changed, { setVars: { SITES_HOSTS: 'shop.example.test=shop' } })).toBe(changed)
+  })
+})
+
+describe('patch-toml: multiple hosts', () => {
+  const app = 'app.example.test'
+  const routes = (text: string) => (TOML.parse(text) as any).routes.map((r: any) => r.pattern)
+
+  it('writes the app host and every site host, and a re-run changes nothing', () => {
+    const out = patchToml(prodText, {
+      routeHost: app,
+      siteRouteHosts: ['www.example.test', 'docs.other.test'],
+    })
+    expect(routes(out)).toEqual([app, 'www.example.test', 'docs.other.test'])
+    expect((TOML.parse(out) as any).routes.every((r: any) => r.custom_domain === true)).toBe(true)
+    expect(
+      patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test', 'docs.other.test'] })
+    ).toBe(out)
+  })
+
+  it('never drops a route on a re-run: one hosts list shorter, or the app host alone', () => {
+    const out = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    expect(routes(patchToml(out, { routeHost: app, siteRouteHosts: [] }))).toEqual([
+      app,
+      'www.example.test',
+    ])
+    expect(routes(patchToml(out, { routeHost: app }))).toEqual([app, 'www.example.test'])
+  })
+
+  it('re-points the app host and keeps the site hosts', () => {
+    const out = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    expect(
+      routes(
+        patchToml(out, { routeHost: 'new.example.test', siteRouteHosts: ['www.example.test'] })
+      )
+    ).toEqual(['new.example.test', 'www.example.test'])
+  })
+
+  it('puts the app host in front when the only route is a site host', () => {
+    const out = patchToml(prodText, { siteRouteHosts: ['www.example.test'] })
+    expect(
+      routes(patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test'] }))
+    ).toEqual([app, 'www.example.test'])
+  })
+
+  it('leaves a hand-written zone route as it was', () => {
+    const hand = prodText.replace(
+      /^# routes = .*$/m,
+      'routes = [{ pattern = "shop.example.test/*", zone_name = "example.test" }]'
+    )
+    const out = patchToml(hand, { siteRouteHosts: ['www.example.test'] })
+    expect((TOML.parse(out) as any).routes).toEqual([
+      { pattern: 'shop.example.test/*', zone_name: 'example.test' },
+      { pattern: 'www.example.test', custom_domain: true },
+    ])
+    expect(patchToml(hand, { siteRouteHosts: ['shop.example.test'] })).toBe(hand)
+  })
+
+  it('writes zone routes when zones are given, converting the custom domains it wrote', () => {
+    const zones = { [app]: 'example.test', 'www.example.test': 'example.test' }
+    const before = patchToml(prodText, { routeHost: app, siteRouteHosts: ['www.example.test'] })
+    const out = patchToml(before, {
+      routeHost: app,
+      siteRouteHosts: ['www.example.test'],
+      routeZones: zones,
+    })
+    expect((TOML.parse(out) as any).routes).toEqual([
+      { pattern: `${app}/*`, zone_name: 'example.test' },
+      { pattern: 'www.example.test/*', zone_name: 'example.test' },
+    ])
+    expect(
+      patchToml(prodText, {
+        routeHost: app,
+        siteRouteHosts: ['www.example.test'],
+        routeZones: zones,
+      })
+    ).toBe(out)
+    expect(
+      patchToml(out, { routeHost: app, siteRouteHosts: ['www.example.test'], routeZones: zones })
+    ).toBe(out)
+  })
+
+  it('never converts a hand-written custom domain', () => {
+    const hand = prodText.replace(
+      /^# routes = .*$/m,
+      'routes = [{ pattern = "app.example.test", custom_domain = true, zone_name = "example.test" }]'
+    )
+    const out = patchToml(hand, { routeHost: app, routeZones: { [app]: 'example.test' } })
+    expect(out).toBe(hand)
+  })
+
+  it('keeps the one-line shape for a single host, so an app with no sites is unchanged', () => {
+    const out = patchToml(prodText, { routeHost: app })
+    expect(out).toContain(`routes = [{ pattern = "${app}", custom_domain = true }]`)
+  })
+})
+
+describe('patch-toml: public-site routing', () => {
+  const wide = ['/*', '!/assets/*', '!/site-assets/*']
+
+  it.each([
+    ['production', shippedProd],
+    ['staging', shippedStaging],
+  ])('%s: widening and restoring returns the exact original bytes', (_env, text) => {
+    const out = applyWorkerFirstAll(text)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBe('none')
+    expect(applyWorkerFirstAll(out)).toBe(out)
+    expect(revertWorkerFirstAll(out)).toBe(text)
+  })
+
+  it('brings a toml widened by an earlier install up to date, without losing the original', () => {
+    const oneKey = applyWorkerFirstAll(shippedProd)
+      .replace('not_found_handling = "none"', 'not_found_handling = "single-page-application"')
+      .replace(/# BEGIN original not_found_handling[^\n]*\n[^\n]*\n# END[^\n]*\n/, '')
+      .replace('["/*", "!/assets/*", "!/site-assets/*"]', '["/*", "!/assets/*"]')
+    const out = applyWorkerFirstAll(oneKey)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBe('none')
+    expect(revertWorkerFirstAll(out)).toBe(shippedProd)
+  })
+
+  it('writes nothing for a toml with no not_found_handling, and restores nothing', () => {
+    const bare = shippedProd.replace(/^not_found_handling[^\n]*\n/m, '')
+    const out = applyWorkerFirstAll(bare)
+    expect((TOML.parse(out) as any).assets.not_found_handling).toBeUndefined()
+    expect(revertWorkerFirstAll(out)).toBe(bare)
+  })
+
+  it('restores a list a copy has extended, comments included', () => {
+    const extended = patchToml(shippedProd, { workerFirstPrefixes: ['/copy-hook'] })
+    expect(revertWorkerFirstAll(applyWorkerFirstAll(extended))).toBe(extended)
+  })
+
+  it('leaves a toml it never widened alone', () => {
+    expect(revertWorkerFirstAll(shippedProd)).toBe(shippedProd)
+  })
+
+  it('does not append a plugin prefix to the widened value', () => {
+    const out = patchToml(shippedProd, { workerFirstAll: true })
+    expect(patchToml(out, { workerFirstPrefixes: ['/late-hook'], workerFirstAll: true })).toBe(out)
+    expect((TOML.parse(out) as any).assets.run_worker_first).toEqual(wide)
+  })
+
+  it('refuses a toml with no array to rewrite', () => {
+    expect(() => applyWorkerFirstAll('name = "x"\n')).toThrow(/run_worker_first/)
+  })
+})
+
+describe('patch-toml: the patched pair satisfies the parity test invariants', () => {
+  const staging = TOML.parse(
+    patchToml(stagingText, {
+      hyperdriveId: HD_STAGING,
+      kvId: KV_STAGING,
+      appUrl: 'https://staging.example.test',
+      routeHost: 'staging.example.test',
+    })
+  ) as any
+  const prod = TOML.parse(
+    patchToml(prodText, {
+      hyperdriveId: HD_PROD,
+      kvId: KV_PROD,
+      appUrl: 'https://app.example.test',
+      routeHost: 'app.example.test',
+    })
+  ) as any
+  const strings = (v: unknown, out: string[] = []): string[] => {
+    if (typeof v === 'string') out.push(v)
+    else if (Array.isArray(v)) for (const x of v) strings(x, out)
+    else if (v && typeof v === 'object') for (const x of Object.values(v)) strings(x, out)
+    return out
+  }
+
+  it('no KIT <PLACEHOLDER> remains in either document', () => {
+    for (const [env, doc] of [
+      ['staging', staging],
+      ['production', prod],
+    ] as const) {
+      const left = strings(doc).filter(x => /^<[A-Z0-9_]+>$/.test(x))
+      for (const p of kitPlaceholders(env)) expect(left).not.toContain(p)
+    }
+  })
+  it('hyperdrive and KV ids differ between environments', () => {
+    expect(staging.hyperdrive[0].id).not.toBe(prod.hyperdrive[0].id)
+    expect(staging.kv_namespaces[0].id).not.toBe(prod.kv_namespaces[0].id)
+  })
+  it('[vars] keys are identical, APP_URL differs, bindings unchanged', () => {
+    expect(Object.keys(staging.vars).sort()).toEqual(Object.keys(prod.vars).sort())
+    expect(staging.vars.APP_URL).not.toBe(prod.vars.APP_URL)
+    expect(staging.hyperdrive[0].binding).toBe(prod.hyperdrive[0].binding)
+    expect(staging.kv_namespaces[0].binding).toBe(prod.kv_namespaces[0].binding)
+    expect(staging.name).toBe(`${prod.name}-staging`)
+    expect(staging.routes[0].pattern).not.toBe(prod.routes[0].pattern)
+  })
+})
+
+// ---- database driver ----------------------------------------------------------------------
+
+describe('patch-toml: DATABASE_DRIVER and the [[hyperdrive]] block', () => {
+  const block = (env: 'staging' | 'production') => ({
+    id: hyperdrivePlaceholder(env),
+    localConnectionString: DEFAULT_LOCAL_CONNECTION_STRING,
+  })
+  const asNeon = (text: string) => patchToml(text, { databaseDriver: 'neon' })
+
+  it('postgres: sets the var and adds the block with the placeholder, above the KV block', () => {
+    const doc = TOML.parse(stagingText) as any
+    expect(doc.vars.DATABASE_DRIVER).toBe('postgres')
+    expect(readDatabaseDriver(stagingText)).toBe('postgres')
+    expect(doc.hyperdrive).toHaveLength(1)
+    expect(doc.hyperdrive[0].binding).toBe('HYPERDRIVE')
+    expect(doc.hyperdrive[0].id).toBe('<HYPERDRIVE_STAGING_ID>')
+    expect(doc.hyperdrive[0].localConnectionString).toBe(DEFAULT_LOCAL_CONNECTION_STRING)
+    expect(stagingText.indexOf('[[hyperdrive]]')).toBeLessThan(
+      stagingText.indexOf('[[kv_namespaces]]')
+    )
+  })
+
+  it('neon: sets the var and removes the block; everything else is identical', () => {
+    for (const [text, env] of [
+      [stagingText, 'staging'],
+      [prodText, 'production'],
+    ] as const) {
+      const neon = asNeon(text)
+      expect(hasHyperdriveBlock(neon)).toBe(false)
+      expect(readDatabaseDriver(neon)).toBe('neon')
+      const { hyperdrive: _dropped, vars, ...rest } = TOML.parse(text) as any
+      const after = TOML.parse(neon) as any
+      expect(after.hyperdrive).toBeUndefined()
+      expect({ ...after, vars: undefined }).toEqual({ ...rest, vars: undefined })
+      expect({ ...after.vars, DATABASE_DRIVER: 'x' }).toEqual({ ...vars, DATABASE_DRIVER: 'x' })
+      // Back to postgres restores the same document.
+      expect(TOML.parse(asPostgres(neon, env))).toEqual(TOML.parse(text))
+    }
+  })
+
+  it('is idempotent in both directions', () => {
+    expect(asPostgres(stagingText, 'staging')).toBe(stagingText)
+    const neon = asNeon(stagingText)
+    expect(asNeon(neon)).toBe(neon)
+  })
+
+  it('switching to postgres keeps an existing block (and its real id)', () => {
+    const provisioned = patchToml(stagingText, { hyperdriveId: HD_STAGING })
+    const again = patchToml(provisioned, {
+      databaseDriver: 'postgres',
+      hyperdriveBlock: block('staging'),
+    })
+    expect(again).toBe(provisioned)
+    expect((TOML.parse(again) as any).hyperdrive[0].id).toBe(HD_STAGING)
+  })
+
+  it('one patch switches to postgres AND fills the id (what cf-provision.sh --apply sends)', () => {
+    const out = patchToml(asNeon(stagingText), {
+      databaseDriver: 'postgres',
+      hyperdriveBlock: block('staging'),
+      hyperdriveId: HD_STAGING,
+    })
+    expect((TOML.parse(out) as any).hyperdrive[0].id).toBe(HD_STAGING)
+  })
+
+  it('inserts DATABASE_DRIVER after TENANT_SCOPE_MODE when a (pre-0.15) toml has none', () => {
+    const old = stagingText.replace(/^DATABASE_DRIVER\s*=[^\n]*\n(?:[ \t]+#[^\n]*\n)*/m, '')
+    expect(readTomlString(old, 'DATABASE_DRIVER')).toBeUndefined()
+    expect(readDatabaseDriver(old)).toBe('postgres')
+    const out = patchToml(old, { databaseDriver: 'neon' })
+    const lines = out.split('\n')
+    const at = lines.findIndex(l => l.startsWith('TENANT_SCOPE_MODE'))
+    expect(lines[at + 1]).toBe('DATABASE_DRIVER = "neon"')
+  })
+
+  it('refuses postgres with no block present and none to write', () => {
+    expect(() => patchToml(asNeon(stagingText), { databaseDriver: 'postgres' })).toThrow(
+      /needs a \[\[hyperdrive\]\] block/
+    )
+  })
+
+  it('the neon pair and the postgres pair each keep both-or-neither (parity)', () => {
+    expect(hasHyperdriveBlock(asNeon(stagingText))).toBe(hasHyperdriveBlock(asNeon(prodText)))
+    expect(hasHyperdriveBlock(stagingText)).toBe(hasHyperdriveBlock(prodText))
+  })
+})
+
+// ---- plugin blocks and list appends -------------------------------------------------------
+
+/**
+ * These four ops are what `pnpm provision cloudflare <env>` uses to write a plugin's `plugin.json`
+ * declarations into BOTH tomls. Every one of them has to be idempotent, because the phase is
+ * re-runnable by design and a second block for one binding is a toml wrangler accepts and nobody
+ * can reason about; and every one of them has to keep the document parseable, which is what the
+ * TOML.parse assertions below are for.
+ */
+describe('plugin binding blocks', () => {
+  const fixtureBlocks = [
+    {
+      type: 'kv' as const,
+      binding: 'TOMLFIXTURE_CACHE',
+      id: '<KV_TOMLFIXTURE_CACHE_ID>',
+      pluginId: 'tomlfixture',
+    },
+    {
+      type: 'queue' as const,
+      binding: 'TOMLFIXTURE_QUEUE',
+      name: 'acme-tomlfixture-jobs',
+      consumer: true,
+      pluginId: 'tomlfixture',
+    },
+    {
+      type: 'r2' as const,
+      binding: 'TOMLFIXTURE_FILES',
+      name: 'acme-tomlfixture-files',
+      pluginId: 'tomlfixture',
+    },
+  ]
+  const patched = patchToml(prodText, { bindings: fixtureBlocks })
+  const doc = TOML.parse(patched) as any
+
+  const baseline = TOML.parse(prodText) as any
+
+  it('inserts exactly one block per binding, in the right section, after what was there', () => {
+    for (const [section, binding] of [
+      ['kv_namespaces', 'TOMLFIXTURE_CACHE'],
+      ['queues.producers', 'TOMLFIXTURE_QUEUE'],
+      ['r2_buckets', 'TOMLFIXTURE_FILES'],
+    ] as const) {
+      const rows = (o: any) =>
+        section.split('.').reduce((acc: any, k) => acc?.[k], o) as Array<{ binding: string }>
+      expect(rows(doc)).toHaveLength(rows(baseline).length + 1)
+      expect(rows(doc).at(-1)?.binding).toBe(binding)
+    }
+  })
+
+  it('a queue with `consumer` also gets a [[queues.consumers]] block', () => {
+    expect(doc.queues.consumers).toHaveLength(baseline.queues.consumers.length + 1)
+    const added = doc.queues.consumers.at(-1)
+    expect(added.queue).toBe('acme-tomlfixture-jobs')
+    expect(added.max_retries).toBe(3)
+  })
+
+  it('leaves every kit binding and id untouched', () => {
+    expect(doc.kv_namespaces[0]).toEqual(baseline.kv_namespaces[0])
+    expect(doc.hyperdrive).toEqual(baseline.hyperdrive)
+    expect(doc.workflows).toEqual(baseline.workflows)
+  })
+
+  it('is idempotent', () => {
+    expect(patchToml(patched, { bindings: fixtureBlocks })).toBe(patched)
+  })
+
+  it('updates the id of a block that already declares the binding, rather than adding a second', () => {
+    const provisioned = patchToml(patched, {
+      bindings: [{ type: 'kv', binding: 'TOMLFIXTURE_CACHE', id: 'a'.repeat(32) }],
+    })
+    const after = TOML.parse(provisioned) as any
+    expect(after.kv_namespaces).toHaveLength(baseline.kv_namespaces.length + 1)
+    expect(after.kv_namespaces.at(-1).id).toBe('a'.repeat(32))
+    expect(tomlPlaceholders(provisioned)).not.toContain('<KV_TOMLFIXTURE_CACHE_ID>')
+  })
+
+  it('refuses to overwrite a DIFFERENT real id unless forced', () => {
+    const provisioned = patchToml(patched, {
+      bindings: [{ type: 'kv', binding: 'TOMLFIXTURE_CACHE', id: 'a'.repeat(32) }],
+    })
+    const rival = { type: 'kv' as const, binding: 'TOMLFIXTURE_CACHE', id: 'b'.repeat(32) }
+    expect(() => patchToml(provisioned, { bindings: [rival] })).toThrowError(TomlPatchError)
+    const forced = patchToml(provisioned, { bindings: [rival], force: true })
+    expect((TOML.parse(forced) as any).kv_namespaces.at(-1).id).toBe('b'.repeat(32))
+  })
+
+  it('refuses a block with no value to write', () => {
+    expect(() => patchToml(prodText, { bindings: [{ type: 'r2', binding: 'X' }] })).toThrowError(
+      TomlPatchError
+    )
+  })
+})
+
+describe('plugin crons, vars and run_worker_first', () => {
+  const patch = {
+    crons: ['7 3 * * *'],
+    vars: [{ key: 'TOMLFIXTURE_MAX_ITEMS', value: '50' }],
+    workerFirstPrefixes: ['/tomlfixture-hook'],
+  }
+  const patched = patchToml(prodText, patch)
+  const doc = TOML.parse(patched) as any
+  const before = TOML.parse(prodText) as any
+
+  it('appends the cron without disturbing the kit’s two', () => {
+    expect(doc.triggers.crons).toEqual([...before.triggers.crons, '7 3 * * *'])
+  })
+
+  it('appends the [vars] key, and does not move or rewrite an existing one', () => {
+    expect(doc.vars.TOMLFIXTURE_MAX_ITEMS).toBe('50')
+    expect(doc.vars.APP_ENV).toBe(before.vars.APP_ENV)
+    expect(Object.keys(doc.vars)).toEqual([...Object.keys(before.vars), 'TOMLFIXTURE_MAX_ITEMS'])
+  })
+
+  it('appends both run_worker_first patterns — the prefix and everything beneath it', () => {
+    expect(doc.assets.run_worker_first).toEqual([
+      ...before.assets.run_worker_first,
+      '/tomlfixture-hook',
+      '/tomlfixture-hook/*',
+    ])
+  })
+
+  it('is idempotent, and never rewrites a [vars] value the operator set', () => {
+    expect(patchToml(patched, patch)).toBe(patched)
+    const renamed = patchToml(patched, {
+      vars: [{ key: 'TOMLFIXTURE_MAX_ITEMS', value: '999' }],
+    })
+    expect((TOML.parse(renamed) as any).vars.TOMLFIXTURE_MAX_ITEMS).toBe('50')
+  })
+
+  it('throws when the array it was asked to append to does not exist', () => {
+    expect(() => patchToml('name = "x"\n', { crons: ['0 0 * * *'] })).toThrowError(TomlPatchError)
+  })
+
+  it('clears the mark `plugin remove` leaves once the prefixes are back, and only then', () => {
+    const marked = markReprovision(prodText)
+    expect(awaitsReprovision(marked)).toBe(true)
+    expect(awaitsReprovision(patchToml(marked, { crons: patch.crons }))).toBe(true)
+    const provisioned = patchToml(marked, { workerFirstPrefixes: patch.workerFirstPrefixes })
+    expect(awaitsReprovision(provisioned)).toBe(false)
+    expect((TOML.parse(provisioned) as any).assets.run_worker_first).toEqual(
+      doc.assets.run_worker_first
+    )
+  })
+})
+
+/**
+ * Class bindings. A `workflow` and a `durable_object` need no resource created — the block
+ * IS the registration and `wrangler deploy` does the rest — so what matters here is that the
+ * blocks are spelled the way Cloudflare reads them, and that re-running provisioning is a no-op.
+ */
+describe('plugin images binding', () => {
+  const images = { type: 'images' as const, binding: 'PLUGIN_IMAGES', pluginId: 'imgs' }
+
+  it('writes the single [images] table, idempotently', () => {
+    const out = patchToml(shippedProd, { bindings: [images] })
+    expect((TOML.parse(out) as any).images).toEqual({ binding: 'PLUGIN_IMAGES' })
+    expect(patchToml(out, { bindings: [images] })).toBe(out)
+  })
+
+  it('refuses a second name beside an existing [images] table', () => {
+    const out = patchToml(shippedProd, { bindings: [images] })
+    expect(() =>
+      patchToml(out, { bindings: [{ type: 'images', binding: 'OTHER_IMAGES' }] })
+    ).toThrow(/single table/)
+  })
+})
+
+describe('plugin workflow and Durable Object blocks', () => {
+  const blocks = [
+    {
+      type: 'workflow' as const,
+      binding: 'ORDERS_SYNC',
+      name: 'acme-orders-sync',
+      className: 'OrdersSyncWorkflow',
+      pluginId: 'orders',
+    },
+    {
+      type: 'durable_object' as const,
+      binding: 'ORDERS_HUB',
+      className: 'OrdersHub',
+      pluginId: 'orders',
+    },
+  ]
+  const migrations = [
+    { tag: 'plugin-orders-v1', newSqliteClasses: ['OrdersHub'], pluginId: 'orders' },
+  ]
+  const baseline = TOML.parse(prodText) as any
+  const patched = patchToml(prodText, { bindings: blocks, migrations })
+  const doc = TOML.parse(patched) as any
+
+  it('adds the workflow beside the kit’s, keeping binding and class_name', () => {
+    expect(doc.workflows).toHaveLength(baseline.workflows.length + 1)
+    expect(doc.workflows.at(-1)).toEqual({
+      name: 'acme-orders-sync',
+      binding: 'ORDERS_SYNC',
+      class_name: 'OrdersSyncWorkflow',
+    })
+  })
+
+  it('spells a Durable Object binding as `name`, which is how the toml names one', () => {
+    // Not `binding`: the kit's own is `name = "NOTIFICATIONS_HUB"`. A patcher keyed on `binding`
+    // would never find an existing block and would insert a second one on every run.
+    expect(doc.durable_objects.bindings).toHaveLength(baseline.durable_objects.bindings.length + 1)
+    expect(doc.durable_objects.bindings.at(-1)).toEqual({
+      name: 'ORDERS_HUB',
+      class_name: 'OrdersHub',
+    })
+  })
+
+  it('appends the migration tag and never touches the kit’s', () => {
+    expect(doc.migrations).toHaveLength(baseline.migrations.length + 1)
+    expect(doc.migrations[0]).toEqual(baseline.migrations[0])
+    expect(doc.migrations.at(-1)).toEqual({
+      tag: 'plugin-orders-v1',
+      new_sqlite_classes: ['OrdersHub'],
+    })
+  })
+
+  it('is idempotent, and never rewrites a tag Cloudflare has already applied', () => {
+    expect(patchToml(patched, { bindings: blocks, migrations })).toBe(patched)
+    // A tag is an identity, not a value: re-running with different classes under the SAME tag
+    // leaves the recorded one alone, because replaying it loses the namespace it created.
+    const rival = patchToml(patched, {
+      migrations: [{ tag: 'plugin-orders-v1', newClasses: ['SomethingElse'] }],
+    })
+    expect((TOML.parse(rival) as any).migrations.at(-1)).toEqual({
+      tag: 'plugin-orders-v1',
+      new_sqlite_classes: ['OrdersHub'],
+    })
+  })
+
+  it('refuses to rename a live Workflow, and renames one block rather than adding a second', () => {
+    // Each toml is patched from its own baseline, so the production file only ever sees the
+    // production name — a DIFFERENT name arriving means the app was renamed, and a Workflow name
+    // is account-scoped state with instances under it. Same protection the KV id has, same escape.
+    const renamed = { ...blocks[0], name: 'acme-orders-sync-staging' }
+    expect(() => patchToml(patched, { bindings: [renamed] })).toThrowError(TomlPatchError)
+    const forced = patchToml(patched, { bindings: [renamed], force: true })
+    const after = TOML.parse(forced) as any
+    expect(after.workflows).toHaveLength(baseline.workflows.length + 1)
+    expect(after.workflows.at(-1).name).toBe('acme-orders-sync-staging')
+    // and the kit's own Workflow is untouched by any of it
+    expect(after.workflows[0]).toEqual(baseline.workflows[0])
+  })
+
+  it('refuses a class binding with no class to name', () => {
+    expect(() =>
+      patchToml(prodText, { bindings: [{ type: 'durable_object', binding: 'X' }] })
+    ).toThrowError(TomlPatchError)
+  })
+})

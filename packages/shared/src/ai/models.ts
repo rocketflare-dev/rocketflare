@@ -1,5 +1,5 @@
 /**
- * What a model id implies about the request body (D17). Providers change the rules per model, not
+ * What a model id implies about the request body. Providers change the rules per model, not
  * per provider: Claude 4.7+ refuses `temperature`, Opus 5.5 refuses `thinking: disabled` and a
  * forced `tool_choice`, Sonnet 5.5 turns thinking down with `between_tools` instead. The adapters
  * (`services/ai/client.ts`) build bodies from these traits and the settings form reads them to

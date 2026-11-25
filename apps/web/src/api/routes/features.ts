@@ -1,5 +1,5 @@
 /**
- * `/api/features` (D30) — what this tenant actually has.
+ * `/api/features` — what this tenant actually has.
  *
  *   GET /    any member
  *

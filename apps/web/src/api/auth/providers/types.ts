@@ -1,7 +1,8 @@
 /**
- * The provider contract (D11): one generic `/auth/:provider` router drives every entry in the
+ * The provider contract: one generic `/auth/:provider` router drives every entry in the
  * registry, so adding GitHub or Slack is one file here, not a copied route. `emailVerified` is
- * part of the profile on purpose — the router refuses to link when it is explicitly `false`.
+ * part of the profile on purpose — the router refuses to link or admit by email when it is
+ * explicitly `false`.
  */
 import type { OAuthProviderName } from '@rocketflare/shared/auth'
 import type { AppConfig } from '../../../config'
@@ -10,12 +11,20 @@ export interface OAuthProfile {
   /** The provider's stable subject id (`sub`), never the email. */
   providerUserId: string
   email: string
-  /** `undefined` = the provider did not say; only an explicit `false` is refused. */
+  /**
+   * `undefined` = the provider did not say; only an explicit `false` is refused, and only where
+   * the address is trusted — matching or admitting an account; a linked identity still signs in.
+   */
   emailVerified?: boolean
   name: string | null
   avatarUrl: string | null
   /** Group names the issuer asserted (OIDC `groups`). Read, never stored — a known gap. */
   groups?: string[]
+  /**
+   * The VERIFIED id_token's payload (OIDC only) — what IdP-managed tenancy reads its claims from
+   * (`OIDC_MANAGED_TENANCY`). Never stored.
+   */
+  idTokenClaims?: Record<string, unknown>
 }
 
 export interface OAuthTokenSet {
@@ -26,7 +35,14 @@ export interface OAuthTokenSet {
   idToken?: string | null
 }
 
-/** The subset of an arctic client the router needs — so tests can substitute a stub. */
+/** What the callback checks the code exchange against: the values bound to the flow cookie. */
+export interface CodeExchangeChecks {
+  state: string
+  verifier: string
+  nonce?: string
+}
+
+/** The client the router needs (`openid.ts`) — so tests can substitute a stub. */
 export interface OAuthClient {
   /** `nonce` is sent by providers that verify an `id_token` (OIDC); the others ignore it. */
   createAuthorizationURL(
@@ -35,7 +51,11 @@ export interface OAuthClient {
     scopes: string[],
     nonce?: string
   ): URL | Promise<URL>
-  validateAuthorizationCode(code: string, codeVerifier: string): Promise<OAuthTokenSet>
+  /** `callbackParams` is the callback's whole query: `code`, `state`, and `iss` where sent. */
+  validateAuthorizationCode(
+    callbackParams: URLSearchParams,
+    checks: CodeExchangeChecks
+  ): Promise<OAuthTokenSet>
 }
 
 /** What the callback knows beyond the tokens — the config, and the nonce bound to the flow. */
@@ -54,34 +74,6 @@ export interface ProviderDefinition {
   /** Scopes for THIS deployment when they are configurable (OIDC); else `scopes`. */
   scopesFor?(cfg: AppConfig): string[]
   fetchProfile(tokens: OAuthTokenSet, ctx: ProfileContext): Promise<OAuthProfile>
-}
-
-/** arctic's `OAuth2Tokens` → our plain token set (methods throw when a field is absent). */
-export function toTokenSet(tokens: {
-  accessToken(): string
-  hasRefreshToken(): boolean
-  refreshToken(): string
-  accessTokenExpiresAt(): Date
-  idToken?(): string
-}): OAuthTokenSet {
-  let expiresAt: Date | null = null
-  try {
-    expiresAt = tokens.accessTokenExpiresAt()
-  } catch {
-    expiresAt = null
-  }
-  let idToken: string | null = null
-  try {
-    idToken = tokens.idToken?.() ?? null
-  } catch {
-    idToken = null
-  }
-  return {
-    accessToken: tokens.accessToken(),
-    refreshToken: tokens.hasRefreshToken() ? tokens.refreshToken() : null,
-    expiresAt,
-    idToken,
-  }
 }
 
 export async function fetchJson<T>(url: string, accessToken: string, what: string): Promise<T> {

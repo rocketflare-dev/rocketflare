@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes, useLocation } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { OrgSwitcher } from '@/ui/components/OrgSwitcher'
 import {
@@ -21,7 +21,7 @@ function Where() {
 describe('OrgSwitcher', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('is hidden in single-tenant mode even with several memberships (D25)', () => {
+  it('is hidden in single-tenant mode even with several memberships', () => {
     renderWithProviders(<OrgSwitcher />, {
       session: makeSession({ tenancyMode: 'single', tenants: [makeTenant(), beta] }),
     })
@@ -43,6 +43,19 @@ describe('OrgSwitcher', () => {
       'href',
       '/select-tenant?create=1'
     )
+  })
+
+  it('offers no "Create organisation" when the session says the server would refuse it', () => {
+    renderWithProviders(<OrgSwitcher />, {
+      session: makeSession({ canCreateTenant: false, tenants: [makeTenant(), beta] }),
+    })
+    expect(screen.getByLabelText('Organisation: Acme')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Create organisation/ })).not.toBeInTheDocument()
+  })
+
+  it('with one org and creation refused, there is nothing to switch to and it renders nothing', () => {
+    renderWithProviders(<OrgSwitcher />, { session: makeSession({ canCreateTenant: false }) })
+    expect(screen.queryByLabelText('Organisation: Acme')).not.toBeInTheDocument()
   })
 
   it('lists memberships and switches via POST /auth/select-tenant, landing on /', async () => {

@@ -1,11 +1,11 @@
 /**
- * The pure half of the run workspace (issue #17): the timeline reducer and its grouping, the
+ * The pure half of the run workspace: the timeline reducer and its grouping, the
  * column split, the input summary, the expiry tick chooser, and the JSON-Schema → fields
  * conversion. No database, no DOM — these are data functions, and each of them is guarding a
  * specific way the page could be silently wrong.
  */
 import type { JsonSchema } from '@rocketflare/shared/ai/interrupts'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   fieldsFromJsonSchema,
   initialValuesFor,
@@ -25,6 +25,7 @@ import {
   type TimelineEvent,
   windowGroups,
 } from '@/ui/pages/agents/run/timeline/timelineModel'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 
 const at = (s: number) => new Date(`2025-06-01T00:00:${String(s).padStart(2, '0')}Z`)
 const eid = (n: number) => `${String(n).padStart(8, '0')}-0000-4000-8000-000000000000`
@@ -34,6 +35,22 @@ const ev = (seq: number, type: string, data: unknown): TimelineEvent => ({
   type,
   data,
   at: at(seq),
+})
+
+/** A registered form for the first rung, contributed the way a plugin would (`UiPlugin.agentForms`). */
+const fixtureForm = vi.hoisted(() => ({
+  initial: '',
+  schema: undefined as never,
+  Component: () => null,
+}))
+
+vi.mock('@/plugins/ui', async importOriginal => {
+  const actual = await importOriginal<typeof import('@/plugins/ui')>()
+  const plugins = [
+    ...actual.uiPlugins,
+    { shared: { id: 'fixture', label: 'Fixture' }, agentForms: { 'fixture-agent': fixtureForm } },
+  ]
+  return { ...actual, UI_PLUGINS: plugins, uiPlugins: plugins }
 })
 
 describe('buildTimeline', () => {
@@ -113,7 +130,7 @@ describe('buildTimeline', () => {
     expect(rows.map(r => r.kind)).toEqual(['interrupt', 'steering', 'artifact'])
   })
 
-  it('reads a decision (D37) and counts its questions; a malformed one stays visible as unknown', () => {
+  it('reads a decision and counts its questions; a malformed one stays visible as unknown', () => {
     const rows = buildTimeline([
       ev(1, 'decision', {
         decisionId: eid(7),
@@ -189,6 +206,67 @@ describe('groupTimeline', () => {
     expect(windowed.visible).toHaveLength(40)
     expect(windowed.hiddenGroups).toBe(10)
     expect(windowGroups(groups, true, 40).hiddenGroups).toBe(0)
+  })
+})
+
+describe('runtime-recorded model calls', () => {
+  const model = (seq: number, type: 'tool.start' | 'tool.end', id: string, extra = {}) =>
+    ev(seq, type, { name: 'claude-x', kind: 'model', toolCallId: id, ...extra })
+
+  it('are rows marked model, counted apart from tools in the stage', () => {
+    const groups = groupTimeline(
+      buildTimeline([
+        ev(1, 'step', { key: 's', label: 'Summarising', status: 'running' }),
+        model(2, 'tool.start', 'model:0.a:1'),
+        model(3, 'tool.end', 'model:0.a:1', {
+          result: { usage: { inputTokens: 5, outputTokens: 2 } },
+        }),
+        ev(4, 'tool.start', { name: 'lookup', toolCallId: 't1' }),
+        ev(5, 'tool.end', { name: 'lookup', toolCallId: 't1' }),
+        ev(6, 'step', { key: 's', label: 'Summarising', status: 'done' }),
+      ])
+    )
+    expect(groups[0]).toMatchObject({ toolCount: 1, modelCount: 1 })
+    expect(groups[0].rows[0]).toMatchObject({ kind: 'tool', model: true, done: true })
+    expect(groups[0].rows[1]).not.toHaveProperty('model')
+  })
+
+  it('a retry stops what the earlier invocation left open; a later answer under its id still closes it', () => {
+    const rows = buildTimeline([
+      ev(1, 'step', { key: 'r', label: 'Researching', status: 'running' }),
+      model(2, 'tool.start', 'model:0.a:1'),
+      ev(3, 'tool.start', { name: 'lookup', toolCallId: 'toolu_1' }),
+      ev(4, 'error', { message: 'database blip', willRetry: true }),
+      // The retry: a new model call id, and the journaled tool call finished under ITS id.
+      model(5, 'tool.start', 'model:0.b:1'),
+      model(6, 'tool.end', 'model:0.b:1'),
+      ev(7, 'tool.end', { name: 'lookup', toolCallId: 'toolu_1' }),
+    ])
+    const tools = rows.filter(row => row.kind === 'tool')
+    expect(tools.map(row => [row.toolCallId, row.done, row.stopped ?? false])).toEqual([
+      ['model:0.a:1', false, true],
+      ['toolu_1', true, false],
+      ['model:0.b:1', true, false],
+    ])
+  })
+
+  it('are counted as model calls with their tokens, never as tool calls', () => {
+    const stats = selectWorkStats(
+      buildTimeline([
+        model(1, 'tool.start', 'm1'),
+        model(2, 'tool.end', 'm1', { result: { usage: { inputTokens: 10, outputTokens: 4 } } }),
+        model(3, 'tool.start', 'm2'),
+        model(4, 'tool.end', 'm2', { isError: true, result: { error: 'no' } }),
+      ])
+    )
+    expect(stats).toMatchObject({
+      toolCalls: 0,
+      tools: [],
+      modelCalls: 2,
+      failedModelCalls: 1,
+      inputTokens: 10,
+      outputTokens: 4,
+    })
   })
 })
 
@@ -269,7 +347,7 @@ describe('fieldsFromJsonSchema', () => {
     ])
     expect(fields?.[0].required).toBe(true)
     // A declared `title` wins; without one the property name is made presentable, because
-    // `zodToJsonSchema` emits no title and `topic` is not a label anybody wrote.
+    // `z.toJSONSchema` emits no title and `topic` is not a label anybody wrote.
     expect(fields?.map(f => f.label)).toEqual(['Topic', 'Notes', 'Count', 'Urgent', 'Style'])
     expect(fields?.[2]).toMatchObject({ min: 1, max: 9 })
     expect(fields?.[4].options?.map(o => o.value)).toEqual(['bullets', 'paragraph'])
@@ -322,12 +400,12 @@ describe('formFor', () => {
       properties: { topic: { type: 'string', maxLength: 2000 } },
       required: ['topic'],
     }
-    const built = formFor({ key: 'research-topic' as never, inputJsonSchema: schema })
+    const built = formFor({ key: 'unregistered-agent' as never, inputJsonSchema: schema })
     expect(built).not.toBe(jsonForm)
     expect(built.initial).toEqual({ topic: '' })
     expect(formFor({ key: 'nope' as never, inputJsonSchema: null })).toBe(jsonForm)
     // A registered form still wins the first rung.
-    expect(formFor({ key: 'summarize-text', inputJsonSchema: schema })).not.toBe(jsonForm)
+    expect(formFor({ key: FIXTURE_AGENT, inputJsonSchema: schema })).toBe(fixtureForm)
   })
 })
 

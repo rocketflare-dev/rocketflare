@@ -1,11 +1,9 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the chat provider seam), so this file needs its own module registry.
 /**
- * `research-topic` (D7, D18) — the agentic agent, driven through the real runtime against Postgres
+ * `research-topic` — the agentic agent, driven through the real runtime against Postgres
  * with a `FakeChatClient` scripting the turns and a really-ingested document behind
  * `search_knowledge`: the loop searches, then calls the terminal `submit_answer`; the run succeeds
  * with the answer, the citation resolved to the real document, one `ai_usage` row per turn carrying
- * the run id (D39 — the runtime's meter, not the agent, writes them)
+ * the run id (the runtime's meter, not the agent, writes them)
  * and the tool events persisted. Also the two decisions in the agent's header: a citation naming a
  * document search never returned is DROPPED, and a loop that ends in prose is salvaged by one
  * forced `submit_answer` call instead of failing.
@@ -15,21 +13,22 @@
  * including the documents the first attempt's searches found, which are folded back out of the
  * stored transcript so their citations are not dropped as hallucinations.
  *
- * And the two human-in-the-loop shapes this agent exists to demonstrate (issue #17): `ask_human`
+ * And the two human-in-the-loop shapes this agent exists to demonstrate: `ask_human`
  * raising a `choice` interrupt from INSIDE a tool handler, and `index_finding` gated by
  * `Tool.requiresApproval` — where the point of the second is that the gate raises before the
  * handler ever runs, so a parked run has written nothing.
  */
 import { researchTopicOutputSchema } from '@rocketflare/shared/ai/agents'
-import { eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { listArtifacts } from '@/api/services/agents/artifacts'
 import { listInterrupts, resolveInterrupt } from '@/api/services/agents/interrupts'
 import { enqueueRun, getRun, listEvents, resumeRun } from '@/api/services/agents/runs'
 import { claimStep, executeRun } from '@/api/services/agents/runtime'
+import { parseToolLoopCheckpoint } from '@/api/services/ai/agent-loop'
 import { AiError } from '@/api/services/ai/errors'
 import { ingestText } from '@/api/services/ai/ingest'
-import { parseToolLoopCheckpoint } from '@/api/services/ai/kit'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatClient } from '@/api/services/ai/types'
 import type { Logger } from '@/api/utils/core/logger'
 import { loadConfig } from '@/config'
@@ -41,20 +40,15 @@ import { createTestEnv, type TestEnv } from '../mocks/bindings'
 
 const state: { client: ChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiError('auth', 'anthropic_compatible', 'no client scripted')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible' as const,
-        model: 'fake-model',
-        source: 'tenant' as const,
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible' as const,
+    model: 'fake-model',
+    source: 'tenant' as const,
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 
@@ -167,22 +161,39 @@ describe('research-topic agent', () => {
     expect(output.turns).toBe(2)
 
     // The search really ran: the model was given the built-in tools and got hits back. An
-    // installed plugin's tools (D31) arrive on `ctx.tools` too, between the kit's three and the
+    // installed plugin's tools arrive on `ctx.tools` too, between the three built-in ones and the
     // agent's own, so the assertion is "these, in this order, all present" rather than equality.
     const offered = client.calls[0]?.tools?.map(t => t.name) ?? []
     expect(offered.slice(0, 3)).toEqual(['search_knowledge', 'get_document', 'list_documents'])
     expect(offered.slice(-3)).toEqual(['ask_human', 'index_finding', 'submit_answer'])
     const events = await listEvents(db, tenant.id, runId)
-    const toolNames = events
-      .filter(e => e.type === 'tool.start' || e.type === 'tool.end')
+    const toolRows = events.filter(e => e.type === 'tool.start' || e.type === 'tool.end')
+    const toolNames = toolRows
+      .filter(e => (e.data as { kind?: string }).kind !== 'model')
       .map(e => (e.data as { name: string }).name)
     // One start + one end for the real tool; the TERMINAL tool emits nothing (its call is the
     // answer, which the output panel renders — emitting it showed the answer three times over).
     expect(toolNames).toEqual(['search_knowledge', 'search_knowledge'])
+    // …and each of the two model turns is a recorded model call around them, paired by its id.
+    const modelRows = toolRows
+      .filter(e => (e.data as { kind?: string }).kind === 'model')
+      .map(e => [e.type, (e.data as { toolCallId: string }).toolCallId])
+    const first = modelRows[0]?.[1]
+    expect(first).toMatch(/^model:0\.[0-9a-f]{8}:1$/)
+    const second = first?.replace(/:1$/, ':2')
+    expect(modelRows).toEqual([
+      ['tool.start', first],
+      ['tool.end', first],
+      ['tool.start', second],
+      ['tool.end', second],
+    ])
     expect(events.some(e => e.type === 'text')).toBe(false)
 
-    // One row per turn (D39), each billed to the run under the agent's feature key.
-    const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
+    // One row per turn, each billed to the run under the agent's feature key.
+    // The run's own rows: the knowledge base meters its embeddings separately (`knowledge.*`).
+    const usage = await db.query.aiUsage.findMany({
+      where: and(eq(aiUsage.tenantId, tenant.id), isNotNull(aiUsage.agentRunId)),
+    })
     expect(usage).toHaveLength(2)
     expect(usage.every(u => u.feature === 'agent:research-topic' && u.agentRunId === runId)).toBe(
       true
@@ -243,7 +254,10 @@ describe('research-topic agent', () => {
     expect(client.calls[1]?.toolChoice).toEqual({ type: 'tool', name: 'submit_answer' })
     // Two ledger rows, one per call: the loop's turn and the recovery — each written by the meter
     // as it returned, so a recovery that FAILED would still leave the loop's tokens recorded.
-    const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
+    // The run's own rows: the knowledge base meters its embeddings separately (`knowledge.*`).
+    const usage = await db.query.aiUsage.findMany({
+      where: and(eq(aiUsage.tenantId, tenant.id), isNotNull(aiUsage.agentRunId)),
+    })
     expect(usage).toHaveLength(2)
     expect(usage.every(u => u.feature === 'agent:research-topic')).toBe(true)
     const output = researchTopicOutputSchema.parse((await getRun(db, tenant.id, runId))?.output)
@@ -315,11 +329,16 @@ describe('research-topic agent', () => {
     // document found before the retry is not mistaken for a hallucination.
     expect(output.citations).toEqual([{ documentId: document.id, title: 'Onboarding handbook' }])
 
-    // One row per call that RETURNED, across both attempts (D39): attempt 1's turn was ledgered
+    // One row per call that RETURNED, across both attempts: attempt 1's turn was ledgered
     // the moment it came back, the failed call cost nothing, and the resumed attempt's turn is the
     // second row — the carried-forward checkpoint usage is never written again.
-    const usage = await db.query.aiUsage.findMany({ where: eq(aiUsage.tenantId, tenant.id) })
-    expect(usage.map(u => [u.inputTokens, u.outputTokens]).sort((a, b) => a[0]! - b[0]!)).toEqual([
+    // The run's own rows: the knowledge base meters its embeddings separately (`knowledge.*`).
+    const usage = await db.query.aiUsage.findMany({
+      where: and(eq(aiUsage.tenantId, tenant.id), isNotNull(aiUsage.agentRunId)),
+    })
+    expect(
+      usage.map(u => [u.inputTokens, u.outputTokens]).sort((a, b) => (a[0] ?? 0) - (b[0] ?? 0))
+    ).toEqual([
       [40, 10],
       [60, 20],
     ])

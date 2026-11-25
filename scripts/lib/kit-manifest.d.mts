@@ -1,7 +1,7 @@
 /**
  * Hand-written types for `kit-manifest.mjs` (no `allowJs`). The manifest itself is typed loosely:
  * its authoritative shape is Launch's zod schema (`@launch/shared/kit-manifest`), which this
- * plain-JS validator mirrors; `apps/web/tests/config/launch-kit-manifest.test.ts` typechecks
+ * plain-JS validator mirrors; `apps/web/tests/kit-only/launch-kit-schema.test.ts` typechecks
  * against this.
  */
 export const KIT_MANIFEST_PATH: string

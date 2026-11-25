@@ -1,5 +1,5 @@
 /**
- * Drizzle over one of two drivers (D35), picked by `DATABASE_DRIVER`:
+ * Drizzle over one of two drivers, picked by `DATABASE_DRIVER`:
  *
  * - `postgres` (a missing var means this): postgres.js. In the Worker, Hyperdrive is the real pool,
  *   so `max: 1` and `prepare: false` (transaction-mode pooler). Locally, TCP to the compose Postgres.
@@ -114,7 +114,7 @@ export function createDatabase(url: string, options: CreateDatabaseOptions = {})
     // Hyperdrive and other transaction-mode poolers do not support named prepared
     // statements across queries; unnamed (per-query) is the only safe mode.
     prepare: false,
-    // Skips the startup round-trip that lists custom types; the kit only uses builtins
+    // Skips the startup round-trip that lists custom types; the app only uses builtins
     // (pgvector's `vector` is sent/received as text by drizzle).
     fetch_types: false,
     onnotice: () => {},
@@ -182,7 +182,7 @@ export interface CreateNeonDatabaseOptions extends CreateDatabaseOptions {
  * exception — the process dies under Node (a script, or a whole vitest run on a Neon gate branch,
  * where `getScriptDatabase` runs every query over this pool), an uncaught error in the isolate
  * under workerd. The query in flight still REJECTS, so nothing is swallowed: the listeners only
- * stop the second, unhandled copy of the same error. Every Neon pool in the kit is made here.
+ * stop the second, unhandled copy of the same error. Every Neon pool in the app is made here.
  */
 export function createNeonPool(url: string, max = 1): NeonPool {
   const pool = new NeonPool({ connectionString: url, max })

@@ -1,4 +1,4 @@
-/** Tenant members (D10, D13): `GET /api/members`, role change, removal. Admin-level surface. */
+/** Tenant members: `GET /api/members`, role change, removal. Admin-level surface. */
 import { paginatedResponse } from '@rocketflare/shared/pagination'
 import {
   memberSchema,

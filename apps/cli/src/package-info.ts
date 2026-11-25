@@ -1,6 +1,6 @@
 /**
- * Package metadata for the CLI (D26). The bin name, version and prefix all derive from
- * `package.json`, so ADAPTING renames the CLI by editing `name`/`bin` there — nothing here.
+ * Package metadata for the CLI. The bin name, version and prefix all derive from
+ * `package.json`, so renaming the CLI means editing `name`/`bin` there — nothing here.
  */
 import pkg from '../package.json'
 

@@ -4,15 +4,17 @@
    to mention. Only the UI tree is scanned; `src/shared` carries no class names. */
 @import "tailwindcss" source(none);
 
+@import "../shared/theme-tokens.css";
+
 @plugin "daisyui";
 @plugin "@tailwindcss/typography";
 
 @source "./index.html";
 @source "./**/*.{ts,tsx}";
-/* Installed plugins (D31) ship their own pages and components under `src/plugins/<id>/ui/`, which
+/* Installed plugins ship their own pages and components under `src/plugins/<id>/ui/`, which
    is OUTSIDE this directory — without this line their classes are simply not generated, and the
    page renders unstyled with nothing in the console to say why. Scoped to `ui/` so a plugin's
-   server code is no more scanned than the kit's is. */
+   server code is no more scanned than core's is. */
 @source "../plugins/**/ui/**/*.{ts,tsx}";
 
 /* Do not `@source` node_modules. A dependency that ships PRE-COMPILED CSS (drizzle-cube's
@@ -37,7 +39,7 @@
      1. `--color-primary` / `--color-primary-content` in BOTH theme blocks (the one accent).
         Keep `--focus-ring`, `--surface-active`, `--tone-primary-*` in step with it.
      2. `--color-accent` (secondary accent, e.g. automation/AI affordances).
-     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The kit ships a
+     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The app ships a
         cool grey (zinc) ramp; swap for a warm or tinted ramp of the same LIGHTNESS steps.
      4. `--color-secondary` MUST equal `--text-secondary` — see the note in the light theme.
      5. `--font-sans` / `--font-mono` in `@theme` (system stack by default; add @fontsource
@@ -53,89 +55,7 @@
    `-content` colour — one token, two jobs, which is how DaisyUI's `badge-*`/`alert-*` use it.
    ========================================================================== */
 
-@theme {
-  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
-    Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-/* ------------------------------------------------------------------ Light */
-@plugin "daisyui/theme" {
-  name: "rocketflare-light";
-  default: true;
-  color-scheme: light;
-
-  --color-primary: #2563eb; /* blue-600 — the one accent */
-  --color-primary-content: #ffffff;
-  /* Same tone as --text-secondary. DaisyUI generates a `text-secondary` UTILITY from this,
-     which sorts after `@layer components` and therefore wins over the `.text-secondary` class
-     below — so the two are made to agree rather than left to fight. */
-  --color-secondary: #3f3f46; /* zinc-700 */
-  --color-secondary-content: #ffffff;
-  --color-accent: #0f766e; /* teal-700 — automation / AI affordances */
-  --color-accent-content: #ffffff;
-  --color-neutral: #18181b; /* zinc-900 */
-  --color-neutral-content: #fafafa;
-
-  --color-base-100: #ffffff; /* card / panel surface */
-  --color-base-200: #ffffff; /* cards (bg-base-200) render white too */
-  --color-base-300: #d4d4d8; /* zinc-300 — borders / hover / lines */
-  --color-base-content: #18181b; /* zinc-900 */
-
-  --color-info: #0369a1; /* sky-700 */
-  --color-info-content: #ffffff;
-  --color-success: #15803d; /* green-700 */
-  --color-success-content: #ffffff;
-  --color-warning: #b45309; /* amber-700 */
-  --color-warning-content: #ffffff;
-  --color-error: #b91c1c; /* red-700 */
-  --color-error-content: #ffffff;
-
-  --radius-selector: 0.5rem;
-  --radius-field: 0.3125rem; /* controls: 5px */
-  --radius-box: 0.375rem; /* cards: 6px */
-  --border: 1px;
-  --depth: 0; /* flat — no faux-3D button/card depth */
-  --noise: 0;
-}
-
-/* ------------------------------------------------------------------- Dark */
-@plugin "daisyui/theme" {
-  name: "rocketflare-dark";
-  prefersdark: true;
-  color-scheme: dark;
-
-  --color-primary: #60a5fa; /* blue-400 */
-  --color-primary-content: #172554; /* blue-950 */
-  --color-secondary: #d4d4d8; /* zinc-300 — matches --text-secondary, see the light block */
-  --color-secondary-content: #18181b;
-  --color-accent: #5eead4; /* teal-300 */
-  --color-accent-content: #042f2e; /* teal-950 */
-  --color-neutral: #d4d4d8;
-  --color-neutral-content: #18181b;
-
-  --color-base-100: #27272a; /* zinc-800 — card / panel surface, lifted off the canvas */
-  --color-base-200: #27272a;
-  --color-base-300: #52525b; /* zinc-600 — borders / hover / lines */
-  --color-base-content: #fafafa;
-
-  /* Tone 300 of the SAME hue rows the light theme reads tone 700 from; `-content` is tone 950. */
-  --color-info: #7dd3fc; /* sky-300 */
-  --color-info-content: #082f49;
-  --color-success: #86efac; /* green-300 */
-  --color-success-content: #052e16;
-  --color-warning: #fcd34d; /* amber-300 */
-  --color-warning-content: #451a03;
-  --color-error: #fca5a5; /* red-300 */
-  --color-error-content: #450a0a;
-
-  --radius-selector: 0.5rem;
-  --radius-field: 0.3125rem;
-  --radius-box: 0.375rem;
-  --border: 1px;
-  --depth: 0;
-  --noise: 0;
-}
+/* The brand itself: `../shared/theme-tokens.css`, shared with the public-site stylesheets. */
 
 /* ------------------------------------------------ Semantic surface tokens */
 [data-theme="rocketflare-light"] {
@@ -169,7 +89,7 @@
 
   /* Status tints: explicit tones (100 surface / 300 border), not `color-mix(<semantic> 12%)`,
      which tints towards the surface and pushes the label under the floor in dark mode. */
-  --tone-primary-surface: #dbeafe; /* blue-100 */
+  --tone-primary-surface: #eff6ff; /* blue-50 — primary is a 600, so blue-100 under it is 4.2:1 */
   --tone-primary-border: #93c5fd; /* blue-300 */
   --tone-info-surface: #e0f2fe; /* sky-100 */
   --tone-info-border: #7dd3fc; /* sky-300 */
@@ -201,7 +121,7 @@
 
   --text-primary: #fafafa; /* zinc-50 */
   --text-secondary: #d4d4d8; /* zinc-300 */
-  --text-muted: #a1a1aa; /* zinc-400 — ≥5:1 on the panel */
+  --text-muted: #acacb4; /* just above zinc-400: 4.6:1 on raised/hover (zinc-400 is 4.1:1) */
 
   --focus-ring: #60a5fa;
   --overlay: color-mix(in srgb, #09090b 65%, transparent);

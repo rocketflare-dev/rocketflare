@@ -5,7 +5,7 @@
  * own token strings.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -19,6 +19,7 @@ import {
   hexToRgb,
   isBinary,
   isExcluded,
+  isLicenceFile,
   KIT,
   KIT_MANIFEST_FILE,
   parseArgs,
@@ -33,6 +34,11 @@ import {
   topLevelObjectSpan,
   validateSlug,
 } from '../../../../scripts/lib/rename-lib.mjs'
+import {
+  kitOnlyGlobs,
+  matchesAny,
+  stripKitOnlyHooks,
+} from '../../../../scripts/lib/upgrade-lib.mjs'
 
 describe('deriveNames', () => {
   it('derives snake, UPPER, display and the placeholder domain from a hyphenated slug', () => {
@@ -223,6 +229,13 @@ describe('applyReplacements', () => {
     expect(preserved).toBe(4)
   })
 
+  it('never rewrites the published plugin catalogue page, while the app domain still moves', () => {
+    const input = 'Browse https://rocketflare.dev/plugins; the app is https://app.rocketflare.dev'
+    const { text } = applyReplacements(input, deriveNames('acme', 'Acme'))
+    expect(text).toContain('https://rocketflare.dev/plugins;')
+    expect(text).not.toContain('https://app.rocketflare.dev')
+  })
+
   it('applies the classes longest-first: the env class takes the bare ENV_PREFIX too', () => {
     const { text, counts } = applyReplacements("'ROCKETFLARE' ROCKETFLARE_X", deriveNames('a-b'))
     expect(text).toBe("'A_B' A_B_X")
@@ -280,6 +293,18 @@ describe('exclusions', () => {
     }
     // The kit's own tests, this file among them, by prefix — the rename deletes them anyway.
     expect(isExcluded('apps/web/tests/kit-only/rename-lib.test.ts')).toBe(true)
+    // Licence files anywhere: a commercial plugin's own LICENSE travels into the app and must
+    // keep its licensor's name. Source files that merely look similar are still translated.
+    for (const p of [
+      'apps/web/src/plugins/sso/LICENSE',
+      'LICENSES/kit-MIT.txt',
+      'packages/x/LICENCE.md',
+      'NOTICE',
+      'apps/web/LICENSE-MIT',
+    ])
+      expect(isExcluded(p), p).toBe(true)
+    for (const p of ['apps/web/src/ui/components/Notice.tsx', 'apps/web/src/api/license.ts'])
+      expect(isExcluded(p), p).toBe(false)
     for (const d of ['node_modules', 'dist', '.git', '.wrangler'])
       expect(EXCLUDED_DIRS).toContain(d)
     expect(isExcluded('apps/web/node_modules/x/package.json')).toBe(true)
@@ -481,5 +506,75 @@ describe('renameKitManifest (launch.kit.json, kept by every copy)', () => {
     const out = renameKitManifest(plain, names)
     expect(out.total).toBe(0)
     expect(out.text).toBe(plain)
+  })
+})
+
+/**
+ * The security audit ships in every copy (`/rf-security`), so the rename must leave it working:
+ * the runs root, the guard hook's marker and the sandbox all name one directory, the sandbox image
+ * has one name, the hook survives the kit-only strip, and the vendored upstream skill stays byte
+ * for byte (its hashes are recorded in `upstream/VENDOR.md`).
+ */
+describe('rf-security after a rename', () => {
+  const root = path.resolve(__dirname, '../../../..')
+  const names = deriveNames('my-app')
+  const renamed = (rel: string) =>
+    applyReplacements(readFileSync(path.join(root, rel), 'utf8'), names).text
+  const SKILL = '.claude/skills/rf-security'
+  const manifest = JSON.parse(readFileSync(path.join(root, '.rocketflare.json'), 'utf8'))
+
+  it('is not kit-only and is renamed, not excluded', () => {
+    const files = execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard'], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+      .split('\n')
+      .filter(f => f.startsWith(`${SKILL}/`) || f === 'scripts/security-sandbox.mjs')
+    expect(files.length).toBeGreaterThan(5)
+    for (const f of files) {
+      expect(matchesAny(f, kitOnlyGlobs(manifest)), f).toBe(false)
+      // The vendored upstream's LICENSE is a third party's legal text: never renamed.
+      expect(isExcluded(f), f).toBe(isLicenceFile(f))
+    }
+    expect(files).toContain(`${SKILL}/upstream/LICENSE`)
+  })
+
+  it('names the renamed config directory for the runs root everywhere', () => {
+    for (const rel of [
+      `${SKILL}/tools/lib.mjs`,
+      `${SKILL}/tools/guard-hook.mjs`,
+      'scripts/security-sandbox.mjs',
+    ]) {
+      const text = renamed(rel)
+      expect(text, rel).toContain("'.my-app', 'security-runs'")
+      expect(text, rel).not.toMatch(/\.rocketflare\b/)
+    }
+    const settings = renamed('.claude/settings.json')
+    expect(settings).toContain('$HOME/.my-app/security-runs/.active')
+    // The secret-path rule follows the CLI's renamed config directory.
+    expect(renamed(`${SKILL}/tools/guard-hook.mjs`)).toContain('\\.my-app\\/config\\.json')
+  })
+
+  it('keeps one sandbox image name across the runner, the sandbox script and compose', () => {
+    expect(renamed(`${SKILL}/tools/audit.mjs`)).toContain("'my-app-security-sandbox'")
+    expect(renamed('scripts/security-sandbox.mjs')).toContain("'my-app-security-sandbox'")
+    expect(renamed('apps/web/docker-compose.security.yml')).toContain(
+      'image: my-app-security-sandbox'
+    )
+    expect(renamed('apps/web/docker-compose.security.yml')).toContain('POSTGRES_DB: my_app_test')
+  })
+
+  it('keeps the guard hook when the kit-only hooks are stripped', () => {
+    const { text } = stripKitOnlyHooks(renamed('.claude/settings.json'), kitOnlyGlobs(manifest))
+    expect(text).toContain('.claude/skills/rf-security/tools/guard-hook.mjs')
+  })
+
+  it('leaves the vendored upstream skill untouched', () => {
+    const dir = path.join(root, SKILL, 'upstream')
+    for (const name of readdirSync(dir)) {
+      if (name === 'VENDOR.md') continue
+      const out = applyReplacements(readFileSync(path.join(dir, name), 'utf8'), names)
+      expect(out.total, name).toBe(0)
+    }
   })
 })

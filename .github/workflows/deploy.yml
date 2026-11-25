@@ -95,10 +95,13 @@ jobs:
   guard:
     name: Anything to deploy?
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       deployable: ${{ steps.check.outputs.deployable }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: check
         run: node scripts/release-check.mjs --deployable
 
@@ -119,7 +122,7 @@ jobs:
   # the PARENT has a completed, successful CI run on its exact sha. That is Launch's `release: X.Y.Z`
   # commit, whose own CI is still running (or `[skip ci]`) when the tag deploys; the gate would
   # re-test code its parent's run already passed. In-progress still does not count, for either.
-  # The decision is `gatedDecision` in scripts/release-check.mjs (tests/config/ci-workflows.test.ts).
+  # The decision is `gatedDecision` in scripts/release-check.mjs, tested in the kit.
   gated:
     name: Already gated?
     needs: guard
@@ -129,6 +132,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       actions: read
       contents: read
@@ -136,8 +140,9 @@ jobs:
       gated: ${{ steps.check.outputs.gated }}
     steps:
       # Two commits: the one being deployed and its parent, which the version-only rule diffs.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 2
       - id: check
         env:
@@ -179,6 +184,7 @@ jobs:
         (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: staging
     # id-token: the deployer path authenticates with a GitHub OIDC token; unused otherwise.
     permissions:
@@ -190,12 +196,13 @@ jobs:
       TOML: apps/web/wrangler.staging.toml
       DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
 
       - name: Resolve release version
         id: version
@@ -211,13 +218,12 @@ jobs:
       # kit.version agrees, the porting note exists and chains, and CHANGELOG.md has its section.
       # The version comparison used to be a third copy of itself, in shell, in both deploy jobs.
       #
-      # A release with no porting note is a gap every copy of the kit has to step over, permanently:
-      # `docs/upgrades/` is the chain `/rf-upgrade` walks. `pnpm kit:release <version>` writes all of
-      # it. Exits 0 immediately in an adopted copy, so it never gates somebody's own product.
+      # The note and kit.version halves are the KIT's release facts (`pnpm kit:release` writes them
+      # there) and exit 0 immediately in an app, so this gates only the kit's own tags.
       #
       # Only on a real tag: `workflow_dispatch` deploys `<branch>-<sha>`, which is not an X.Y.Z
       # version and has no note of its own.
-      - name: Tag matches the root version and carries its porting note
+      - name: Kit release facts (kit repository only; a no-op in an app)
         if: github.ref_type == 'tag'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
@@ -285,7 +291,7 @@ jobs:
       # Only once staging is live on these bytes; `release-bundle` attaches it to the release.
       - name: Keep the bundle for the release
         if: vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: launch-bundle
           path: ${{ steps.bundle.outputs.file }}
@@ -296,7 +302,7 @@ jobs:
       # `[assets] directory = "./dist/ui"` live.
       - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
-        run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy -c wrangler.staging.toml --var "RELEASE_VERSION:${{ steps.version.outputs.version }}" --var "DEPLOYMENT_ID:${{ github.run_id }}-${{ github.run_attempt }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -326,19 +332,22 @@ jobs:
       !cancelled() && needs.staging.result == 'success' &&
       vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     env:
       TOML: apps/web/wrangler.staging.toml
       BUNDLE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
       - id: download
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: launch-bundle
           path: bundle
@@ -378,6 +387,7 @@ jobs:
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
       )
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     environment: production
     permissions:
       contents: read
@@ -388,20 +398,23 @@ jobs:
       TOML: apps/web/wrangler.toml
       DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
-          cache: pnpm
 
       - name: Resolve release version
         id: version
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then VERSION="${{ github.event.release.tag_name }}"
+          if [ "$EVENT_NAME" = "release" ]; then VERSION="$RELEASE_TAG"
           else VERSION="${GITHUB_REF_NAME}-${GITHUB_SHA::7}"; fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Deploying version: $VERSION"
@@ -409,7 +422,7 @@ jobs:
       # As in the staging job: one script checks the tag against the root version, the manifest's
       # kit.version, the porting note and the changelog section. Only on a real Release — a
       # `workflow_dispatch` ships `<branch>-<sha>`, which is not an X.Y.Z version.
-      - name: Release tag matches the root version and carries its porting note
+      - name: Kit release facts (kit repository only; a no-op in an app)
         if: github.event_name == 'release'
         run: node scripts/release-check.mjs --tag "${{ steps.version.outputs.version }}"
 
@@ -474,7 +487,7 @@ jobs:
 
       - name: Deploy with wrangler (no deployer)
         if: vars.DEPLOYER_URL == ''
-        run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}"
+        run: pnpm --filter @rocketflare/web exec wrangler deploy --var "RELEASE_VERSION:${{ steps.version.outputs.version }}" --var "DEPLOYMENT_ID:${{ github.run_id }}-${{ github.run_attempt }}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

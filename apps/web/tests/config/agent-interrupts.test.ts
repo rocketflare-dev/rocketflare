@@ -1,5 +1,5 @@
 /**
- * The human-in-the-loop contracts (issue #17), tested where they are cheapest to test: pure, no
+ * The human-in-the-loop contracts, tested where they are cheapest to test: pure, no
  * database, no Worker. Three of these are guarding a specific way this feature can fail silently.
  *
  * - **`AGENT_RESUME_EVENT`** — Cloudflare rejects a `.` in a Workflow event type with

@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 /**
- * CLI entry point (D26). Wires commander to the thin command modules; the ONE place that maps
+ * CLI entry point. Wires commander to the thin command modules; the ONE place that maps
  * errors to exit codes (0 ok · 1 error · 2 not logged in · 3 forbidden) and prints them. Global
  * `--server <url>` and `--json` apply to every command. The bin name comes from `package.json`.
  */
 import { Command, InvalidArgumentError } from 'commander'
 import { runActivityList } from './commands/activity'
-import { runAgentRunsList, runAgentsList, runAgentsRun } from './commands/agents'
+import { runAgentRunsList, runAgentsInspect, runAgentsList, runAgentsRun } from './commands/agents'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
+import { runDocsIngest, runDocsList, runDocsRetry, runDocsSearch } from './commands/docs'
 import { runEvalsPromote } from './commands/evals'
+import { runFactsReview, runFactsSettle } from './commands/facts'
 import { runFeaturesList } from './commands/features'
 import { runFeedbackList } from './commands/feedback'
 import { runGroupMembers, runGroupsList } from './commands/groups'
@@ -26,6 +28,16 @@ import { BIN_NAME, VERSION } from './package-info'
 import { cliPlugins } from './plugins'
 import { createLogger } from './utils/logger'
 import { formatJson } from './utils/output'
+
+// `pnpm cli …` runs this from apps/cli; a path the person typed (`--batch ./runs.jsonl`, a plugin's
+// bundle directory) means their own directory, which pnpm passes as INIT_CWD.
+if (process.env.npm_lifecycle_event === 'cli' && process.env.INIT_CWD) {
+  try {
+    process.chdir(process.env.INIT_CWD)
+  } catch {
+    // A directory that has gone away: stay where pnpm put us.
+  }
+}
 
 interface GlobalOptions {
   server?: string
@@ -174,9 +186,20 @@ agentRuns
   .option('--agent <key>', 'only this agent')
   .option('--status <status>', 'queued | running | awaiting_input | succeeded | failed | cancelled')
   .option('--batch <id>', 'only the runs one batch created')
+  .option('--parent <runId>', "one run's child runs (children are otherwise left out)")
+  .option('--since <date>', 'only runs created at or after this ISO date or time')
+  .option(
+    '--agent-version <n>',
+    'only runs recorded under this meta.version',
+    positiveInt('--agent-version')
+  )
   .option('--page <n>', 'page number', positiveInt('--page'))
   .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
   .action(action((ctx, cmd) => runAgentRunsList(ctx, cmd.opts())))
+agents
+  .command('inspect <runId>')
+  .description("a run's timeline: events, turns, effects, decisions, asks, children, spend")
+  .action(action((ctx, cmd) => runAgentsInspect(ctx, cmd.args[0] ?? '')))
 
 const traces = program
   .command('traces')
@@ -206,6 +229,53 @@ traces
   .description('print one trace as a span tree — <id> is a trace id, agent run id or message id')
   .option('--full', 'print tool/model content unclipped')
   .action(action((ctx, cmd) => runTracesShow(ctx, cmd.args[0] ?? '', cmd.opts())))
+
+const docs = program.command('docs').description('the knowledge base: documents and search')
+docs
+  .command('list')
+  .description('list the documents you can see, newest first')
+  .option('--status <status>', 'pending | indexed | failed')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runDocsList(ctx, cmd.opts())))
+docs
+  .command('search <query>')
+  .description('search the knowledge base (the same hybrid search chat uses)')
+  .option('--limit <n>', 'passages to return (max 20)', positiveInt('--limit'))
+  .option('--document <id>', 'search one document only')
+  .action(action((ctx, cmd) => runDocsSearch(ctx, cmd.args[0] ?? '', cmd.opts())))
+docs
+  .command('ingest <file>')
+  .description('add a text file (.txt, .md, .csv…) to the knowledge base, shared with everyone')
+  .option('--title <title>', 'document title (default: the file name)')
+  .option('--source <source>', 'where it came from (default: upload)')
+  .action(action((ctx, cmd) => runDocsIngest(ctx, cmd.args[0] ?? '', cmd.opts())))
+docs
+  .command('retry <id>')
+  .description('index a failed document again (yours, or any as admin+)')
+  .action(action((ctx, cmd) => runDocsRetry(ctx, cmd.args[0] ?? '')))
+
+const facts = program
+  .command('facts')
+  .description('knowledge facts read from documents: what is waiting for a person')
+facts
+  .command('review')
+  .description('list open items — facts that are unsure or disagree, and names that may be one')
+  .option('--mine', 'only items addressed to me (an admin sees everyone’s otherwise)')
+  .option('--kind <kind>', 'fact | possibleMatch')
+  .option('--page <n>', 'page number', positiveInt('--page'))
+  .option('--page-size <n>', 'items per page (max 200)', positiveInt('--page-size'))
+  .action(action((ctx, cmd) => runFactsReview(ctx, cmd.opts())))
+for (const [verb, help] of [
+  ['confirm', 'the fact is right'],
+  ['reject', 'the fact is wrong'],
+  ['prefer', 'this side of a disagreement is right; the others are rejected'],
+] as const) {
+  facts
+    .command(`${verb} <factId>`)
+    .description(help)
+    .action(action((ctx, cmd) => runFactsSettle(ctx, verb, cmd.args[0] ?? '')))
+}
 
 const feedback = program
   .command('feedback')
@@ -255,7 +325,7 @@ config.command('path').description('print the config file path').action(action(r
 
 // ---- plugins -------------------------------------------------------------------------------
 
-// Installed plugins register LAST (D31), so `--help` lists the kit's commands first and a plugin's
+// Installed plugins register LAST, so `--help` lists the built-in commands first and a plugin's
 // under its own id. They get the same `action()` wrapper, and so the same context, error printer
 // and exit-code mapping as everything above.
 for (const plugin of cliPlugins) plugin.register(program, action)

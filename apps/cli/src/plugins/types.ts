@@ -1,8 +1,8 @@
 /**
- * The CLI half of a plugin (D31).
+ * The CLI half of a plugin.
  *
- * A plugin that ships commands registers them on the kit's `program` with the same `action()`
- * wrapper every kit command uses, so it inherits one context, one error printer and one exit-code
+ * A plugin that ships commands registers them on the CLI's `program` with the same `action()`
+ * wrapper every built-in command uses, so it inherits one context, one error printer and one exit-code
  * mapping (0 ok · 1 error · 2 not logged in · 3 forbidden). It never calls `fetch` itself and never
  * prints an error: it throws `CliError`, exactly like `commands/*.ts`.
  */

@@ -1,5 +1,5 @@
 /**
- * `api_keys` — tenant-scoped bearer credentials (D12). The plaintext is shown ONCE at creation;
+ * `api_keys` — tenant-scoped bearer credentials. The plaintext is shown ONCE at creation;
  * only `keyHash` (SHA-256) is stored, `keyPrefix` is the human-readable handle in lists. A key acts
  * AS its creator: validation requires the creator to still be an unblocked member of the tenant,
  * so removing a member revokes their keys' access. Soft-revoked via `revokedAt`, never deleted.
@@ -26,7 +26,7 @@ export const apiKeys = pgTable(
     /** `apiKeyScopeSchema` values; CASL on the creator's role is the real authorisation. */
     scopes: text('scopes').array().notNull().default(['read', 'write']),
     lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
-    /** `validateApiKey` MUST check this (D12 — neither reference app did). */
+    /** `validateApiKey` MUST check this. */
     expiresAt: timestamp('expires_at', { withTimezone: true }),
     revokedAt: timestamp('revoked_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),

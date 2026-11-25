@@ -1,5 +1,5 @@
 /**
- * The CONFORMANCE suite for the driver seam (D35, tests/driver/CLAUDE.md): every test states one
+ * The CONFORMANCE suite for the driver seam (tests/driver/CLAUDE.md): every test states one
  * equivalence between `postgres` and `neon` and passes UNCHANGED under both. `pnpm test` runs this
  * project twice on a local target — under `postgres`, then under `neon` through the local proxy —
  * and once, under `neon`, on a real Neon gate branch. A test that fails under one driver is a hole
@@ -13,6 +13,11 @@
 import { and, eq, sql } from 'drizzle-orm'
 import { afterAll, describe, expect, it } from 'vitest'
 import { resolveSession } from '@/api/auth/sessions'
+import { fullAccessScope } from '@/api/services/access'
+import { ingestText } from '@/api/services/ai/ingest'
+import { ingestPlatformText, prunePlatformText } from '@/api/services/ai/platform-documents'
+import { searchKnowledgeChunks } from '@/api/services/ai/retrieval'
+import { loadConfig } from '@/config'
 import {
   affected,
   DATABASE_DRIVERS,
@@ -24,11 +29,12 @@ import {
   pgErrorCode,
   rows,
 } from '@/db/client'
-import { aiSpans, featureFlags } from '@/db/schema'
+import { aiSpans, featureFlags, pluginEvents, tenants } from '@/db/schema'
 import { withTenantScope } from '@/db/tenant-scope'
 import { runMigrations } from '../../scripts/migrate'
 import { createTestSession, createTestTenantWithUser } from '../helpers/auth'
 import { setupTestDatabase, testDatabaseUrl } from '../helpers/db'
+import { createTestEnv } from '../mocks/bindings'
 
 const env: DatabaseEnv = {
   DATABASE_DRIVER: process.env.DATABASE_DRIVER,
@@ -145,6 +151,33 @@ describe(`database driver: ${driver}`, () => {
     expect(affected(await db.delete(aiSpans).where(eq(aiSpans.tenantId, tenant.id)))).toBe(0)
   })
 
+  it('onConflictDoNothing().returning() on a PARTIAL unique index: a row, then none (plugin events)', async () => {
+    const { db } = open()
+    const { tenant } = await createTestTenantWithUser(fixtures)
+    const event = (idempotencyKey: string | null) => ({
+      tenantId: tenant.id,
+      name: 'driver-probe.thing.happened',
+      source: 'driver-probe',
+      payload: { n: 1, nested: { ok: true } },
+      idempotencyKey,
+    })
+    const [first] = await db
+      .insert(pluginEvents)
+      .values(event('k1'))
+      .onConflictDoNothing()
+      .returning()
+    expect(first?.payload).toEqual({ n: 1, nested: { ok: true } })
+    expect(first?.createdAt).toBeInstanceOf(Date)
+    expect(
+      await db.insert(pluginEvents).values(event('k1')).onConflictDoNothing().returning()
+    ).toEqual([])
+    // NULL keys are never equal: both keyless rows land.
+    expect(affected(await db.insert(pluginEvents).values([event(null), event(null)]))).toBe(2)
+    expect(
+      affected(await db.delete(pluginEvents).where(eq(pluginEvents.tenantId, tenant.id)))
+    ).toBe(3)
+  })
+
   it('the query builder maps rows (timestamps as Date) the same under both', async () => {
     const { db } = open()
     const { tenant } = await createTestTenantWithUser(fixtures)
@@ -197,6 +230,40 @@ describe(`database driver: ${driver}`, () => {
     expect(left).toEqual([])
   })
 
+  it('select … for update in a transaction holds the row: a second one waits, then reads the commit', async () => {
+    const first = open().db
+    const second = open().db
+    const { tenant } = await createTestTenantWithUser(fixtures)
+    let waiting: Promise<string | undefined> | undefined
+    await first.transaction(async tx => {
+      await tx.select().from(tenants).where(eq(tenants.id, tenant.id)).for('update')
+      waiting = second.transaction(async tx2 => {
+        const [row] = await tx2
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, tenant.id))
+          .for('update')
+        return row?.name
+      })
+      for (let i = 0; i < 300; i++) {
+        const blocked = rows<{ n: number }>(
+          await fixtures.execute(sql`
+            SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'
+              AND query ILIKE '%for update%'
+          `)
+        )[0]?.n
+        if (blocked) break
+        await new Promise(resolve => setTimeout(resolve, 10))
+      }
+      await tx
+        .update(tenants)
+        .set({ name: 'written under the lock' })
+        .where(eq(tenants.id, tenant.id))
+    })
+    expect(await waiting).toBe('written under the lock')
+  })
+
   it('withTenantScope enforce: the scoped handle sees app.tenant_id', async () => {
     const { db } = open()
     const { tenant } = await createTestTenantWithUser(fixtures)
@@ -221,6 +288,65 @@ describe(`database driver: ${driver}`, () => {
     const handle = openDatabase(env)
     await handle.close()
     await handle.close()
+  })
+
+  it('hybrid retrieval over tenant + platform documents answers the same (every query shape)', async () => {
+    const { db } = open()
+    const testEnv = createTestEnv()
+    const cfg = loadConfig(testEnv)
+    const { tenant, user } = await createTestTenantWithUser(fixtures)
+    const source = `example-feature:driver-${crypto.randomUUID().slice(0, 8)}`
+    const platform = await ingestPlatformText(db, cfg, testEnv, {
+      source,
+      externalId: 'members/invite',
+      title: 'Inviting a teammate',
+      text: 'Inviting a teammate: open Members and choose Invite.',
+    })
+    // Idempotent re-ingest: one read, no write.
+    expect(
+      (
+        await ingestPlatformText(db, cfg, testEnv, {
+          source,
+          externalId: 'members/invite',
+          title: 'Inviting a teammate',
+          text: 'Inviting a teammate: open Members and choose Invite.',
+        })
+      ).status
+    ).toBe('unchanged')
+    await ingestText(db, cfg, testEnv, {
+      tenantId: tenant.id,
+      userId: user.id,
+      title: 'Our onboarding',
+      text: 'Invite new hires on their first day.',
+    })
+    const scope = fullAccessScope(tenant.id)
+    const query = { query: 'invite teammate', limit: 5 }
+    const titles = (r: { hits: { title: string; platform: boolean }[] }) =>
+      r.hits.map(h => [h.title, h.platform]).sort()
+
+    // The tenant-only shape (no platform sources) — unchanged.
+    const tenantOnly = await searchKnowledgeChunks(db, cfg, testEnv, scope, query)
+    expect(titles(tenantOnly)).toEqual([['Our onboarding', false]])
+    // One shared dense leg over both corpora (same model), in a transaction.
+    const both = await searchKnowledgeChunks(db, cfg, testEnv, scope, {
+      ...query,
+      platformSources: [source],
+    })
+    expect(titles(both)).toEqual([
+      ['Inviting a teammate', true],
+      ['Our onboarding', false],
+    ])
+    expect(both.semantic).toBe('used')
+    // The platform corpus alone (its own dense leg), located at offset 0.
+    const platformOnly = await searchKnowledgeChunks(db, cfg, testEnv, scope, {
+      ...query,
+      sources: [],
+      platformSources: [source],
+    })
+    expect(platformOnly.hits.map(h => [h.documentId, h.charOffset])).toEqual([
+      [platform.documentId, 0],
+    ])
+    expect(await prunePlatformText(db, { source, keepExternalIds: [] })).toBe(1)
   })
 
   it('the migrator re-runs cleanly (already applied) over this driver', async () => {

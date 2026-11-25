@@ -1,12 +1,12 @@
 /**
- * `/invite/:token` (D9): look the invitation up, get the reader signed in as the invited address,
+ * `/invite/:token`: look the invitation up, get the reader signed in as the invited address,
  * accept, and land inside the org with the session the server returned. A reader signed in under a
  * different email is told so and offered a switch (sign out → login with this page as returnUrl).
  */
 import { CheckCircleIcon, ClockIcon, ExclamationTriangleIcon } from '@heroicons/react/24/outline'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
+import { Link, Navigate, useNavigate, useParams } from 'react-router'
 import { AuthCard, SignedInAs } from '@/ui/components/AuthCard'
 import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
 import { RoleBadge } from '@/ui/components/RoleBadge'

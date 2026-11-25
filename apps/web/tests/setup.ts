@@ -1,12 +1,12 @@
 /**
- * Global test setup (D15) — runs once per vitest project before the api suites:
+ * Global test setup — runs once per vitest project before the api suites:
  * roles (phase=role) → migrations → roles (phase=grants) → clean → seed one owner/tenant/API
  * key/session, exposed to tests as `inject('seed')` (`TestSeed` in helpers/auth.ts).
  *
- * Two projects (`api`, `api-isolated`) name this file and vitest calls a globalSetup ONCE PER
+ * Three projects (`api`, `api-isolated`, `api-fixtures`) name this file, and vitest runs it ONCE PER
  * PROJECT, re-importing the module, so a module-level flag would not dedupe. The memo hangs
- * off `globalThis` — the only thing the two module instances share — and holds the seed so the
- * second project `provide()`s the same rows instead of inserting duplicates.
+ * off `globalThis` — the only thing the module instances share — and holds the seed so a
+ * later project `provide()`s the same rows instead of inserting duplicates.
  */
 import { applyDbRoles } from '../scripts/db-roles'
 import { seedTestFixtures, type TestSeed } from './helpers/auth'
@@ -17,6 +17,7 @@ import {
   safetyCheck,
   setupTestDatabase,
 } from './helpers/db'
+import { plainStartupError } from './helpers/startup-error'
 
 const MEMO = Symbol.for('rocketflare.tests.globalSetup')
 type MemoHost = typeof globalThis & { [MEMO]?: Promise<TestSeed> }
@@ -25,7 +26,7 @@ export default async function setup(context: {
   provide: <K extends 'seed'>(key: K, value: TestSeed) => void
 }) {
   const host = globalThis as MemoHost
-  host[MEMO] ??= prepareTestDatabase()
+  host[MEMO] ??= prepareTestDatabase().catch(plainStartupError)
   const seed = await host[MEMO]
   context.provide('seed', seed)
 

@@ -1,8 +1,7 @@
 /**
- * Create (or reconcile) the non-superuser Postgres role that RLS policies target (D1).
- * Ported from the Node reference app's `scripts/db-roles.ts`; role name from
- * `src/db/schema/rls.ts`, REVOKE list from `RLS_REVOKED_TABLES`. Runs over the driver
- * `DATABASE_DRIVER` selects (D35, `scripts/lib/sql.ts`).
+ * Create (or reconcile) the non-superuser Postgres role that RLS policies target.
+ * Role name from `src/db/schema/rls.ts`, REVOKE list from `RLS_REVOKED_TABLES`. Runs over the
+ * driver `DATABASE_DRIVER` selects (`scripts/lib/sql.ts`).
  *
  * The owner (DATABASE_URL's user) owns every table and bypasses RLS — on Neon it is a
  * `neon_superuser` member (BYPASSRLS, CREATEROLE, but NOT a superuser), locally a real superuser —

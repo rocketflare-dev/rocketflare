@@ -1,5 +1,5 @@
 /**
- * The local trace store read back (D32): spans flushed through `databaseSpanStore` land in
+ * The local trace store read back: spans flushed through `databaseSpanStore` land in
  * `ai_spans`; `GET /api/traces` lists one row per trace for the caller's tenant only, with the
  * filters the CLI uses; `GET /api/traces/:id` returns a trace's spans by trace id, run id or message
  * id, and another tenant's id is a 404 exactly like an unknown one; anonymous 401, members 403.
@@ -14,11 +14,12 @@ import { agentRuns } from '@/db/schema'
 import { FakeChatClient } from '../helpers/ai'
 import { createTestSession, createTestTenantWithUser, sessionCookieHeader } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
-const cfg = loadConfig(createTestEnv())
+const cfg = loadConfig(createTestEnv({ OBSERVABILITY_CAPTURE_CONTENT: 'true' }))
 
 async function actor(role: 'owner' | 'admin' | 'member' = 'admin') {
   const { user, tenant } = await createTestTenantWithUser(db, role)
@@ -128,7 +129,7 @@ describe('/api/traces', () => {
         traceId = trace.traceId
         trace.toolCall({
           name: 'read_document',
-          input: { query: 'in\u0000voice', ['k\u0001ey']: ['a\u0007b'] },
+          input: { query: 'in\u0000voice', 'k\u0001ey': ['a\u0007b'] },
           output: 'Total:\u0000 42\tEUR\r\nPaid\u001F',
           startTime: new Date(),
           endTime: new Date(),
@@ -151,12 +152,12 @@ describe('/api/traces', () => {
     const a = await actor()
     const [run] = await db
       .insert(agentRuns)
-      .values({ tenantId: a.tenant.id, agentKey: 'summarize-text', input: {}, status: 'running' })
+      .values({ tenantId: a.tenant.id, agentKey: FIXTURE_AGENT, input: {}, status: 'running' })
       .returning()
     if (!run) throw new Error('no run')
     const tracer = tracerFor(cfg, { store: databaseSpanStore(db) })
     await withAgentTrace(
-      'summarize-text',
+      FIXTURE_AGENT,
       {
         tracer,
         tenantId: a.tenant.id,

@@ -1,9 +1,9 @@
 /**
- * `triage-research` — the decisions example (D37), and the shape the kit recommends for a job an
+ * `triage-research` — the decisions example, and the recommended shape for a job an
  * agent does over and over: **a question decides what a thing IS; code decides what follows; an
  * agent runs only where something must be found, or where no question could settle it.**
  *
- *   search      one `search_knowledge` call (the kit tool, not a model turn)
+ *   search      one `search_knowledge` call (the built-in tool, not a model turn)
  *   screen      `ctx.decide.sift` — ONE request, the same yes/no of every passage: does it help
  *               answer the question? Code keeps the ones at or above `RELEVANCE_THRESHOLD`.
  *   triage      `ctx.decide` — taken together, do the kept passages answer it?
@@ -17,7 +17,7 @@
  * `agent_run_decisions`, so "why was this passage ignored?" has a row, and changing the threshold
  * below is a code change that can be checked against recorded answers rather than a prompt edit.
  *
- * It is NON-exclusive (D39): the shape is meant for volume, so a batch of a hundred questions is a
+ * It is NON-exclusive: the shape is meant for volume, so a batch of a hundred questions is a
  * hundred concurrent runs, each metered and held to the run budget.
  *
  * Retry safety: the search runs inside `ctx.once`, so a re-entered `run()` screens the SAME
@@ -33,7 +33,7 @@ import {
 } from '@rocketflare/shared/ai/agents'
 import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { z } from 'zod'
-import { callStructuredTool } from '../../ai/kit'
+import { callStructuredTool } from '../../ai/agent-loop'
 import { withFanout } from '../fanout'
 import type { AgentContext, AgentDefinition } from '../registry'
 import type { SearchKnowledgeResult } from '../tools/search-knowledge'
@@ -80,8 +80,8 @@ export const triageResearchAgent: AgentDefinition<TriageResearchInput, TriageRes
     inputSchema: triageResearchInputSchema,
     outputSchema: triageResearchOutputSchema,
     promptKey: 'triage-research',
-    // D39: one run per question, and nothing shared between two of them — so any number may run at
-    // once, and `POST /runs/batch` takes a file of questions. The kit's one non-exclusive agent.
+    // One run per question, and nothing shared between two of them — so any number may run at
+    // once, and `POST /runs/batch` takes a file of questions. The one built-in non-exclusive agent.
     exclusive: false,
   },
 
@@ -180,7 +180,7 @@ async function answer(
   screen: Screen
 ): Promise<TriageResearchOutput> {
   await ctx.step('answer', 'Writing the answer', 'running')
-  // `rerun`: a pure model call, so a live replay (D38) asks again and a prompt change shows.
+  // `rerun`: a pure model call, so a live replay asks again and a prompt change shows.
   const result = await ctx.once(
     'triage:answer',
     async () => {
@@ -249,7 +249,7 @@ async function escalate(
 ): Promise<TriageResearchOutput> {
   await ctx.step('escalate', 'Unsure — handing over to the research agent', 'running')
   await screenArtifact(ctx, passages, screen.p)
-  // NOT a scope (D39): `research-topic` resumes its tool loop from the run's checkpoint, and a
+  // NOT a scope: `research-topic` resumes its tool loop from the run's checkpoint, and a
   // scope has none. Its keys share this run's namespace, and none of them is a `triage:*` key.
   const full = await researchTopicAgent.run(
     withFanout({

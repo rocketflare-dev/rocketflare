@@ -1,24 +1,27 @@
 /**
- * Markdown renderer for model output (D17). `react-markdown` + GFM, **sanitised by default**: raw
+ * Markdown renderer for model output. `react-markdown` + GFM, **sanitised by default**: raw
  * HTML in the source is skipped (`skipHtml`), `javascript:` URLs are dropped by react-markdown's
  * default `urlTransform`, and links open in a new tab with `rel="noopener noreferrer"`. Nothing
  * here uses `dangerouslySetInnerHTML`. Memoised: while a reply streams the parent re-renders per
  * delta and re-parsing every settled turn is what makes a long transcript stutter.
  *
  * ONE exception to "a link is an `<a>`": a link to this app's own document viewer
- * (`/documents/<uuid>`) renders as a `DocumentCard` (D18), so `research-topic`'s markdown answer
+ * (`/documents/<uuid>`) renders as a `DocumentCard`, so `research-topic`'s markdown answer
  * cites documents as cards rather than as bare in-app URLs opened in a new tab. The card is fetched
  * by id, degrades to a plain in-app `<Link>` while it loads or if the document has since been
  * deleted, and — being markdown-free itself — lives in the eager `components/shared` barrel.
+ *
+ * An image renders as a link (`MarkdownImageLink`): this text comes from a model or a document, and
+ * an `<img>` would have the browser fetch whatever address it names as soon as the page is open.
  *
  * Lives in `components/ai/` on purpose — NOT the `components/shared` barrel App.tsx imports
  * eagerly — so the markdown dependency ships only in the lazy chat / agents / documents chunks.
  */
 import { memo } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import remarkGfm from 'remark-gfm'
-import { DocumentCard } from '@/ui/components/shared'
+import { DocumentCard, MarkdownImageLink } from '@/ui/components/shared'
 import { useDocumentCard } from '@/ui/hooks/useDocuments'
 
 /** `/documents/<uuid>` with an optional query — the shape `documentPath()` writes. */
@@ -48,6 +51,7 @@ function DocumentLink({ href, children }: { href: string; children: React.ReactN
 }
 
 const COMPONENTS: Components = {
+  img: MarkdownImageLink,
   a: ({ node: _node, href, children, ...props }) =>
     documentIdFromHref(href) ? (
       <DocumentLink href={href as string}>{children}</DocumentLink>

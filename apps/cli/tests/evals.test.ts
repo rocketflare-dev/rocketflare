@@ -1,5 +1,5 @@
 /**
- * `feedback list` and `evals promote` (D33), plus the feedback span in `traces show`: the promotion
+ * `feedback list` and `evals promote`, plus the feedback span in `traces show`: the promotion
  * queue renders and forwards its filters; promote tries the id as a message and falls back to a run
  * on 404, refuses to write tenant data unconfirmed, refuses a duplicate case id, and appends one
  * valid `EvalCase` line.
@@ -146,7 +146,7 @@ describe('evals promote', () => {
               draft({
                 id: 'run-3f9c2b1e',
                 input: { question: 'refunds?' },
-                agentKey: 'research-topic',
+                agentKey: 'fixture-agent',
                 source: { kind: 'agent_run', id: RUN },
               })
             ),
@@ -157,7 +157,7 @@ describe('evals promote', () => {
     const line = (await readFile(join(datasets, 'research.jsonl'), 'utf8')).trim()
     expect(evalCaseSchema.parse(JSON.parse(line))).toMatchObject({
       id: 'refund-window',
-      agentKey: 'research-topic',
+      agentKey: 'fixture-agent',
     })
   })
 

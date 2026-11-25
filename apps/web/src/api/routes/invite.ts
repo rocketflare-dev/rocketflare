@@ -1,5 +1,5 @@
 /**
- * Public invitation routes by token (D9): `GET /api/invite/:token` (details for the accept page —
+ * Public invitation routes by token: `GET /api/invite/:token` (details for the accept page —
  * no ids, no other members) and `POST /api/invite/:token/accept` (cookie session required; the
  * UI sends signed-out users to `/login?returnUrl=/invite/<token>`; the email must match). Accept
  * is transactional and answers with the session response so the UI can switch straight in.
@@ -29,6 +29,7 @@ inviteRouter.post('/:token/accept', async c => {
     user: auth.user,
     sessionId: auth.session.id,
     realtime: { defer: makeDefer(c), env: c.env },
+    maxOwnedTenants: cfg.MAX_OWNED_TENANTS_PER_USER,
   })
   const refreshed = await resolveCookieAuth(c)
   if (!refreshed) throw new UnauthorizedError()

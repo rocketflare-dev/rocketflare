@@ -1,12 +1,26 @@
 /**
- * AI usage contracts (D18): one `ai_usage` row per generation, written from the provider's usage
+ * AI usage contracts: one `ai_usage` row per generation, written from the provider's usage
  * tap (`services/ai/usage.ts`), and the per-model summary `GET /api/ai/usage/summary` returns.
- * `costMicrocents` is nullable — the kit records tokens and prices them from
+ * `costMicrocents` is nullable — the app records tokens and prices them from
  * `@rocketflare/shared/ai/pricing`, which an app corrects; a model the table does not know stays
  * null and is counted in `unpricedCalls`, so a partial total says so instead of pretending.
  */
 import { z } from 'zod'
 import { aiProviderSchema } from './config'
+
+/**
+ * The `ai_usage.feature` names the knowledge base writes: document and query embeddings, the
+ * reranker, and (phase 2) fact extraction. One `knowledge.` prefix so the Usage page groups them
+ * together and `knowledgeSpendToday` can sum exactly these three.
+ */
+export const KNOWLEDGE_USAGE_FEATURES = {
+  embeddings: 'knowledge.embeddings',
+  rerank: 'knowledge.rerank',
+  extraction: 'knowledge.extraction',
+  context: 'knowledge.context',
+} as const
+export type KnowledgeUsageFeature =
+  (typeof KNOWLEDGE_USAGE_FEATURES)[keyof typeof KNOWLEDGE_USAGE_FEATURES]
 
 export const aiUsageSchema = z.object({
   id: z.string().uuid(),

@@ -1,12 +1,31 @@
 /**
- * The pure rules a well-formed plugin obeys (D31), factored out of `tests/config/plugins.test.ts`
+ * The pure rules a well-formed plugin obeys, factored out of `tests/config/plugins.test.ts`
  * so the suite can both exercise them with fixtures and run them over whatever is installed.
  *
  * They are string functions on purpose: the checks that matter here are structural (what a file
  * imports, how deep a specifier reaches), and a structural rule that cannot be unit-tested with a
  * fixture is one that quietly stops meaning anything the moment no plugin is installed — which is
- * the kit's own default state.
+ * the default state.
  */
+
+import { eventNameProblem } from '@rocketflare/shared/plugins'
+import {
+  MAX_PLUGIN_UPLOAD_LIMIT_BYTES,
+  MAX_PUBLIC_MOUNT_BODY_BYTES,
+} from '@/api/middleware/body-limit'
+import { PUBLIC_SITE_HOST } from '@/api/middleware/public-sites'
+import {
+  isForbiddenCspSource,
+  reachesAdminBundle,
+  SITE_ASSETS_PATH,
+} from '@/api/middleware/security-headers'
+import type { AppConfig } from '@/config'
+import type {
+  AnyServerPlugin,
+  PluginPublicMountOptions,
+  PublicSiteCsp,
+  PublicSiteFormPath,
+} from '@/plugins/types'
 import {
   DECLARED_ENTRIES,
   normaliseModulePath,
@@ -74,7 +93,7 @@ const UI_ENTRY_ALLOWED = [
 /**
  * The published entries of a plugin: its server API, its UI, its shared contracts and its CLI
  * commands. Everything else in a plugin is private, which is what lets its semver cover a
- * knowable surface (decision 9).
+ * knowable surface.
  */
 export function isPluginEntry(repoPath: string): boolean {
   const p = normaliseModulePath(repoPath)
@@ -136,7 +155,31 @@ export function queryKeyRootIssues(id: string, roots: readonly string[]): string
 }
 
 /**
- * D34: where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
+ * A plugin's top-bar items (`UiPlugin.header`): each id a non-empty kebab-case word unique within
+ * the plugin (the React key is `<plugin id>:<id>`), a placement the shell renders, a finite order.
+ */
+export function headerItemIssues(
+  id: string,
+  items: readonly { id: string; placement?: string; order?: number }[]
+): string[] {
+  const issues: string[] = []
+  const seen = new Set<string>()
+  for (const item of items) {
+    if (!/^[a-z][a-z0-9-]*$/.test(item.id)) issues.push(`${id}: header item id '${item.id}'`)
+    if (seen.has(item.id)) issues.push(`${id}: header item '${item.id}' declared twice`)
+    seen.add(item.id)
+    if (item.placement !== undefined && item.placement !== 'center' && item.placement !== 'end') {
+      issues.push(`${id}: header item '${item.id}' placement '${item.placement}'`)
+    }
+    if (item.order !== undefined && !Number.isFinite(item.order)) {
+      issues.push(`${id}: header item '${item.id}' order must be a finite number`)
+    }
+  }
+  return issues
+}
+
+/**
+ * Where a plugin may mount a route with NO auth. Only `/api/hooks/<its own id>` and beneath,
  * so the unauthenticated surface is one enumerable prefix per plugin; and no AUTHED mount may sit
  * under `/api/hooks` at all, so a reader can trust that everything there is public by design.
  */
@@ -152,6 +195,74 @@ export function publicMountIssues(
   for (const p of authedPrefixes) {
     if (p === '/api/hooks' || p.startsWith('/api/hooks/')) {
       issues.push(`${id}: authed mount '${p}' is under /api/hooks, which is public by definition`)
+    }
+  }
+  return issues
+}
+
+/** A prefix that skips the 1 MB cap: only a plugin's own routes, and never its whole mount. */
+export function uploadPathIssues(id: string, paths: readonly string[]): string[] {
+  const root = `/api/${id}/`
+  return paths
+    .filter(p => !p.startsWith(root) || p.length === root.length)
+    .map(p => `${id}: upload path '${p}' is outside ${root}`)
+}
+
+/**
+ * A plugin's `uploadLimits`: each an exact path under `/api/<id>/` with a positive integer cap no
+ * larger than `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` — the host clamps a larger one, and saying so here
+ * is what stops a plugin believing it asked for 200 MB and got it.
+ */
+export function uploadLimitIssues(
+  id: string,
+  limits: Readonly<Record<string, number>> | undefined
+): string[] {
+  const root = `/api/${id}/`
+  return Object.entries(limits ?? {}).flatMap(([path, bytes]) => {
+    const issues: string[] = []
+    if (!path.startsWith(root) || path.length === root.length) {
+      issues.push(`${id}: upload limit path '${path}' is outside ${root}`)
+    }
+    if (!Number.isInteger(bytes) || bytes <= 0) {
+      issues.push(`${id}: upload limit for '${path}' must be a positive integer of bytes`)
+    } else if (bytes > MAX_PLUGIN_UPLOAD_LIMIT_BYTES) {
+      issues.push(
+        `${id}: upload limit for '${path}' (${bytes}) exceeds the ${MAX_PLUGIN_UPLOAD_LIMIT_BYTES}-byte ceiling`
+      )
+    }
+    return issues
+  })
+}
+
+/**
+ * The guards a public mount may declare (`PluginPublicMount`'s third element). `rateLimit` is
+ * `false` or two positive integers — a zero `max` would refuse everything, and a fractional one
+ * reads as a limit it does not enforce; `bodyLimitBytes` is a positive integer no larger than
+ * `MAX_PUBLIC_MOUNT_BODY_BYTES`, so no plugin can make an unauthenticated prefix unbounded.
+ */
+export function publicMountOptionIssues(
+  id: string,
+  prefix: string,
+  options: PluginPublicMountOptions | undefined
+): string[] {
+  if (options === undefined) return []
+  const at = `${id}: public mount '${prefix}'`
+  const issues: string[] = []
+  const positiveInt = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0
+  const { rateLimit, bodyLimitBytes } = options
+  if (rateLimit !== undefined && rateLimit !== false) {
+    if (!positiveInt(rateLimit.max)) issues.push(`${at}: rateLimit.max must be a positive integer`)
+    if (!positiveInt(rateLimit.windowSeconds)) {
+      issues.push(`${at}: rateLimit.windowSeconds must be a positive integer`)
+    }
+  }
+  if (bodyLimitBytes !== undefined) {
+    if (!positiveInt(bodyLimitBytes)) {
+      issues.push(`${at}: bodyLimitBytes must be a positive integer`)
+    } else if (bodyLimitBytes > MAX_PUBLIC_MOUNT_BODY_BYTES) {
+      issues.push(
+        `${at}: bodyLimitBytes ${bodyLimitBytes} exceeds the ${MAX_PUBLIC_MOUNT_BODY_BYTES}-byte ceiling`
+      )
     }
   }
   return issues
@@ -183,21 +294,154 @@ export function emailHandlerIssues(
   return issues
 }
 
-// ---- the plugin import rule (D31) ----------------------------------------------------------------
+/** Everything the event rule reads (D42), gathered from the barrels so the rule stays pure. */
+export interface EventDeclarations {
+  /** Each plugin's declared names (`SharedPlugin.events` keys). */
+  declared: readonly { id: string; events: readonly string[] }[]
+  /** Each subscription: `owner` is a plugin id, or `app` for `APP_EVENT_HANDLERS`. */
+  handlers: readonly { owner: string; event: string; name: string }[]
+  /** Each agent's `triggers` and `bindable` entries. */
+  agentEvents: readonly { agentKey: string; event: string; kind: 'trigger' | 'bindable' }[]
+}
+
+const HANDLER_NAME_RE = /^[a-z][a-z0-9-]*$/
+
+/**
+ * **Declared, namespaced, once; subscribed only to what is declared** (D42). A name outside its
+ * plugin's `<id>.` or inside `kit.` is refused, and so is one two plugins declare — the host keeps
+ * the first, so the second plugin's emits would validate against the other's schema. A handler, a
+ * trigger or a binding naming an event nobody declares never fires: that is the "undeclared" case,
+ * and it is only visible here. Handler names are part of each delivery's id, so they are unique
+ * per owner and well formed.
+ */
+export function eventDeclarationIssues(d: EventDeclarations): string[] {
+  const issues: string[] = []
+  const owner = new Map<string, string>()
+  for (const { id, events } of d.declared) {
+    for (const name of events) {
+      const problem = eventNameProblem(id, name)
+      if (problem) issues.push(`${id}: event ${problem}`)
+      const prior = owner.get(name)
+      if (prior) issues.push(`${id}: event '${name}' is already declared by ${prior}`)
+      else owner.set(name, id)
+    }
+  }
+  const seen = new Set<string>()
+  for (const h of d.handlers) {
+    if (!owner.has(h.event)) {
+      issues.push(`${h.owner}: handler '${h.name}' subscribes to undeclared event '${h.event}'`)
+    }
+    if (!HANDLER_NAME_RE.test(h.name)) {
+      issues.push(`${h.owner}: handler name '${h.name}' must match ${HANDLER_NAME_RE.source}`)
+    }
+    const key = `${h.owner}:${h.name}`
+    if (seen.has(key)) issues.push(`${h.owner}: handler name '${h.name}' is used twice`)
+    seen.add(key)
+  }
+  for (const a of d.agentEvents) {
+    if (!owner.has(a.event)) {
+      issues.push(`agent ${a.agentKey}: ${a.kind} names undeclared event '${a.event}'`)
+    }
+  }
+  return issues
+}
+
+/** One plugin's `publicSites`, evaluated against a config so the rule below stays pure. */
+export interface PublicSiteClaim {
+  id: string
+  /** `null` is the dormant answer: a config problem, not a malformed declaration. */
+  hosts: readonly string[] | null
+  forms?: readonly PublicSiteFormPath[]
+  /** What `csp(host, config, '/')` returned, for each claimed host. */
+  csp?: readonly PublicSiteCsp[]
+}
+
+/** The claims of every installed plugin that declares `publicSites`. */
+export function publicSiteClaims(
+  plugins: readonly AnyServerPlugin[],
+  config: AppConfig
+): PublicSiteClaim[] {
+  return plugins.flatMap(plugin => {
+    const site = plugin.publicSites
+    if (!site) return []
+    const hosts = site.hosts(config)
+    const { csp } = site
+    return [
+      {
+        id: plugin.shared.id,
+        hosts,
+        forms: site.forms,
+        csp: csp ? (hosts ?? []).map(host => csp(host, config, '/')) : [],
+      },
+    ]
+  })
+}
+
+/**
+ * What a plugin's public hosts must obey. A host is lowercase DNS with no port, claimed by one
+ * plugin only and never the app's own. A form path is exact and absolute, with the same guards as
+ * a public mount. A CSP source may not reopen what the public policy closes (`isForbiddenCspSource`).
+ */
+export function publicSiteIssues(claims: readonly PublicSiteClaim[], appHost?: string): string[] {
+  const issues: string[] = []
+  const owner = new Map<string, string>()
+  for (const { id, hosts, forms, csp } of claims) {
+    for (const host of hosts ?? []) {
+      if (!PUBLIC_SITE_HOST.test(host)) {
+        issues.push(`${id}: public site host '${host}' must be lowercase with no scheme or port`)
+      }
+      if (host === appHost) issues.push(`${id}: public site host '${host}' is the app's own host`)
+      const prior = owner.get(host)
+      if (prior) issues.push(`${id}: public site host '${host}' is already claimed by ${prior}`)
+      else owner.set(host, id)
+    }
+    for (const form of forms ?? []) {
+      if (!/^\/(?!\/)[^?#*:\s]*$/.test(form.path)) {
+        issues.push(`${id}: public site form path '${form.path}' must be an exact absolute path`)
+      }
+      issues.push(
+        ...publicMountOptionIssues(id, form.path, {
+          rateLimit: form.rateLimit,
+          bodyLimitBytes: form.bodyLimitBytes,
+        })
+      )
+    }
+    for (const [index, declared] of (csp ?? []).entries()) {
+      const host = hosts?.[index]
+      for (const source of declared.scriptSrc ?? []) {
+        if (host && !isForbiddenCspSource(source) && reachesAdminBundle(source, host)) {
+          issues.push(
+            `${id}: public site csp scriptSrc source '${source}' reaches ${host}/assets/, the admin bundle; site scripts load from ${SITE_ASSETS_PATH}`
+          )
+        }
+      }
+      for (const [directive, sources] of Object.entries(declared)) {
+        for (const source of (sources ?? []) as readonly string[]) {
+          if (isForbiddenCspSource(source)) {
+            issues.push(`${id}: public site csp ${directive} source '${source}' is forbidden`)
+          }
+        }
+      }
+    }
+  }
+  return issues
+}
+
+// ---- the plugin import rule --------------------------------------------------------------------
 
 /**
  * **A plugin imports only from declared entries, and receives everything else as injected context.**
  *
  * That sentence is the whole rule, and it is why there is no per-symbol allow-list here and no
  * exceptions list. The measurement this came from found 128 distinct (module, symbol) pairs across
- * 55 kit modules, and the answer to that is not a longer table — a table of 128 exceptions is the
+ * 55 core modules, and the answer to that is not a longer table — a table of 128 exceptions is the
  * sprawl written down rather than fixed. Nearly every one of those symbols already took an
  * execution context as its first argument, so nearly every one became a method on
  * `apps/web/src/plugins/api`.
  *
  * `deepImportIssue` above guards core→plugin and plugin→plugin. This guards the third direction —
  * **plugin→core** — which is the one that actually breaks: it is what makes a plugin's semver
- * meaningless, because the plugin is pinned to kit internals nobody promised to keep.
+ * meaningless, because the plugin is pinned to core internals nobody promised to keep.
  */
 
 /** Packages of the repo a plugin could reach into. Anything else is a third-party dependency. */
@@ -222,11 +466,20 @@ export function isPluginFile(repoPath: string): boolean {
   return pluginIdOfPath(repoPath) !== null
 }
 
+/** Where a plugin's seeded host code lives: `apps/web/src/host/<id>/`, imported as `@/host/<id>/…`. */
+export const HOST_FILES_DIR = 'apps/web/src/host/'
+
+/** The plugin id a resolved `apps/web/src/host/<id>/…` path belongs to, or null. */
+export function hostDirIdOf(repoPath: string): string | null {
+  if (!repoPath.startsWith(HOST_FILES_DIR)) return null
+  return repoPath.slice(HOST_FILES_DIR.length).split('/')[0] || ''
+}
+
 /**
  * One message when a plugin file imports the host from anywhere but a declared entry, else null.
  *
  * Third-party packages (`react`, `zod`, `drizzle-orm`, `commander`) are not the host and are never
- * an issue; the rule is about coupling to kit INTERNALS.
+ * an issue; the rule is about coupling to core INTERNALS.
  */
 export function pluginImportIssue(
   importer: string,
@@ -238,9 +491,18 @@ export function pluginImportIssue(
   // A bare specifier that is not `@/` or `@rocketflare/shared/` — an ordinary dependency.
   if (!target) return null
   // Its own files are always fine; another plugin's are `deepImportIssue`'s to report — and a
-  // PUBLISHED entry of a plugin it requires is allowed (D31), so every plugin path stops here.
+  // PUBLISHED entry of a plugin it requires is allowed, so every plugin path stops here.
   if (pluginIdOfPath(target) !== null) return null
   const normalised = normaliseModulePath(target)
+  // `@/host/<id>/…` is the developer's half of a plugin — files it seeded (`hostFiles`) and the
+  // developer owns since — so a plugin may import its OWN id's directory and nobody else's.
+  const hostId = hostDirIdOf(normalised)
+  if (hostId !== null) {
+    const own = pluginIdOfPath(importer)
+    if (hostId === own) return null
+    const where = `${importer.split('/').pop()}${line === undefined ? '' : `:${line}`}`
+    return `${where} imports '${specifier}' — a plugin imports only its own host files, '@/host/${own}/…'`
+  }
   if (DECLARED_ENTRIES.some(e => normalised === e || normalised.startsWith(`${e}/`))) return null
   if (!HOST_ROOTS.some(root => `${normalised}/`.startsWith(root) || normalised.startsWith(root))) {
     return null
@@ -253,9 +515,9 @@ export function pluginImportIssue(
  * Whether the rule FAILS the suite or only reports.
  *
  * **Failing, for every plugin — there is no longer a tier to opt into.** It used to key on a
- * plugin declaring `requires.pluginApi`, because the gate's second pass installed `defaultPlugins`
+ * plugin declaring `requires.pluginApi`, because the gate's second pass installed the CI plugins
  * at refs that predated the surface and could not retroactively be changed. That tier went with
- * the field: a plugin now declares what it USES, the kit emits what it provides, and the two are
+ * the field: a plugin now declares what it USES, the host emits what it provides, and the two are
  * compared directly — so there is nothing left here a released plugin cannot satisfy by being
  * re-exported.
  *

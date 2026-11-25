@@ -1,5 +1,5 @@
 /**
- * `@testkit` is registered in exactly two places, and the third absence is the point (D31).
+ * `@testkit` is registered in exactly two places, and the third absence is the point.
  *
  * `tsconfig.json` makes it typecheck; `vitest.config.ts` makes it resolve when tests run;
  * `vite.config.ts` deliberately does NOT.
@@ -7,7 +7,7 @@
  * **The two bundles are protected asymmetrically, and only one of them by the build.** Measured,
  * not reasoned:
  *
- *   - `src/ui/**` — Rollup resolves no `@testkit`, so `build:ui` FAILS. The harness
+ *   - `src/ui/**` — Rolldown resolves no `@testkit`, so `build:ui` FAILS. The harness
  *     (`@testing-library/react`, the seed fixtures, a Postgres client) cannot reach a browser.
  *   - `src/api/**` — wrangler resolves `tsconfig.json` paths, where `@testkit` IS registered. So
  *     `build:api` SUCCEEDS and the harness is bundled: +866 KB on a 1.98 MB Worker, silently.
@@ -15,9 +15,9 @@
  * So on the API side the build is not a backstop at all, and the scan below is the ONLY thing
  * between a stray import and 866 KB of test fixtures in production. Weakening it — narrowing the
  * file glob, exempting a directory — removes the sole protection for that half. The scan also
- * gives the better diagnostic on both halves: a failed Rollup resolve says only that SOMETHING was
- * missing, while the scan names the file and the line, which is what an agent installing a plugin
- * needs.
+ * gives the better diagnostic on both halves: a failed Rolldown resolve says only that SOMETHING
+ * was missing, while the scan names the file and the line, which is what an agent installing a
+ * plugin needs.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
@@ -33,7 +33,7 @@ describe('the @testkit alias', () => {
     const tsconfig = JSON.parse(read('tsconfig.json')) as {
       compilerOptions: { paths: Record<string, string[]> }
     }
-    expect(tsconfig.compilerOptions.paths['@testkit/*']).toEqual(['tests/kit/*'])
+    expect(tsconfig.compilerOptions.paths['@testkit/*']).toEqual(['./tests/kit/*'])
   })
 
   it('is registered in vitest.config.ts, so a test resolves it', () => {

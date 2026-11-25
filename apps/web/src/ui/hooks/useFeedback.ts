@@ -1,5 +1,5 @@
 /**
- * Thumbs on AI answers (D33): `useMyFeedback(target, ids)` reads the caller's own votes on a set of
+ * Thumbs on AI answers: `useMyFeedback(target, ids)` reads the caller's own votes on a set of
  * answers (`GET /api/feedback/mine`) so the thumbs draw their state; `useRateAnswer()` sets a vote
  * (`POST /api/feedback`) or withdraws it (`DELETE /api/feedback/:target/:targetId`) when the same
  * thumb is pressed twice. Every member may rate an answer they can read; reading everyone's votes

@@ -1,5 +1,5 @@
 /**
- * `ai_feedback` — a person's thumbs up/down on an AI answer (D33): an assistant message or an agent
+ * `ai_feedback` — a person's thumbs up/down on an AI answer: an assistant message or an agent
  * run's output. One row per `(tenant, target, user)`: voting again replaces the vote, withdrawing
  * it deletes the row. The list is the evals promotion queue (`rocketflare feedback list --rating
  * down` → `rocketflare evals promote`).

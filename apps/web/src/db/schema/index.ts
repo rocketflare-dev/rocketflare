@@ -5,10 +5,10 @@
  */
 
 /**
- * Installed plugin tables (D31). Position in this file decides nothing: a name exported by two
+ * Installed plugin tables. Position in this file decides nothing: a name exported by two
  * `export *` declarations is AMBIGUOUS, and TypeScript reports it (TS2308) instead of silently
  * letting one win — which is the loud failure that wants to happen before `pnpm db:generate`
- * writes DDL for a table that shadows a kit one. Biome sorts these lines, so this one sits where
+ * writes DDL for a table that shadows a core one. Biome sorts these lines, so this one sits where
  * the sorter puts it.
  */
 export * from '../../plugins/schema'
@@ -21,6 +21,7 @@ export * from './agent-run-decisions'
 export * from './agent-run-effects'
 export * from './agent-run-events'
 export * from './agent-run-interrupts'
+export * from './agent-run-turns'
 export * from './agent-runs'
 export * from './ai-configs'
 export * from './ai-feedback'
@@ -34,14 +35,22 @@ export * from './documents'
 export * from './feature-flags'
 export * from './files'
 export * from './groups'
+export * from './invitation-send-counters'
+export * from './knowledge-entities'
+export * from './knowledge-facts'
+export * from './knowledge-value-judgements'
 export * from './magic-link-tokens'
+export * from './mcp'
 export * from './messages'
 export * from './notifications'
+export * from './oauth'
 export * from './oauth-providers'
+export * from './plugin-events'
 export * from './prompt-overrides'
 export * from './relations'
 export * from './rls'
 export * from './team-invitations'
+export * from './tenant-creation-counters'
 export * from './tenant-settings'
 export * from './tenant-user-settings'
 export * from './tenant-users'

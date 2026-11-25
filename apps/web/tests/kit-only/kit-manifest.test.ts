@@ -146,3 +146,46 @@ describe('launch.kit.json in the kit (the Launch kit contract, D36)', () => {
     expect(classifyPath('launch.kit.json', { manifest, existsLocally: true }).class).toBe('manual')
   })
 })
+
+describe('the threat model (a surface the copy owns)', () => {
+  // A copy rewrites its own threat model for its own product, so a later kit release may show
+  // its diff but never patch it in, and never recreates one the copy deleted.
+  it('is shown as a manual diff while present', () => {
+    const c = classifyPath('docs/THREAT-MODEL.md', { manifest, existsLocally: true })
+    expect(c.class).toBe('manual')
+  })
+
+  it('is skipped once the copy deletes it', () => {
+    const absent = absentSurfaces(
+      manifest,
+      tracked.filter(f => f !== 'docs/THREAT-MODEL.md')
+    )
+    expect(absent).toEqual(['threat-model'])
+    const c = classifyPath('docs/THREAT-MODEL.md', { manifest, absent, change: 'modified' })
+    expect(c.class).toBe('skipped-surface-absent')
+  })
+})
+
+/**
+ * The kit classifies every file it ships, so `kit:upgrade` knows what each one is in a copy. Add a
+ * directory the manifest has never heard of and this fails until somebody says what it is. Kit-only:
+ * a copy's own new files (`infra/`, `docs/guides/`) never appear in a kit diff, so an app owes the
+ * manifest nothing for them.
+ */
+describe('coverage', () => {
+  it('classifies every tracked file', () => {
+    const all = [
+      // A plugin's seeded host files are the developer's, recorded beside its paths.
+      ...manifest.surfaces.flatMap(s => [...s.paths, ...(s.hostFiles ?? [])]),
+      ...manifest.neverPort,
+      ...kitOnlyGlobs(manifest),
+      ...manifest.manual,
+      ...manifest.core,
+    ]
+    const unclassified = tracked.filter(f => !matchesAny(f, all))
+    expect(
+      unclassified,
+      'add these to a surface, neverPort, kitOnly, manual or core in .rocketflare.json'
+    ).toEqual([])
+  })
+})

@@ -1,18 +1,19 @@
 /**
- * Providers + route table (06 §b, D20, D25).
+ * Providers + route table.
  *
  * Provider order: ErrorBoundary → QueryClientProvider → AuthProvider → AbilityProvider →
- * WebSocketProvider (D8: connects once authenticated with a tenant, invalidates queries on events)
+ * WebSocketProvider (connects once authenticated with a tenant, invalidates queries on events)
  * → BrowserRouter (NavigationBridge, ScrollToTop, routes, ToastContainer).
  *
  * Route tiers: public (`/login`, `/magic-link/sent`, `/magic-link/confirm`, `/invite/:token`);
  * signed-in-without-tenant (`/select-tenant`, `/pending`, `/no-access` — `ProtectedRoute
- * requireTenant={false}`); and the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested
- * routes swap beneath it).
+ * requireTenant={false}`); the shell (`/*` — `ProtectedRoute`, `Layout` mounted ONCE, nested
+ * routes swap beneath it), which also renders a plugin's `workspace` routes: the same guards, but
+ * `Layout` is told to give the page the whole space under the header.
  */
 import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, matchRoutes, Navigate, Route, Routes, useLocation } from 'react-router'
 import type { PluginRouteTier } from '@/plugins/types'
 import { uiPlugins } from '@/plugins/ui'
 import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
@@ -22,6 +23,7 @@ import { LoadingIndicator } from '@/ui/components/LoadingIndicator'
 import { NotificationsBell } from '@/ui/components/NotificationsBell'
 import { OrgSwitcher } from '@/ui/components/OrgSwitcher'
 import { PendingInvitationsBanner } from '@/ui/components/PendingInvitationsBanner'
+import { PluginHeaderSlot } from '@/ui/components/PluginHeaderSlot'
 import { ProtectedRoute } from '@/ui/components/ProtectedRoute'
 import { AbilityProvider } from '@/ui/components/permissions/AbilityContext'
 import { RequireGuard } from '@/ui/components/RequireGuard'
@@ -32,6 +34,7 @@ import { UserMenu } from '@/ui/components/UserMenu'
 import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
 import { WebSocketStatus } from '@/ui/components/WebSocketStatus'
 import { AuthProvider, useAuth } from '@/ui/hooks/useAuth'
+import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { NavigationBridge } from '@/ui/lib/navigation'
 import { queryClient } from '@/ui/lib/queryClient'
 import Home from '@/ui/pages/Home'
@@ -41,6 +44,8 @@ import NotFound from '@/ui/pages/NotFound'
 // Public / no-tenant pages
 const MagicLinkSent = lazy(() => import('@/ui/pages/MagicLinkSent'))
 const MagicLinkConfirm = lazy(() => import('@/ui/pages/MagicLinkConfirm'))
+const CliConfirm = lazy(() => import('@/ui/pages/CliConfirm'))
+const OAuthConsent = lazy(() => import('@/ui/pages/OAuthConsent'))
 const InviteAccept = lazy(() => import('@/ui/pages/InviteAccept'))
 const SelectTenant = lazy(() => import('@/ui/pages/SelectTenant'))
 const Pending = lazy(() => import('@/ui/pages/Pending'))
@@ -50,16 +55,20 @@ const Profile = lazy(() => import('@/ui/pages/Profile'))
 const Notifications = lazy(() => import('@/ui/pages/Notifications'))
 const Activity = lazy(() => import('@/ui/pages/Activity'))
 const SettingsLayout = lazy(() => import('@/ui/pages/settings/SettingsLayout'))
-// D17: its own chunk — the markdown renderer must not ride in the main bundle.
+// Its own chunk — the markdown renderer must not ride in the main bundle.
 const ChatPage = lazy(() => import('@/ui/pages/chat/ChatPage'))
-// D7: also carries the markdown renderer (run transcripts) — lazy for the same reason.
+// Also carries the markdown renderer (run transcripts) — lazy for the same reason.
 const AgentsPage = lazy(() => import('@/ui/pages/agents/AgentsPage'))
 const RunPage = lazy(() => import('@/ui/pages/agents/RunPage'))
-// D18: the knowledge base — ingest/upload + list on /documents, hybrid search on /search.
+const AgentPage = lazy(() => import('@/ui/pages/agents/AgentPage'))
+const AllRunsPage = lazy(() => import('@/ui/pages/agents/AllRunsPage'))
+// The knowledge base — ingest/upload + list on /documents, hybrid search on /search.
 const DocumentsPage = lazy(() => import('@/ui/pages/documents/DocumentsPage'))
 const SearchPage = lazy(() => import('@/ui/pages/documents/SearchPage'))
 // The detail page — no SideNav entry; it is reached from the list, from Search and from a citation.
 const DocumentViewPage = lazy(() => import('@/ui/pages/documents/DocumentViewPage'))
+// Knowledge facts (D43): one entity and its facts, behind the flag.
+const EntityPage = lazy(() => import('@/ui/pages/knowledge/EntityPage'))
 const AdminLayout = lazy(() => import('@/ui/pages/admin/AdminLayout'))
 const AccessRequests = lazy(() => import('@/ui/pages/admin/AccessRequests'))
 const TenantList = lazy(() => import('@/ui/pages/admin/TenantList'))
@@ -80,9 +89,9 @@ const ReactQueryDevtools =
     : null
 
 /**
- * Routes contributed by installed plugins (D31), for one tier. Rendered from the SAME `RequireGuard`
+ * Routes contributed by installed plugins, for one tier. Rendered from the SAME `RequireGuard`
  * the nav item uses, so a plugin link can no more point at a page its reader cannot open than a
- * kit one can. `Component` is always a `lazy()` wrapper — checked in the source by
+ * core one can. `Component` is always a `lazy()` wrapper — checked in the source by
  * `tests/config/plugins.test.ts` — so a plugin's pages never reach the main bundle.
  */
 function pluginRoutes(tier: PluginRouteTier) {
@@ -99,6 +108,8 @@ function pluginRoutes(tier: PluginRouteTier) {
           element={
             tier === 'noTenant' ? (
               <NoTenantRoute>{guarded}</NoTenantRoute>
+            ) : tier === 'workspace' ? (
+              <WorkspaceRoute>{guarded}</WorkspaceRoute>
             ) : tier === 'public' ? (
               <Suspense fallback={<LoadingIndicator size="lg" centered />}>{guarded}</Suspense>
             ) : (
@@ -108,6 +119,20 @@ function pluginRoutes(tier: PluginRouteTier) {
         />
       )
     })
+}
+
+/**
+ * Whether a path inside the shell is a plugin `workspace` route. Matched against the plugin routes
+ * `Layout` renders (`shell` and `workspace`) with the router's own ranking, so a shell route that
+ * out-ranks a dynamic workspace path stays a shell route.
+ */
+const SHELL_PLUGIN_ROUTES = uiPlugins
+  .flatMap(p => p.routes)
+  .filter(r => r.tier === undefined || r.tier === 'shell' || r.tier === 'workspace')
+  .map(r => ({ path: r.path, tier: r.tier ?? 'shell' }))
+
+function isWorkspacePath(pathname: string): boolean {
+  return matchRoutes(SHELL_PLUGIN_ROUTES, pathname)?.at(-1)?.route.tier === 'workspace'
 }
 
 /** Sidebar footer: which org (and as what) the reader is acting in. */
@@ -129,11 +154,15 @@ function TenantFooter() {
  * nested routes swap beneath it, so the sidebar and header widgets never remount on navigation.
  */
 function ShellRoutes() {
+  const workspace = isWorkspacePath(useLocation().pathname)
   return (
     <Layout
+      workspace={workspace}
       headerStart={<OrgSwitcher />}
+      headerCenter={<PluginHeaderSlot plugins={uiPlugins} placement="center" />}
       headerEnd={
         <>
+          <PluginHeaderSlot plugins={uiPlugins} placement="end" />
           <WebSocketStatus />
           <NotificationsBell />
           <UserMenu />
@@ -141,8 +170,8 @@ function ShellRoutes() {
       }
       sidebarFooter={<TenantFooter />}
     >
-      <ConnectionBanner className="mb-4" />
-      <PendingInvitationsBanner className="mb-6" />
+      <ConnectionBanner className={workspace ? 'rounded-none' : 'mb-4'} />
+      <PendingInvitationsBanner className={workspace ? 'rounded-none' : 'mb-6'} />
       <Suspense fallback={<LoadingIndicator fullPage />}>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -156,7 +185,7 @@ function ShellRoutes() {
               </RequireGuard>
             }
           />
-          {/* D7 + issue #17: the list and the run are two pages. A run is something a person is
+          {/* The list and the run are two pages. A run is something a person is
               asked to ACT on, arrives at from a notification and comes back to — so it has its own
               route and its own lazy chunk, not a modal over the list. */}
           <Route
@@ -164,6 +193,23 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
                 <AgentsPage />
+              </RequireGuard>
+            }
+          />
+          {/* `runs` is a static segment, so it outranks `:agentKey` — no agent may be keyed `runs`. */}
+          <Route
+            path="/agents/runs"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <AllRunsPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/agents/:agentKey"
+            element={
+              <RequireGuard guard={{ action: 'read', subject: 'AgentRun' }}>
+                <AgentPage />
               </RequireGuard>
             }
           />
@@ -192,6 +238,14 @@ function ShellRoutes() {
             element={
               <RequireGuard guard={{ action: 'read', subject: 'Document' }}>
                 <DocumentViewPage />
+              </RequireGuard>
+            }
+          />
+          <Route
+            path="/knowledge/entities/:type/:id"
+            element={
+              <RequireGuard guard={KNOWLEDGE_FACTS_GUARD}>
+                <EntityPage />
               </RequireGuard>
             }
           />
@@ -236,6 +290,7 @@ function ShellRoutes() {
             <Route path="feature-flags" element={<FeatureFlags />} />
           </Route>
           {pluginRoutes('shell')}
+          {pluginRoutes('workspace')}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
@@ -249,6 +304,18 @@ function NoTenantRoute({ children }: { children: React.ReactNode }) {
     <ProtectedRoute requireTenant={false}>
       <Suspense fallback={<LoadingIndicator size="lg" centered />}>{children}</Suspense>
     </ProtectedRoute>
+  )
+}
+
+/**
+ * A plugin `workspace` page: the flex child of `Layout`'s `<main>` that the page sizes itself
+ * against. Its own `Suspense`, so the spinner sits in the space the page will fill.
+ */
+function WorkspaceRoute({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-0 flex-1">
+      <Suspense fallback={<LoadingIndicator fullPage />}>{children}</Suspense>
+    </div>
   )
 }
 
@@ -278,6 +345,24 @@ function AppRoutes() {
           <Suspense fallback={<LoadingIndicator size="lg" centered />}>
             <InviteAccept />
           </Suspense>
+        }
+      />
+      <Route
+        path="/cli/confirm"
+        element={
+          <ProtectedRoute>
+            <Suspense fallback={<LoadingIndicator size="lg" centered />}>
+              <CliConfirm />
+            </Suspense>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/consent"
+        element={
+          <NoTenantRoute>
+            <OAuthConsent />
+          </NoTenantRoute>
         }
       />
       <Route
@@ -325,7 +410,7 @@ export default function App() {
         <AuthProvider>
           <AbilityProvider>
             <WebSocketProvider>
-              <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <BrowserRouter>
                 <NavigationBridge />
                 <ScrollToTop />
                 <AppRoutes />

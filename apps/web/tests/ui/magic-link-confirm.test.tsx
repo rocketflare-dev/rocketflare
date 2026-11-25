@@ -1,10 +1,10 @@
 /**
- * `/magic-link/confirm` (D11): the emailed link lands here without spending the token. The page
+ * `/magic-link/confirm`: the emailed link lands here without spending the token. The page
  * must NOT submit on its own (a script-running mail scanner would spend it); the button posts a
  * native form carrying the token and redirectTo to `POST /auth/magic-link/verify`.
  */
 import { screen } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MagicLinkConfirm from '@/ui/pages/MagicLinkConfirm'
 import { renderWithProviders, stubFetch } from './helpers/renderWithProviders'

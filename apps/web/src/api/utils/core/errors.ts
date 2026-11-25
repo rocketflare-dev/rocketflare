@@ -1,14 +1,13 @@
 /**
- * Typed error tree (D13). Every `ApiError` serialises to the shared envelope
+ * Typed error tree. Every `ApiError` serialises to the shared envelope
  * `{ error, statusCode, code?, details? }` from `src/shared/errors.ts`; `middleware/error-handler.ts`
- * is the only place that turns errors into responses. Ported from the Node reference app
- * `src/api/utils/core/errors.ts`, trimmed to the generic classes and with `code` promoted to a
- * first-class field instead of ad-hoc `context.code`.
+ * is the only place that turns errors into responses. `code` is a first-class field, never an
+ * ad-hoc `context.code`.
  */
 import { type ApiErrorBody, ERROR_CODES, type ErrorCode } from '@rocketflare/shared/errors'
 import { TenantScopeConflictError } from '../../../db/tenant-scope'
 
-/** A unique / primary-key violation under either driver — read at the driver seam (D35). */
+/** A unique / primary-key violation under either driver — read at the driver seam. */
 export { isUniqueViolation } from '../../../db/client'
 
 export class ApiError extends Error {
@@ -153,7 +152,7 @@ function errorCode(error: unknown): string | undefined {
 /**
  * The error plus its `cause` chain, bounded. drizzle wraps EVERY driver failure in a
  * `DrizzleQueryError`, so a `42501` or our own scope errors never arrive as the top-level throw.
- * Neon's `NeonDbError` hangs the transport failure on `sourceError` rather than `cause` (D35).
+ * Neon's `NeonDbError` hangs the transport failure on `sourceError` rather than `cause`.
  */
 function errorChain(error: unknown): unknown[] {
   const chain: unknown[] = []
@@ -167,7 +166,7 @@ function errorChain(error: unknown): unknown[] {
 }
 
 /**
- * Neon's "never reached Postgres" shapes (D35), which carry no code a Worker can rely on: the
+ * Neon's "never reached Postgres" shapes, which carry no code a Worker can rely on: the
  * HTTP driver's `NeonDbError` whose fetch failed, and the WebSocket pool's bare `ErrorEvent` when
  * the socket a transaction needs cannot open.
  */

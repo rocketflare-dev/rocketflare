@@ -1,5 +1,5 @@
 /**
- * The agent runtime — the bodies of the three Workflow steps (D7, D16, D17), kept as plain functions
+ * The agent runtime — the bodies of the three Workflow steps, kept as plain functions
  * over `(db, cfg, env, logger, params)` so tests drive them against Postgres with no platform:
  *   claimStep   — `claimRun` (row is the gate) + a `status: running` event. `false` = nothing to do.
  *   executeRun  — resolve the client for `meta.promptKey` (per-agent model assignment applies),
@@ -13,56 +13,62 @@
  *   finishStep  — two arms, then one last nudge, returning the terminal `{ runId, status }`: a
  *                 `queued|running` row after execute (the step threw past its retries) is marked
  *                 failed; an `awaiting_input` row at the END OF THE WORKFLOW is a park nothing can
- *                 wake any more, and settles `cancelled` with `error` NULL (T7).
+ *                 wake any more, and settles `cancelled` with `error` NULL.
  * Progress events are awaited (a Workflow step has no `waitUntil`) and never fail the run.
  *
  * A retry re-enters `executeRun` from the top, so two pieces of `ctx` exist to make that cheap and
  * safe: `ctx.checkpoint` (the tool loop resumes from `agent_runs.checkpoint` rather than replaying
  * every turn) and `ctx.once` (work with a side effect runs once per run, not once per attempt).
- * The ledger is not the checkpoint's business (D39): every call through `ctx.chat.client` and
+ * The ledger is not the checkpoint's business: every call through `ctx.chat.client` and
  * `ctx.decide` writes its own `ai_usage` row through the run's meter as it returns, so a resumed
  * loop's carried-forward `usage` is a tally for the agent, never a second bill. The meter starts
  * from the rows earlier attempts wrote, which is what makes a budget the RUN's rather than the
  * attempt's; `AgentBudgetExceededError` settles `failed` with event code `agent_budget_exceeded`
  * and is never retried.
  */
-import type { AgentRunStatus } from '@rocketflare/shared/ai/agents'
+import { type AgentRunStatus, isRunActive } from '@rocketflare/shared/ai/agents'
 import type { AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
 import { rejectionFor, steeringNoteDataSchema } from '@rocketflare/shared/ai/interrupts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { and, asc, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { type AgentRunInterruptRow, agentRunEvents, tenants, tenantUsers } from '../../../db/schema'
+import { agentRunEvents, tenants } from '../../../db/schema'
+import { ATTR, rootAttributes } from '../../observability/genai-attributes'
 import { databaseSpanStore } from '../../observability/span-store'
 import { rootSpanIdForRun, traceIdForRun } from '../../observability/trace-ids'
 import { traceChatClient, tracerFor, withAgentTrace } from '../../observability/tracing'
 import { classifyInfrastructureError } from '../../utils/core/errors'
 import type { Logger } from '../../utils/core/logger'
-import { accessScopeForUser } from '../access'
-import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import {
   InterruptDeclinedError,
   InterruptRequested,
   StructuredOutputError,
   type ToolApproval,
   ToolLoopExhaustedError,
-} from '../ai/kit'
+} from '../ai/agent-loop'
+import { AiError, describeAiError, redactSecrets } from '../ai/errors'
 import { DECISIONS_FALLBACK_PROMPT_KEY, resolveChat, resolveDecisions } from '../ai/resolve'
 import type { AiEnv } from '../ai/types'
-import { notifyMany } from '../notifications'
-import { resolvePrompt } from '../prompts'
+import { runRequester } from '../member-ability'
+import { type RegistryPromptKey, resolvePrompt } from '../prompts'
 import type { HubEnv, Realtime } from '../realtime'
 import { toAgentArtifact, upsertArtifact } from './artifacts'
 import { AgentBudgetExceededError, budgetFor, createRunMeter, meterChatClient } from './budget'
+import { abortableChatClient, watchCancel } from './cancel'
+import {
+  ChildRunFailedError,
+  ChildRunPending,
+  cancelChildren,
+  createSpawn,
+  wakeParent,
+} from './children'
 import { createDecide } from './decisions'
 import { withFanout } from './fanout'
-import {
-  approvalsForRun,
-  expireInterrupts,
-  interruptExpiryFrom,
-  requestInterrupt,
-} from './interrupts'
+import { askTiming, notifyApprovers } from './hitl'
+import { approvalsForRun, expireInterrupts, requestInterrupt } from './interrupts'
+import { attemptKeys, EffectKeyConflictError, effectKey } from './keys'
+import { loopEventSink, recordingChatClient } from './recording'
 import type { AgentEvent, AgentRunEnv } from './registry'
 import { getAgent } from './registry'
 import {
@@ -84,7 +90,10 @@ import {
   runOnce,
   saveCheckpoint,
 } from './runs'
-import { buildAgentTools } from './tools'
+import { toolsFor } from './tools'
+import { requesterUrlsForRun } from './tools/requester-urls'
+import { createTurnJournal } from './turns'
+import { checkRunVersion } from './versions'
 
 /** `step.do('execute', { retries: { limit } })` — the runtime counts attempts against the same number. */
 export const EXECUTE_RETRIES = 2
@@ -143,7 +152,9 @@ export async function claimStep(
   db: Database,
   env: RuntimeEnv,
   logger: Logger,
-  params: AgentRunParams
+  params: AgentRunParams,
+  /** Given by the workflow's claim step: the FIRST claim records the run's `run started` span. */
+  trace?: { cfg: AppConfig }
 ): Promise<boolean> {
   const row = await claimRun(db, params.tenantId, params.runId)
   if (!row) {
@@ -154,14 +165,63 @@ export async function claimStep(
   const emit = await createEmitter(db, params, realtime, logger)
   await emit({ type: 'status', data: { status: 'running', attempt: row.attempt } })
   await settle()
+  if (trace && row.attempt === 1) await recordRunStarted(db, trace.cfg, logger, row)
   return true
+}
+
+/**
+ * `gen_ai.conversation.id` for a run's spans: the run IS its thread (AG-UI's `threadId` is the run
+ * id). The attribute only — `rocketflare.conversation_id` and the `ai_spans` column stay a CHAT
+ * thread's, which is what `traces list --conversation` filters on.
+ */
+function runConversation(runId: string) {
+  return { [ATTR.conversationId]: runId }
+}
+
+/**
+ * The run's start, visible in the backend BEFORE it settles: a zero-length `run started` span,
+ * a child of the root id {@link recordRunRoot} records at the end, carrying the trace's name,
+ * tags and session so a backend lists the run at once. An OTLP span cannot be updated, so this
+ * is a span of its own (the "pending span" pattern) rather than an early copy of the root: a
+ * backend that keeps the first span it sees for an id would otherwise keep the unfinished one.
+ * Never throws.
+ */
+export async function recordRunStarted(
+  db: Database,
+  cfg: AppConfig,
+  logger: Logger,
+  run: { id: string; tenantId: string; agentKey: string; requestedByUserId: string | null }
+): Promise<void> {
+  try {
+    const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
+    if (!tracer.enabled) return
+    const span = tracer.startTrace({
+      name: run.agentKey,
+      tenantId: run.tenantId,
+      userId: run.requestedByUserId ?? undefined,
+      runId: run.id,
+      traceId: traceIdForRun(run.id),
+      parentSpanId: rootSpanIdForRun(run.id),
+      spanName: 'run started',
+      kind: 'span',
+    })
+    span.setAttributes({
+      ...rootAttributes({ name: run.agentKey, tags: ['agent', run.agentKey] }),
+      ...runConversation(run.id),
+      [ATTR.runPending]: true,
+    })
+    span.end()
+    await tracer.flush()
+  } catch (err) {
+    logger.warn({ err, runId: run.id }, 'agent-run: could not record the run start')
+  }
 }
 
 /** A fault a retry can plausibly fix: the provider was unreachable/overloaded or the DB was down. */
 export function isRetryableRunError(err: unknown): boolean {
   if (err instanceof AiError) return err.code === 'unavailable' || err.code === 'rate_limit'
   if (err instanceof StructuredOutputError || err instanceof AgentCancelledError) return false
-  // A budget is spent, not unavailable: a retry would only spend more (D39).
+  // A budget is spent, not unavailable: a retry would only spend more.
   if (err instanceof AgentBudgetExceededError) return false
   // A policy that ran out would run out again: the retry resumes the same transcript.
   if (err instanceof ToolLoopExhaustedError) return false
@@ -181,7 +241,7 @@ export function describeRunError(err: unknown): string {
 /**
  * Steering notes this run has not been handed yet, in the order they were sent, marked delivered as
  * they are read. The cursor is the EXISTING `agent_run_effects` ledger keyed `steering:<eventId>`,
- * which is why steering needs no table of its own (decision 4): the note is an `agent_run_events`
+ * which is why steering needs no table of its own: the note is an `agent_run_events`
  * row, and "has it been delivered?" is a decision, not a result — `claimEffect`, not `runOnce`.
  *
  * A note whose `data` no longer parses is CLAIMED and skipped rather than retried forever.
@@ -212,48 +272,9 @@ export async function takeSteeringNotes(
   return notes
 }
 
-/**
- * Tell the people who can answer that a run is waiting on them. Inside the `execute` step and
- * AWAITED — a Workflow step has no `waitUntil`.
- *
- * A run with no requester ("system") falls back to the tenant's admins, as does an agent that
- * declares `approvers: 'admin'`. **A parked run nobody is told about is a hung agent**, so there is
- * no branch here that notifies nobody.
- */
-async function notifyApprovers(
-  db: Database,
-  run: { tenantId: string; id: string; requestedByUserId: string | null },
-  agentTitle: string,
-  approvers: 'requester' | 'admin',
-  interrupt: AgentRunInterruptRow,
-  realtime: Realtime
-): Promise<void> {
-  let recipients: string[] = []
-  if (approvers === 'requester' && run.requestedByUserId) {
-    recipients = [run.requestedByUserId]
-  } else {
-    const admins = await db
-      .select({ userId: tenantUsers.userId })
-      .from(tenantUsers)
-      .where(
-        and(eq(tenantUsers.tenantId, run.tenantId), sql`${tenantUsers.role} IN ('owner', 'admin')`)
-      )
-    recipients = admins.map(a => a.userId)
-  }
-  await notifyMany(
-    db,
-    recipients,
-    {
-      tenantId: run.tenantId,
-      type: 'agent_run_awaiting_input',
-      title: `${agentTitle} needs your decision`,
-      body: interrupt.message,
-      // The run id is what the bell deep-links to: the question is answered on the run page, in
-      // front of the timeline that explains why it is being asked.
-      data: { runId: run.id, interruptId: interrupt.id },
-    },
-    realtime
-  )
+function spawnOf(spawner: ReturnType<typeof createSpawn> | undefined) {
+  if (!spawner) throw new Error('ctx.spawn before the run meter exists')
+  return spawner
 }
 
 /** Step 2: run the agent. Returns the terminal outcome, or throws ONLY to request a step retry. */
@@ -264,7 +285,11 @@ export async function executeRun(
   logger: Logger,
   params: AgentRunParams,
   /** The Workflow round (`execute#N`) — names this step's span. */
-  options: { round?: number } = {}
+  options: {
+    round?: number
+    /** How often the attempt reads its row for a cancel; `CANCEL_POLL_MS` unless a test lowers it. */
+    cancelPollMs?: number
+  } = {}
 ): Promise<ExecuteOutcome> {
   const { tenantId, runId } = params
   const run = await getRun(db, tenantId, runId)
@@ -275,26 +300,48 @@ export async function executeRun(
   const agent = getAgent(run.agentKey)
   const { realtime, settle } = createStepRealtime(env, logger)
   const emit = await createEmitter(db, params, realtime, logger)
-  // D32: flushed in `finally`, while this step's client is still open — no `waitUntil` in a step.
+  // Flushed in `finally`, while this step's client is still open — no `waitUntil` in a step.
   const tracer = tracerFor(cfg, { logger, store: databaseSpanStore(db) })
   const checkCancelled = async () => {
     if (await isCancelRequested(db, tenantId, runId)) throw new AgentCancelledError()
   }
+  // The other half of cancel: a request reaches the model call IN FLIGHT, not just the next poll.
+  const cancel = watchCancel(() => isCancelRequested(db, tenantId, runId), {
+    logger,
+    intervalMs: options.cancelPollMs,
+  })
+  // Outside the `try`, so the catch arm can wait for every spawn of this attempt before parking.
+  let spawner: ReturnType<typeof createSpawn> | undefined
 
   try {
+    const tenant = await db.query.tenants.findFirst({
+      columns: { name: true, status: true },
+      where: eq(tenants.id, tenantId),
+    })
+    // A run queued before its organisation was suspended settles cancelled here, before any
+    // model call — a suspended organisation runs no agents.
+    if (tenant?.status !== 'active') {
+      await cancelRun(db, tenantId, runId)
+      await expireInterrupts(db, tenantId, runId)
+      await emit({ type: 'status', data: { status: 'cancelled', reason: 'tenant_suspended' } })
+      return { runId, status: 'cancelled' }
+    }
     await checkCancelled()
+    // Before anything is asked: a run that recorded another `meta.version` meets the agent's
+    // `onVersionChange` here, and `fail` / `rerun` settle it without running the agent.
+    const version = await checkRunVersion(db, cfg, env, logger, run, agent.meta, emit)
+    if (version.settled) return { runId, ...version.settled }
     const input = agent.meta.inputSchema.parse(run.input)
     const resolved = await resolveChat(db, cfg, env, tenantId, { promptKey: agent.meta.promptKey })
-    const toolScope = await accessScopeForUser(db, tenantId, run.requestedByUserId)
+    const requester = await runRequester(db, cfg, tenantId, run.requestedByUserId)
+    const toolScope = requester.scope
     // Answers to this run's gated tool calls, read ONCE per attempt and handed to the agent as
     // `ctx.approvals`. The agent never queries for them, so there is one set of approval rules.
     const approvals: ReadonlyMap<string, ToolApproval> = await approvalsForRun(db, tenantId, runId)
-    const interruptExpiresAt = interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT)
-    const tenant = await db.query.tenants.findFirst({
-      columns: { name: true },
-      where: eq(tenants.id, tenantId),
-    })
-    // D39: every model call and decision of this attempt goes through ONE meter, which starts from
+    const timing = askTiming(cfg, agent.meta.hitl)
+    // Keys are claimed per ATTEMPT: across attempts the same key is how a retry finds its work.
+    const onceKeys = attemptKeys('once', { orderDerived: agent.meta.pinned === true })
+    // Every model call and decision of this attempt goes through ONE meter, which starts from
     // what earlier attempts already spent — the budget is the run's, not the attempt's.
     const meter = await createRunMeter({
       db,
@@ -302,9 +349,12 @@ export async function executeRun(
       runId,
       userId: run.requestedByUserId,
       agentKey: agent.meta.key,
-      budget: budgetFor(cfg, agent.meta.budget),
+      // A child's `budget` column is its share of the parent's remainder; the lower cap wins.
+      budget: budgetFor(cfg, agent.meta.budget, run.budget),
+      billedToPlatform: resolved.billedToPlatform,
       logger,
     })
+    spawner = createSpawn({ db, cfg, env, run, meter, logger })
     const output = await withAgentTrace(
       agent.meta.key,
       {
@@ -313,9 +363,17 @@ export async function executeRun(
         userId: run.requestedByUserId ?? undefined,
         runId,
         tags: ['agent', agent.meta.key],
-        metadata: { attempt: run.attempt, model: resolved.model },
+        metadata: {
+          attempt: run.attempt,
+          model: resolved.model,
+          // A child's trace says whose it is: the parent run and the parent's trace.
+          ...(run.parentRunId && {
+            parent_run_id: run.parentRunId,
+            parent_trace_id: traceIdForRun(run.parentRunId),
+          }),
+        },
         input,
-        // D32: every step of the run joins ONE trace derived from the run id; this span is the
+        // Every step of the run joins ONE trace derived from the run id; this span is the
         // step, a child of the root `finishStep` records once the run has settled.
         traceId: traceIdForRun(runId),
         parentSpanId: rootSpanIdForRun(runId),
@@ -323,10 +381,19 @@ export async function executeRun(
         kind: 'span',
       },
       async trace => {
-        // Metered OUTSIDE the trace wrapper, so a call the budget refuses opens no span.
-        const client = meterChatClient(
-          traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
-          meter
+        trace.setAttributes(runConversation(runId))
+        // Metered OUTSIDE the trace wrapper, so a call the budget refuses opens no span; recorded
+        // outside the meter, so a refused call still shows on the timeline as the failure it was.
+        const client = abortableChatClient(
+          recordingChatClient(
+            meterChatClient(
+              traceChatClient(resolved.client, trace, { provider: resolved.provider }, tracer),
+              meter
+            ),
+            emit,
+            { invocation: `${options.round ?? 0}.${crypto.randomUUID().slice(0, 8)}` }
+          ),
+          cancel.signal
         )
         const ctx = withFanout({
           db,
@@ -340,27 +407,44 @@ export async function executeRun(
           input,
           emit,
           checkCancelled,
+          signal: cancel.signal,
           chat: { client, model: resolved.model, maxOutputTokens: resolved.maxOutputTokens },
-          // D29: built here, at EXECUTE time, from the run's requester — current membership, not
+          // Built here, at EXECUTE time, from the run's requester — current membership, not
           // a snapshot taken when the run was enqueued. No requester ("system") reads tenant-wide
           // documents only, never an owner's restricted ones.
-          tools: await buildAgentTools({ db, cfg, env, scope: toolScope }),
+          tools: await toolsFor('agents', {
+            db,
+            cfg,
+            env,
+            scope: toolScope,
+            can: requester.can,
+            ...(requester.requester && { requester: requester.requester }),
+            // Recomputed every attempt, so a resumed run keeps them. Only a person's own input.
+            requesterUrls: requesterUrlsForRun(run, input),
+          }),
           checkpoint: {
             load: () => loadCheckpoint(db, tenantId, runId),
             save: cp => saveCheckpoint(db, tenantId, runId, cp),
           },
-          once: (key, fn) => runOnce(db, tenantId, runId, key, fn),
+          once: async (label, fn, onceOptions) => {
+            // Before the record is read: a second call under this key in THIS attempt is a
+            // different call, and answering it from the first one's result is the silent bug.
+            const key = onceKeys.claim(await effectKey(label, onceOptions?.inputs))
+            return runOnce(db, tenantId, runId, key, fn)
+          },
+          journal: { ...createTurnJournal(db, tenantId, runId), onEvent: loopEventSink(emit) },
+          spawn: (key, agentKey, input) => spawnOf(spawner).spawn(key, agentKey, input),
           approvals,
           interrupt: async ask => {
             // Create-or-read on `(run_id, key)`: the SECOND time this line runs — a resumed or
-            // retried attempt re-entering `run()` from the top — it finds the answer (T2).
+            // retried attempt re-entering `run()` from the top — it finds the answer.
             const row = await requestInterrupt(db, {
               tenantId,
               runId,
               key: ask.key,
               spec: ask.spec,
               toolCallId: ask.toolCallId ?? null,
-              expiresAt: interruptExpiresAt,
+              ...timing,
             })
             if (row.status === 'pending') {
               throw new InterruptRequested([
@@ -406,8 +490,24 @@ export async function executeRun(
                   appName: cfg.APP_NAME,
                   tenantName: tenant?.name ?? '',
                 }),
-                wrapChat: (chatClient, provider) =>
-                  traceChatClient(chatClient, trace, { provider, name: 'decide' }, tracer),
+                // Metered like `ctx.chat.client`, but on who pays for the `agent-decide` model.
+                wrapChat: (chatClient, chat) =>
+                  abortableChatClient(
+                    meterChatClient(
+                      traceChatClient(
+                        chatClient,
+                        trace,
+                        { provider: chat.provider, name: 'decide' },
+                        tracer
+                      ),
+                      meter,
+                      {
+                        feature: `agent:${agent.meta.key}:decide`,
+                        billedToPlatform: chat.billedToPlatform,
+                      }
+                    ),
+                    cancel.signal
+                  ),
               }),
             emit: data => emit({ type: 'decision', data }),
             meter,
@@ -421,7 +521,7 @@ export async function executeRun(
             return toAgentArtifact(row)
           },
           prompt: (vars, promptKey) =>
-            resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as 'summarize-text'), {
+            resolvePrompt(db, tenantId, promptKey ?? (agent.meta.promptKey as RegistryPromptKey), {
               appName: cfg.APP_NAME,
               tenantName: tenant?.name ?? '',
               ...vars,
@@ -439,13 +539,47 @@ export async function executeRun(
     await emit({ type: 'status', data: { status } })
     return { runId, status }
   } catch (err) {
-    if (err instanceof AgentCancelledError) {
+    // An aborted attempt is a cancel whatever surfaced it — the race's own error, or a provider's
+    // abort error, which would otherwise read as a retryable `unavailable`.
+    if (err instanceof AgentCancelledError || cancel.signal.aborted) {
       await cancelRun(db, tenantId, runId)
       await expireInterrupts(db, tenantId, runId)
       await emit({ type: 'status', data: { status: 'cancelled' } })
       return { runId, status: 'cancelled' }
     }
-    // Park (issue #17). **The order below is the safety property**: a row with no parked run
+    // Waiting on a child: park with no ask. The child's settle (or the sweeper) wakes this run.
+    if (err instanceof ChildRunPending) {
+      // Every spawn of this attempt has created its child before the park — a `Promise.all` of
+      // spawns rejects on the FIRST, while the others are still being created.
+      await spawner?.settled()
+      const parked = await parkRun(db, tenantId, runId)
+      if (!parked) {
+        const current = await getRun(db, tenantId, runId)
+        return { runId, status: current?.status ?? 'cancelled' }
+      }
+      await emit({
+        type: 'status',
+        data: { status: 'awaiting_input', reason: 'child', childRunId: err.childRunId },
+      })
+      // A child that settled before the park could not wake us; do it now, as an answer would.
+      await wakeParent(db, env, tenantId, runId, realtime)
+      return { runId, status: 'awaiting_input' }
+    }
+    if (err instanceof ChildRunFailedError) {
+      await failRun(db, tenantId, runId, err.message)
+      await emit({
+        type: 'error',
+        data: {
+          message: err.message,
+          willRetry: false,
+          code: err.code,
+          details: { childRunId: err.childRunId, childStatus: err.childStatus },
+        },
+      })
+      await emit({ type: 'status', data: { status: 'failed' } })
+      return { runId, status: 'failed', error: err.message }
+    }
+    // Park. **The order below is the safety property**: a row with no parked run
     // simply re-asks on the next attempt, while a parked run with no row is a hang — nothing for
     // anybody to answer and a seven-day `waitForEvent` to sit through. So the rows go first.
     if (err instanceof InterruptRequested) {
@@ -458,12 +592,12 @@ export async function executeRun(
             key: request.key,
             spec: request.spec,
             toolCallId: request.toolCallId ?? null,
-            expiresAt: interruptExpiryFrom(cfg.AGENT_INTERRUPT_TIMEOUT),
+            ...askTiming(cfg, agent.meta.hitl),
           })
         )
       }
       // NOT `settle()`: `finishedAt` stays NULL and the checkpoint survives, which is what makes
-      // the resumed attempt cheap (T7).
+      // the resumed attempt cheap.
       const parked = await parkRun(db, tenantId, runId)
       if (!parked) {
         // Settled underneath us — cancelled from outside while the gate was being raised. The row
@@ -525,6 +659,22 @@ export async function executeRun(
       await emit({ type: 'status', data: { status: 'failed' } })
       return { runId, status: 'failed', error: err.message }
     }
+    if (err instanceof EffectKeyConflictError) {
+      // A bug in the agent, not a fault a retry fixes: say which key, and how to fix it.
+      await failRun(db, tenantId, runId, err.message)
+      await emit({
+        type: 'error',
+        data: {
+          message: err.message,
+          attempt: run.attempt,
+          willRetry: false,
+          code: err.code,
+          details: { primitive: err.primitive, key: err.key },
+        },
+      })
+      await emit({ type: 'status', data: { status: 'failed' } })
+      return { runId, status: 'failed', error: err.message }
+    }
     if (err instanceof ToolLoopExhaustedError) {
       // The same shape as a budget: a reason a person can act on (loosen the policy), not a fault.
       await failRun(db, tenantId, runId, err.message)
@@ -559,6 +709,7 @@ export async function executeRun(
     await emit({ type: 'status', data: { status: 'failed' } })
     return { runId, status: 'failed', error: message }
   } finally {
+    cancel.stop()
     await settle()
     await tracer.flush()
   }
@@ -567,7 +718,7 @@ export async function executeRun(
 /**
  * The last step: settle anything the loop left unsettled, and nudge one last time.
  *
- * **Two arms, and the difference between them is T7.** The backstop predicate stays
+ * **Two arms, and the difference between them matters.** The backstop predicate stays
  * `queued | running` — widening it to `ACTIVE_RUN_STATUSES` would turn every legitimately
  * parked run into a `failed` row. A row that is `awaiting_input` when the WORKFLOW IS ENDING is a
  * different fact: the instance that would have woken it is finishing, so nobody can ever resume it.
@@ -587,7 +738,7 @@ export async function finishStep(
   params: AgentRunParams,
   outcome?: ExecuteOutcome,
   /**
-   * D32: given ONLY by the workflow's final `finish` step, which records the run's root span
+   * Given ONLY by the workflow's final `finish` step, which records the run's root span
    * (`invoke_agent <key>`) — the expiry arm calls this too, and one root per run is the point.
    */
   trace?: { cfg: AppConfig }
@@ -600,9 +751,9 @@ export async function finishStep(
   if (row?.status === 'awaiting_input') await expireInterrupts(db, tenantId, runId)
   // The one case where a parked row is a FAILURE rather than an expiry: the loop gave up on an
   // agent that kept asking (`MAX_INTERRUPT_ROUNDS`) and said so in the outcome. It is the outcome
-  // that decides, never the row's status — widening the predicate below is T7.
+  // that decides, never the row's status — never widen the predicate below.
   const abandoned = row?.status === 'awaiting_input' && outcome?.status === 'failed'
-  // T7: NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
+  // NOT `ACTIVE_RUN_STATUSES`. A parked run is not a failure, and this list must never grow.
   if (row && (row.status === 'queued' || row.status === 'running' || abandoned)) {
     const message =
       outcome?.error ?? 'The agent run did not complete (execute step exhausted its retries)'
@@ -616,6 +767,12 @@ export async function finishStep(
     await emit({ type: 'status', data: { status: 'cancelled', reason: 'expired' } })
   }
   nudgeRun(realtime, tenantId, runId)
+  if (row && !isRunActive(row.status)) {
+    // A run that did not succeed takes its active children with it; one that did has none left.
+    if (row.status !== 'succeeded') await cancelChildren(db, env, tenantId, runId, realtime)
+    // A child's settle is what wakes the parent parked on it.
+    if (row.parentRunId) await wakeParent(db, env, tenantId, row.parentRunId, realtime)
+  }
   await settle()
   if (trace && row) await recordRunRoot(db, trace.cfg, logger, row)
   return {
@@ -626,7 +783,7 @@ export async function finishStep(
 }
 
 /**
- * The run's root span (D32): `invoke_agent <key>` from the first claim to now, with the run's
+ * The run's root span: `invoke_agent <key>` from the first claim to now, with the run's
  * input and output, an error status when it failed, and the settled status as an attribute. Its id
  * is derived from the run id, so the `execute#N` spans every earlier step recorded — each in its
  * own Worker invocation — already point at it. Never throws: a trace is not worth a failed step.
@@ -664,6 +821,7 @@ export async function recordRunRoot(
       spanId: rootSpanIdForRun(run.id),
       startTime: run.startedAt ?? run.createdAt,
     })
+    root.setAttributes(runConversation(run.id))
     root.end(
       run.status === 'failed'
         ? { error: run.error ?? 'The agent run failed' }

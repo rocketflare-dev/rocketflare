@@ -1,13 +1,13 @@
 /**
- * The `evals` project (D33) — run by `pnpm eval` (scripts/eval.mjs), never by `pnpm test` or the
- * gate. It lives in its own package because vitest-evals needs vitest 4 and the kit's suites are on
- * vitest 3; the targets import `apps/web` source in-process through the same `@/` alias, and the
+ * The `evals` project — run by `pnpm eval` (scripts/eval.mjs), never by `pnpm test` or the
+ * gate. It lives in its own package because vitest-evals needs vitest 4 and the app's suites are on
+ * vitest 5; the targets import `apps/web` source in-process through the same `@/` alias, and the
  * test database on :5433 through the web package's own helpers.
  */
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
-const web = path.resolve(__dirname, '../web')
+const web = path.resolve(import.meta.dirname, '../web')
 
 export default defineConfig({
   resolve: {

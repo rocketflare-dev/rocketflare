@@ -1,5 +1,5 @@
 /**
- * `magic_link_tokens` — one-time email login tokens (D11, D12). Only the SHA-256 of the token is
+ * `magic_link_tokens` — one-time email login tokens. Only the SHA-256 of the token is
  * stored; `consumedAt` makes a link single-use and `expiresAt` bounds it. Keyed by email, not
  * user: the user row may not exist yet (invite-only / open sign-up decide that at verify time).
  *

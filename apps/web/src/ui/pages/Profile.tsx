@@ -1,6 +1,6 @@
 /**
- * Your account (D13): name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
- * upload (`POST /api/files?scope=avatars`, D23 — type/size checked client-side first) and the
+ * Your account: name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
+ * upload (`POST /api/files?scope=avatars` — type/size checked client-side first) and the
  * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip in LINK
  * mode (`?link=1&returnUrl=/profile`, so the identity attaches to THIS user instead of signing
  * in as whoever it matches); disconnecting is refused when it would leave no way to sign in.
@@ -10,6 +10,7 @@ import { LinkIcon } from '@heroicons/react/24/outline'
 import { updateProfileRequestSchema } from '@rocketflare/shared/user-settings'
 import { useEffect, useRef, useState } from 'react'
 import { PROVIDER_ICONS, providerLabel } from '@/ui/components/icons/ProviderIcons'
+import { McpConnectionsTable } from '@/ui/components/mcp/McpConnectionsTable'
 import {
   FieldError,
   fieldErrorFor,
@@ -20,6 +21,8 @@ import {
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useAuthMethods } from '@/ui/hooks/useAuthMethods'
 import { useMyGroups } from '@/ui/hooks/useGroups'
+import { useMyMcpConnections, useRevokeMcpConnection } from '@/ui/hooks/useMcp'
+import { useFeature } from '@/ui/hooks/usePermissions'
 import {
   AVATAR_ACCEPT,
   useLinkedProviders,
@@ -42,12 +45,13 @@ export default function Profile() {
       <ProfileForm />
       <YourGroups />
       <SignInMethods />
+      <ConnectedApps />
     </div>
   )
 }
 
 /**
- * Read-only (D29): group membership is administered under Settings → Groups, but a person should
+ * Read-only: group membership is administered under Settings → Groups, but a person should
  * be able to see what they are in without asking — it is what decides which documents and
  * dashboards they can open. The panel hides itself when they are in none, so an organisation that
  * does not use groups never sees it.
@@ -204,7 +208,7 @@ function Avatar({
 }
 
 /**
- * Upload a photo (D23). The file is checked against the shared allowlist/limit before any
+ * Upload a photo. The file is checked against the shared allowlist/limit before any
  * request; the server's 415/413 remain the backstop. "Remove" clears `avatarUrl` via PATCH — the
  * stored object stays until its file is deleted (see CONCEPTS: storage).
  */
@@ -333,6 +337,32 @@ function SignInMethods() {
           )}
         </ul>
       )}
+    </SectionPanel>
+  )
+}
+
+/**
+ * The AI clients (Claude, ChatGPT…) the reader has connected, in every organisation, each with
+ * Revoke. Shown only where the deployment ships MCP, and only once there is something to show.
+ */
+function ConnectedApps() {
+  const shipped = useFeature('mcp')
+  const { data } = useMyMcpConnections(shipped)
+  const revoke = useRevokeMcpConnection('own')
+  const items = data?.items ?? []
+  if (!shipped || items.length === 0) return null
+  return (
+    <SectionPanel
+      flush
+      title="Connected apps"
+      description="AI clients you connected. Each acts as you, with your permissions, in one organisation."
+    >
+      <McpConnectionsTable
+        connections={items}
+        show="organisation"
+        revoking={revoke.isPending}
+        onRevoke={(c, done) => revoke.mutate(c.id, { onSuccess: done })}
+      />
     </SectionPanel>
   )
 }

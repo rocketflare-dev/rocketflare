@@ -1,12 +1,13 @@
 /**
- * Navigation outside React Router (D20). `AuthProvider` sits ABOVE `BrowserRouter` (06 §b), so the
+ * Navigation outside React Router. `AuthProvider` sits ABOVE `BrowserRouter`, so the
  * global 401 handler cannot call `useNavigate()`; `<NavigationBridge />` (mounted inside the router)
  * registers the router's `navigate` and current location here. `hardNavigate` wraps
  * `window.location.assign` so tests can stub it (jsdom cannot navigate) and so full-page
  * transitions — OAuth, dev-login — are greppable.
  */
+import { isSameOriginPath } from '@rocketflare/shared/auth'
 import { useEffect } from 'react'
-import { type NavigateFunction, useLocation, useNavigate } from 'react-router-dom'
+import { type NavigateFunction, useLocation, useNavigate } from 'react-router'
 
 let routerNavigate: NavigateFunction | null = null
 let routerPath: string | null = null
@@ -32,9 +33,21 @@ export function navigateTo(to: string, options: { replace?: boolean } = {}): voi
   else hardNavigate(to)
 }
 
+const assignLocation = (url: string) => window.location.assign(url)
+let assign: (url: string) => void = assignLocation
+
 /** Full-page navigation — the server sets/clears the cookie and every cache starts clean. */
 export function hardNavigate(url: string): void {
-  window.location.assign(url)
+  assign(url)
+}
+
+/**
+ * **Tests only.** Records full-page navigations instead of making them (jsdom cannot navigate),
+ * so a test needs no `vi.mock` of this module and shares the `ui` registry; `null` restores
+ * the real one. `tests/ui/setup.ts` restores it after each file.
+ */
+export function overrideHardNavigateForTests(fn: ((url: string) => void) | null): void {
+  assign = fn ?? assignLocation
 }
 
 /** `/settings/people?tab=x` — the current in-app location (router's when mounted). */
@@ -46,10 +59,10 @@ export function currentPathname(): string {
   return currentPath().split('?')[0]
 }
 
-/** Only same-origin relative paths are honoured (open-redirect guard, mirrors `redirectToSchema`). */
+/** Only same-origin relative paths are honoured (the rule `redirectToSchema` applies on the server). */
 export function safeReturnUrl(value: string | null | undefined, fallback = '/'): string {
   if (!value) return fallback
-  return /^\/(?![/\\])/.test(value) ? value : fallback
+  return isSameOriginPath(value) ? value : fallback
 }
 
 export function loginUrl(returnUrl?: string): string {

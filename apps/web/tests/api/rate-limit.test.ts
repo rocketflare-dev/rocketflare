@@ -1,5 +1,5 @@
 /**
- * KV rate limiting + operation lock (D14) against the in-memory KV: the 11th request in a minute
+ * KV rate limiting + operation lock against the in-memory KV: the 11th request in a minute
  * is 429 with Retry-After; no binding → no limit; the lock refuses a concurrent second caller.
  */
 import { describe, expect, it } from 'vitest'

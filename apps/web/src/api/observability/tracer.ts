@@ -1,5 +1,5 @@
 /**
- * Tracing seam (D32, superseding D16): a thin `Tracer` interface every AI call site talks to, with
+ * Tracing seam: a thin `Tracer` interface every AI call site talks to, with
  * a no-op default so code paths are identical with and without a backend. The one implementation
  * is the span recorder in `recorder.ts`, which `tracing.ts` builds with two sinks: the OTLP/HTTP
  * exporter (`otlp-fetch.ts`, when a backend is configured) and the local `ai_spans` store

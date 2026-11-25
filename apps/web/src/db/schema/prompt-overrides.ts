@@ -1,5 +1,5 @@
 /**
- * `prompt_overrides` — a tenant's override of a registry prompt (D17). PK (tenant, key); a row
+ * `prompt_overrides` — a tenant's override of a registry prompt. PK (tenant, key); a row
  * exists ONLY when overridden, so reverting is a delete and the registry default needs no row.
  * `key` is a `PromptKey` from `services/prompts.ts` — text, not an enum, so a new prompt is a
  * registry entry and no migration. All runtime reads go through `resolvePrompt()`.

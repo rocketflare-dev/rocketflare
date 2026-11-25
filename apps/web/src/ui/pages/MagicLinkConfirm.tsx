@@ -1,5 +1,5 @@
 /**
- * "Finish signing in" (D11) at `/magic-link/confirm?token=`. `GET /auth/magic-link/verify` — the
+ * "Finish signing in" at `/magic-link/confirm?token=`. `GET /auth/magic-link/verify` — the
  * link in the email — redirects here WITHOUT consuming the token, so a mail security scanner that
  * fetches the link on delivery cannot spend it. The token is consumed only when a person presses
  * the button: a NATIVE form post (not `fetch`) to `POST /auth/magic-link/verify`, so the server's
@@ -8,7 +8,7 @@
  */
 import { EnvelopeOpenIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { Navigate, useSearchParams } from 'react-router'
 import { AuthCard } from '@/ui/components/AuthCard'
 
 export default function MagicLinkConfirm() {

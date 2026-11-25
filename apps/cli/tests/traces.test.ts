@@ -1,4 +1,4 @@
-/** `traces list|show` (D32): table vs `--json`, the span tree with tool I/O, 403 → exit 3. */
+/** `traces list|show`: table vs `--json`, the span tree with tool I/O, 403 → exit 3. */
 import { traceDetailSchema } from '@rocketflare/shared/ai/traces'
 import { afterEach, describe, expect, it } from 'vitest'
 import { formatDuration, runTracesList, runTracesShow } from '../src/commands/traces'
@@ -31,7 +31,7 @@ async function loggedInStore() {
 
 const summary = {
   traceId: TRACE,
-  name: 'invoke_agent research-topic',
+  name: 'invoke_agent fixture-agent',
   status: 'error',
   startedAt: '2026-09-25T10:00:00.000Z',
   endedAt: '2026-09-25T10:00:04.200Z',
@@ -70,7 +70,7 @@ const detail = {
   spans: [
     span({
       spanId: 'a1',
-      name: 'invoke_agent research-topic',
+      name: 'invoke_agent fixture-agent',
       kind: 'agent',
       status: 'error',
       statusMessage: 'failed',
@@ -110,10 +110,10 @@ describe('traces list', () => {
         }),
     })
     const { ctx, out } = await testContext({ store, fetch: api.fetch })
-    await runTracesList(ctx, { agent: 'research-topic', status: 'error', runId: RUN })
+    await runTracesList(ctx, { agent: 'fixture-agent', status: 'error', runId: RUN })
     expect(out.content()).toContain(TRACE)
-    expect(out.content()).toMatch(/invoke_agent research-topic\s+error\s+4\.2s\s+4\s+120\/30/)
-    expect(api.calls[0]?.url.searchParams.get('agent')).toBe('research-topic')
+    expect(out.content()).toMatch(/invoke_agent fixture-agent\s+error\s+4\.2s\s+4\s+120\/30/)
+    expect(api.calls[0]?.url.searchParams.get('agent')).toBe('fixture-agent')
     expect(api.calls[0]?.url.searchParams.get('status')).toBe('error')
     expect(api.calls[0]?.url.searchParams.get('runId')).toBe(RUN)
 
@@ -134,7 +134,7 @@ describe('traces show', () => {
     await runTracesShow(ctx, RUN)
     const lines = out.content().split('\n')
     expect(
-      lines.some(l => l.startsWith('invoke_agent research-topic') && l.includes('ERROR failed'))
+      lines.some(l => l.startsWith('invoke_agent fixture-agent') && l.includes('ERROR failed'))
     ).toBe(true)
     expect(lines).toContainEqual(expect.stringMatching(/^ {2}└ execute#0/))
     expect(lines).toContainEqual(expect.stringMatching(/^ {4}└ chat claude-sonnet-5 {2}120→30 tok/))

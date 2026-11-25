@@ -14,7 +14,7 @@ pnpm --filter @rocketflare/cli typecheck · test · build   # vitest node env, n
 - `src/context.ts` — `createContext({ server, json })` → `{ store, config, log, out, fetch, open }`; `requireClient` / `publicClient`
 - `src/config.ts` — `~/.rocketflare/config.json` (0700/0600), `ENV_PREFIX`, `DEFAULT_SERVER_URL`, `redactKey`
 - `src/api.ts` — `createApiClient` → `request/get/post/del`, envelope → `CliApiError { status, code, body }`
-- `src/auth.ts` — loopback `127.0.0.1:8765–8770/callback`, `/auth/cli?redirect_uri=`, 5-min timeout, `/api/me`
+- `src/auth.ts` — loopback `127.0.0.1:8765–8770/callback`, `/auth/cli?redirect_uri=&state=` (a callback without this login's `state` is ignored), 5-min timeout, `/api/me`
 - `src/commands/*.ts` — thin `run<X>(ctx, opts)`; `src/utils/{brand,logger,output}.ts`
 - `src/plugins/{index.ts,types.ts}` + `src/plugins/<id>/index.ts` (D31) — the `CLI_PLUGINS` barrel
   and the `CliPlugin` type. `cli.ts` calls each `register(program, action)` LAST, so a plugin's

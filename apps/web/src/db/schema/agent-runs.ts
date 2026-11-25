@@ -1,5 +1,5 @@
 /**
- * `agent_runs` — one row per agent run (D7): the durable claim record behind `AGENT_RUN_WORKFLOW`.
+ * `agent_runs` — one row per agent run: the durable claim record behind `AGENT_RUN_WORKFLOW`.
  * A row is inserted `queued` BEFORE the Workflow instance is created (id = run id); the `claim`
  * step flips it to `running` with `UPDATE … WHERE status IN ('queued','running') RETURNING` — the
  * row IS the idempotency gate, so a retried step re-claims and a settled row is a no-op.
@@ -16,6 +16,8 @@ import type { AgentKey, AgentRunStatus } from '@rocketflare/shared/ai/agents'
 import { ACTIVE_RUN_STATUSES } from '@rocketflare/shared/ai/agents'
 import { relations, sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
+  boolean,
   index,
   integer,
   jsonb,
@@ -79,7 +81,7 @@ export const agentRuns = pgTable(
      */
     checkpoint: jsonb('checkpoint'),
     /**
-     * The run's OTLP trace id (D32) — derived from the run id (`traceIdForRun`), so every Workflow
+     * The run's OTLP trace id — derived from the run id (`traceIdForRun`), so every Workflow
      * step lands in one trace without carrying anything; stored so a reader need not know the rule.
      */
     traceId: text('trace_id'),
@@ -89,14 +91,46 @@ export const agentRuns = pgTable(
      * `<caller key>` = one active run per key, NULL = none (runs freely).
      */
     concurrencyKey: text('concurrency_key'),
-    /** D39: the `POST /runs/batch` call that created the row — `GET /runs?batchId=`. */
+    /** The `POST /runs/batch` call that created the row — `GET /runs?batchId=`. */
     batchId: uuid('batch_id'),
+    /**
+     * The plugin event that started the run (D42), by name and `plugin_events` id — NULL for a run
+     * a person or a job started. A plain uuid with NO foreign key: the event row is pruned after
+     * `EVENTS_RETENTION_DAYS`, and the run's record of what started it must outlive it.
+     */
+    triggerEvent: text('trigger_event'),
+    triggerEventId: uuid('trigger_event_id'),
+    /**
+     * A person submitted `input` through `POST /api/agents/runs` (or `/runs/batch`), so the URLs in
+     * it are theirs — `ToolCtx.requesterUrls`. False for a run a plugin or an event started, whose
+     * input may carry text from an email, a page or a webhook.
+     */
+    inputFromRequester: boolean('input_from_requester').notNull().default(false),
+    /**
+     * The agent's `meta.version` this run executes under — set at enqueue, moved forward when a
+     * resume finds a newer one and the agent's `onVersionChange` lets it continue.
+     */
+    agentVersion: integer('agent_version').notNull().default(1),
+    /** The Worker deployment (`[version_metadata]` id) the run last executed on; NULL without it. */
+    workerVersionId: text('worker_version_id'),
+    /**
+     * The run that spawned this one (`ctx.spawn`). A child is reached through its parent — it is
+     * left out of the runs list — and goes with it.
+     */
+    parentRunId: uuid('parent_run_id').references((): AnyPgColumn => agentRuns.id, {
+      onDelete: 'cascade',
+    }),
+    /**
+     * A per-run cap that overrides the agent's `meta.budget` where it is LOWER: a child's share of
+     * what its parent had left when it was spawned. NULL for every other run.
+     */
+    budget: jsonb('budget').$type<{ maxTokens?: number; maxCostUsd?: number }>(),
     ...timestamps(),
   },
   table => [
     index('agent_runs_tenant_agent_status_idx').on(table.tenantId, table.agentKey, table.status),
     index('agent_runs_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
-    // The EXCLUSIVE guarantee (D7): at most one active run per (tenant, agent, slot), by the
+    // The EXCLUSIVE guarantee: at most one active run per (tenant, agent, slot), by the
     // database. A row with no slot (NULL `concurrency_key`, a non-exclusive agent — one person's
     // conversation, where two people at once is the normal case) is outside it.
     // The predicate is `ACTIVE_RUN_STATUSES`, which INCLUDES `awaiting_input`: a run parked on a
@@ -108,11 +142,14 @@ export const agentRuns = pgTable(
       .where(
         sql`${table.status} IN (${sql.raw(ACTIVE_STATUS_LITERALS)}) AND ${table.concurrencyKey} IS NOT NULL`
       ),
-    // D39: the per-tenant concurrency cap counts active rows on every enqueue.
+    // The per-tenant concurrency cap counts active rows on every enqueue.
     index('agent_runs_tenant_status_idx').on(table.tenantId, table.status),
     index('agent_runs_tenant_batch_idx')
       .on(table.tenantId, table.batchId)
       .where(sql`${table.batchId} IS NOT NULL`),
+    index('agent_runs_tenant_parent_idx')
+      .on(table.tenantId, table.parentRunId)
+      .where(sql`${table.parentRunId} IS NOT NULL`),
     tenantIsolation('agent_runs'),
   ]
 )

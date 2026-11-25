@@ -1,5 +1,5 @@
 /**
- * The `triage-research` agent (D37): one search, a `ctx.decide.sift` relevance screen, a
+ * The `triage-research` agent: one search, a `ctx.decide.sift` relevance screen, a
  * `ctx.decide` "is this answerable?" triage, then code routes — answer from the kept passages,
  * say the knowledge base does not cover it, or escalate to `research-topic`. `Decisions` scores the
  * recorded answers per question (no model call) against `expected.decisions`; the rest judge the

@@ -44,8 +44,8 @@ describe('not found', () => {
   })
 
   /**
-   * The same guarantee for every prefix an installed PLUGIN owns (D31). It is asserted over
-   * `API_PREFIXES` rather than a list of literals, because the kit cannot know what is installed —
+   * The same guarantee for every prefix an installed PLUGIN owns. It is asserted over
+   * `API_PREFIXES` rather than a list of literals, because core cannot know what is installed —
    * and because the point of the guard is structural: a plugin prefix missing from that list is
    * silently served `index.html`, which reads as "the route works" until somebody parses it.
    *

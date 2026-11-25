@@ -1,4 +1,4 @@
-/** Command tests (D26): tables vs `--json`, not-logged-in / forbidden exits, env key, config commands. */
+/** Command tests: tables vs `--json`, not-logged-in / forbidden exits, env key, config commands. */
 import { afterEach, describe, expect, it } from 'vitest'
 import { runActivityList } from '../src/commands/activity'
 import { runConfigGet, runConfigPath, runConfigSet } from '../src/commands/config'

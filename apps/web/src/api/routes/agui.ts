@@ -4,7 +4,7 @@
  * reconciles the input against the stored conversation, then calls the SAME `streamChatTurn` the
  * chat route calls. There is exactly one implementation of the event sequence.
  *
- * **Auth is the kit's, unchanged.** `authMiddleware` takes a session cookie or a tenant API key as
+ * **Auth is the app's, unchanged.** `authMiddleware` takes a session cookie or a tenant API key as
  * Bearer, and `csrf.ts` already exempts Bearer requests; a cross-origin browser client needs its
  * origin in the CORS allow-list, which is configuration, not code. **Conversation ownership is the
  * `userId` filter**, so every thread an API key touches belongs to the user who created that key —

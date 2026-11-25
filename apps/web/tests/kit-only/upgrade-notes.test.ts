@@ -14,6 +14,8 @@ import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   compareVersions,
   NOTE_HEADINGS,
+  NOTE_LINES_GUIDE,
+  noteLengthWarning,
   noteProblems,
   parseNote,
   VERSION_RE,
@@ -95,12 +97,12 @@ describe('unreleased.md', () => {
   it('exists, parses, and follows the newest release', () => {
     const parsed = parseNote(text)
     expect(parsed).not.toBeNull()
-    expect(parsed!.data.version).toBe('unreleased')
-    expect(parsed!.data.previous).toBe(releases[releases.length - 1])
+    expect(parsed?.data.version).toBe('unreleased')
+    expect(parsed?.data.previous).toBe(releases[releases.length - 1])
   })
 
   it('carries the same four headings a release note must have', () => {
-    for (const heading of NOTE_HEADINGS) expect(parseNote(text)!.body).toContain(heading)
+    for (const heading of NOTE_HEADINGS) expect(parseNote(text)?.body).toContain(heading)
   })
 
   it('is judged by the same function, with no version and no date to check', () => {
@@ -114,6 +116,16 @@ describe('unreleased.md', () => {
  * The schema function itself, over fixtures — because every assertion above passes trivially if it
  * silently checks nothing, and the notes on disk are all (correctly) well formed.
  */
+describe('noteLengthWarning', () => {
+  it('is silent within the guide and warns past it', () => {
+    const lines = (n: number) => `${Array.from({ length: n }, (_, i) => `line ${i}`).join('\n')}\n`
+    expect(noteLengthWarning(lines(NOTE_LINES_GUIDE), 'u.md')).toBeNull()
+    expect(noteLengthWarning(lines(NOTE_LINES_GUIDE + 1), 'u.md')).toMatch(
+      /^warning: u\.md is 151 lines \(guide: 150\) — this is becoming a big update/
+    )
+  })
+})
+
 describe('noteProblems', () => {
   const note = (frontmatter: string, body = '') => `---\n${frontmatter}\n---\n${body}`
   const HEADINGS = '\n## What changed\nx\n## How to apply\n## Conflicts to expect\n## Verify\n'

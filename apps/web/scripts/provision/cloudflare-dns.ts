@@ -6,7 +6,7 @@
  *     (…/resources/zones/methods/list/); a token without a Zone scope gets `result: []`, not an
  *     error, so "no zone" and "no zone permission" look alike — `hasAnyZone()` tells them apart
  *   - `GET /zones/{zone}/dns_records?per_page=1` is the cheapest proof the token can READ DNS in
- *     that zone (`assertDnsRead`); `Zone: DNS — Edit` is what the kit asks for, which implies it
+ *     that zone (`assertDnsRead`); `Zone: DNS — Edit` is what provisioning asks for, which implies it
  *   - `GET /zones/{zone}/dns_records?name=&type=&per_page=` and `POST /zones/{zone}/dns_records
  *     { type, name, content, ttl (1 = automatic), proxied, priority (MX), comment }` → `result.id`
  *     (…/resources/dns/subresources/records/methods/create/); `PUT …/dns_records/{id}` overwrites
@@ -111,6 +111,33 @@ export class CloudflareClient {
     return 'created'
   }
 
+  /**
+   * A zone route needs a proxied record at its host so the request reaches Cloudflare at all; the
+   * Worker answers it, so the record's address is never used (`100::` is the documented
+   * "originless" placeholder). Any existing A / AAAA / CNAME at the host already does the job and is
+   * left alone — it may be a real origin someone relies on — unless it is not proxied, which is an
+   * error: the route would never see the request.
+   */
+  async ensureRouteRecord(zoneId: string, host: string): Promise<'exists' | 'created'> {
+    const existing = (await this.listRecords(zoneId, host)).filter(r =>
+      ['A', 'AAAA', 'CNAME'].includes(r.type)
+    )
+    if (existing.length > 0) {
+      const direct = existing.find(r => !r.proxied)
+      if (direct)
+        throw new ProvisionError(
+          `${host} has a DNS-only ${direct.type} record — a Worker route only sees proxied traffic; turn the proxy on for it (orange cloud) or delete it and re-run`
+        )
+      return 'exists'
+    }
+    await this.request(
+      'POST',
+      `/zones/${zoneId}/dns_records`,
+      withComment({ type: 'AAAA', name: host, content: '100::', ttl: 1, proxied: true })
+    )
+    return 'created'
+  }
+
   async workersSubdomain(accountId: string): Promise<string> {
     const r = await this.request<{ subdomain?: string }>(
       'GET',
@@ -127,7 +154,7 @@ export class CloudflareClient {
 const withComment = (rec: DnsRecordInput) => ({ ...rec, comment: 'rocketflare provision: Resend' })
 const normalise = (v: string) => v.trim().replace(/^"|"$/g, '').replace(/\.$/, '').toLowerCase()
 
-// ---- pure helpers (tests/config/provision-zone.test.ts) ----------------------------------
+// ---- pure helpers (tests/kit-only/provision-zone.test.ts) ----------------------------------
 
 export const WORKERS_DEV = 'workers.dev'
 

@@ -1,5 +1,5 @@
 /**
- * `validate(target, schema)` (D13): `@hono/zod-validator` with a hook that throws
+ * `validate(target, schema)`: `@hono/zod-validator` with a hook that throws
  * `ValidationError`, so a bad body/query/param becomes the shared 400 envelope
  * `{ error, statusCode: 400, code: 'validation_failed', details: issues }` through `onError`
  * instead of zod's raw `{ success: false, error }`.

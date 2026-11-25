@@ -1,9 +1,9 @@
 /**
- * `agent_run_artifacts` — the things an agent run PRODUCED that a person opens (issue #17): a draft
+ * `agent_run_artifacts` — the things an agent run PRODUCED that a person opens: a draft
  * email, a table of the rows it is about to change, the document it wrote.
  *
  * **An artifact is a table row and a steering note is an event row, and the asymmetry is the whole
- * design** (decision 4). An artifact is MUTABLE — a redraft must replace itself under
+ * design**. An artifact is MUTABLE — a redraft must replace itself under
  * `(run_id, key)` — it is QUERIED ACROSS RUNS ("everything this agent has produced"), and it
  * OUTLIVES the run with an id a card links to. An append-only positional log expresses none of
  * those. What goes in `agent_run_events` is a *thin* `artifact` row carrying
@@ -15,7 +15,7 @@
  * Size caps live in the contract (`@rocketflare/shared/ai/artifacts`), not here: an artifact bigger
  * than they allow belongs in R2 as a `file` artifact, and `document` / `file` kinds carry **ids,
  * never content**, because those bytes already sit behind routes that enforce tenancy and, for a
- * document, group visibility (D29).
+ * document, group visibility.
  */
 import type { AgentArtifactData } from '@rocketflare/shared/ai/artifacts'
 import { AGENT_ARTIFACT_KINDS } from '@rocketflare/shared/ai/artifacts'

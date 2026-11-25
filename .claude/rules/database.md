@@ -20,6 +20,10 @@ Hyperdrive), chosen per deployment. Never add `pg`. **No driver import outside
 
 - Every domain table has `tenantId` via `tenantRef()` (`apps/web/src/db/schema/_helpers.ts`) — `uuid`, FK to
   `tenants.id`, `onDelete: 'cascade'`, and it comes FIRST in every composite index
+- To make a row unable to point at another tenant's row, reference it with a composite FK
+  `(tenant_id, x_id) → t(tenant_id, id)` (the target needs `unique(tenant_id, id)`), and give it
+  `onDelete: 'cascade'` too: EVERY foreign key carrying `tenant_id` must cascade, so `tenant.purge`
+  reaches every row — a reference with no `onDelete` is NO ACTION, which `schema-invariants.test.ts` fails
 - Every query filters by `tenantId` from the auth context (`withAuthAndDb`), never from a client-
   supplied id. This predicate is what keeps the `(tenant_id, …)` indexes selective; it never goes away
 - Cross-tenant SQL lives in exactly two places: `apps/web/src/api/routes/admin.ts` (behind
@@ -29,12 +33,26 @@ Hyperdrive), chosen per deployment. Never add `pg`. **No driver import outside
   decision (an entry there, with a reason, and a line in the PR), not a refactor
 - `users` is global (a person belongs to many tenants); visibility is through `tenant_users`
 - `TENANCY_MODE=single` changes nothing here: the schema is identical in both modes (D25)
+- **Platform rows** are the one sanctioned null tenant: `documents` and `chunks` use
+  `platformTenantRef()` (nullable) instead of `tenantRef()`, and a row with `tenant_id` NULL is the
+  app describing itself, readable by EVERY tenant. Never give another table a nullable tenant
+  without the same review. A CHECK makes a platform document carry `source` + `external_id`
+  (`documents_platform_source_external_uq` is their identity), and only
+  `services/ai/platform-documents.ts` writes them, on the owner connection, from a job or cron.
+  Every tenant read keeps `tenant_id = $t`; platform rows are reached only by `tenant_id IS NULL
+  AND source = ANY(…)` in `searchChunks`. Code reading `DocumentRow.tenantId` gets
+  `string | null`; `documentTenantId(row)` is the narrowing that throws on a platform row
 
 ## Row-level security — shipped inert (D1, docs/RLS.md)
 
 Every table with a `tenantId` MUST include `tenantIsolation('<table>')` in its `extraConfig`; a table
 without one goes in `RLS_EXCLUDED_TABLES` (`apps/web/src/db/schema/rls.ts`) with the reason.
-`apps/web/tests/api/rls-coverage.test.ts` fails CI either way until you do. The policies are `FOR ALL TO
+`apps/web/tests/api/rls-coverage.test.ts` fails CI either way until you do. `documents` and
+`chunks` also carry `platformReadable('<table>')`, a second permissive policy `FOR SELECT … USING
+(tenant_id IS NULL)` with no `WITH CHECK`. Policies OR, so a scoped read sees its tenant's rows plus
+the platform rows, and writes stay under `tenantIsolation` alone, whose `WITH CHECK` refuses a
+null tenant. `rls-coverage` pins the pair and the exact table list: a new platform-readable table
+is a design decision. The policies are `FOR ALL TO
 rocketflare_app` with `USING` and `WITH CHECK` on `tenant_id = nullif(current_setting('app.tenant_id',
 true), '')::uuid`. `apps/web/scripts/db-roles.ts` creates `rocketflare_app` `NOLOGIN` via SQL (never a
 `neon_superuser`), so policies resolve while nothing can connect as the role.
@@ -69,8 +87,21 @@ predicate**, not SQL injection — the app role can `set_config` itself.
   matching the `<=>` operator `services/ai/retrieval.ts` orders by; the tenant predicate still comes
   first in every query and in every btree index. The `vector` extension is created by
   `apps/web/scripts/migrate.ts` (`CREATE EXTENSION IF NOT EXISTS vector`) before the migrations run,
-  not by a migration file. Lexical search is `to_tsvector('english', text)` at query time; a generated
-  `tsvector` column + GIN index is the scaling path (a migration, no code change in the query shape)
+  not by a migration file (`pg_trgm` likewise — the trigram index on `knowledge_entities.name`;
+  migration 0028 also creates it). Every chunk records its `embedding_model`, and each dense leg filters on
+  the query vector's model — a chunk row written without one is invisible to dense search. Lexical
+  search reads `chunks.search_vector`, a GENERATED tsvector (context + heading path + table header + text) with
+  a GIN index; its `'english'` literal must equal `SEARCH_TEXT_CONFIG` (`retrieval.ts`), which
+  `tests/config/search-text-config.test.ts` pins. `chunks.text` is an exact slice of
+  `documents.content` at `[char_start, char_end)` — chunk through `chunkText`, never by hand
+- **Generated columns** (`chunks.search_vector`): declared with `.generatedAlwaysAs(sql…)`,
+  never written by the app. Adding one to an existing table rewrites the whole table under an
+  exclusive lock — above about 1M rows that migration needs a maintenance window
+- **Knowledge facts (D43)**: `knowledge_facts.entity_id` is text with **no FK** (it names a
+  staging entity or a row of any registered domain table), so nothing cascades from the entity;
+  `document_id` cascades and `chunk_id` is set null (a re-index keeps the fact's span and quote).
+  A fact has no grants of its own: every read joins `documents` under `visibleDocuments(scope)`.
+  `knowledge_entities.name` has a GIN `gin_trgm_ops` index (`pg_trgm`, above)
 - Query vectors are parameters: `vectorLiteral(v)` (`[0.1,0.2,…]`) interpolated through the drizzle
   `sql` tag and cast `::vector` — never string-concatenate a query; `embedding` values are inserted as
   `number[]` through drizzle
@@ -194,6 +225,17 @@ predicate**, not SQL injection — the app role can `set_config` itself.
 ## Migrations
 
 1. Edit `apps/web/src/db/schema/*` → 2. `pnpm db:generate` → 3. **read the SQL** → 4. `pnpm db:migrate`.
+
+`pnpm db:generate` (`scripts/db-generate.ts`) runs `drizzle-kit generate` and, when that wrote a
+migration, applies EVERY migration to a scratch database it creates beside the local dev one and
+drops — never the dev data, never the test database, never a non-local URL (skipped with a note) —
+and names, in plain words, the statement Postgres refused. Not part of the gate. After a hand fix,
+`pnpm db:generate --check` runs the check alone.
+
+**drizzle-kit gotcha:** in one migration it can emit a composite `FOREIGN KEY … REFERENCES
+t(tenant_id, id)` BEFORE the `UNIQUE (tenant_id, id)` on `t` it depends on ("there is no unique
+constraint matching given keys"); move the FK statement after the UNIQUE by hand, before the file
+is applied (the scratch check is what catches it).
 
 `db:migrate` = `db-roles --phase=role` → `migrate.ts` → `db-roles --phase=grants`. Role first
 because a policy's `TO rocketflare_app` needs the role to exist; grants after because `REVOKE` can only name

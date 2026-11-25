@@ -1,5 +1,5 @@
 /**
- * `/api/keys` (D12): tenant API keys. Admin+ throughout; the plaintext appears exactly once, in the
+ * `/api/keys`: tenant API keys. Admin+ throughout; the plaintext appears exactly once, in the
  * `POST` response. Revoke is soft (`revokedAt`), never a delete.
  */
 import type { ApiKey as ApiKeyDto } from '@rocketflare/shared/api-keys'

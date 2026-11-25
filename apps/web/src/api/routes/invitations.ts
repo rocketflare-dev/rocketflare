@@ -1,7 +1,7 @@
 /**
- * `/api/invitations` (D9, D10): pending list (read), create / bulk / resend / revoke (`manage
+ * `/api/invitations`: pending list (read), create / bulk / resend / revoke (`manage
  * Invitation`), plus the tenant-free `GET /pending` — invitations addressed to MY email across
- * tenants (the login-prologue banner). The public token routes live in `invite.ts`.
+ * tenants (the login-prologue banner; a session only — an API key gets 403 `insufficient_scope`). The public token routes live in `invite.ts`.
  */
 import { paginationQuerySchema } from '@rocketflare/shared/pagination'
 import { bulkInviteRequestSchema, inviteMemberRequestSchema } from '@rocketflare/shared/tenants'
@@ -16,7 +16,7 @@ import {
   revokeInvitation,
 } from '../services/invitations'
 import { paginated } from '../utils/routes/pagination'
-import { uuidParam, withAuth, withAuthAndDb } from '../utils/routes/route-helpers'
+import { uuidParam, withAccountAuth, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
 import { validate } from '../utils/routes/validate'
 
@@ -24,7 +24,7 @@ export const invitationsRouter = createRouter()
 
 // Tenant-free, before `/:id` so "pending" is never parsed as an id.
 invitationsRouter.get('/pending', async c => {
-  const { db, user } = withAuth(c)
+  const { db, user } = withAccountAuth(c)
   return c.json({ items: await listPendingForEmail(db, user.email) })
 })
 
@@ -37,7 +37,7 @@ invitationsRouter.get('/', validate('query', paginationQuerySchema), async c => 
 })
 
 invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c => {
-  const { db, cfg, logger, tenantId, user, defer, realtime } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { email, role } = c.req.valid('json')
   const { invitation } = await createInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
@@ -45,6 +45,7 @@ invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c
     email,
     role,
     inviter: user,
+    actor: auth,
     realtime,
   })
   defer(() =>
@@ -61,7 +62,7 @@ invitationsRouter.post('/', validate('json', inviteMemberRequestSchema), async c
 })
 
 invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async c => {
-  const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const { emails, role } = c.req.valid('json')
   const results = await bulkInvite(db, cfg, logger, c.env.JOBS_QUEUE, {
@@ -69,6 +70,7 @@ invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async
     emails,
     role,
     inviter: user,
+    actor: auth,
   })
   defer(() =>
     recordActivity(db, {
@@ -87,13 +89,14 @@ invitationsRouter.post('/bulk', validate('json', bulkInviteRequestSchema), async
 })
 
 invitationsRouter.post('/:id/resend', async c => {
-  const { db, cfg, logger, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, cfg, logger, tenantId, user, auth, defer } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'Invitation')
   const id = uuidParam(c, 'id')
   const invitation = await resendInvitation(db, cfg, logger, c.env.JOBS_QUEUE, {
     tenantId,
     id,
     inviter: user,
+    actor: auth,
   })
   defer(() =>
     recordActivity(db, {

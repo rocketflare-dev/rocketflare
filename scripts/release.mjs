@@ -29,10 +29,13 @@
  * which cannot resolve a bare SHA, and `latestTag()` is how `--to` and `openSource` default. The
  * accepted cost of that lockstep: a fix to one plugin bumps every plugin's version.
  *
- * In the KIT it additionally refuses a version its `defaultPlugins` are not ready for (D31,
- * decision 5): every entry must still resolve at the ref the kit pins, and the version being cut
- * must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
+ * In the KIT it additionally refuses a version its CI plugins (`defaultPlugins` plus
+ * `.github/ci-plugins.json`) are not ready for (D31, decision 5): every entry must still resolve
+ * at the ref the kit pins, and the version being cut must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
  * hatch, and it says so loudly.
+ *
+ * In the KIT it also WARNS, never fails, when the changes since the previous tag touch the paths
+ * a security audit should see first (`AUDIT_CADENCE_GLOBS`, `docs/SECURITY-AUDIT.md` "Cadence").
  *
  * Exit 0 ok · 1 error · 2 usage.
  */
@@ -40,14 +43,16 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { ciPluginEntries, readCiPlugins } from './default-plugins.mjs'
 import { ensureMirror, mirrorDirFor, PLUGIN_MIRROR_ROOT } from './lib/git-lib.mjs'
 import { MANIFEST_FILE, readManifest } from './lib/manifest.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
   changelogSection,
-  defaultPluginEntries,
   defaultPluginProblems,
   isKitManifest,
+  matchesAny,
+  noteLengthWarning,
   parseNote,
   prependChangelogSection,
   VERSION_RE,
@@ -139,6 +144,79 @@ export function releaseContext(root = SCRIPT_ROOT, { repoRoot = root } = {}) {
     }
   }
   return { kind: 'unknown' }
+}
+
+/**
+ * The paths where a change deserves a security audit before it ships (`docs/SECURITY-AUDIT.md`,
+ * "Cadence"): authentication, tenant scoping and row-level security, the identity and plugin
+ * seams, and how the model is handed tools. A release touching one prints a WARNING, never a
+ * failure, recommending a diff-scoped `standard` audit (`/rf-security standard <prev>..HEAD`).
+ */
+export const AUDIT_CADENCE_GLOBS = Object.freeze([
+  // Authentication: sessions, keys, magic links, OAuth/OIDC providers, the auth routes
+  'apps/web/src/api/auth/**',
+  'apps/web/src/api/routes/auth/**',
+  'apps/web/src/api/middleware/auth.ts',
+  'apps/web/src/api/middleware/csrf.ts',
+  'apps/web/src/api/middleware/permissions.ts',
+  'apps/web/src/api/middleware/public-mounts.ts',
+  'apps/web/src/api/services/auth.ts',
+  // Tenancy, roles and row-level security
+  'apps/web/src/permissions/**',
+  'packages/shared/src/permissions.ts',
+  'apps/web/src/api/services/access.ts',
+  'apps/web/src/api/services/access-sql.ts',
+  'apps/web/src/api/services/member-ability.ts',
+  'apps/web/src/api/services/idp-tenancy.ts',
+  'apps/web/src/db/tenant-scope.ts',
+  'apps/web/src/db/schema/rls.ts',
+  // The identity and plugin seams
+  'apps/web/src/plugins/api/identity*',
+  'apps/web/src/plugins/api/auth.ts',
+  'apps/web/src/plugins/api/access.ts',
+  'apps/web/src/plugins/api/secrets.ts',
+  'apps/web/src/plugins/api/types.ts',
+  'apps/web/src/plugins/types.ts',
+  'packages/shared/src/plugins/types.ts',
+  // AI tool binding and the agent loop
+  'apps/web/src/api/services/agents/tools/**',
+  'apps/web/src/api/services/agents/runtime.ts',
+  'apps/web/src/api/services/ai/agent-loop.ts',
+  'apps/web/src/api/services/ai/chat-turn.ts',
+])
+
+/** The changed paths a security audit should look at before the release, in input order. */
+export function auditCadencePaths(changed, globs = AUDIT_CADENCE_GLOBS) {
+  return (changed ?? []).filter(f => matchesAny(f, globs))
+}
+
+/** The warning `pnpm kit:release` prints for those paths, or [] when there are none. */
+export function auditCadenceWarning(paths, previous) {
+  if (paths.length === 0) return []
+  const shown = paths.slice(0, 8).map(p => `    ${p}`)
+  if (paths.length > shown.length) shown.push(`    … and ${paths.length - shown.length} more`)
+  return [
+    `⚠ WARNING: ${paths.length} change(s) since ${previous} touch auth, tenancy/RLS, the identity or`,
+    '  plugin seams, or AI tool binding:',
+    ...shown,
+    `  Run a diff-scoped standard audit first: /rf-security standard ${previous}..HEAD`,
+    '  (docs/SECURITY-AUDIT.md, "Cadence"). This is a reminder, not a gate.',
+  ]
+}
+
+/** Paths changed between `ref` and HEAD, or null when git cannot say (no such tag, no git). */
+function changedSince(ref, root) {
+  try {
+    return execFileSync('git', ['diff', '--name-only', `${ref}..HEAD`], {
+      cwd: root,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    })
+      .split('\n')
+      .filter(Boolean)
+  } catch {
+    return null
+  }
 }
 
 /** `git ls-remote` as a boolean: does `ref` exist on that remote? The offline-ish fallback. */
@@ -251,7 +329,8 @@ export function resolveDefaultPlugin(
  */
 function checkDefaultPlugins(version, root) {
   const { manifest } = readManifest(root)
-  const entries = defaultPluginEntries(manifest)
+  // The CI canaries too: a release whose CI plugin cannot install is one kit.yml goes red on.
+  const entries = ciPluginEntries(manifest, readCiPlugins(root))
   if (entries.length === 0) return { entries, problems: [] }
   return {
     entries,
@@ -402,15 +481,16 @@ function main(argv) {
   }
   const ctx = targets[0].ctx
 
-  // A kit release ships a `defaultPlugins` set with it: a fresh clone installs those plugins, so a
-  // version whose default plugins cannot be fetched at their pin — or that falls below a floor
-  // one of them declares — is a version that does not bootstrap. What this can and cannot prove is
-  // written out on `defaultPluginProblems`; the CI job is what proves them GREEN.
+  // A kit release ships a `defaultPlugins` set (what a fresh clone installs) and a CI set
+  // (`.github/ci-plugins.json`, what kit.yml installs): a version one of them cannot be fetched at
+  // its pin for — or that falls below a floor one declares — is a version that does not bootstrap,
+  // or whose CI is red. What this can and cannot prove is written out on `defaultPluginProblems`;
+  // the CI job is what proves them GREEN.
   if (ctx.kind === 'kit' && !skipPluginCheck) {
     const { entries, problems } = checkDefaultPlugins(version, repoRoot)
     if (problems.length > 0) {
       warn(
-        `error: ${version} cannot be released — its default plugins are not ready:`,
+        `error: ${version} cannot be released — its default / CI plugins are not ready:`,
         ...problems.map(p => `  ${p}`),
         '',
         'Fix the pin (or the plugin), or pass --skip-plugin-check if you know why this is fine.'
@@ -418,7 +498,7 @@ function main(argv) {
       return 1
     }
     if (entries.length > 0) {
-      out(`✔ default plugins            ${entries.map(e => e.id).join(', ')} resolve at ${version}`)
+      out(`✔ default + CI plugins       ${entries.map(e => e.id).join(', ')} resolve at ${version}`)
     }
   } else if (skipPluginCheck) {
     warn(
@@ -454,6 +534,9 @@ function main(argv) {
       )
       return 1
     }
+    // Released anyway — a guide, not a gate — but said, so the next one is cut sooner.
+    const tooLong = noteLengthWarning(unreleased, unreleasedPath)
+    if (tooLong) out(tooLong)
     const notes = releaseNotes(target.notesDir, { root: repoRoot })
     const previous = notes.length > 0 ? notes[notes.length - 1].version : null
     jobs.push({
@@ -467,6 +550,12 @@ function main(argv) {
         .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
         .replace(/^date: .*$/m, `date: ${date}`),
     })
+  }
+
+  // A reminder, not a gate: the audit costs model budget and needs Docker, so it is never forced.
+  if (ctx.kind === 'kit' && jobs[0]?.previous) {
+    const changed = changedSince(jobs[0].previous, repoRoot)
+    if (changed) warn(...auditCadenceWarning(auditCadencePaths(changed), jobs[0].previous))
   }
 
   const changelog = existsSync(abs(repoRoot, ctx.changelog))
@@ -557,7 +646,8 @@ function main(argv) {
     `  node scripts/release-check.mjs --tag ${version}`,
     `  pnpm gate`,
     '',
-    `Then: git commit -am "Release ${version}" && git tag -m "Release ${version}" ${version} && git push origin main ${version}`,
+    // `-a` stages tracked files only: without the `git add`, the new note was left out of the tag.
+    `Then: git add ${jobs.map(j => j.notePath).join(' ')} && git commit -am "Release ${version}" && git tag -m "Release ${version}" ${version} && git push origin main ${version}`,
     // The site mirrors the kit's notes as committed data and nothing triggers it (CONTRIBUTING.md).
     ...(ctx.kind === 'kit'
       ? [

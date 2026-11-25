@@ -1,5 +1,5 @@
 /**
- * Sign-up gating and login plumbing (D9, D25). `admitUser` is the ONE function every login path
+ * Sign-up gating and login plumbing. `admitUser` is the ONE function every login path
  * (magic link, OAuth, invite accept, dev-login bypasses it) runs to turn a verified email into a
  * user row — or a refusal. `onNoTenant` is the one hook that decides what a member-less user
  * gets: the single tenant, a personal workspace, or nothing (→ /pending or /select-tenant).
@@ -23,6 +23,8 @@ import type { Logger } from '../utils/core/logger'
 import { createTenantForUser, getSingleTenant } from '../utils/db/tenant-helpers'
 import { recordActivity } from './activity'
 import { platformFeatures } from './features'
+import { issuerMayIssue } from './invitations'
+import { tenantCreationRefusal } from './tenants'
 
 export interface AdmitInput {
   email: string
@@ -30,6 +32,19 @@ export interface AdmitInput {
   /** The login proved ownership of the address (magic link; provider said verified). */
   verified: boolean
   avatarUrl?: string | null
+  /**
+   * The issuer already decided this person may use the app (`OIDC_MANAGED_TENANCY`: the verified
+   * claims carry an org, the admit claim or the global-admin claim). A new user is created whatever
+   * `SIGNUP_MODE` says, with no access request and no `onNoTenant` — the claims reconcile the
+   * tenants right after.
+   */
+  admittedBy?: 'idp'
+  /**
+   * Who proved the address. `kit` is the kit's own login — a magic link, Google, Microsoft, the
+   * deployment's OIDC issuer — and the only proof that earns `BOOTSTRAP_ADMIN_EMAILS`; `plugin`
+   * is a plugin's identity provider, which speaks for one tenant and never for the platform.
+   */
+  proof: 'kit' | 'plugin'
 }
 
 export type AdmitResult =
@@ -56,17 +71,43 @@ export async function findUserByEmail(db: Database, email: string): Promise<User
   return db.query.users.findFirst({ where: sql`lower(${users.email}) = ${email.toLowerCase()}` })
 }
 
+/**
+ * An open invitation to this address that would still be honoured: one query reads each pending
+ * row with its issuer's standing in that row's tenant, and `issuerMayIssue` — the rule accept
+ * applies — decides. An invitation whose issuer was blocked or lost the role that issued it is no
+ * invitation at all.
+ */
 export async function hasPendingInvitation(db: Database, email: string): Promise<boolean> {
-  const row = await db.query.teamInvitations.findFirst({
-    columns: { id: true },
-    where: and(
-      sql`lower(${teamInvitations.email}) = ${email.toLowerCase()}`,
-      isNull(teamInvitations.acceptedAt),
-      isNull(teamInvitations.revokedAt),
-      sql`${teamInvitations.expiresAt} > now()`
-    ),
-  })
-  return Boolean(row)
+  const rows = await db
+    .select({
+      role: teamInvitations.role,
+      blockedAt: users.blockedAt,
+      isGlobalAdmin: users.isGlobalAdmin,
+      issuerRole: tenantUsers.role,
+    })
+    .from(teamInvitations)
+    .innerJoin(users, eq(users.id, teamInvitations.invitedByUserId))
+    .leftJoin(
+      tenantUsers,
+      and(
+        eq(tenantUsers.userId, teamInvitations.invitedByUserId),
+        eq(tenantUsers.tenantId, teamInvitations.tenantId)
+      )
+    )
+    .where(
+      and(
+        sql`lower(${teamInvitations.email}) = ${email.toLowerCase()}`,
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt),
+        sql`${teamInvitations.expiresAt} > now()`
+      )
+    )
+  return rows.some(row =>
+    issuerMayIssue(
+      { blockedAt: row.blockedAt, isGlobalAdmin: row.isGlobalAdmin, role: row.issuerRole },
+      row.role
+    )
+  )
 }
 
 export async function membershipCount(db: Database, userId: string): Promise<number> {
@@ -107,7 +148,8 @@ export async function admitUser(
   logger: AdmitLogger
 ): Promise<AdmitResult> {
   const email = input.email.toLowerCase()
-  const bootstrap = input.verified && isBootstrapAdmin(cfg, email)
+  // Only the kit's own login earns the platform role: a plugin's IdP may assert any address.
+  const bootstrap = input.proof === 'kit' && input.verified && isBootstrapAdmin(cfg, email)
 
   const existing = await findUserByEmail(db, email)
   if (existing) {
@@ -144,6 +186,12 @@ export async function admitUser(
       'BOOTSTRAP_ADMIN_EMAILS: created the first GLOBAL ADMIN on verified login'
     )
     await onNoTenant(db, cfg, user, logger)
+    return { ok: true, user, created: true }
+  }
+
+  if (input.admittedBy === 'idp') {
+    const user = await createUser(db, { ...input, email }, { isGlobalAdmin: false })
+    logger.info({ userId: user.id }, 'IdP-managed tenancy: admitted by the token claims')
     return { ok: true, user, created: true }
   }
 
@@ -209,7 +257,7 @@ export async function ensureAccessRequest(
 }
 
 /**
- * What a member-less user gets (D9/D25):
+ * What a member-less user gets:
  *   single           → join the one tenant as `member` (a bootstrap admin creates it if missing)
  *   multi + open     → a personal workspace as `owner`
  *   otherwise        → nothing; the session has no tenant (→ /pending or /select-tenant)
@@ -320,6 +368,7 @@ export async function buildSessionResponse(
     accessRequest,
     tenancyMode: cfg.TENANCY_MODE,
     signupMode: cfg.SIGNUP_MODE,
+    canCreateTenant: cfg.TENANCY_MODE === 'multi' && tenantCreationRefusal(cfg, auth) === null,
     version: cfg.RELEASE_VERSION,
   }
 }

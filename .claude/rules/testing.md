@@ -11,18 +11,19 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), six projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` (Node, **real Postgres** on 5433),
+`apps/web`), nine projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` + `api-fixtures` (Node, **real Postgres** on 5433),
 `driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
 `openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
-`ui` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
+`ui` + `ui-isolated` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
 helpers, the driver guards `driver-results.test.ts` and `driver-conformance.test.ts`, and every
 installed plugin's own `src/plugins/*/tests/config/**`), and `kit-only` (Node, no database:
-`tests/kit-only/**`, the KIT's own tests — see below). The web suite is two `vitest run`
-invocations (`api` with `--no-isolate`, then the rest) because vitest 3 resolves `isolate` per
-run, not per project.
+`tests/kit-only/**`, the KIT's own tests — see below), and `config-isolated` beside `config`. Each
+shared-registry project sets `isolate: false` in `vitest.config.ts`, so no command line carries
+`--no-isolate`. The full web suite is two `vitest run` invocations (`api`, then the rest), which
+measured faster than one.
 
 **`pnpm test` is the one full test run** (`scripts/test.mjs`, the plan in
-`scripts/lib/test-plan.mjs`, unit-tested in `tests/config/gate.test.ts`), and the `test` step of
+`scripts/lib/test-plan.mjs`, unit-tested in `tests/kit-only/gate.test.ts`), and the `test` step of
 `pnpm gate`. It prints its target first. On a **local** target (the default) it starts the compose
 test Postgres and Neon proxy itself, runs every package's tests with the web suite under
 `postgres`, then the `driver` project again under `neon` through the proxy. On a **remote** target
@@ -34,17 +35,34 @@ the local suite under `neon` instead (kit.yml's backstop; a way to chase a seam 
 test belongs there when it is true of the kit repository and of nothing made from it — the porting
 notes and the root version being the kit's (`upgrade-notes`), the release and rename machinery
 (`release-lib`, `release-root`, `rename-lib`, `rename-safe-identifiers`), the maintainer nudge hooks,
-the plugin CI that plugin repositories call from the kit, and the manifest's kit-state claims
-(`kit-only/kit-manifest.test.ts`). `scripts/rename.mjs` deletes the directory when a copy is born
-and unwires `--project kit-only`; the project is registered only while the directory exists;
+the plugin CI that plugin repositories call from the kit, the manifest's kit-state claims
+(`kit-only/kit-manifest.test.ts`), the Launch conformance checker and its parsers (`kit-check`,
+`kit-check-parsers`, `launch-kit-schema` — the kit keeps them in step with the meta-kit), and the
+kit's own doc guards (`gate-string`) — and the kit's TOOLING: every test whose subject is
+`scripts/**` machinery or the rf-security runner (`plugin-*`, `upgrade-*`, `manifest-lib`,
+`surface`, `repo-paths`, `bundle*`, `deployer`, `release-version-only`, `gate*`,
+`bootstrap-lib`, `prereqs-sh`, the dev-tooling and `provision-*` helpers, `patch-toml`,
+`design-docs`, `rf-security/`). A copy runs that tooling but does not write it: it arrives through
+`kit:upgrade` already tested by the kit's gate, so re-running its end-to-end suites on every app
+commit buys the app nothing. `scripts/rename.mjs` deletes the directory — and every other
+`kitOnly` path: the maintainer scripts, their package.json scripts and `.claude/settings.json`
+hooks — when a copy is born and unwires `--project kit-only`; the project is registered only while the directory exists;
 `kit:upgrade` never ports one; `tests/config/kit-manifest.test.ts` fails a copy that carries one.
-A test of tooling a copy RUNS (upgrade, plugin, bootstrap, the update-check hook, the manifest
-reader) or of anything the app ships stays in `config` — the copy's gate is where it earns its keep.
-Such a test never judges the checkout's own state — its tomls, `launch.kit.json`, version or
+A test of anything the APP ships — its config, its composition (plugins well-formed, the MCP
+seam, wrangler parity), its code's pure halves — stays in `config`; the copy's gate is where it earns
+its keep. Such a test never judges the checkout's own state — its tomls, `launch.kit.json`, version or
 provisioning — because a copy's differ by design (renamed, then provisioned by Launch, which
-commits real KV ids). Build a fixture (`tests/config/fixtures/`: `kit-fixture.mjs` makes a whole
-kit, fresh or provisioned like Launch's `write_config`; the toml snapshots feed the patcher's
-tests), and put the claim about THIS checkout in `kit-only`.
+commits real KV ids). Build a fixture (`tests/kit-only/fixtures/`: the toml snapshots feed the
+patcher's tests; `tests/kit-only/fixtures/kit-fixture.mjs` makes a whole kit, fresh or provisioned
+like Launch's `write_config`, for the kit-only conformance tests), and put the claim about THIS
+checkout in `kit-only`.
+
+**The security audit's runner** (`.claude/skills/rf-security/tools/`, `docs/SECURITY-AUDIT.md`) is
+tested in `kit-only` by `tests/kit-only/rf-security/`: child-process runs of `audit.mjs` and
+`guard-hook.mjs` over a synthetic run in the OS temp directory (`fixture.ts` plays the agents'
+part; `RF_SECURITY_RUNS` points the runs root there), never a real run's files. A confirmed audit
+finding, once fixed, lands as a permanent regression test in `tests/api/security/`, named for the
+behaviour rather than the attack.
 
 ## Tests run under Node, against the real Hono app
 
@@ -78,7 +96,8 @@ tests), and put the claim about THIS checkout in `kit-only`.
 - `apps/web/tests/helpers/request.ts` `request()` / `json()` drive the app through every middleware with a
   per-file random client IP (rate-limit isolation); `apps/web/tests/helpers/auth.ts` factories
   (`createTestUser`, `createTestTenant`, `linkUserToTenant`, `createTestTenantWithUser`,
-  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes;
+  `createTestSession` → cookie value, `createTestApiKey` → plaintext) use `uniqueId()` suffixes —
+  slug-safe (`[a-z0-9]+-[a-z0-9]+`), so a factory tenant's slug passes `SLUG_RE` in a request;
   `inject('seed')` gives the run's seeded owner/tenant/API key/session (`TestSeed`)
 - No `@cloudflare/vitest-pool-workers` in the default suite (D15). It cannot reach a real Postgres
   through Hyperdrive locally; the value here is integration tests against real Postgres
@@ -86,9 +105,15 @@ tests), and put the claim about THIS checkout in `kit-only`.
 ## Database discipline
 
 - `apps/web/tests/setup.ts` (globalSetup, memoised on `globalThis` because two projects share it): roles →
-  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`
+  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`.
+  A failure there (no `.env.test` loaded, a migration Postgres refuses) is printed as itself by
+  `tests/helpers/startup-error.ts`, not as Vite's `code.charCodeAt is not a function`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema
   is designed for parallel files. If a test genuinely needs an empty table, it is `// @vitest-isolate`
+- A cross-tenant cron task under test (a prune, a sweep) also acts on OTHER files' rows. Assert only
+  on your own rows; and where the outcome depends on the caller's stubs (`runSweepLostRuns` asks the
+  file's own Workflow stub), hold `itSweeps`/`withSweepLock` (`tests/helpers/sweeps.ts`) from the
+  backdate to the last assertion
 - `apps/web/tests/helpers/db.ts` `safetyCheck()` refuses to run unless `NODE_ENV=test` and `DATABASE_URL`'s
   HOST is local. Never point tests at Neon — except `pnpm test` on a throwaway gate branch, which
   needs `TEST_DATABASE_BRANCH=gate-<short>-<attempt>` and `TEST_DATABASE_ENDPOINT` = the URL's
@@ -107,6 +132,12 @@ tests), and put the claim about THIS checkout in `kit-only`.
   they drive the kit's tooling end to end through child processes, which slow with CPU load, not
   with a database link
 - Per-file `apps/web/tests/api-setup.ts` closes clients after each file (connection budget: forks × pools)
+  and installs the **network guard** (`tests/helpers/network-guard.ts`): an api test never reaches
+  the internet — a request to anything but loopback / `localhost` / `*.localtest.me` rejects AT ONCE
+  with `OutboundNetworkError` naming the URL. A test that needs a provider's answer runs a local
+  `node:http` server on 127.0.0.1 (`security/ai-config-stored-credential.test.ts`) or injects
+  `fetch`. A row on a vendor's DEFAULT endpoint is a real call: give it a local `baseUrl`. A test
+  that takes seconds is waiting on something — a timeout, a retry backoff, a lock — not slow
 - **Both drivers (D35), one seam.** `.env.test` sets `DATABASE_DRIVER=postgres`, so the narrow
   scripts and the suite run postgres.js; `pnpm test` then runs the `driver` project under `neon`
   through the proxy on :4433 (compose profile `neon`). App code does not branch on the driver, so
@@ -117,22 +148,49 @@ tests), and put the claim about THIS checkout in `kit-only`.
 
 ## The `// @vitest-isolate` marker
 
-`api` shares one module registry per worker; `api-isolated` gives each file a fresh one. If a
-file uses `vi.mock`, `vi.stubGlobal`, `vi.spyOn(globalThis…)` or otherwise needs a clean process,
-its FIRST line must be **exactly** the marker, with nothing after it; the reason goes on line 2:
+`api` shares one module registry per worker; `api-isolated` gives each file a fresh one. A file
+that evaluates a module under a fake (`vi.mock`, `vi.doMock`) or drops the registry
+(`vi.resetModules`) must carry the marker on its FIRST line, **exactly**, with nothing after it;
+the reason goes on line 2:
 
 ```ts
 // @vitest-isolate
-// Spies on the global fetch, so this file needs its own module registry.
+// Mocks the plugin barrels, so this file needs its own module registry.
 ```
+
+A file that runs the fixture agents (`tests/helpers/fixture-agents.ts`) carries
+`// @vitest-fixture-agents` on its first line instead, and mocks nothing: it runs in
+`api-fixtures`, a shared registry whose setup (`tests/api-fixtures-setup.ts`) installs the fixture
+plugin into the real barrels once per worker, before the app is first imported — the agent-key
+enum is `z.enum(AGENT_KEYS)`, frozen at import, so the fixture must be there first.
+
+Spies and stubs need no marker. Vitest restores every `vi.spyOn` spy (on `globalThis.fetch`
+included) after each file even in a shared registry, and the per-file setups (`tests/api-setup.ts`,
+`tests/ui/setup.ts`, `tests/config/setup.ts`) run `vi.unstubAllGlobals()` and `vi.unstubAllEnvs()`.
+Prefer a seam to a module mock — in ui tests too: `overrideHardNavigateForTests` (`@/ui/lib/navigation`, restored by `tests/ui/setup.ts`) records full-page navigations, and `SettingsLayout` takes a `plugins` prop for fixture tabs. `overrideResolveChatForTests` (a fake chat client) is reset by
+`api-setup.ts` after each file, so a file using it shares the registry.
 
 `isMarkedIsolated` (`apps/web/tests/helpers/isolation.ts`) compares the trimmed first line to
 `// @vitest-isolate` — `// @vitest-isolate — mocks a module` does NOT match, and `vitest.config.ts`
 then places the file in the shared `api` project. Forgetting it does not fail in your file; it hands
-the fake to whatever runs next in that worker. `apps/web/tests/api/isolation-contract.test.ts`
-catches a missing or malformed marker only when its heuristic (`vi.mock|doMock|stubGlobal|stubEnv|
-spyOn(globalThis`) matches the file; anything else that leaks (a module-level singleton you mutate,
-a fake `WebSocket` factory left set) is on you.
+the fake to whatever runs next in that worker. `apps/web/tests/config/isolation-contract.test.ts`
+walks the same directories as `vitest.config.ts` (`testDirs`: `tests/api` and every installed
+plugin's `src/plugins/<id>/tests/api`) and catches a missing or malformed marker when its heuristic
+(`vi.mock|doMock|resetModules`) matches the file. What it cannot see is module-level state a test
+mutates: a registry entry added (`FEATURE_FLAGS`, `AGENTS`), a fake factory left set. Restore it in
+`afterAll` (`feature-flags.test.ts`, `seed-features.test.ts`), or mark the file.
+
+**`ui` is split the same way, but by the heuristic itself.** `ui` shares a registry
+(`isolate: false` in its project config); a ui file goes to `ui-isolated` when it carries the
+marker OR the heuristic matches it (`uiNeedsIsolation`). No marker is needed, because a plugin's ui
+tests live in the plugin's repository and a host must not break the day a plugin ships an unmarked
+one. Under the shared registry the app's module-level state outlives a file, so
+`tests/ui/setup.ts` resets the singletons after each test (`queryClient`, the toast and websocket
+stores) and unstubs globals after each file. A new module-level store gets a reset line there.
+`config` and `config-isolated` split the same way. The shared `config` project also loads the
+server barrel first (`tests/config/shared-setup.ts`): a file importing a plugin module directly
+would otherwise enter the plugin import cycle from the plugin's side and leave a barrel holding
+`undefined` cached for every later file.
 
 ## Testing background work — plain functions, no platform
 
@@ -152,11 +210,11 @@ a fake `WebSocket` factory left set) is on you.
   `queue(batch, env, ctx)` is tested the same way with the two queue names (`queue-dispatch.test.ts`)
 - Durable Object: instantiate `NotificationsHub` with a fake `DurableObjectState`
   (`getWebSockets(tag)` over tagged fake sockets with `send` spies) and call the RPC methods; the
-  101 upgrade cannot run under Node (`notifications-hub.test.ts`, `// @vitest-isolate` because it
-  stubs `WebSocketRequestResponsePair`). Route tests for `/ws` stop at the forwarded request
+  101 upgrade cannot run under Node (`notifications-hub.test.ts`, which stubs
+  `WebSocketRequestResponsePair` with `vi.stubGlobal`). Route tests for `/ws` stop at the forwarded request
 - Nudges: `stubs(env).hub.broadcasts` after `waitOnExecutionContext(ctx)` — assert the tenant id,
   the method and the event `type`; `realtime-nudges.test.ts` covers the kit's emitters
-- Workflow (`agent-run-workflow.test.ts`, `// @vitest-isolate` because it mocks the resolve seam):
+- Workflow (`agent-run-workflow.test.ts`, a fake chat client through `overrideResolveChatForTests`):
   the step bodies are plain exported functions in `services/agents/runtime.ts` — `claimStep(db, env,
   logger, params)`, `executeRun(db, cfg, env, logger, params)`, `finishStep(db, env, logger, params,
   outcome?)` — call them directly against Postgres, or instantiate `new AgentRunWorkflow(ctx, env)`
@@ -166,9 +224,15 @@ a fake `WebSocket` factory left set) is on you.
   rows. **Assert the step NAMES are distinct** — the platform replays a repeated name's recorded
   result, which reads as "the agent ignored my approval", and only `names` can catch it. Test the claim-row gate: `claimRun` on a settled row returns
   `null` and `claimStep` returns `false`; a cancel while `queued` never reaches `execute`
-- AI seam: `vi.mock('@/api/services/ai/resolve', async importOriginal => ({ ...(await importOriginal()),
-  resolveChat: vi.fn(async () => ({ client: new FakeChatClient(script), provider, model, source,
-  maxOutputTokens })) }))` in a `// @vitest-isolate` file (`chat.test.ts`, `agent-run-workflow.test.ts`).
+- A route that resolves chat through the REAL seam (a plugin's `streamChat`): `scriptPlatformChat(env,
+  turns)` (`tests/helpers/ai.ts`, re-exported by `@testkit/integration`) scripts the `AI` binding
+  stub's chat answers — `{ text?, toolCalls?: [{ name, input }], usage? }` per turn — and returns
+  the recorded calls; `createTestEnv({ AI: undefined })` is the 503 (`plugin-stream-chat.test.ts`)
+- AI seam: `overrideResolveChatForTests(async () => ({ client: new FakeChatClient(script), provider,
+  model, source, billedToPlatform: false, maxOutputTokens }))` at the top of the file, and
+  `overrideResolveDecisionsForTests` for `ctx.decide` (`chat.test.ts`, `agent-triage-research.test.ts`);
+  `tests/api-setup.ts` resets both after each file, so the file shares the `api` registry. Record
+  calls inside the override if the test asserts on them — never `vi.mock` the module.
   `FakeChatClient(script)` (`tests/helpers/ai.ts`) answers turns of `{ text, toolUses, usage, error }`,
   streams text in word-sized deltas and records every `calls[i]` (`ChatParams`) so a test can assert the
   system prompt, tools and `toolChoice` the route sent; `aguiFrames(res)` parses an AG-UI stream body
@@ -203,7 +267,7 @@ a fake `WebSocket` factory left set) is on you.
   fixture PDF is text typed `application/pdf`; override `convert` for `format: 'error'` (→ `failed` +
   ack) or a throw (→ `failed` + retry); `createTestEnv({ AI: undefined, EMBEDDINGS_API_KEY })` is the
   Worker that embeds but cannot convert (503 `conversion_not_configured`, nothing stored)
-- Tracing (D32): `tests/api/observability.test.ts` needs no database — `createTracer({ sinks:
+- Tracing (D32): `tests/config/observability.test.ts` needs no database — `createTracer({ sinks:
   [collect] })` hands a test every recorded span, `tracerFor(cfg, { fetch })` takes an injected
   `fetch` for the OTLP POST, and the OTLP/JSON request is compared to a FIXTURE (the protobuf case
   walks the bytes back with a small decoder). Nesting is asserted through the real `runToolLoop`, so
@@ -253,6 +317,7 @@ a fake `WebSocket` factory left set) is on you.
 ## UI tests
 
 `apps/web/tests/ui/setup.ts` (jest-dom). `renderWithProviders()` gives QueryClient + Auth + Ability + Router.
+The `ui` project resolves with Vite's `defaultClientConditions`, as the browser bundle does: without them `react-router` loads as CommonJS and an ESM importer (`react-router-dom`, which plugins still use) gets a second copy with its own context — `router-instance.test.tsx` holds it.
 Shallow component tests; mock `fetch` where needed, no MSW. `contrast.test.ts` gates the design tokens.
 Polling hooks (`agents-page`, `run-page`, `documents-page`): test the pure decision
 (`runPollInterval(status)` over `runOwesAnswer`, so a parked run polls NEVER), not `refetchInterval`
@@ -281,12 +346,14 @@ admin+) and that `withEvalScope` tags spans.
 ## Commands
 
 `pnpm test` (every package; it starts the test database itself — see above), or `pnpm gate` for the
-whole pre-commit gate. The inner loop is the narrow scripts, which run under `postgres` and expect
-the database up (`pnpm test:db:up`, or any earlier `pnpm test`): `pnpm web test:driver` for the
-driver project alone, and single projects through the web package: `pnpm web test:api` ·
-`pnpm web test:ui` · `pnpm web test:config` ·
-`pnpm web test:kit-only` (the kit only) ·
-`pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
+whole pre-commit gate. The inner loop is `pnpm test <suite…> [file…]`: `api`, `ui`, `config`,
+`driver` and (the kit only) `kit-only`. Each suite is its shared and isolated projects together, run
+under `postgres` with the database expected up (`pnpm test:db:up`, or any earlier `pnpm test`),
+and a file path or a name filter narrows it (`pnpm test api apps/web/tests/api/health.test.ts`).
+`pnpm test web` is the full web plan without the other packages. The `apps/web` `test:*` scripts
+(`pnpm web test:api` and the rest) are one-line aliases for these. The project lists live in
+`scripts/lib/test-plan.mjs` (`SUITES`), never in a `package.json`, so a new project changes no
+script. `pnpm test:coverage`. `REQUIRE_PROVISIONED=1 pnpm --filter @rocketflare/web test:config` is what CI runs
 before a deploy.
 
 ## CLI tests (`apps/cli/tests`)
@@ -303,7 +370,7 @@ the whole rule, and it is why neither half duplicates the other.
 
 - **A plugin's tests live inside it** — `src/plugins/<id>/tests/{api,ui,config}` — so installing or
   removing one moves its tests with it and never touches `tests/`. `vitest.config.ts` discovers all
-  three: the `ui` and `config` projects by glob, and the api ones through the same `apiTestFiles()`
+  three: the `config` project by glob, the ui ones through `uiTestFiles()`, and the api ones through the same `apiTestFiles()`
   walk the kit's use, so **the `// @vitest-isolate` marker decides which api project a plugin file
   lands in exactly as it does for a kit file** (first line, exact match, reason on line 2)
 - **A plugin reaches the harness through `@testkit`, never a relative climb into `tests/`.** Two
@@ -359,7 +426,25 @@ the whole rule, and it is why neither half duplicates the other.
 - **A kit test must not borrow a plugin's keys.** `tests/config/features.test.ts` and
   `tests/api/feature-flags.test.ts` register their own fixture flag now: the kit ships none,
   `feature_flags.key` is platform state with `tenant_feature_overrides` cascading off it, and two
-  files resetting one key delete each other's rows across tenants. The API one is
-  `// @vitest-isolate` because it mutates the shared registry. For the same reason an assertion that
+  files resetting one key delete each other's rows across tenants. The API one adds the key in
+  `beforeAll` and removes it in `afterAll`, so it can share the registry. For the same reason an
+  assertion that
   pinned the exact agent-tool list is a PREFIX assertion — a plugin's tools are appended after the
   kit's three
+- **A core test must not borrow an EXAMPLE agent either** (`summarize-text`, `research-topic`,
+  `triage-research` — `kind: "example"` surfaces an app deletes). It uses the fixture agents in
+  `tests/helpers/fixture-agents.ts` (`FIXTURE_AGENT` takes `{ text }`, `FIXTURE_AGENT_B`
+  `{ topic }`), registered through the plugin seam: an api file starts with
+  `// @vitest-fixture-agents` and runs in `api-fixtures`, whose setup puts them in the barrels; a
+  UI test mocks the shared barrel (`withFixtureShared`), and a test storing a key as an opaque
+  string needs neither. The core route and runtime tests (`agent-run-routes`, `agent-run-runtime`)
+  run on the fixture agent; the example's own files test only what is the example's. A test of an example's own behaviour is listed in that surface's
+  `paths`; `tests/kit-only/example-surfaces.test.ts` fails a test outside the surface that names
+  the key or imports one of its files. `tests/api-setup.ts` imports `@/db/client` inside its hook
+  for this reason: a static import there evaluates the barrels before the test's `vi.mock` exists
+- **A fixture server plugin without a mock.** `withServerPlugins(fixtures, { replace? })`
+  (`tests/helpers/server-plugins.ts`) splices fixtures into the real `serverPlugins` for one file
+  and restores it after, so the file shares the `api` registry (`plugin-tools`, `mcp-plugin-tools`,
+  `plugin-tenant-status-hook`, `security/chat-approval-gates`). Only consumers that read the barrel
+  at CALL time see a fixture — the tool builder, the MCP listing, the tenant hooks; one read at
+  module load (mounts, `API_PREFIXES`, the agent and prompt registries) still needs the mock

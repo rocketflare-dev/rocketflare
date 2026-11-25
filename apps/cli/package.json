@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Rocketflare kit command-line interface (login via browser → API key, whoami, tenant-scoped commands)",
+  "description": "Rocketflare command-line interface (login via browser → API key, whoami, tenant-scoped commands)",
   "type": "module",
   "bin": {
     "rocketflare": "./dist/cli.js"
@@ -20,16 +20,16 @@
   },
   "dependencies": {
     "@rocketflare/shared": "workspace:*",
-    "chalk": "^5.6.2",
+    "chalk": "^6.0.1",
     "commander": "^15.0.0",
-    "open": "^11.0.0",
-    "zod": "^3.25.76"
+    "open": "^11.0.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0",
-    "esbuild": "^0.25.12",
-    "tsx": "^4.23.13",
-    "typescript": "^5.9.3",
-    "vitest": "^3.2.7"
+    "@types/node": "^26.6.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
   }
 }

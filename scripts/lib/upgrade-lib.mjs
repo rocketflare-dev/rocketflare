@@ -1,7 +1,7 @@
 /**
  * The pure half of `scripts/upgrade.mjs`: path classification against `.rocketflare.json`, the
  * diff translator, and the release-note parser. No I/O and nothing runs at import time, so
- * `apps/web/tests/config/upgrade-lib.test.ts` can drive it under vitest; `upgrade-lib.d.mts`
+ * `apps/web/tests/kit-only/upgrade-lib.test.ts` can drive it under vitest; `upgrade-lib.d.mts`
  * beside this file is the hand-written type surface (no `allowJs`).
  *
  * The problem this solves: an adopted copy of the kit has been renamed (`scripts/rename.mjs`
@@ -42,7 +42,7 @@ export function globToRegExp(glob) {
           out += '(?:[^/]+/)*'
         } else out += '.*'
       } else out += '[^/]*'
-    } else if ('.+^${}()|[]\\?'.includes(c)) out += `\\${c}`
+    } else if (/[.+^${}()|[\]\\?]/.test(c)) out += `\\${c}`
     else out += c
   }
   return new RegExp(`^${out}$`)
@@ -75,6 +75,48 @@ export function isKitManifest(manifest) {
  */
 export const KIT_ONLY_PATHS = Object.freeze(['apps/web/tests/kit-only/**'])
 
+/**
+ * Kit tooling that a PORTED script imports, so it is ported too — verbatim, since the rename never
+ * translates it — whatever the copy's own `neverPort` says. `rename-lib.mjs` is the token map the
+ * rename runs once, but `upgrade.mjs`, `plugin.mjs` and `manifest.mjs` import it every day: kept on
+ * a copy's `neverPort` (where every copy made before 0.44.0 has it, because `.rocketflare.json` is
+ * never ported), a release whose `plugin.mjs` imported a new export from it crashed the first
+ * `pnpm plugin upgrade` after the kit upgrade (#178). This list is that floor; the kit's own
+ * manifest no longer names them.
+ */
+export const ALWAYS_PORTED_TOOLING = Object.freeze([
+  'scripts/lib/rename-lib.mjs',
+  'scripts/lib/rename-lib.d.mts',
+])
+
+/**
+ * The variables `kit:upgrade` hands its run over with (#178). `pnpm kit:upgrade` runs the COPY's
+ * `upgrade.mjs`, so a fix to the upgrader released inside the range it crosses never applied to
+ * that crossing. Since 0.44.0 the copy's script extracts the TARGET release's `upgrade.mjs` and
+ * `lib/` from the mirror and runs that instead, pointed back at this checkout by
+ * `UPGRADE_ROOT_ENV`; `UPGRADE_DELEGATED_ENV` stops the handed-over run handing over again.
+ * Token-free names, so no rename ever rewrites them.
+ */
+export const UPGRADE_ROOT_ENV = 'KIT_UPGRADE_ROOT'
+export const UPGRADE_DELEGATED_ENV = 'KIT_UPGRADE_DELEGATED'
+
+/** The tooling a hand-over extracts from the target release: the script and everything it imports. */
+export const UPGRADER_FILES = Object.freeze({ script: 'scripts/upgrade.mjs', lib: 'scripts/lib' })
+
+/**
+ * Whether to run the target release's upgrader in place of this one: `same` (the bytes match, so
+ * nothing to gain), `delegate` (it differs and reads `UPGRADE_ROOT_ENV`), or `too-old` (it
+ * differs but predates the hand-over, so it would act on its own directory — run this one, and
+ * say that fixes in between do not apply). `null` target text = not readable = `same`.
+ * @param {{ local: string, target: string | null }} scripts
+ */
+export function upgraderHandoff({ local, target }) {
+  if (target === null || target === local) return 'same'
+  // The script names the constant, never its value: that identifier is what marks one that
+  // reads the hand-over.
+  return /\bUPGRADE_ROOT_ENV\b/.test(target) ? 'delegate' : 'too-old'
+}
+
 /** The vitest project (`apps/web/vitest.config.ts`) that runs them — kit only, like its files. */
 export const KIT_ONLY_PROJECT = 'kit-only'
 
@@ -85,11 +127,29 @@ export function kitOnlyGlobs(manifest, extra = []) {
 }
 
 /**
- * `apps/web/package.json` with the kit-only project unwired: every `--project kit-only` dropped
- * from a script, and a script that exists only to run it (`test:kit-only`) removed. Text in, text
- * out, formatting kept; `removed` and `edited` name the scripts it touched so the caller can say so.
+ * Does a shell command name a kit-only file? Each whitespace-separated word, unquoted and with a
+ * `$CLAUDE_PROJECT_DIR/` or `./` prefix dropped, is tested against the globs — so
+ * `node scripts/release.mjs` and `node "$CLAUDE_PROJECT_DIR/scripts/changelog-nudge.mjs"` both
+ * match `scripts/release.mjs`-style entries, and `scripts/release-check.mjs` does not.
  */
-export function stripKitOnlyWiring(packageJsonText) {
+export function commandNamesKitOnly(command, globs) {
+  if (typeof command !== 'string' || !globs?.length) return false
+  return command
+    .split(/\s+/)
+    .map(word =>
+      word.replace(/^["']+|["';&|]+$/g, '').replace(/^(\$\{?CLAUDE_PROJECT_DIR\}?\/|\.\/)/, '')
+    )
+    .some(word => word && matchesAny(word, globs))
+}
+
+/**
+ * A package.json with the kit-only wiring removed: every `--project kit-only` dropped from a
+ * script, a script that exists only to run it (`test:kit-only`) removed, and a script whose
+ * command names a kit-only file (`kit:release` → `scripts/release.mjs`, given `globs`) removed.
+ * Text in, text out, formatting kept; `removed` and `edited` name the scripts it touched so the
+ * caller can say so.
+ */
+export function stripKitOnlyWiring(packageJsonText, globs = []) {
   const pkg = JSON.parse(packageJsonText)
   const scripts = pkg.scripts ?? {}
   const flag = new RegExp(`\\s+--project[ =]${KIT_ONLY_PROJECT}(?![\\w-])`, 'g')
@@ -97,7 +157,7 @@ export function stripKitOnlyWiring(packageJsonText) {
   const edited = []
   for (const [name, command] of Object.entries(scripts)) {
     if (typeof command !== 'string') continue
-    if (name.endsWith(`:${KIT_ONLY_PROJECT}`)) {
+    if (name.endsWith(`:${KIT_ONLY_PROJECT}`) || commandNamesKitOnly(command, globs)) {
       delete scripts[name]
       removed.push(name)
       continue
@@ -111,6 +171,36 @@ export function stripKitOnlyWiring(packageJsonText) {
   if (removed.length === 0 && edited.length === 0) return { text: packageJsonText, removed, edited }
   const indent = packageJsonText.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
   return { text: `${JSON.stringify(pkg, null, indent)}\n`, removed, edited }
+}
+
+/**
+ * `.claude/settings.json` with every hook whose command names a kit-only file removed — the
+ * maintainer nudges (`changelog-nudge.mjs`, `release-site-nudge.mjs`) a copy has no use for and
+ * would otherwise spawn on every Bash call. A matcher group left with no hooks goes, and so does
+ * an event left with no groups. `removed` lists the commands dropped.
+ */
+export function stripKitOnlyHooks(settingsText, globs) {
+  const settings = JSON.parse(settingsText)
+  const removed = []
+  const events = settings.hooks ?? {}
+  for (const [event, groups] of Object.entries(events)) {
+    if (!Array.isArray(groups)) continue
+    const kept = []
+    for (const group of groups) {
+      const hooks = Array.isArray(group?.hooks) ? group.hooks : []
+      const keep = hooks.filter(h => {
+        const drop = commandNamesKitOnly(h?.command, globs)
+        if (drop) removed.push(h.command)
+        return !drop
+      })
+      if (keep.length > 0 || hooks.length === 0) kept.push({ ...group, hooks: keep })
+    }
+    if (kept.length > 0) events[event] = kept
+    else delete events[event]
+  }
+  if (removed.length === 0) return { text: settingsText, removed }
+  const indent = settingsText.match(/^[ \t]+(?=")/m)?.[0] ?? '  '
+  return { text: `${JSON.stringify(settings, null, indent)}\n`, removed }
 }
 
 /**
@@ -207,7 +297,8 @@ export function classifyPath(relPath, ctx) {
     return {
       class: 'skipped-kit-only',
       translate: false,
-      reason: "a kit-only test — the kit's gate runs it, a copy never carries it",
+      reason:
+        "kit-only — the kit's own test, workflow or maintainer script; a copy never carries it",
     }
   }
   const surface = manifest.surfaces.find(s => matchesAny(relPath, s.paths))
@@ -225,7 +316,13 @@ export function classifyPath(relPath, ctx) {
   // know what version of the plugin is installed, and the two histories would fight. This sits
   // second, right after "the adopter deleted it", because both are about not writing where the kit
   // has no say.
-  if (surface && surface.kind === 'plugin') {
+  //
+  // A VENDORED plugin is the exception (`isVendored`: the kit's own repository, no subdirectory —
+  // `example-feature`): it has no release chain of its own, so `pnpm plugin upgrade` refuses it and
+  // points here. Skipping it here too left it stranded on the version the copy was made from, the
+  // reference plugin teaching an API the kit had since replaced. Its files are the kit's, so they
+  // fall through and are classified, translated and applied exactly like core.
+  if (surface && surface.kind === 'plugin' && !isVendored(surface.source, manifest.kit?.repo)) {
     return {
       class: 'skipped-plugin-owned',
       translate: false,
@@ -250,7 +347,7 @@ export function classifyPath(relPath, ctx) {
   if (ENV_PATHS.includes(relPath)) {
     return { class: 'manual-env', translate: false, reason: 'carries your local database naming' }
   }
-  if (matchesAny(relPath, manifest.neverPort)) {
+  if (matchesAny(relPath, manifest.neverPort) && !ALWAYS_PORTED_TOOLING.includes(relPath)) {
     if (includeKitTooling && isExcluded(relPath)) {
       return {
         class: 'verbatim',
@@ -552,6 +649,20 @@ const NOTE_LIST_FIELDS = Object.freeze([
  *   - `retiredSurfaceIds` is `.rocketflare.json`'s `retiredSurfaces`: ids that were real when the
  *     note was written and have since been removed on purpose.
  */
+/**
+ * A note's length guide. Past it the note still passes every check — a big release is allowed —
+ * but `release-check --unreleased` and `kit:release` say so, because a note that keeps growing is a
+ * release that is due: every copy ports it in one sitting.
+ */
+export const NOTE_LINES_GUIDE = 150
+
+/** The warning line for an over-long note, or null when it is within the guide. */
+export function noteLengthWarning(text, file = 'the note') {
+  const lines = text.replace(/\n$/, '').split('\n').length
+  if (lines <= NOTE_LINES_GUIDE) return null
+  return `warning: ${file} is ${lines} lines (guide: ${NOTE_LINES_GUIDE}) — this is becoming a big update; consider cutting a release`
+}
+
 export function noteProblems(
   text,
   {
@@ -768,8 +879,8 @@ export function isVendored(source, kitRepo) {
  * every default plugin is still FETCHABLE at the ref the kit pins, and that the version being cut
  * is at or above the `minKit` floor it declares — one integer comparison, no range language. It
  * does not prove that plugin's tests pass against it, and nothing a release script can do proves
- * that. The kit's own CI installs every default plugin and runs the full gate on the release
- * commit (`.github/workflows/ci.yml`), and each plugin repository runs the mirrored check against
+ * that. The kit's own CI installs every CI plugin and runs the full gate on the release
+ * commit (`.github/workflows/kit.yml`), and each plugin repository runs the mirrored check against
  * the kit (`.github/workflows/plugin-ci.yml`). Those two are the compatibility proof; this is the
  * stop that catches a pin nobody updated.
  *

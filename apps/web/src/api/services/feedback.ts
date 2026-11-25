@@ -1,14 +1,14 @@
 /**
- * Thumbs feedback on AI answers (D33): `recordFeedback` upserts one person's vote on an assistant
+ * Thumbs feedback on AI answers: `recordFeedback` upserts one person's vote on an assistant
  * message or an agent run, `withdrawFeedback` removes it, `listFeedback` is the admin promotion
  * queue and `myFeedback` answers "which of these did I already rate?" for the UI.
  *
  * **The rater must be able to read what they rate**, and that is checked here rather than trusted:
  * a message belongs to the rater's OWN conversation (another member's thread is 404, admins
- * included — D17), a run is the rater's own unless they are admin-level (D7). A foreign or unknown
+ * included), a run is the rater's own unless they are admin-level. A foreign or unknown
  * id is a 404, never a 403, so an id cannot be probed.
  *
- * Every vote also lands in the rated answer's TRACE (D32) as a zero-length `feedback` span under the
+ * Every vote also lands in the rated answer's TRACE as a zero-length `feedback` span under the
  * trace's root, with `rocketflare.feedback.rating` on it — `rocketflare traces show <id>` prints
  * it, and a backend can join thumbs to the generation they judged. A span rather than an OTLP span
  * event because the local store has no events column and the recorder no events API; a finished
@@ -85,7 +85,7 @@ async function readableTarget(
           eq(messages.id, targetId),
           eq(messages.role, 'assistant'),
           eq(conversations.tenantId, actor.tenantId),
-          // D17: a thread is its owner's — admins included — so only they can rate its answers.
+          // A thread is its owner's — admins included — so only they can rate its answers.
           eq(conversations.userId, actor.userId)
         )
       )

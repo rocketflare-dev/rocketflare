@@ -1,5 +1,5 @@
 /**
- * `example-feature` — the reference plugin's UI entry (D31).
+ * `example-feature` — the reference plugin's UI entry.
  *
  * **This file ships in the MAIN bundle**, because `App.tsx` and `SideNav` import the barrel that
  * imports it, for every reader — including the ones who never open the plugin. So it wires things
@@ -34,7 +34,7 @@ export const exampleFeatureUi = {
   routes: [
     { path: '/example-feature', Component: ExampleFeaturePage, guard: EXAMPLE_FEATURE_GUARD },
   ],
-  // No `before`, so it lands above the kit's "Organisation" group — where an app's own features go.
+  // No `before`, so it lands above the core "Organisation" group — where an app's own features go.
   nav: [
     {
       items: [

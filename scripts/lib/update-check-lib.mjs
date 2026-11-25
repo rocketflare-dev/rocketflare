@@ -3,7 +3,7 @@
  * `SessionStart` hook): should this session check, is the cached answer fresh, which release is
  * newest, what changed between the copy's version and it, and the one message Claude is handed.
  * No I/O here — the script owns git, the network, the cache file and stdout — so every decision is
- * a unit test (`apps/web/tests/config/update-check-lib.test.ts`).
+ * a unit test (`apps/web/tests/kit-only/update-check-lib.test.ts`).
  */
 import { compareVersions, VERSION_RE } from './upgrade-lib.mjs'
 

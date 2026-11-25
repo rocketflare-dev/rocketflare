@@ -1,5 +1,5 @@
 /**
- * Client-side spelling of the feature flags (D30). One const per feature so the nav, the routes and
+ * Client-side spelling of the feature flags. One const per feature so the nav, the routes and
  * the settings tabs cannot drift apart or disagree with the server.
  *
  * These are COSMETIC, exactly like every other `NavGuard`: the answer comes from `session.features`,
@@ -15,10 +15,22 @@ import type { NavGuard } from '@/ui/hooks/useNavGuard'
  * a global admin's `manage all` satisfies the CASL form, which would show them a nav item whose
  * routes the server 404s. The flag is configuration; only `session.features` answers it.
  *
- * The kit ships none of its own — its demonstration flag lives in the `example-feature` PLUGIN
- * (D31), which declares its guard beside the route and the nav item it gates, in
- * `apps/web/src/plugins/example-feature/ui/index.ts`. A plugin never edits this file.
+ * Core ships one, `knowledge-facts` (D43, default off) — below. The demonstration flag lives in
+ * the `example-feature` PLUGIN, which declares its guard beside the route and the nav item it
+ * gates, in `apps/web/src/plugins/example-feature/ui/index.ts`. A plugin never edits this file.
  */
 
 /** `featureGuard(MY_FEATURE, { action: 'read', subject: 'Thing' })` → the flag AND the permission. */
 export const featureGuard = (feature: NavGuard, guard: NavGuard): NavGuard => [feature, guard]
+
+/** Knowledge facts (D43): the flag alone — what `useFeature('knowledge-facts')` answers. */
+export const KNOWLEDGE_FACTS_FEATURE = { feature: 'knowledge-facts' } as const satisfies NavGuard
+
+/**
+ * The flag AND `read KnowledgeFact`: the entity page's route, the review list on the Knowledge
+ * page, the nav badge and the chat's entity cards all use this one guard.
+ */
+export const KNOWLEDGE_FACTS_GUARD = featureGuard(KNOWLEDGE_FACTS_FEATURE, {
+  action: 'read',
+  subject: 'KnowledgeFact',
+})

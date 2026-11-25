@@ -1,16 +1,15 @@
 /**
- * Nightly prune (D12): expired sessions, expired/consumed magic links, expired invitations older
+ * Nightly prune: expired sessions, expired/consumed magic links, expired invitations older
  * than 30 days are removed; live rows stay.
  */
 import { eq, inArray } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { dispatchScheduled, runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
+import { runPruneAiSpans, runPruneExpired } from '@/api/scheduled'
 import { hashToken } from '@/api/utils/core/hash'
 import { randomToken } from '@/api/utils/core/ids'
 import { aiSpans, magicLinkTokens, teamInvitations, userSessions } from '@/db/schema'
 import { createTestSession, createTestTenantWithUser, createTestUser } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
-import { createExecutionContext, createTestEnv, waitOnExecutionContext } from '../mocks/bindings'
 
 const db = setupTestDatabase()
 const DAY = 86_400_000
@@ -121,19 +120,9 @@ describe('pruneExpired', () => {
         .where(eq(teamInvitations.tokenHash, await hashToken(recentExpired)))
     ).toHaveLength(1)
   })
-
-  it('runs from the cron dispatcher', async () => {
-    const ctx = createExecutionContext()
-    const reports = await dispatchScheduled('0 4 * * *', createTestEnv(), ctx)
-    await waitOnExecutionContext(ctx)
-    expect(reports).toEqual([
-      expect.objectContaining({ task: 'pruneExpired', status: 'ok' }),
-      expect.objectContaining({ task: 'pruneAiSpans', status: 'ok' }),
-    ])
-  })
 })
 
-describe('pruneAiSpans (D32)', () => {
+describe('pruneAiSpans', () => {
   const span = (tenantId: string, spanId: string, startedAt: Date) => ({
     tenantId,
     traceId: 'a'.repeat(32),

@@ -1,0 +1,526 @@
+// @vitest-fixture-agents
+/**
+ * `/api/agents` for any agent, on the fixture agent (`tests/helpers/fixture-agents.ts`): the
+ * enqueue handoff — 202 + a `queued` row + a Workflow instance recorded on the stub binding (id =
+ * run id, params `{ runId, tenantId }`); exclusive dedupe (same run back with
+ * `deduplicated: true`, 409 `agent_run_active` only with `?strict=1`); input validated against the
+ * agent's schema (400) BEFORE any row; members see only their own runs (others' are 404, admins see
+ * all); cancel flips a queued run to `cancelled` and sets `cancelRequestedAt`; `GET /runs/:id`
+ * reconciles a stale active row against the runtime (`not_found` → failed, `errored` → failed,
+ * `complete` → succeeded); no binding → 503 `agent_runs_not_configured`; 401 anon; tenant isolation.
+ * The example agents' own route behaviour (their defaults, their fields) is in their surfaces'
+ * files (`agent-runs.test.ts`), which an app may delete with the example.
+ */
+import {
+  agentListResponseSchema,
+  agentRunWithEventsSchema,
+  CORE_AGENT_KEYS,
+  createAgentRunResponseSchema,
+} from '@rocketflare/shared/ai/agents'
+import { eq } from 'drizzle-orm'
+import { describe, expect, it } from 'vitest'
+import { RECONCILE_LIVENESS_MS } from '@/api/services/agents/runs'
+import { agentRunEvents, agentRuns } from '@/db/schema'
+import { fieldsFromJsonSchema } from '@/ui/pages/agents/fields/schemaFields'
+import {
+  createTestSession,
+  createTestTenantWithUser,
+  createTestUser,
+  linkUserToTenant,
+  sessionCookieHeader,
+} from '../helpers/auth'
+import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
+import { json, request } from '../helpers/request'
+import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
+
+const db = setupTestDatabase()
+
+async function actor(role: 'owner' | 'admin' | 'member' = 'member') {
+  const { user, tenant } = await createTestTenantWithUser(db, role)
+  return {
+    user,
+    tenant,
+    cookie: sessionCookieHeader(await createTestSession(db, user.id, tenant.id)),
+  }
+}
+
+async function memberOf(tenantId: string, role: 'member' | 'admin' = 'member') {
+  const user = await createTestUser(db)
+  await linkUserToTenant(db, user.id, tenantId, role)
+  return { user, cookie: sessionCookieHeader(await createTestSession(db, user.id, tenantId)) }
+}
+
+const start = (
+  cookie: Record<string, string>,
+  env: TestEnv,
+  text = 'Some text to summarise.',
+  qs = ''
+) =>
+  request(
+    `/api/agents/runs${qs}`,
+    { method: 'POST', headers: cookie },
+    { env, json: { agentKey: FIXTURE_AGENT, input: { text } } }
+  )
+
+describe('GET /api/agents', () => {
+  it('lists the registry meta (no schemas on the wire); 401 anon', async () => {
+    const a = await actor()
+    const body = agentListResponseSchema.parse(
+      await json(await request('/api/agents', { headers: a.cookie }))
+    )
+    // The core agents, in order; an installed plugin's agents follow them. Which core
+    // agents there are is the app's business (each example is a removable surface), so none is
+    // pinned by name; the fixture plugin's agent is listed like any plugin's.
+    const core: readonly string[] = CORE_AGENT_KEYS
+    expect(body.items.map(i => i.key).filter(key => core.includes(key))).toEqual([...core])
+    expect(body.items.find(i => i.key === FIXTURE_AGENT)).toEqual(
+      expect.objectContaining({
+        key: FIXTURE_AGENT,
+        promptKey: FIXTURE_AGENT,
+        exclusive: true,
+        title: expect.any(String),
+      })
+    )
+    expect((await request('/api/agents')).status).toBe(401)
+  })
+
+  /**
+   * The gap that let `inputJsonSchema` ship unpopulated: every earlier test drove the field
+   * renderer from a schema it wrote ITSELF, so nothing walked registry → route → page. This asserts
+   * the REAL registry's output through the REAL route is something the REAL renderer accepts —
+   * which is the only assertion that would have caught a route returning no schema at all.
+   */
+  it("carries each agent's input schema, and the field renderer accepts what the registry emits", async () => {
+    const a = await actor()
+    const body = agentListResponseSchema.parse(
+      await json(await request('/api/agents', { headers: a.cookie }))
+    )
+    for (const item of body.items) {
+      expect(item.inputJsonSchema, `${item.key} has no inputJsonSchema`).toBeTruthy()
+      expect(item.inputJsonSchema).toMatchObject({ type: 'object' })
+      // Not `toBeTruthy()`: a refusal is `null`, and a refusal here means the run page renders a
+      // JSON blob and `formFor` skips its middle rung — silently, which is how this got through.
+      const fields = fieldsFromJsonSchema(item.inputJsonSchema)
+      expect(
+        fields,
+        `${item.key}: fieldsFromJsonSchema refused the registry's schema`
+      ).not.toBeNull()
+      expect(fields?.length).toBeGreaterThan(0)
+    }
+    const fixture = body.items.find(i => i.key === FIXTURE_AGENT)
+    expect(fieldsFromJsonSchema(fixture?.inputJsonSchema)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: 'text', required: true })])
+    )
+  })
+})
+
+describe('POST /api/agents/runs', () => {
+  it('202 → queued row + Workflow instance with id = run id and params { runId, tenantId }; activity + nudge', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const res = await start(a.cookie, env)
+    expect(res.status).toBe(202)
+    const run = createAgentRunResponseSchema.parse(await json(res))
+    expect(run).toMatchObject({
+      tenantId: a.tenant.id,
+      agentKey: FIXTURE_AGENT,
+      status: 'queued',
+      input: { text: 'Some text to summarise.' },
+      output: null,
+      error: null,
+      requestedByUserId: a.user.id,
+      instanceId: run.id,
+      attempt: 0,
+      startedAt: null,
+      finishedAt: null,
+      deduplicated: false,
+    })
+    expect(stubs(env).workflow?.created).toEqual([
+      { id: run.id, params: { runId: run.id, tenantId: a.tenant.id } },
+    ])
+    const [row] = await db.select().from(agentRuns).where(eq(agentRuns.id, run.id))
+    expect(row?.status).toBe('queued')
+    expect(row?.instanceId).toBe(run.id)
+    const nudges = stubs(env).hub.broadcasts.filter(b => b.tenantId === a.tenant.id)
+    expect(nudges.map(b => (b.args[1] as { type: string; payload: unknown }).type)).toContain(
+      'entity.changed'
+    )
+    expect(nudges.map(b => (b.args[1] as { payload: unknown }).payload)).toContainEqual({
+      entity: 'agent-run',
+      id: run.id,
+    })
+  })
+
+  it('exclusive: a second request while one is active answers THAT run (deduplicated); ?strict=1 → 409', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const first = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    const again = await start(a.cookie, env, 'Different text')
+    expect(again.status).toBe(202)
+    const second = createAgentRunResponseSchema.parse(await json(again))
+    expect(second.id).toBe(first.id)
+    expect(second.deduplicated).toBe(true)
+    expect(second.input).toEqual(first.input)
+    expect(stubs(env).workflow?.created).toHaveLength(1)
+
+    const strict = await start(a.cookie, env, 'x', '?strict=1')
+    expect(strict.status).toBe(409)
+    expect(await json(strict)).toMatchObject({
+      error: expect.any(String),
+      statusCode: 409,
+      code: 'agent_run_active',
+      details: { runId: first.id },
+    })
+  })
+
+  it('validates the body and the agent input (400) before any row exists', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const bad = await request(
+      '/api/agents/runs',
+      { method: 'POST', headers: a.cookie },
+      { env, json: { agentKey: FIXTURE_AGENT, input: { text: '' } } }
+    )
+    expect(bad.status).toBe(400)
+    expect(await json(bad)).toMatchObject({ statusCode: 400, code: 'validation_failed' })
+    const unknown = await request(
+      '/api/agents/runs',
+      { method: 'POST', headers: a.cookie },
+      { env, json: { agentKey: 'nope', input: {} } }
+    )
+    expect(unknown.status).toBe(400)
+    expect(await db.select().from(agentRuns).where(eq(agentRuns.tenantId, a.tenant.id))).toEqual([])
+    expect(stubs(env).workflow?.created).toEqual([])
+  })
+
+  it('503 agent_runs_not_configured without the Workflow binding, and no row is written', async () => {
+    const a = await actor()
+    const res = await start(a.cookie, createTestEnv({ AGENT_RUN_WORKFLOW: undefined }))
+    expect(res.status).toBe(503)
+    expect(await json(res)).toMatchObject({
+      error: expect.any(String),
+      statusCode: 503,
+      code: 'agent_runs_not_configured',
+    })
+    expect(await db.select().from(agentRuns).where(eq(agentRuns.tenantId, a.tenant.id))).toEqual([])
+  })
+})
+
+describe('GET /api/agents/runs(/:id) — visibility', () => {
+  it("members see only their own runs; another member's run is 404; admins see every run", async () => {
+    const a = await actor('member')
+    const env = createTestEnv()
+    const mine = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    const other = await memberOf(a.tenant.id)
+    const admin = await memberOf(a.tenant.id, 'admin')
+
+    expect(
+      (await request(`/api/agents/runs/${mine.id}`, { headers: other.cookie }, { env })).status
+    ).toBe(404)
+    const otherList = await json<{ items: Array<{ id: string }> }>(
+      await request('/api/agents/runs', { headers: other.cookie }, { env })
+    )
+    expect(otherList.items).toEqual([])
+
+    const mineDetail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${mine.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(mineDetail).toMatchObject({ id: mine.id, status: 'queued', events: [] })
+
+    const adminList = await json<{ items: Array<{ id: string }>; pagination: { total: number } }>(
+      await request(
+        `/api/agents/runs?agentKey=${FIXTURE_AGENT}`,
+        { headers: admin.cookie },
+        { env }
+      )
+    )
+    expect(adminList.items.map(i => i.id)).toEqual([mine.id])
+    expect(adminList.pagination.total).toBe(1)
+    expect(
+      (await request(`/api/agents/runs/${mine.id}`, { headers: admin.cookie }, { env })).status
+    ).toBe(200)
+
+    // Other tenant: 404, and a filtered list is empty.
+    const b = await actor('owner')
+    expect(
+      (await request(`/api/agents/runs/${mine.id}`, { headers: b.cookie }, { env })).status
+    ).toBe(404)
+    expect(
+      (await request('/api/agents/runs/not-a-uuid', { headers: a.cookie }, { env })).status
+    ).toBe(404)
+    expect((await request(`/api/agents/runs/${mine.id}`)).status).toBe(401)
+  })
+})
+
+describe('POST /api/agents/runs/:id/cancel', () => {
+  it('a queued run is cancelled outright (flag + finishedAt); cancelling again is idempotent; a running run only gets the flag', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    const res = await request(
+      `/api/agents/runs/${run.id}/cancel`,
+      { method: 'POST', headers: a.cookie },
+      { env }
+    )
+    expect(res.status).toBe(200)
+    const cancelled = createAgentRunResponseSchema.parse(await json(res))
+    expect(cancelled.status).toBe('cancelled')
+    expect(cancelled.cancelRequestedAt).toBeInstanceOf(Date)
+    expect(cancelled.finishedAt).toBeInstanceOf(Date)
+    const again = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${run.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(again.status).toBe('cancelled')
+
+    // The slot is free again: a new run can be enqueued.
+    const next = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    expect(next.id).not.toBe(run.id)
+    expect(next.deduplicated).toBe(false)
+    // Simulate the claim step: running → cancel sets only the flag; the run polls it.
+    await db
+      .update(agentRuns)
+      .set({ status: 'running', startedAt: new Date() })
+      .where(eq(agentRuns.id, next.id))
+    const flagged = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${next.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(flagged.status).toBe('running')
+    expect(flagged.cancelRequestedAt).toBeInstanceOf(Date)
+    expect(flagged.finishedAt).toBeNull()
+
+    // Asked AGAIN, the same running run is FORCED: the instance is terminated and the row settled,
+    // so a run whose loop stopped polling can never stay stuck on "Cancelling…".
+    const forced = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${next.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(forced.status).toBe('cancelled')
+    expect(forced.finishedAt).toBeInstanceOf(Date)
+    expect(stubs(env).workflow?.terminated).toContain(next.id)
+  })
+
+  it('forces a cancel even when the Workflow instance is gone (an orphaned local run)', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await db
+      .update(agentRuns)
+      .set({ status: 'running', startedAt: new Date(), cancelRequestedAt: new Date() })
+      .where(eq(agentRuns.id, run.id))
+    // The instance no longer exists — `terminate()` throws and is swallowed; the ROW is the truth.
+    stubs(env).workflow?.clear()
+
+    const forced = createAgentRunResponseSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${run.id}/cancel`,
+          { method: 'POST', headers: a.cookie },
+          { env }
+        )
+      )
+    )
+    expect(forced.status).toBe('cancelled')
+    expect(forced.finishedAt).toBeInstanceOf(Date)
+  })
+
+  it('another member cannot cancel my run (404)', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    const other = await memberOf(a.tenant.id)
+    expect(
+      (
+        await request(
+          `/api/agents/runs/${run.id}/cancel`,
+          { method: 'POST', headers: other.cookie },
+          { env }
+        )
+      ).status
+    ).toBe(404)
+  })
+})
+
+describe('reconcile on read', () => {
+  it('an active row whose instance is not_found → failed; errored → failed with the message; complete → succeeded; running → untouched; no binding → untouched', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+
+    // Same binding, instance still running: nothing changes.
+    let detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail.status).toBe('queued')
+
+    // No binding at all: a read never 503s and never settles.
+    detail = agentRunWithEventsSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${run.id}`,
+          { headers: a.cookie },
+          { env: createTestEnv({ AGENT_RUN_WORKFLOW: undefined }) }
+        )
+      )
+    )
+    expect(detail.status).toBe('queued')
+
+    // The runtime says errored.
+    stubs(env).workflow?.setStatus(run.id, {
+      status: 'errored',
+      error: { name: 'Error', message: 'step exhausted retries' },
+    })
+    detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail).toMatchObject({ status: 'failed', error: 'step exhausted retries' })
+    expect(detail.finishedAt).toBeInstanceOf(Date)
+
+    // A fresh binding that never created the instance: `not_found` is an answer → failed.
+    const run2 = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    detail = agentRunWithEventsSchema.parse(
+      await json(
+        await request(
+          `/api/agents/runs/${run2.id}`,
+          { headers: a.cookie },
+          { env: createTestEnv() }
+        )
+      )
+    )
+    expect(detail).toMatchObject({ status: 'failed', error: 'Workflow instance not found' })
+
+    // terminated (what a forced cancel leaves behind) → cancelled, NOT failed.
+    const terminated = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    stubs(env).workflow?.setStatus(terminated.id, { status: 'terminated' })
+    detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${terminated.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail).toMatchObject({ status: 'cancelled', error: null })
+
+    // complete while the row is still active → succeeded.
+    const run3 = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    stubs(env).workflow?.setStatus(run3.id, { status: 'complete' })
+    detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${run3.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail.status).toBe('succeeded')
+  })
+})
+
+/**
+ * The liveness guard (`RECONCILE_LIVENESS_MS`): a run that has written a durable event inside the
+ * window is alive by definition, so a read must ask the Workflow runtime NOTHING. Without this the
+ * run page's stream-driven refetch turns one `instance.status()` subrequest every 3 s into several
+ * a second, per viewer — the poll it replaced, moved to the client.
+ */
+describe('reconcile liveness guard', () => {
+  /** Append one raw progress row with an explicit timestamp. */
+  const emit = (run: { id: string; tenantId: string }, agoMs: number) =>
+    db.insert(agentRunEvents).values({
+      runId: run.id,
+      tenantId: run.tenantId,
+      seq: Math.floor(Math.random() * 1_000_000),
+      type: 'status',
+      data: {},
+      at: new Date(Date.now() - agoMs),
+    })
+
+  it('a recent event answers for the runtime: zero status() calls, and a dead instance is NOT settled yet', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await emit({ id: run.id, tenantId: a.tenant.id }, 2_000)
+    // The runtime would settle this row the moment it was asked.
+    stubs(env).workflow?.setStatus(run.id, {
+      status: 'errored',
+      error: { name: 'Error', message: 'gone' },
+    })
+    stubs(env).workflow?.statusCalls.splice(0)
+
+    const detail = agentRunWithEventsSchema.parse(
+      await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+    )
+    expect(detail.status).toBe('queued')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(0)
+
+    // `/agui` reads the same log and takes the same shortcut.
+    await request(`/api/agents/runs/${run.id}/agui`, { headers: a.cookie }, { env })
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(0)
+
+    // `?events=0` has no log in hand, so it reconciles — and finds the dead instance at once.
+    const bare = await json<{ status: string }>(
+      await request(`/api/agents/runs/${run.id}?events=0`, { headers: a.cookie }, { env })
+    )
+    expect(bare.status).toBe('failed')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === run.id)).toHaveLength(1)
+  })
+
+  it('an event older than the window, and a run with no events at all, both still reconcile', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+
+    const stale = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    await emit({ id: stale.id, tenantId: a.tenant.id }, RECONCILE_LIVENESS_MS + 5_000)
+    stubs(env).workflow?.setStatus(stale.id, { status: 'complete' })
+    stubs(env).workflow?.statusCalls.splice(0)
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${stale.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('succeeded')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === stale.id)).toHaveLength(1)
+
+    const silent = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    stubs(env).workflow?.setStatus(silent.id, { status: 'complete' })
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${silent.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('succeeded')
+    expect(stubs(env).workflow?.statusCalls.filter(id => id === silent.id)).toHaveLength(1)
+  })
+
+  it('a run that goes quiet is settled on the read after the window lapses', async () => {
+    const a = await actor()
+    const env = createTestEnv()
+    const run = createAgentRunResponseSchema.parse(await json(await start(a.cookie, env)))
+    // Written just inside the window, read just outside it: the same row, two answers.
+    await emit({ id: run.id, tenantId: a.tenant.id }, RECONCILE_LIVENESS_MS - 1_000)
+    stubs(env).workflow?.setStatus(run.id, {
+      status: 'errored',
+      error: { name: 'Error', message: 'instance died mid-run' },
+    })
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+      ).status
+    ).toBe('queued')
+
+    await db
+      .update(agentRunEvents)
+      .set({ at: new Date(Date.now() - RECONCILE_LIVENESS_MS - 1_000) })
+      .where(eq(agentRunEvents.runId, run.id))
+    expect(
+      agentRunWithEventsSchema.parse(
+        await json(await request(`/api/agents/runs/${run.id}`, { headers: a.cookie }, { env }))
+      )
+    ).toMatchObject({ status: 'failed', error: 'instance died mid-run' })
+  })
+})

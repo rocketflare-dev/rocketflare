@@ -153,6 +153,25 @@ describe('documentCardsFromToolResult', () => {
     })
   })
 
+  it('makes no card for a platform document, which the documents page cannot open', () => {
+    const cards = documentCardsFromToolResult(
+      KNOWLEDGE_TOOLS.search,
+      JSON.stringify({
+        query: 'invite',
+        documents: [
+          {
+            documentId: OTHER,
+            title: 'Inviting people',
+            platform: true,
+            passages: [{ text: 'a' }],
+          },
+          { documentId: DOC, title: 'Onboarding', totalPassages: 2, passages: [{ text: 'b' }] },
+        ],
+      })
+    )
+    expect(cards.map(c => c.id)).toEqual([DOC])
+  })
+
   it('reads a list answer with its types, and a get_document window as the excerpt', () => {
     const [listed] = documentCardsFromToolResult(KNOWLEDGE_TOOLS.list, {
       documents: [
@@ -202,5 +221,23 @@ describe('documentCardsFromToolResult', () => {
     expect(cards).toHaveLength(1)
     expect(cards[0]?.id).toBe(DOC)
     expect(documentCardsFromToolCalls(null)).toEqual([])
+  })
+})
+
+describe('facetsPollInterval', () => {
+  it('polls only while a re-index this page started still has stale documents', async () => {
+    const { facetsPollInterval, REEMBED_POLL_MS } = await import('@/ui/hooks/useDocuments')
+    expect(facetsPollInterval(true, 3)).toBe(REEMBED_POLL_MS)
+    expect(facetsPollInterval(true, 0)).toBe(false)
+    expect(facetsPollInterval(true, undefined)).toBe(false)
+    expect(facetsPollInterval(false, 3)).toBe(false)
+  })
+
+  it('polls while a context backfill this page started still has documents without one', async () => {
+    const { facetsPollInterval, REEMBED_POLL_MS } = await import('@/ui/hooks/useDocuments')
+    expect(facetsPollInterval(false, 0, true, 4)).toBe(REEMBED_POLL_MS)
+    expect(facetsPollInterval(false, 0, true, 0)).toBe(false)
+    expect(facetsPollInterval(false, 0, false, 4)).toBe(false)
+    expect(facetsPollInterval(true, 2, true, 0)).toBe(REEMBED_POLL_MS)
   })
 })

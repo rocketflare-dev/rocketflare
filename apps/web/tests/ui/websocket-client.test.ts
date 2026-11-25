@@ -1,5 +1,5 @@
 /**
- * `lib/websocketClient.ts` (D8): backoff schedule with full jitter, the deploy fast path
+ * `lib/websocketClient.ts`: backoff schedule with full jitter, the deploy fast path
  * (close 1001/1012 → 100 ms), heartbeat, event fan-out, tenant switch and disconnect — driven
  * through an injected fake socket factory and fake timers, no React.
  */

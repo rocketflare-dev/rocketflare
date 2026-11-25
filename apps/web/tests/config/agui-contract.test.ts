@@ -37,7 +37,7 @@ const TENANT = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const AT = new Date('2026-09-16T09:00:00.000Z')
 const EXPIRES = new Date('2026-09-23T09:00:00.000Z')
 
-/** A pending approval, as `agent_run_interrupts` holds it (issue #17). */
+/** A pending approval, as `agent_run_interrupts` holds it. */
 const INTERRUPT_ROW: AgentRunInterrupt = {
   id: INTERRUPT,
   tenantId: TENANT,
@@ -132,6 +132,23 @@ const CUSTOM_SAMPLES: Record<string, unknown> = {
       sizeBytes: 2048,
       fileId: null,
       href: '/documents/55555555-5555-4555-8555-555555555555',
+    },
+  },
+  [KIT_CUSTOM_EVENTS.entity]: {
+    card: {
+      entity: { kind: 'staging', type: 'customer', id: ARTIFACT, name: 'Harbour View Dental' },
+      href: `/knowledge/entities/customer/${ARTIFACT}`,
+      facts: [
+        {
+          factId: EVENT,
+          key: 'monthly_fee_gbp',
+          valueText: '285',
+          state: 'conflicting',
+          documentId: '55555555-5555-4555-8555-555555555555',
+          documentTitle: 'Contract',
+        },
+      ],
+      moreFacts: 0,
     },
   },
   [KIT_CUSTOM_EVENTS.agentInterrupt]: { interrupt: INTERRUPT_ROW },
@@ -284,9 +301,9 @@ describe('a parked run’s interrupt outcome', () => {
 
 describe('the protobuf transport', () => {
   it('round-trips every emitted event except the ones declared unsupported', () => {
-    // A round trip, not "does `encode` throw": `@ag-ui/proto@0.0.59` has no message for
-    // TOOL_CALL_RESULT, and its encoder answers an EMPTY frame for it rather than failing — which
-    // no client can decode. That is why the encoder drops those events instead of writing them.
+    // A round trip, not "does `encode` throw": a `@ag-ui/proto` with no message for an event
+    // answers an EMPTY frame for it rather than failing — which no client can decode. That is why
+    // the encoder drops those events instead of writing them.
     const unsupported = Object.entries(SAMPLES)
       .filter(([, sample]) => {
         try {
@@ -299,6 +316,12 @@ describe('the protobuf transport', () => {
       .map(([type]) => type)
     // When upstream gains the missing message, this fails and the list shrinks deliberately.
     expect(unsupported.sort()).toEqual([...PROTO_UNSUPPORTED_EVENTS].sort())
+  })
+
+  it('carries a TOOL_CALL_RESULT whole, now that protobuf writes it', () => {
+    expect(decodeProto(encodeProto(SAMPLES.TOOL_CALL_RESULT as never))).toMatchObject(
+      SAMPLES.TOOL_CALL_RESULT as object
+    )
   })
 })
 

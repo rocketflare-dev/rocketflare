@@ -1,18 +1,21 @@
 /**
- * The single read seam for "which AI client does this tenant get" (D17). Resolution order:
+ * The single read seam for "which AI client does this tenant get". Resolution order:
  *   chat:       tenant default `ai_configs(scope='chat')` → platform `ANTHROPIC_API_KEY` →
  *               `workers_ai` (`WORKERS_AI_CHAT_MODEL`) if `env.AI` → 503
  *   embeddings: tenant default `ai_configs(scope='embeddings')` → `workers_ai` if `env.AI` →
  *               `EMBEDDINGS_API_KEY` (OpenAI) → 503
  *   decisions:  tenant default `ai_configs(scope='decisions')` (TypeSafe) → platform
- *               `TYPESAFE_API_KEY` → the chat model on prompt key `agent-decide` (D37, the
+ *               `TYPESAFE_API_KEY` → the chat model on prompt key `agent-decide` (the
  *               uncalibrated `llm_self_report` fallback) → 503 from `resolveChat`
+ *   rerank:     tenant default `ai_configs(scope='rerank')` (a Cohere-style `/rerank` endpoint
+ *               as `openai_compatible`, or `workers_ai`) → `workers_ai` bge-reranker-base if
+ *               `env.AI` → null = no reranking (never a 503: search answers in fused order)
  * Credentials are decrypted here and nowhere else. `readiness()` mirrors both orders WITHOUT
  * building a client or throwing (the Home checklist must not turn a page load into a 503).
- * Feature code never queries `ai_configs`; the chat route, connection test and Phase 3b agents
+ * Feature code never queries `ai_configs`; the chat route, connection test and agents
  * all come through here — and tests mock this module (`vi.mock('@/api/services/ai/resolve')`).
  *
- * `promptKey` (D17, Phase 3b) consults `agent_models` FIRST: an assignment for `(tenant, promptKey)`
+ * `promptKey` consults `agent_models` FIRST: an assignment for `(tenant, promptKey)`
  * names a specific chat config (`aiConfigId`, else the tenant default) and/or a model override; the
  * chain is then assignment → tenant default → platform → 503. Only chat is assignable — embeddings
  * feed a different client shape and no agent runs on them.
@@ -23,7 +26,11 @@ import type {
   AiScope,
   AiScopeReadiness,
 } from '@rocketflare/shared/ai/config'
-import { DEFAULT_MODELS, WORKERS_AI_CHAT_MODEL } from '@rocketflare/shared/ai/config'
+import {
+  DEFAULT_MODELS,
+  WORKERS_AI_CHAT_MODEL,
+  WORKERS_AI_RERANK_MODEL,
+} from '@rocketflare/shared/ai/config'
 import type { DecisionMethod } from '@rocketflare/shared/ai/decisions'
 import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import { and, eq } from 'drizzle-orm'
@@ -36,6 +43,7 @@ import { createLlmDecisionClient } from './decisions/llm'
 import type { DecisionClient } from './decisions/types'
 import { createTypesafeClient } from './decisions/typesafe'
 import { AiNotConfiguredError } from './errors'
+import { createRerankClient, createWorkersAiRerankClient, type RerankClient } from './rerank'
 import type { AiEnv, ChatClient, EmbeddingsClient, SystemPrompt } from './types'
 
 export interface ResolvedChat {
@@ -44,6 +52,8 @@ export interface ResolvedChat {
   model: string
   /** `agent` = an `agent_models` assignment for `promptKey` decided the config and/or model. */
   source: 'tenant' | 'platform' | 'agent'
+  /** The deployment pays for this call: the platform key, or the Workers AI binding. */
+  billedToPlatform: boolean
   /** `cfg.AGENT_MAX_OUTPUT_TOKENS` — the per-call `max_tokens` consumers pass. */
   maxOutputTokens: number
   configId?: string
@@ -64,6 +74,14 @@ export interface ResolvedDecisions {
   method: DecisionMethod
   /** `fallback` = no TypeSafe key anywhere, so the chat model answers (uncalibrated). */
   source: 'tenant' | 'platform' | 'fallback'
+  configId?: string
+}
+
+export interface ResolvedRerank {
+  client: RerankClient
+  provider: AiProvider
+  model: string
+  source: 'tenant' | 'platform'
   configId?: string
 }
 
@@ -207,6 +225,62 @@ export async function embeddingsClientFromRow(
   })
 }
 
+/**
+ * Build a reranker from ONE config row — the connection test probes through it. `workers_ai` is
+ * the binding (no key); every other provider is a Cohere-style `POST {base}/rerank` behind the
+ * row's bearer key, its dialect read from the base URL's host.
+ */
+export async function rerankClientFromRow(
+  row: AiConfigRow,
+  cfg: AppConfig,
+  env: AiEnv,
+  fetchImpl?: FetchLike
+): Promise<RerankClient> {
+  if (row.provider === 'workers_ai') {
+    return createWorkersAiRerankClient({ ai: env.AI, model: row.model })
+  }
+  return createRerankClient({
+    baseUrl: row.baseUrl,
+    model: row.model,
+    apiKey: await credentialOf(row, cfg),
+    fetch: fetchImpl,
+  })
+}
+
+/**
+ * The reranker knowledge search uses, or null — no reranking, the fused order stands, exactly as
+ * before rerank existed. Never throws for "not configured": reranking is an improvement, never a
+ * requirement. Order: the tenant's default `rerank` row → Workers AI's bge-reranker-base when the
+ * `AI` binding exists → null.
+ */
+export async function resolveRerank(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: Pick<ResolveOptions, 'fetch'> = {}
+): Promise<ResolvedRerank | null> {
+  const row = await findDefaultConfig(db, tenantId, 'rerank')
+  if (row) {
+    return {
+      client: await rerankClientFromRow(row, cfg, env, options.fetch),
+      provider: row.provider,
+      model: row.model,
+      source: 'tenant',
+      configId: row.id,
+    }
+  }
+  if (env.AI) {
+    return {
+      client: createWorkersAiRerankClient({ ai: env.AI }),
+      provider: 'workers_ai',
+      model: WORKERS_AI_RERANK_MODEL,
+      source: 'platform',
+    }
+  }
+  return null
+}
+
 /** Build a decisions client from ONE config row (TypeSafe) — the connection test probes through it. */
 export async function decisionsClientFromRow(
   row: AiConfigRow,
@@ -221,7 +295,7 @@ export async function decisionsClientFromRow(
 }
 
 /**
- * The client behind `ctx.decide` (D37). `fallbackSystem` is the resolved `agent-decide` prompt —
+ * The client behind `ctx.decide`. `fallbackSystem` is the resolved `agent-decide` prompt —
  * the caller resolves it (prompts are read through `resolvePrompt`, which this module does not
  * import) and it is used only when the chain lands on the chat model.
  */
@@ -230,11 +304,53 @@ export async function resolveDecisions(
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
-  options: ResolveOptions & {
-    fallbackSystem: SystemPrompt
-    /** Wraps the fallback's chat client — the runtime passes `traceChatClient` so its calls are spans. */
-    wrapChat?: (client: ChatClient, provider: AiProvider) => ChatClient
-  }
+  options: ResolveDecisionsOptions
+): Promise<ResolvedDecisions> {
+  if (decisionsOverride) return decisionsOverride(tenantId, options)
+  return resolveDecisionsFromConfig(db, cfg, env, tenantId, options)
+}
+
+/** What a test answers `resolveDecisions` with (`overrideResolveDecisionsForTests`). */
+export type ResolveDecisionsOverride = (
+  tenantId: string,
+  options: ResolveDecisionsOptions
+) => Promise<ResolvedDecisions>
+
+let decisionsOverride: ResolveDecisionsOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveDecisions` call from `fn` until it is reset with `null` —
+ * the decisions twin of `overrideResolveChatForTests`, reset by `tests/api-setup.ts` after every
+ * file. Nothing in `src/` calls it.
+ */
+export function overrideResolveDecisionsForTests(fn: ResolveDecisionsOverride | null): void {
+  decisionsOverride = fn
+}
+
+export type ResolveDecisionsOptions = ResolveOptions & {
+  fallbackSystem: SystemPrompt
+  /**
+   * The prompt key the chat fallback resolves its model on (`agent_models` pins apply) —
+   * `DECISIONS_FALLBACK_PROMPT_KEY` unless a caller has its own (knowledge facts: `knowledge-decide`).
+   */
+  fallbackPromptKey?: PromptKey
+  /**
+   * Wraps the fallback's chat client — the runtime traces and METERS it, so every call is a
+   * span and an `ai_usage` row. `chat` is the `agent-decide` resolution: whether THAT model is
+   * billed to the deployment, which need not match the agent's own chat model.
+   */
+  wrapChat?: (
+    client: ChatClient,
+    chat: { provider: AiProvider; billedToPlatform: boolean }
+  ) => ChatClient
+}
+
+async function resolveDecisionsFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveDecisionsOptions
 ): Promise<ResolvedDecisions> {
   const row = await findDefaultConfig(db, tenantId, 'decisions')
   if (row) {
@@ -256,13 +372,18 @@ export async function resolveDecisions(
       source: 'platform',
     }
   }
-  const chat = await resolveChat(db, cfg, env, tenantId, {
-    promptKey: DECISIONS_FALLBACK_PROMPT_KEY,
+  const chat = await resolveChatFromConfig(db, cfg, env, tenantId, {
+    promptKey: options.fallbackPromptKey ?? DECISIONS_FALLBACK_PROMPT_KEY,
     fetch: options.fetch,
   })
   return {
     client: createLlmDecisionClient({
-      chat: options.wrapChat ? options.wrapChat(chat.client, chat.provider) : chat.client,
+      chat: options.wrapChat
+        ? options.wrapChat(chat.client, {
+            provider: chat.provider,
+            billedToPlatform: chat.billedToPlatform,
+          })
+        : chat.client,
       system: options.fallbackSystem,
     }),
     provider: chat.provider,
@@ -273,12 +394,42 @@ export async function resolveDecisions(
   }
 }
 
+/** What a test answers `resolveChat` with (`overrideResolveChatForTests`). */
+export type ResolveChatOverride = (
+  tenantId: string,
+  options: ResolveOptions
+) => Promise<ResolvedChat>
+
+let chatOverride: ResolveChatOverride | null = null
+
+/**
+ * **Tests only.** Answers every `resolveChat` call from `fn` until it is reset with `null`, so a
+ * test can hand the code under test a fake chat client without `vi.mock`, and its file can share
+ * the `api` project's module registry. `tests/api-setup.ts` resets it after every file. Calls
+ * inside this module (the decisions fallback) still resolve for real, as they did under a mock.
+ * Nothing in `src/` calls it.
+ */
+export function overrideResolveChatForTests(fn: ResolveChatOverride | null): void {
+  chatOverride = fn
+}
+
 export async function resolveChat(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string,
   options: ResolveOptions = {}
+): Promise<ResolvedChat> {
+  if (chatOverride) return chatOverride(tenantId, options)
+  return resolveChatFromConfig(db, cfg, env, tenantId, options)
+}
+
+async function resolveChatFromConfig(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string,
+  options: ResolveOptions
 ): Promise<ResolvedChat> {
   const {
     assignment,
@@ -292,6 +443,7 @@ export async function resolveChat(
       provider: row.provider,
       model: override ?? row.model,
       source,
+      billedToPlatform: row.provider === 'workers_ai',
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
       configId: row.id,
     }
@@ -303,6 +455,7 @@ export async function resolveChat(
       provider: platform.provider,
       model: override ?? platform.model,
       source: assignment ? 'agent' : 'platform',
+      billedToPlatform: true,
       maxOutputTokens: cfg.AGENT_MAX_OUTPUT_TOKENS,
     }
   }
@@ -352,17 +505,102 @@ export async function resolveEmbeddings(
   throw new AiNotConfiguredError('embeddings')
 }
 
-/** What the three resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
+/** The platform embedder — never a tenant's row. */
+export interface ResolvedPlatformEmbeddings extends ResolvedEmbeddings {
+  source: 'platform'
+}
+
+/**
+ * The PLATFORM embeddings tier alone, never a tenant's row — for the tenant-less PLATFORM corpus
+ * (`documents.tenant_id` null: a plugin's user guide), whose vectors must come from ONE model
+ * whichever tenant writes or asks, or a query embedded by tenant A's provider is compared with
+ * passages embedded by another. Order: the operator's `EMBEDDINGS_API_KEY` (a deliberate choice)
+ * → the `AI` binding (Workers AI, zero key) → null. Null means platform documents can be neither
+ * written (`ingestPlatformDocument` refuses) nor searched semantically (`semantic: 'unavailable'`).
+ *
+ * The order is the reverse of `resolveEmbeddings`' platform fallback (binding first) on purpose:
+ * that one is a tenant's free floor, this one is an operator's corpus, and an operator who set a
+ * key meant it.
+ */
+export function resolvePlatformEmbeddings(
+  cfg: AppConfig,
+  env: AiEnv,
+  options: Pick<ResolveOptions, 'fetch'> = {}
+): ResolvedPlatformEmbeddings | null {
+  if (cfg.EMBEDDINGS_API_KEY) {
+    const model = DEFAULT_MODELS.openai
+    return {
+      client: createEmbeddingsClient({
+        provider: 'openai',
+        model,
+        apiKey: cfg.EMBEDDINGS_API_KEY,
+        fetch: options.fetch,
+      }),
+      provider: 'openai',
+      model,
+      source: 'platform',
+    }
+  }
+  if (env.AI) {
+    const model = DEFAULT_MODELS.workers_ai
+    return {
+      client: createEmbeddingsClient({ provider: 'workers_ai', model, ai: env.AI }),
+      provider: 'workers_ai',
+      model,
+      source: 'platform',
+    }
+  }
+  return null
+}
+
+/** What `resolveEmbeddings` would pick for a tenant whose default row is `row` — no client, no throw. */
+function embeddingsReadiness(
+  row: AiConfigRow | undefined,
+  cfg: AppConfig,
+  env: AiEnv
+): AiScopeReadiness {
+  if (row) return { ready: true, source: 'tenant', provider: row.provider, model: row.model }
+  if (env.AI) {
+    return {
+      ready: true,
+      source: 'platform',
+      provider: 'workers_ai',
+      model: DEFAULT_MODELS.workers_ai,
+    }
+  }
+  if (cfg.EMBEDDINGS_API_KEY) {
+    return { ready: true, source: 'platform', provider: 'openai', model: DEFAULT_MODELS.openai }
+  }
+  return { ready: false, source: 'none' }
+}
+
+/**
+ * The embeddings MODEL a tenant resolves to today, or null when none would — the same chain as
+ * `resolveEmbeddings`, without building a client or decrypting a key. What the stale-embeddings
+ * count compares chunks against, and what `routes/ai-config.ts` compares before and after a save.
+ */
+export async function resolveEmbeddingsModel(
+  db: Database,
+  cfg: AppConfig,
+  env: AiEnv,
+  tenantId: string
+): Promise<string | null> {
+  const row = await findDefaultConfig(db, tenantId, 'embeddings')
+  return embeddingsReadiness(row, cfg, env).model ?? null
+}
+
+/** What the four resolvers WOULD pick — no client is built, no credential decrypted, nothing thrown. */
 export async function readiness(
   db: Database,
   cfg: AppConfig,
   env: AiEnv,
   tenantId: string
 ): Promise<AiReadiness> {
-  const [chatRow, embRow, decisionsRow] = await Promise.all([
+  const [chatRow, embRow, decisionsRow, rerankRow] = await Promise.all([
     findDefaultConfig(db, tenantId, 'chat'),
     findDefaultConfig(db, tenantId, 'embeddings'),
     findDefaultConfig(db, tenantId, 'decisions'),
+    findDefaultConfig(db, tenantId, 'rerank'),
   ])
   const none: AiScopeReadiness = { ready: false, source: 'none' }
   const platform = platformChat(cfg, env)
@@ -371,18 +609,7 @@ export async function readiness(
     : platform
       ? { ready: true, source: 'platform', provider: platform.provider, model: platform.model }
       : none
-  const embeddings: AiScopeReadiness = embRow
-    ? { ready: true, source: 'tenant', provider: embRow.provider, model: embRow.model }
-    : env.AI
-      ? {
-          ready: true,
-          source: 'platform',
-          provider: 'workers_ai',
-          model: DEFAULT_MODELS.workers_ai,
-        }
-      : cfg.EMBEDDINGS_API_KEY
-        ? { ready: true, source: 'platform', provider: 'openai', model: DEFAULT_MODELS.openai }
-        : none
+  const embeddings = embeddingsReadiness(embRow, cfg, env)
   const decisions: AiScopeReadiness = decisionsRow
     ? { ready: true, source: 'tenant', provider: decisionsRow.provider, model: decisionsRow.model }
     : cfg.TYPESAFE_API_KEY
@@ -390,5 +617,10 @@ export async function readiness(
       : chat.ready
         ? { ready: true, source: 'fallback', provider: chat.provider, model: chat.model }
         : none
-  return { chat, embeddings, decisions }
+  const rerank: AiScopeReadiness = rerankRow
+    ? { ready: true, source: 'tenant', provider: rerankRow.provider, model: rerankRow.model }
+    : env.AI
+      ? { ready: true, source: 'platform', provider: 'workers_ai', model: WORKERS_AI_RERANK_MODEL }
+      : none
+  return { chat, embeddings, decisions, rerank }
 }

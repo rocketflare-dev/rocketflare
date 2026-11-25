@@ -1,5 +1,5 @@
 /**
- * Decisions (D37), the pure half: the shared contract and TypeSafe's confidence definitions, the
+ * Decisions, the pure half: the shared contract and TypeSafe's confidence definitions, the
  * TypeSafe client against an injected `fetch` (request shape, error mapping, the 429/529 retry,
  * the derived noul confidence, redaction), the LLM fallback's schema/normalisation, and the
  * `sift` / `pick` request builders and the questions fingerprint. No database, no network.

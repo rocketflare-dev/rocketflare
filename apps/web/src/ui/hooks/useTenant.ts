@@ -1,5 +1,5 @@
 /**
- * The active organisation (D13, D25): `GET/PATCH /api/tenant`, its settings, create (multi mode
+ * The active organisation: `GET/PATCH /api/tenant`, its settings, create (multi mode
  * only) and delete (owner, slug confirmation). Every mutation that changes what `/auth/session`
  * reports (name, slug, membership) also refreshes the session.
  *
@@ -75,7 +75,7 @@ export function useUpdateTenantSettings() {
   })
 }
 
-/** Multi mode only (D25): creates an org owned by the caller and switches into it. */
+/** Multi mode only: creates an org owned by the caller and switches into it. */
 export function useCreateTenant() {
   const { applySession, selectTenant } = useAuth()
   return useMutation({
@@ -97,7 +97,7 @@ export function useCreateTenant() {
   })
 }
 
-/** Owner only, multi mode only (D25). `confirm` must equal the slug. */
+/** Owner only, multi mode only. `confirm` must equal the slug. */
 export function useDeleteTenant() {
   const { refresh } = useAuth()
   return useMutation({

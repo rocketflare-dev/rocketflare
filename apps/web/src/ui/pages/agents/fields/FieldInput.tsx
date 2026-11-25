@@ -1,5 +1,5 @@
 /**
- * One form field, in the kit's closed set of five types (decision 7). The SAME renderer serves the
+ * One form field, in the closed set of five types. The SAME renderer serves the
  * `form` interrupt kind and the fallback run form for an agent with no hand-written entry, which is
  * what makes the fourth interrupt kind nearly free.
  *

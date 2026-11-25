@@ -5,14 +5,15 @@ name: Kit
 # copy's CI is ci.yml's one job; this file proves what only the kit can prove about itself:
 #
 #   kit-checks  the published plugin API is current, the vendored plugin audits clean, a behaviour
-#               change carries its porting note, `defaultPlugins` is well formed, the kit conforms
+#               change carries its porting note, the plugin lists are well formed, the kit conforms
 #               to the Launch kit contract (launch.kit.json, D36) — no database;
 #   renamed     the gate on the checkout renamed to a HYPHENATED slug, as every copy is born, and
 #               then provisioned as Launch's write_config does it, with the copy's own Launch kit
 #               check in both states;
-#   plugins     the gate with every `defaultPlugins` entry installed, and the WHOLE suite under
-#               `neon` — the backstop for the driver seam, which a copy's gate proves through the
-#               conformance pass alone (apps/web/src/db/CLAUDE.md).
+#   plugins     the gate with every CI plugin installed — `defaultPlugins` (empty) plus the
+#               canaries in .github/ci-plugins.json (analytics, opt-in for a clone) — and the WHOLE
+#               suite under `neon`, the backstop for the driver seam, which a copy's gate proves
+#               through the conformance pass alone (apps/web/src/db/CLAUDE.md).
 #
 # A required pull-request check through branch protection, never a deploy precondition: the kit
 # does not deploy (deploy.yml's guard says so and skips), and a deploy of a copy must not wait on a
@@ -26,19 +27,23 @@ concurrency:
   group: kit-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+permissions:
+  contents: read
+
 jobs:
   kit-checks:
     name: Kit checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       count: ${{ steps.plugins.outputs.count }}
-      ids: ${{ steps.plugins.outputs.ids }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0 # the porting-note check diffs against the base
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -75,12 +80,12 @@ jobs:
       - name: pnpm plugin check
         run: node scripts/plugin.mjs check
 
-      # What does a fresh clone install? `defaultPlugins` is a list of OBJECTS — `{ id, repo, ref?,
-      # subdir? }` — read and validated by ONE reader, which refuses a malformed entry with the
-      # reason. It always says what it found, including "none".
+      # What does CI install? `defaultPlugins` (what a fresh clone gets — empty) plus the canaries
+      # in .github/ci-plugins.json, each `{ id, repo, ref?, subdir? }`, read and validated by ONE
+      # reader, which refuses a malformed entry with the reason and always says what it found.
       - id: plugins
-        name: Default plugins
-        run: node scripts/default-plugins.mjs --github-output
+        name: CI plugins
+        run: node scripts/default-plugins.mjs --ci --github-output
 
   # Every app starts as a copy renamed by `scripts/rename.mjs`, and a hyphenated slug is where the
   # rename bites: the bare kit name becomes `my-app` while its snake form becomes `my_app`, so a
@@ -90,31 +95,49 @@ jobs:
   renamed:
     name: Gate on a renamed copy
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The rename rewrites the workspace package names, so the lockfile has to change here.
       - name: Rename the checkout to my-app
-        run: |
+        run: | # jactionlint ignore=unlocked-install
           set -euo pipefail
+          # The Launch fixture lives in tests/kit-only/, which the rename deletes; the provisioning
+          # step below still needs it, so it is kept outside the tree.
+          cp apps/web/tests/kit-only/fixtures/kit-fixture.mjs "$RUNNER_TEMP/kit-fixture.mjs"
           node scripts/rename.mjs my-app --domain example.com --force --skip-install
           # The rename's own install is frozen on a runner and the workspace names just changed.
           pnpm install --no-frozen-lockfile
           node scripts/plugin-api-doc.mjs
           pnpm lint:fix
-          for path in apps/web/tests/kit-only .github/workflows/kit.yml \
-                      .github/workflows/plugin-ci.yml .github/workflows/notify-plugins.yml; do
+          # Every kitOnly path, read from the manifest rather than listed twice.
+          for path in $(node -p 'require("./.rocketflare.json").kitOnly.map(g => g.replace(/\/\*\*$/, "")).join(" ")'); do
             if [ -e "$path" ]; then
               echo "::error::the renamed copy still carries $path (kitOnly)"
               exit 1
             fi
           done
+          if grep -nE 'changelog-nudge|release-site-nudge' .claude/settings.json; then
+            echo "::error::the renamed copy still registers the kit's maintainer hooks"
+            exit 1
+          fi
+          if node -e 'process.exit(require("./package.json").scripts["kit:release"] ? 0 : 1)'; then
+            echo "::error::the renamed copy still has the kit:release script"
+            exit 1
+          fi
+          if node -e 'process.exit("retiredSurfaces" in require("./.rocketflare.json") ? 0 : 1)'; then
+            echo "::error::the renamed copy still carries retiredSurfaces"
+            exit 1
+          fi
           if grep -n -- '--project kit-only' package.json apps/web/package.json; then
             echo "::error::the renamed copy still wires the kit-only vitest project"
             exit 1
@@ -145,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           node --input-type=module -e \
-            "const m = await import('./apps/web/tests/config/fixtures/kit-fixture.mjs'); console.log(m.provisionLikeLaunch('.'))"
+            "const m = await import(process.env.RUNNER_TEMP + '/kit-fixture.mjs'); console.log(m.provisionLikeLaunch('.'))"
           git diff --stat
           git add -A
           git -c user.name=ci -c user.email=ci@example.com -c commit.gpgsign=false \
@@ -156,16 +179,18 @@ jobs:
       - run: pnpm gate
 
   plugins:
-    name: Gate with default plugins, the whole suite under neon
+    name: Gate with the CI plugins, the whole suite under neon
     needs: kit-checks
     if: needs.kit-checks.outputs.count != '0'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -174,13 +199,13 @@ jobs:
       # (§16) — so `db:generate` after each install and one `db:migrate:ci` at the end is the whole
       # of it, exactly what a person does locally. Each `plugin add --apply` ends with
       # `pnpm plugin check` over the tree it wrote.
-      - name: Install the default plugins
+      - name: Install the CI plugins
         run: |
           set -euo pipefail
           # db:generate runs `dotenv -e .dev.vars`, so the file has to exist here as it does on a
           # laptop. Git-ignored, and it holds nothing secret: a throwaway local database URL.
           printf 'DATABASE_URL=postgresql://test:test@localhost:5433/rocketflare_test\n' > apps/web/.dev.vars
-          node scripts/default-plugins.mjs --tsv > "$RUNNER_TEMP/default-plugins.tsv"
+          node scripts/default-plugins.mjs --ci --tsv > "$RUNNER_TEMP/ci-plugins.tsv"
           while IFS=$'\t' read -r id repo ref subdir; do
             [ -n "$id" ] || continue
             spec="$repo"
@@ -201,7 +226,7 @@ jobs:
             ")
             pnpm db:generate --name "plugin-$id-$version"
             echo "::endgroup::"
-          done < "$RUNNER_TEMP/default-plugins.tsv"
+          done < "$RUNNER_TEMP/ci-plugins.tsv"
           # Staged, as an adopter commits an install: the source scanners read `git ls-files`.
           git add -A
       - name: Apply the generated migrations

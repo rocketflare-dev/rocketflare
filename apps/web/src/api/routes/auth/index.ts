@@ -1,5 +1,5 @@
 /**
- * `/auth` mount (D11, D14): static routes first, the generic `/:provider` router LAST so
+ * `/auth` mount: static routes first, the generic `/:provider` router LAST so
  * `/auth/session` is never mistaken for a provider. Rate limits (`authRateLimit`, 10/min/IP) sit
  * here on the login-shaped routes — never inside a handler.
  */

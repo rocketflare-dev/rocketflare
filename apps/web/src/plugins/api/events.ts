@@ -1,5 +1,5 @@
 /**
- * Realtime nudges, notifications, activity and Durable Objects (D8, D31).
+ * Realtime nudges, notifications, activity and Durable Objects.
  *
  * **"DB is the truth, WebSocket is a nudge."** Everything here sends an id and a family root, never
  * a payload: the client re-queries. A nudge carrying the row would broadcast one member's data to
@@ -50,7 +50,7 @@ export { notify, notifyMany, nudge, nudgeUser, nudgeUsers, realtimeEvent, record
 
 /**
  * A Durable Object stub for one tenant, **with the tenant prefix built here rather than by the
- * caller** (D31).
+ * caller**.
  *
  * This is the whole reason the method exists. `docs/CONCEPTS.md` §9 rejects Cloudflare's Agents SDK
  * partly because a DO's instance name is a client-supplied string, which converts tenant isolation

@@ -43,7 +43,7 @@ deliberate omissions with a reason).
 
 ### <a name="setup"></a> Setup
 
-Node 24 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker; macOS or Linux
+Node 26 (`.nvmrc`), pnpm 10 (`corepack enable` reads `packageManager`), Docker; macOS or Linux
 (Windows: WSL2). Then:
 
 ```bash
@@ -56,7 +56,8 @@ The bootstrap is [`SETUP.md`](SETUP.md) Part 1 as one re-runnable command — ev
 `✔ n/9` verification line; the numbered steps there are what it runs, for doing it by hand or
 debugging one step (`pnpm preflight` is the read-only check). No external credentials are needed:
 magic links are logged; chat, agents and embeddings run on Workers AI through a logged-in Cloudflare
-account, or answer 503 with `bash scripts/bootstrap.sh --offline` until a key exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
+account, or answer 503 with `bash scripts/bootstrap.sh --offline` (`DEV_WORKERS_AI=off` in `.dev.vars`; no
+tracked file changes) until a key exists. If you are working somewhere Docker cannot run, `pnpm web test:config` and
 `pnpm --filter @rocketflare/cli test` need no database; the `api`, `api-isolated` and `ui` projects do.
 
 ### <a name="repository-structure"></a> Repository structure
@@ -164,8 +165,12 @@ the approval. Enqueue email.send instead — the consumer retries with backoff.
 Maintainers only. `SETUP.md` 3.7 is the release dance every copy of the kit deploys with; the kit
 adds one step, because rocketflare.dev keeps its own copy of the release list.
 
-1. `pnpm kit:release X.Y.Z`, then `node scripts/release-check.mjs --tag X.Y.Z` and the gate.
-2. `git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
+1. `pnpm kit:release X.Y.Z`, then `node scripts/release-check.mjs --tag X.Y.Z` and the gate. If it
+   warns that the changes touch auth, tenancy/RLS, the identity or plugin seams or AI tool binding,
+   run a diff-scoped `standard` audit first (`/rf-security standard <previous>..HEAD`,
+   [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) "Cadence"); it is a warning, never a failure.
+2. `git add docs/upgrades/X.Y.Z.md && git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
+   The `git add` matters: `-a` stages only tracked files, and the porting note is a new one.
    The tag has to be annotated because tags are signed. The kit's `deploy.yml` skips deployment,
    since its tomls hold placeholders, and `notify-plugins.yml` pings the plugin repositories.
 3. **Update the site's changelog**, which never happens automatically. `rocketflare-www` stores

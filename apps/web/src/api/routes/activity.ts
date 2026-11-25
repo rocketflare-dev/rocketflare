@@ -1,5 +1,5 @@
 /**
- * `GET /api/activity` (D19): the tenant's activity feed, admin+, filterable by type / subject /
+ * `GET /api/activity`: the tenant's activity feed, admin+, filterable by type / subject /
  * time range, with the actor resolved.
  */
 import { activityListQuerySchema } from '@rocketflare/shared/activity'

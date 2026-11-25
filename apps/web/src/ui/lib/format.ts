@@ -1,4 +1,4 @@
-/** Date formatting for tables and cards (D13 — every timestamp on the wire is a `z.coerce.date`). */
+/** Date formatting for tables and cards (every timestamp on the wire is a `z.coerce.date`). */
 import { format, formatDistanceToNow } from 'date-fns'
 
 export function formatDate(value: Date | null | undefined, fallback = '—'): string {

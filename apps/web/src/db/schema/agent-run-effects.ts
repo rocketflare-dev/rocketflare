@@ -1,5 +1,5 @@
 /**
- * `agent_run_effects` — the durable-effect ledger for one agent run (D7). An agent wraps work that
+ * `agent_run_effects` — the durable-effect ledger for one agent run. An agent wraps work that
  * must not repeat in `ctx.once(key, fn)`; the result is recorded here under `(run_id, key)`, and a
  * later attempt of the same run reads the recorded value instead of doing the work again. The
  * `agent_run_effects_run_key_idx` UNIQUE index IS the guarantee — like

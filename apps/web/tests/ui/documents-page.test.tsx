@@ -1,11 +1,12 @@
 /**
- * `/documents` (D18): the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
+ * `/documents`: the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
  * with the shared schema and POSTs the exact body (then toasts and clears); the upload tab refuses
  * a wrong type or an oversized file before any request and POSTs the chosen file as multipart to
  * `/api/ai/documents/upload` with the optional title; the table shows status badges with the
  * failure reason, every title linking to the viewer, a download link only for uploaded originals,
  * and only offers delete on own rows
- * (any row for admin+). Search lives on `/search` (`search-page.test.tsx`).
+ * (any row for admin+); a failed row offers Retry (owner or admin+), which posts, re-reads the
+ * list and toasts only on an error. Search lives on `/search` (`search-page.test.tsx`).
  */
 import { DOCUMENT_UPLOAD_ACCEPT, INGEST_TEXT_MAX_CHARS } from '@rocketflare/shared/ai/embeddings'
 import { MAX_UPLOAD_BYTES } from '@rocketflare/shared/files'
@@ -14,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import DocumentsPage from '@/ui/pages/documents/DocumentsPage'
 import {
+  errorResponse,
   IDS,
   jsonResponse,
   makeSession,
@@ -57,7 +59,7 @@ const DOCS = paged([
     id: DOC_B,
     ownerUserId: IDS.otherUser,
     title: 'Release notes',
-    source: 'agent:summarize-text',
+    source: 'agent:fixture-agent',
     status: 'failed',
     error: 'Embeddings provider timed out',
     chunkCount: 0,
@@ -89,7 +91,10 @@ describe('Documents page', () => {
     const fetchMock = mount({
       'POST /api/ai/documents/ingest': (init: RequestInit | undefined) => {
         const body = JSON.parse(String(init?.body)) as { title: string; text: string }
-        return jsonResponse(doc({ title: body.title, sizeBytes: body.text.length }), 201)
+        return jsonResponse(
+          { ...doc({ title: body.title, sizeBytes: body.text.length }), deduplicated: false },
+          201
+        )
       },
     })
     const form = document.getElementById('ingest-form') as HTMLFormElement
@@ -109,7 +114,7 @@ describe('Documents page', () => {
       expect(requestBody(fetchMock, 'POST /api/ai/documents/ingest')).toEqual({
         title: 'Handbook',
         text: 'Twelve chars',
-        // D29: the default is tenant-wide, sent explicitly rather than left to the server.
+        // The default is tenant-wide, sent explicitly rather than left to the server.
         visibility: 'tenant',
         groupIds: [],
       })
@@ -136,6 +141,7 @@ describe('Documents page', () => {
             fileId: FILE_ID,
             status: 'pending',
             chunkCount: 0,
+            deduplicated: false,
           }),
           201
         )
@@ -148,7 +154,9 @@ describe('Documents page', () => {
 
     const pdf = new File([new Uint8Array([1, 2, 3])], 'report.pdf', { type: 'application/pdf' })
     fireEvent.change(input, { target: { files: [pdf] } })
-    expect(screen.getByText('report.pdf')).toBeInTheDocument()
+    // Scoped to the form: the table's `report.pdf` row may already have rendered.
+    const form = document.getElementById('upload-form') as HTMLElement
+    expect(within(form).getByText('report.pdf')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Q3 report' } })
     fireEvent.click(screen.getByRole('button', { name: 'Upload document' }))
 
@@ -247,5 +255,63 @@ describe('Documents page', () => {
         )
       ).toBe(true)
     )
+  })
+
+  it('Retry posts a failed row back, re-reads the list and toasts nothing on success', async () => {
+    let lists = 0
+    const fetchMock = mount({
+      '/api/ai/documents': () => {
+        lists++
+        return DOCS
+      },
+      [`POST /api/ai/documents/${DOC_B}/retry`]: jsonResponse(
+        {
+          ...DOCS.items[1],
+          status: 'pending',
+          error: null,
+          job: 'document.index',
+        },
+        202
+      ),
+    })
+    await screen.findByRole('table', { name: 'Documents' })
+    // Only the failed row has one.
+    expect(screen.queryByRole('button', { name: 'Retry Onboarding guide' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry Quarterly report' })).not.toBeInTheDocument()
+    const listsBefore = lists
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Release notes' }))
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([input, init]) =>
+            String(input).endsWith(`/api/ai/documents/${DOC_B}/retry`) && init?.method === 'POST'
+        )
+      ).toBe(true)
+    )
+    await waitFor(() => expect(lists).toBeGreaterThan(listsBefore))
+    expect(useToastStore.getState().toasts).toEqual([])
+  })
+
+  it('a refused Retry is an error toast', async () => {
+    mount({
+      [`POST /api/ai/documents/${DOC_B}/retry`]: errorResponse(
+        409,
+        'This document is pending, not failed',
+        'document_not_failed'
+      ),
+    })
+    await screen.findByRole('table', { name: 'Documents' })
+    fireEvent.click(screen.getByRole('button', { name: 'Retry Release notes' }))
+    await waitFor(() =>
+      expect(useToastStore.getState().toasts).toEqual([
+        expect.objectContaining({ message: 'This document is pending, not failed', type: 'error' }),
+      ])
+    )
+  })
+
+  it('a member sees no Retry on someone else’s failed document', async () => {
+    mount({}, makeSession({ tenant: makeTenant({ role: 'member' }) }))
+    await screen.findByRole('table', { name: 'Documents' })
+    expect(screen.queryByRole('button', { name: 'Retry Release notes' })).not.toBeInTheDocument()
   })
 })

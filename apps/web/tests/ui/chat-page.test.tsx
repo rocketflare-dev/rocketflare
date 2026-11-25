@@ -1,13 +1,13 @@
 /**
- * `/chat/:conversationId` (D17): send → AG-UI frames → the assistant bubble accumulates deltas and
+ * `/chat/:conversationId`: send → AG-UI frames → the assistant bubble accumulates deltas and
  * shows the usage footnote; Shift+Enter does not send; Stop aborts the stream (a cancelled run
  * emits NO terminal event, and that must not read as an error); a 503 `ai_not_configured` renders
  * the configure call to action (admins) or the "ask an admin" copy.
  */
 import { AguiEventType, KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import type { Message } from '@rocketflare/shared/ai/chat'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
+import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ChatPage from '@/ui/pages/chat/ChatPage'
 import {
@@ -52,6 +52,7 @@ const READY = {
   chat: { ready: true, source: 'tenant', provider: 'anthropic', model: 'claude-sonnet-4-5' },
   embeddings: { ready: false, source: 'none' },
   decisions: { ready: false, source: 'none' },
+  rerank: { ready: false, source: 'none' },
 }
 
 function mount(routes: RouteTable, session = makeSession()) {
@@ -191,6 +192,92 @@ describe('Chat page', () => {
     )
   })
 
+  it('shows an entity card for the facts lookup_facts used — only with knowledge facts on', async () => {
+    const DOC = '55555555-5555-4555-8555-555555555555'
+    const ENTITY = '99999999-9999-4999-8999-999999999999'
+    const fact = (over: Record<string, unknown>) => ({
+      factId: '77777777-7777-4777-8777-777777777777',
+      entity: { kind: 'staging', type: 'customer', id: ENTITY, name: 'Harbour View Dental' },
+      key: 'monthly_fee_gbp',
+      value: 285,
+      valueText: '285',
+      state: 'conflicting',
+      preferred: false,
+      conflictsWith: [],
+      sourceKind: 'upload',
+      documentId: DOC,
+      documentTitle: 'Contract',
+      quote: '£285',
+      validFrom: null,
+      validTo: null,
+      observedAt: now,
+      ...over,
+    })
+    const lookup = JSON.stringify({
+      entities: [
+        {
+          entity: { kind: 'staging', type: 'customer', id: ENTITY, name: 'Harbour View Dental' },
+          facts: [
+            fact({}),
+            fact({ factId: '78787878-7878-4787-8787-787878787878', valueText: '310' }),
+          ],
+        },
+      ],
+      note: 'Two sources disagree.',
+    })
+    const thread = {
+      ...conversation,
+      messages: [
+        {
+          id: ASSISTANT_ID,
+          conversationId: CONV,
+          role: 'assistant',
+          content: 'Either £285 or £310.',
+          toolCalls: [{ id: 'c1', name: 'lookup_facts', input: {}, result: lookup }],
+          createdAt: now,
+        },
+      ],
+    }
+    const on = makeSession({ features: ['knowledge-facts'] })
+
+    // Streaming: the card arrives as `CUSTOM kit.entity`, derived by the server's own mapper.
+    const hanging = hangingSseResponse(
+      run({
+        unterminated: true,
+        text: ['Either.'],
+        tools: [{ id: 'c1', name: 'lookup_facts', result: lookup }],
+      })
+    )
+    mount(
+      {
+        [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
+        [`POST /api/chat/conversations/${CONV}/messages`]: () => hanging.response,
+      },
+      on
+    )
+    await typeAndSend('What does Harbour View pay?')
+    const link = await screen.findByRole('link', { name: 'Harbour View Dental' })
+    expect(link).toHaveAttribute('href', `/knowledge/entities/customer/${ENTITY}`)
+    expect(screen.getByText('Looking up facts')).toBeInTheDocument()
+    expect(screen.getAllByText('Conflicting')).toHaveLength(2)
+
+    // Reloaded: the same card from the persisted `toolCalls`.
+    cleanup()
+    vi.unstubAllGlobals()
+    mount({ [`/api/chat/conversations/${CONV}`]: thread }, on)
+    expect(await screen.findByRole('link', { name: 'Harbour View Dental' })).toHaveAttribute(
+      'href',
+      `/knowledge/entities/customer/${ENTITY}`
+    )
+
+    // Flag off: the same thread shows no card (it would link to a page that 404s).
+    cleanup()
+    vi.unstubAllGlobals()
+    mount({ [`/api/chat/conversations/${CONV}`]: thread })
+    expect(await screen.findByText('Either £285 or £310.')).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Harbour View Dental' })).not.toBeInTheDocument()
+  })
+
   it('renders a kit notice as a quiet line, not an error', async () => {
     mount({
       [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
@@ -257,6 +344,7 @@ describe('Chat page', () => {
           chat: { ready: false, source: 'none' },
           embeddings: { ready: false, source: 'none' },
           decisions: { ready: false, source: 'none' },
+          rerank: { ready: false, source: 'none' },
         },
         [`/api/chat/conversations/${CONV}`]: { ...conversation, messages: [] },
       },

@@ -1,8 +1,8 @@
 /**
- * CLI config (D26): `~/.rocketflare/config.json` (dir 0700, file 0600) holding the server URL, API key,
+ * CLI config: `~/.rocketflare/config.json` (dir 0700, file 0600) holding the server URL, API key,
  * active tenant and the signed-in user. Env overrides for CI: `ROCKETFLARE_API_KEY`, `ROCKETFLARE_URL`, and
- * `ROCKETFLARE_CONFIG_DIR` to relocate the directory. ADAPTING renames the `ROCKETFLARE_` prefix and `.rocketflare` dir
- * here — these constants are the only place they live.
+ * `ROCKETFLARE_CONFIG_DIR` to relocate the directory. The env prefix and config dir name live only in
+ * these constants.
  */
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
@@ -12,7 +12,7 @@ import { z } from 'zod'
 export const ENV_PREFIX = 'ROCKETFLARE'
 export const CONFIG_DIR_NAME = '.rocketflare'
 export const CONFIG_FILE_NAME = 'config.json'
-/** The kit's local `wrangler dev` port; a real app sets its production URL here. */
+/** The local `wrangler dev` port; a real app sets its production URL here. */
 export const DEFAULT_SERVER_URL = 'http://localhost:3001'
 
 export const ENV = {
@@ -49,6 +49,12 @@ export interface ResolvedConfig {
   tenantId?: string
   tenantName?: string
   user?: CliConfig['user']
+  /**
+   * The environment's key or URL is used although `login` saved a different one — a stale export
+   * (a dev shell's env script, say) silently pointing every command somewhere else. The saved
+   * server, for the warning that names it.
+   */
+  envOverridesLogin?: { savedServerUrl?: string }
 }
 
 export interface ConfigStore {
@@ -131,11 +137,17 @@ export function createConfigStore(options: { dir?: string; env?: Env } = {}): Co
         : config.apiKey
           ? [config.apiKey, 'config']
           : [undefined, 'none']
+      const overridesLogin =
+        (apiKeySource === 'env' && config.apiKey !== undefined && config.apiKey !== envKey) ||
+        (serverUrlSource === 'env' &&
+          config.serverUrl !== undefined &&
+          config.serverUrl.replace(/\/+$/, '') !== serverUrl.replace(/\/+$/, ''))
       return {
         serverUrl: serverUrl.replace(/\/+$/, ''),
         serverUrlSource,
         apiKey,
         apiKeySource,
+        ...(overridesLogin ? { envOverridesLogin: { savedServerUrl: config.serverUrl } } : {}),
         tenantId: config.tenantId,
         tenantName: config.tenantName,
         user: config.user,

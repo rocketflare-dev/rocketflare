@@ -1,5 +1,5 @@
 /**
- * `summarize-text`'s answer (D7, D17, D18): the summary as Markdown, its key points, and a link to
+ * `summarize-text`'s answer: the summary as Markdown, its key points, and a link to
  * the indexed document when the run was asked to store it. Parsed with the SAME
  * `summarizeTextOutputSchema` the runtime validated the output against.
  */
@@ -7,7 +7,7 @@ import { DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { type SummarizeTextOutput, summarizeTextOutputSchema } from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { documentPath } from '@rocketflare/shared/ai/embeddings'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import type { AgentOutput, AgentOutputProps } from './types'
 

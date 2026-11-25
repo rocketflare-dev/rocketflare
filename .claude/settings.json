@@ -3,6 +3,16 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|Grep|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -e \"$HOME/.rocketflare/security-runs/.active\" || exit 0; node \"$CLAUDE_PROJECT_DIR/.claude/skills/rf-security/tools/guard-hook.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {

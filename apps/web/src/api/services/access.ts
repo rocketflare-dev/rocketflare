@@ -1,11 +1,11 @@
 /**
- * Resource visibility (D29) — the ONE place "who may read this row" is expressed as SQL.
+ * Resource visibility — the ONE place "who may read this row" is expressed as SQL.
  *
- * The kit never uses CASL conditions: an ability answers "may this role do this KIND of thing",
+ * The app never uses CASL conditions: an ability answers "may this role do this KIND of thing",
  * and "is this particular row yours" is always a predicate in the query. Groups follow that rule
  * exactly — `visibleDocuments(scope)` returns a `SQL` fragment that is **ANDed with the tenant
  * predicate and never replaces it**, and an installed plugin contributes its own the same way
- * through `ServerPlugin.visibilityResources` (D31; the analytics plugin's dashboards are one).
+ * through `ServerPlugin.visibilityResources` (the analytics plugin's dashboards are one).
  *
  * The predicate reads: the resource is tenant-wide, OR the reader owns it, OR the reader is in one
  * of the groups it was shared with. `bypass` (admin, owner, support, global admin) drops the
@@ -52,7 +52,7 @@ export function visibleDocuments(scope: AccessScope): SQL | undefined {
   return sql`(${documents.visibility} = 'tenant' or ${owned} or ${shared})`
 }
 
-// ---- The registry of restrictable resources (D29, D31) -----------------------------------------
+// ---- The registry of restrictable resources -----------------------------------------
 
 export interface SetResourceGroupsInput {
   visibility: ResourceVisibility
@@ -70,13 +70,13 @@ export interface ResourceGrantRow {
 /**
  * What it takes to be a resource a group can restrict.
  *
- * This was a two-value union and an `if (kind === 'document')` in three places. A plugin (D31) may
+ * This was a two-value union and an `if (kind === 'document')` in three places. A plugin may
  * own restrictable rows of its own, and the host cannot know its tables — so the four behaviours
  * became a registry entry the owner supplies, rather than metadata the host interprets. Behaviour,
  * not columns, is deliberate: drizzle's types only hold for a concrete table, and a registry of
  * generic `PgTable`s would have to cast away exactly the checking that makes these queries safe.
  *
- * The rules a new entry must keep are the kit's existing ones: `predicate` is ANDed with the tenant
+ * The rules a new entry must keep are the existing ones: `predicate` is ANDed with the tenant
  * predicate and NEVER replaces it, it returns `undefined` for an admin-level scope, and
  * `visibility` is a COLUMN — an empty grant list under `groups` means owner-and-admins-only, never
  * "everyone".
@@ -150,7 +150,7 @@ const documentVisibility: VisibilityResource = {
 export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [documentVisibility]
 
 /**
- * The kit's restrictable resources plus every installed plugin's (D31).
+ * The built-in restrictable resources plus every installed plugin's.
  *
  * **A function, memoised — not a const.** A plugin's visibility resource sits in a module that
  * imports this one (for `sharedWithMyGroups`, for typed route helpers, for anything), so this
@@ -285,6 +285,6 @@ export async function grantsForResources(
 /**
  * Re-exported so every existing importer of `services/access` is unchanged. The definitions now
  * live in the LEAF `./access-sql`, because this module reads the plugin barrel: anything an
- * installed plugin needs at module scope has to come from a file that does not (D31).
+ * installed plugin needs at module scope has to come from a file that does not.
  */
 export { type AccessScope, sharedWithMyGroups } from './access-sql'

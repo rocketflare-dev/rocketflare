@@ -1,5 +1,5 @@
 /**
- * `email.send` (D7): deliver a pre-rendered email through `services/email.ts`. A provider
+ * `email.send`: deliver a pre-rendered email through `services/email.ts`. A provider
  * failure is thrown so the consumer retries with backoff; the "no RESEND_API_KEY" dev fallback is
  * a successful outcome (logged, `delivered: false`, no error) and is acked.
  */

@@ -6,7 +6,7 @@
 import path from 'node:path'
 import { defineConfig } from 'vitest/config'
 
-const web = path.resolve(__dirname, '../web')
+const web = path.resolve(import.meta.dirname, '../web')
 
 export default defineConfig({
   resolve: {

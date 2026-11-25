@@ -1,12 +1,12 @@
 /**
- * The CLI plugin barrel (D31) — ONE line per installed plugin, written by
+ * The CLI plugin barrel — ONE line per installed plugin, written by
  * `pnpm plugin add|remove`, never by hand:
  *
  *     import { approvalsCli } from './approvals'
  *     export const CLI_PLUGINS = [approvalsCli] as const satisfies readonly AnyCliPlugin[]
  *
- * `cli.ts` loops over `cliPlugins` and calls `register(program, action)` once each, after the kit's
- * own commands, so `rocketflare --help` lists them together.
+ * `cli.ts` loops over `cliPlugins` and calls `register(program, action)` once each, after the
+ * built-in commands, so `rocketflare --help` lists them together.
  */
 import { exampleFeatureCli } from './example-feature'
 import type { AnyCliPlugin } from './types'

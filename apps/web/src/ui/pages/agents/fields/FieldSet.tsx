@@ -1,6 +1,6 @@
 /**
  * A list of {@link FieldInput}s over one draft object. The caller owns the draft and the schema;
- * this maps issues onto fields by their first path segment, the same way every other kit form does.
+ * this maps issues onto fields by their first path segment, the same way every other form does.
  */
 import type { FormField } from '@rocketflare/shared/ai/interrupts'
 import type { Issue } from '../issues'

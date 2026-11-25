@@ -1,7 +1,8 @@
 /**
- * Transactional email over Resend's REST API via `fetch` (no SDK) — D16 zero-creds rule: when
- * `RESEND_API_KEY` is absent nothing is sent, the message (and its link) is logged at `info` so
- * every flow still works locally, and the result says `delivered: false`. Templates share one
+ * Transactional email over Resend's REST API via `fetch` (no SDK) — the zero-creds rule: when
+ * `RESEND_API_KEY` is absent nothing is sent, the message (and, except when `APP_ENV` is
+ * `production`, its link) is logged at `info` so every flow still works locally, and the result
+ * says `delivered: false`. Templates share one
  * plain, brandable shell driven by `APP_NAME`.
  */
 import type { AppConfig } from '../../config'
@@ -32,18 +33,19 @@ export async function sendEmail(
   message: EmailMessage
 ): Promise<EmailResult> {
   if (!cfg.RESEND_API_KEY) {
+    const link = cfg.APP_ENV === 'production' ? undefined : message.link
     logger.info(
-      { to: message.to, subject: message.subject, link: message.link },
-      `[email:dev] To: ${message.to} Subject: ${message.subject}${message.link ? ` Link: ${message.link}` : ''}`
+      { to: message.to, subject: message.subject, link },
+      `[email:dev] To: ${message.to} Subject: ${message.subject}${link ? ` Link: ${link}` : ''}`
     )
-    if (message.link) {
+    if (link) {
       // Deliberately loud: this is how a developer without an email provider signs in.
       logger.info(
-        `\n==================== [email:dev] ${message.subject} ====================\n${message.link}\n=========================================================================\n`
+        `\n==================== [email:dev] ${message.subject} ====================\n${link}\n=========================================================================\n`
       )
     }
     if (cfg.APP_ENV === 'production') {
-      logger.warn('RESEND_API_KEY is not set — emails are logged, not delivered')
+      logger.warn('RESEND_API_KEY is not set — emails are not delivered')
     }
     return { delivered: false }
   }
@@ -125,6 +127,32 @@ ${button(verifyUrl, `Sign in to ${cfg.APP_NAME}`)}
     html: emailShell(cfg, subject, body),
     text: `Sign in to ${cfg.APP_NAME}: ${verifyUrl}\n\nThis link expires in 15 minutes. If you did not request it, ignore this email.`,
     link: verifyUrl,
+  }
+}
+
+/**
+ * Sent INSTEAD of a magic link when the address's domain requires single sign-on
+ * (`ServerPlugin.ssoPolicy`). It carries no token — only a link to the login page with the SSO
+ * method preselected — so it is worth nothing to anybody who intercepts it.
+ */
+export function ssoRequiredEmail(
+  cfg: AppConfig,
+  to: string,
+  loginUrl: string,
+  connectionLabel?: string
+): EmailMessage {
+  const subject = `Sign in to ${cfg.APP_NAME} with single sign-on`
+  const via = connectionLabel ? ` through ${connectionLabel}` : ''
+  const body = `<h1 style="margin:0 0 16px;font-size:22px;">Use single sign-on</h1>
+<p>Your organisation requires you to sign in to ${escapeHtml(cfg.APP_NAME)} with single sign-on${escapeHtml(via)}, so we did not send a sign-in link.</p>
+${button(loginUrl, 'Sign in with single sign-on')}
+<p style="font-size:13px;color:${palette.muted};">If you did not request this email you can ignore it.</p>`
+  return {
+    to,
+    subject,
+    html: emailShell(cfg, subject, body),
+    text: `Your organisation requires you to sign in to ${cfg.APP_NAME} with single sign-on${via}, so we did not send a sign-in link.\n\nSign in: ${loginUrl}\n\nIf you did not request this email, ignore it.`,
+    link: loginUrl,
   }
 }
 

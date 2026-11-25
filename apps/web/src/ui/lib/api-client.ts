@@ -8,7 +8,7 @@
  * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@rocketflare/shared/errors`)
  * - Optional zod `schema` validates the response body
  * - `api.upload(url, formData)` posts multipart (no JSON content-type; the browser sets the boundary)
- * - 401 → the registered unauthorized handler (D20). Phase 1 wires it to
+ * - 401 → the registered unauthorized handler. `AuthProvider` wires it to
  *   `queryClient.clear()` + redirect to `/login?returnUrl=…`.
  */
 
@@ -65,7 +65,7 @@ let unauthorizedPending = false
 
 /**
  * Register the global 401 handler. One handler; the last registration wins. Pass `null` to
- * remove it. Phase 1 calls this from `AuthProvider` with the redirect-to-login behaviour.
+ * remove it. `AuthProvider` calls this with the redirect-to-login behaviour.
  */
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   unauthorizedHandler = handler
@@ -100,7 +100,7 @@ export interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'
    * Zod schema to validate the response against; throws a descriptive Error on mismatch.
    * Input is `unknown` so schemas with `.transform()`/`.default()` still infer `T`.
    */
-  schema?: z.ZodType<T, z.ZodTypeDef, unknown>
+  schema?: z.ZodType<T, unknown>
 }
 
 /**
@@ -229,7 +229,7 @@ export const api = {
       ...options,
     })
   },
-  /** `POST` a `FormData` body (file uploads, D23). Same envelope/schema handling as the rest. */
+  /** `POST` a `FormData` body (file uploads). Same envelope/schema handling as the rest. */
   upload<T>(url: string, form: FormData, options?: ApiRequestOptions<T>): Promise<T> {
     return request<T>(url, { method: 'POST', body: form, showErrorToast: true, ...options })
   },

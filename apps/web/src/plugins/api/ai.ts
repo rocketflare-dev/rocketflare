@@ -1,12 +1,12 @@
 /**
- * Agent tools and agents, as a plugin writes them (D7, D17, D31).
+ * Agent tools and agents, as a plugin writes them.
  *
- * `AgentCtx` is derived from the kit's own `AgentContext` (`services/agents/registry.ts`) and from
+ * `AgentCtx` is derived from the core `AgentContext` (`services/agents/registry.ts`) and from
  * what agents demonstrably use, and nothing speculative is added beyond that. It was first widened
  * for a plugin that holds a conversation with a person (`interrupt`, `chatModel`): widen it again
  * when a plugin exists to widen it for.
  *
- * Two rules carry over from the kit and matter more inside a plugin, because a plugin's author is
+ * Two core rules carry over and matter more inside a plugin, because a plugin's author is
  * further from the runtime that enforces them:
  *
  * - **A tool is bound to the RUN, never to the model.** The tenant comes from `ctx.scope`, which
@@ -16,13 +16,15 @@
  * - **A dead end is still information.** A tool that answers only "nothing found" makes a model
  *   invent. Answer with an `error`/`hint` it can act on, and where it helps, what DOES exist.
  *
- * This module names `services/agents/**` and `services/ai/kit`, which live inside the deletable
+ * This module names `services/agents/**` and `services/ai/agent-loop`, which live inside the deletable
  * `feature-agents` surface — the same dependency `plugins/types.ts` already carries and for the
  * same reason: the real types are what make a registration an exhaustiveness check rather than a
  * shape a plugin can get subtly wrong.
  */
 
+import type { AgentKey } from '@rocketflare/shared/ai/agents'
 import type { AiProvider } from '@rocketflare/shared/ai/config'
+import type { PromptKey } from '@rocketflare/shared/ai/prompts'
 import type { AccessScope } from '../../api/services/access-sql'
 import type { AgentDecide } from '../../api/services/agents/decisions'
 import type {
@@ -31,19 +33,24 @@ import type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-import type { AgentToolContext } from '../../api/services/agents/tools'
-import { AiNotConfiguredError } from '../../api/services/ai/errors'
+import type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
+import { noRequesterUrls } from '../../api/services/agents/tools/requester-urls'
 import type {
   CallStructuredToolOptions,
   RunToolLoopOptions,
   Tool,
   ToolLoopResult,
-} from '../../api/services/ai/kit'
-import { callStructuredTool, runToolLoop, toolInputSchema } from '../../api/services/ai/kit'
+} from '../../api/services/ai/agent-loop'
+import { callStructuredTool, runToolLoop, toolInputSchema } from '../../api/services/ai/agent-loop'
+import { AiNotConfiguredError } from '../../api/services/ai/errors'
 import { recordUsage } from '../../api/services/ai/usage'
+import type { TenantEmit } from '../../api/services/events/types'
+import { tenantFeatures } from '../../api/services/features'
 import type { StorageService } from '../../api/services/storage'
+import type { AbilityCheck } from './auth'
+import { tenantEmitter } from './emit'
 import { filesStorage } from './storage'
-import type { Database, PluginBindings, PluginConfig } from './types'
+import type { Database, PluginBindings, PluginConfig, PluginContext } from './types'
 
 export type {
   AgentDecide,
@@ -59,24 +66,35 @@ export type {
   AgentInterruptAnswer,
   AgentInterruptAsk,
 } from '../../api/services/agents/registry'
-export type { AgentToolContext } from '../../api/services/agents/tools'
+export type { AgentToolContext, ToolRequester } from '../../api/services/agents/tools'
 export type {
+  McpToolAnnotations,
+  McpToolScope,
   Tool,
   ToolApproval,
   ToolLoopCheckpoint,
   ToolLoopResult,
-} from '../../api/services/ai/kit'
+  ToolMcpOptions,
+  ToolSurface,
+} from '../../api/services/ai/agent-loop'
+/**
+ * The retrieval primitives, for a plugin that searches a corpus of its own the way the kit
+ * searches `chunks`: `anyTermTsquery` (the lexical half's ANY-word tsquery), `candidatePoolSize`
+ * ("retrieve wide, fuse narrow") and `fuseByRank` (Reciprocal Rank Fusion, `k = 60`). Pure.
+ */
+export type { FusedItem } from '../../api/services/ai/fusion'
+export { anyTermTsquery, candidatePoolSize, fuseByRank } from '../../api/services/ai/fusion'
 /** A tool whose input schema failed to convert is a tool the model cannot see — fail loudly. */
 /** Ledger one model call (`ai_usage`). `feature` is `<plugin id>:<what>` or `agent:<key>`. */
 /** 503 `ai_not_configured` — throw it BEFORE any row is written or any stream opens. */
 export { AiNotConfiguredError, recordUsage, toolInputSchema }
 
 /**
- * What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the
+ * What `ServerPlugin.tools(ctx)` is handed, spelled as the plugin surface rather than as the
  * runtime's internal shape.
  *
  * `scope` and not `tenantId`: the scope carries the tenant AND what this particular requester may
- * read (D29). Passing it to a query is how a plugin's tool answers the same rows the person who
+ * read. Passing it to a query is how a plugin's tool answers the same rows the person who
  * started the run would see, rather than everything in the organisation.
  */
 export interface ToolCtx {
@@ -86,17 +104,54 @@ export interface ToolCtx {
   scope: AccessScope
   /** The run's tenant — `scope.tenantId`, surfaced because every query needs it. */
   tenantId: string
+  /**
+   * Does the requester hold this CASL grant now? Offer a tool that writes only when they hold your
+   * subject's manage (`ctx.can('manage', MY_SUBJECT)`) — never decide that from `scope.bypass`,
+   * which is the row-visibility flag and is true for roles your grants treat as read-only. A run
+   * with no requester holds nothing.
+   */
+  can: AbilityCheck
   /** The CALLER's budget for one document window, in characters. An agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number
+  /**
+   * The http(s) URLs the person behind this call wrote themselves, normalised with `new URL()` and
+   * no fragment: the chat person's own messages, or an agent run's input when a person submitted it
+   * through the API. Never text from a tool result, a page, a document, an email, the model, or a run
+   * a plugin or event started (empty there). A tool that fetches the web reads a URL only when it is
+   * in here or its own search returned it — compare `new URL(x)` with its hash cleared, `toString()`.
+   */
+  requesterUrls: ReadonlySet<string>
   /**
    * R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other
    * context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin id>/…`;
    * the tenant is the RUN's, never one the model named.
    */
   storage(): StorageService
+  /**
+   * The feature keys the run's organisation has — what `ctx.features(tenantId)` answers in a job.
+   * A plugin whose tool belongs to a flagged surface returns `[]` when the flag is off, so a dark
+   * feature costs no prompt tokens and the model never sees a tool it could only fail with.
+   */
+  features(): Promise<readonly string[]>
+  /**
+   * The person behind this call — their role, the admin-level flag (owner, admin, support or a
+   * global admin) and their groups with each group's TYPE name — or `null` for a run nobody
+   * started. Their own facts, already resolved by the caller; use them to SCOPE (a semantic
+   * layer's security context), and gate on `can` rather than on `role`.
+   */
+  requester: ToolRequester | null
 }
 
-/** Adapt the runtime's tool context. The only place a plugin's tools name a kit internal. */
+/** One lazy read, shared by every call of the returned function. */
+function once<T>(read: () => Promise<T>): () => Promise<T> {
+  let value: Promise<T> | undefined
+  return () => {
+    value ??= read()
+    return value
+  }
+}
+
+/** Adapt the runtime's tool context. The only place a plugin's tools name a core internal. */
 export function toolCtx(ctx: AgentToolContext): ToolCtx {
   return {
     db: ctx.db,
@@ -104,18 +159,30 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
     env: ctx.env as PluginBindings,
     scope: ctx.scope,
     tenantId: ctx.scope.tenantId,
+    can: ctx.can ?? (() => false),
     ...(ctx.maxDocumentChars !== undefined && { maxDocumentChars: ctx.maxDocumentChars }),
+    requesterUrls: ctx.requesterUrls ?? noRequesterUrls(),
     storage: () => filesStorage(ctx.env as PluginBindings),
+    // The caller's resolved flags when it has them (chat, MCP); otherwise the tenant's, read once.
+    features: ctx.features
+      ? async () => ctx.features as readonly string[]
+      : once(() => tenantFeatures(ctx.db, ctx.cfg, ctx.scope.tenantId)),
+    requester: ctx.requester ?? null,
   }
 }
 
 /**
  * Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of
- * the `Tool` type from a kit path — but it is also where the two rules in this file's header can
+ * the `Tool` type from a core path — but it is also where the two rules in this file's header can
  * be stated where somebody is looking.
  *
  * A tool with **no handler is TERMINAL**: its validated input is the agent's answer, and the loop
  * stops when the model calls it.
+ *
+ * **Where it is offered**: `surfaces` (`'chat' | 'agents' | 'mcp'`, absent = all). On the MCP
+ * server a tool needs a handler and no approval gate, and `mcp` shapes how a client sees it:
+ * `scope` (`mcp:read`, or `mcp:write` for a `sideEffects` tool), `annotations` (defaulted from
+ * `sideEffects`/`durable`), `title`, `outputSchema`. Whether a tenant exposes it is the tenant's.
  */
 export function defineTool<Input>(tool: Tool<Input>): Tool<Input> {
   return tool
@@ -142,7 +209,7 @@ export interface AgentCtx<Input = unknown> {
   userId: string | null
   /** Already validated against the agent's own `inputSchema`, twice: at enqueue and before `run()`. */
   input: Input
-  /** The kit's knowledge tools plus every installed plugin's, bound to this run's scope. */
+  /** The built-in knowledge tools plus every installed plugin's, bound to this run's scope. */
   tools: Tool[]
   /**
    * R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other
@@ -150,6 +217,11 @@ export interface AgentCtx<Input = unknown> {
    * write is a side effect, so it goes through `once` like any other.
    */
   storage(): StorageService
+  /**
+   * Emit a declared plugin event (D42) in the run's organisation. A side effect: wrap it in
+   * `once`, and derive its `idempotencyKey` from `runId`, so a retried step emits once.
+   */
+  emit: TenantEmit
   /** The system prompt for this agent's `promptKey`, with `appName`/`tenantName` filled in. */
   prompt(vars?: Record<string, string | undefined>): Promise<string>
   /** A durable timeline row. Never throws — progress must not be able to fail a run. */
@@ -159,32 +231,49 @@ export interface AgentCtx<Input = unknown> {
     status: 'running' | 'done' | 'error',
     detail?: string
   ): Promise<void>
-  /** Throws when the run was asked to stop. Call it between model turns; the loop takes no signal. */
+  /** Throws when the run was asked to stop. Call it between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to
+   * your own `fetch`es so a cancel reaches them in flight.
+   */
+  signal: AbortSignal
   /**
    * Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
    *
    * **Anything with a side effect goes through here** — an ingest, a ledger write, an outbound
    * call — because a retry re-enters `run()` from the TOP, and so does a resume after a human
-   * answered. `key` is yours and must be stable across attempts. The result is stored as jsonb, so
-   * return ids and scalars, never rows.
+   * answered. `key` is yours and must be stable across attempts, and **the same key twice in one
+   * attempt throws** — a call that repeats with different arguments passes them as
+   * `options.inputs`, which become part of the key (`label#<hash>`). The result is stored as
+   * jsonb, so return ids and scalars, never rows.
    */
-  once<T>(key: string, fn: () => Promise<T>): Promise<T>
+  once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
   /**
-   * The agentic loop, with this run's client, model, ceiling and approval plumbing already bound.
+   * Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output.
+   * This run parks while the child runs and is woken when it settles; a failed or cancelled child
+   * throws. `key` must be stable across attempts. Its budget is what this run could still spend.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
+  /**
+   * The agentic loop, with this run's client, model, ceiling, approval plumbing and journal
+   * already bound: a retried attempt is served the turns and tool results it already recorded,
+   * so it is never billed twice and never re-runs a finished tool. Mark a tool that writes
+   * `sideEffects: true` (and `durable: true` if it passes `call.idempotencyKey` on); give a
+   * second loop in the same run its own `key`.
    */
   toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
   /** One forced tool call, zod-validated, one retry with the issues fed back. */
   structured<T>(options: PluginStructuredOptions<T>): Promise<T>
   /**
-   * Typed questions answered with probabilities (D37): `decide(key, { state, questions })`,
+   * Typed questions answered with probabilities: `decide(key, { state, questions })`,
    * `decide.sift(key, …)`, `decide.pick(key, …)`. The tenant's decisions engine answers —
    * TypeSafe's Jev, or the chat model's uncalibrated fallback — and every call is recorded once per
    * `key`, so `key` must be stable across attempts, exactly like `once`.
    */
   decide: AgentDecide
   /**
-   * Ask the person a question and park the run until they answer (issue #17) — `approval`,
+   * Ask the person a question and park the run until they answer — `approval`,
    * `choice`, `input` or `form`. The SECOND time this line runs (the run resumed after the answer,
    * re-entering `run()` from the top) it returns the answer instead of asking again, which is why
    * **`key` must be stable across attempts**: derive it from a step or a round number your code
@@ -207,7 +296,7 @@ export interface AgentCtx<Input = unknown> {
 /** `runToolLoop` minus what the runtime supplies. */
 export type PluginToolLoopOptions = Omit<
   RunToolLoopOptions,
-  'model' | 'maxTokens' | 'approvals' | 'runApproved'
+  'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal'
 > & { maxTokens?: number }
 
 /** `callStructuredTool` minus what the runtime supplies. */
@@ -237,11 +326,18 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
     input: ctx.input,
     tools: ctx.tools,
     storage: () => filesStorage(ctx.env as PluginBindings),
+    emit: tenantEmitter(
+      { db: ctx.db, config: ctx.cfg, logger: ctx.logger, env: ctx.env as PluginBindings },
+      ctx.tenantId
+    ),
     prompt: vars => ctx.prompt(vars),
     step: (key, label, status, detail) => ctx.step(key, label, status, detail),
     checkCancelled: () => ctx.checkCancelled(),
-    once: (key, fn) => ctx.once(key, fn),
+    signal: ctx.signal,
+    once: (key, fn, options) =>
+      ctx.once(key, fn, options?.inputs !== undefined ? { inputs: options.inputs } : undefined),
     decide: ctx.decide,
+    spawn: (key, agentKey, input) => ctx.spawn(key, agentKey, input),
     interrupt: ask => ctx.interrupt(ask),
     chatModel: { provider: ctx.chat.client.provider, model: ctx.chat.model },
     toolLoop: options =>
@@ -251,15 +347,54 @@ export function agentCtx<Input>(ctx: AgentContext<Input>): AgentCtx<Input> {
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
         approvals: ctx.approvals,
         runApproved: ctx.once,
+        journal: ctx.journal,
+        signal: options.signal ?? ctx.signal,
       }),
     structured: options =>
       callStructuredTool(ctx.chat.client, {
         ...options,
         model: ctx.chat.model,
         maxTokens: options.maxTokens ?? ctx.chat.maxOutputTokens,
+        signal: options.signal ?? ctx.signal,
       }),
   }
 }
 
+/**
+ * Would a chat model resolve for this prompt key and tenant? Answers the same question
+ * `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up
+ * front instead of failing inside a run. A function-scope import, for the barrel cycle `./agent-runs`
+ * explains: `services/ai/resolve` reads the prompt registry, which reads the plugin barrel.
+ */
+export async function chatModelAvailable(
+  ctx: Pick<PluginContext, 'db' | 'config' | 'env'>,
+  tenantId: string,
+  promptKey: string
+): Promise<boolean> {
+  const { planChat, platformChat } = await import('../../api/services/ai/resolve')
+  const { config: row } = await planChat(ctx.db, tenantId, promptKey as PromptKey)
+  return row !== undefined || platformChat(ctx.config, ctx.env) !== null
+}
+
 /** A plugin's agent, as `ServerPlugin.agents` takes it. */
 export type PluginAgent<Input = unknown, Output = unknown> = AgentDefinition<Input, Output>
+
+/** One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific. */
+export interface AgentSummary {
+  key: string
+  title: string
+  description: string
+}
+
+/**
+ * Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`,
+ * the same catalogue `GET /api/agents` serves. For a plugin that lists or searches agents (a
+ * command palette); the caller decides who may see it (`read AgentRun` is the kit's guard).
+ *
+ * Loaded at CALL time: the registry reads the server barrel, which must stay off `@/plugins/api`'s
+ * load path (`tests/config/plugin-api-load-order.test.ts`).
+ */
+export async function listAgents(): Promise<readonly AgentSummary[]> {
+  const { listAgentInfo } = await import('../../api/services/agents/registry')
+  return listAgentInfo().map(a => ({ key: a.key, title: a.title, description: a.description }))
+}

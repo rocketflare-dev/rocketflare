@@ -5,19 +5,12 @@
     "id": "rocketflare",
     "name": "rocketflare",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
-    "version": "0.23.0",
+    "version": "0.44.1",
     "commit": null
   },
   "app": null,
-  "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md §16). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } — the id is what answers \"is this one already here?\" without fetching anything. Analytics is here because the kit is bare from 0.6.0: a fresh clone still gets dashboards, cubes and the drizzle-cube API, but as an installed plugin rather than as core.",
-  "defaultPlugins": [
-    {
-      "id": "analytics",
-      "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
-      "ref": "3.4.2",
-      "subdir": "plugins/analytics"
-    }
-  ],
+  "$defaultPlugins": "The plugins a FRESH clone installs before the app is first run (D31, docs/CONCEPTS.md §16). `scripts/bootstrap.mjs`'s `plugins` step reads it, skips every id already recorded as a surface, runs `pnpm plugin add <repo>[@ref] --apply` for the rest and then generates and applies their migration; `pnpm bootstrap --no-plugins` skips it. Each entry is { \"id\", \"repo\", \"ref\"?, \"subdir\"? } — the id is what answers \"is this one already here?\" without fetching anything. The kit ships it EMPTY: analytics is opt-in (`/rf-plugin add analytics`). An app may list the plugins its own fresh clones should get.",
+  "defaultPlugins": [],
   "$retiredSurfaces": "Surfaces a LATER release removed, and the release that removed each one (§13). A released porting note is never rewritten — every copy of the kit pins a commit, so editing history orphans them — which is why `docs/upgrades/0.2.0.md` still names `feature-analytics` after 0.6.0 moved analytics out into a plugin. Both readers of a note's `touches_surfaces` / `requires_surfaces` (`scripts/release-check.mjs` and `apps/web/tests/kit-only/upgrade-notes.test.ts`, through one `noteProblems()`) accept an id listed here, so the typo check stays meaningful for the note somebody is writing TODAY — the only note it can still protect. Add an entry in the same commit that deletes the surface; never delete one, or the kit stops being able to re-verify its own released tags.",
   "retiredSurfaces": {
     "feature-analytics": "0.6.0",
@@ -36,13 +29,21 @@
         "apps/web/src/api/services/agents/examples/summarize-text.ts",
         "apps/web/src/ui/pages/agents/forms/summarize-text.tsx",
         "apps/web/tests/api/agent-runs.test.ts",
-        "apps/web/tests/api/agent-run-workflow.test.ts"
+        "apps/web/tests/api/agent-run-workflow.test.ts",
+        "apps/web/src/ui/pages/agents/outputs/summarize-text.tsx",
+        "apps/web/tests/ui/agent-form-summarize-text.test.tsx",
+        "apps/web/tests/ui/agent-output-summarize-text.test.tsx",
+        "apps/evals/suites/agents/summarize-text.eval.ts",
+        "apps/evals/datasets/summarize-text.jsonl",
+        "apps/evals/baselines/agents-summarize-text.json"
       ],
       "registries": [
         "apps/web/src/api/services/agents/registry.ts#CORE_AGENTS",
         "packages/shared/src/ai/agents.ts#CORE_AGENT_KEYS",
         "apps/web/src/api/services/prompts.ts#CORE_PROMPT_REGISTRY",
-        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS"
+        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS",
+        "apps/web/src/ui/pages/agents/outputs/index.ts#AGENT_OUTPUTS",
+        "apps/web/scripts/seed.ts#seedDemo"
       ]
     },
     {
@@ -53,13 +54,20 @@
       "paths": [
         "apps/web/src/api/services/agents/examples/research-topic.ts",
         "apps/web/src/ui/pages/agents/forms/research-topic.tsx",
-        "apps/web/tests/api/agent-research.test.ts"
+        "apps/web/tests/api/agent-research.test.ts",
+        "apps/web/src/ui/pages/agents/outputs/research-topic.tsx",
+        "apps/evals/suites/agents/research-topic.eval.ts",
+        "apps/evals/datasets/research-topic.jsonl",
+        "apps/evals/baselines/agents-research-topic.json",
+        "apps/web/tests/agent-recordings/research-topic-onboarding.json"
       ],
       "registries": [
         "apps/web/src/api/services/agents/registry.ts#CORE_AGENTS",
         "packages/shared/src/ai/agents.ts#CORE_AGENT_KEYS",
         "apps/web/src/api/services/prompts.ts#CORE_PROMPT_REGISTRY",
-        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS"
+        "apps/web/src/ui/pages/agents/forms/index.ts#CORE_AGENT_FORMS",
+        "apps/web/src/ui/pages/agents/outputs/index.ts#AGENT_OUTPUTS",
+        "apps/web/scripts/seed.ts#seedDemo"
       ]
     },
     {
@@ -80,7 +88,10 @@
         "packages/shared/src/ai/agents.ts#CORE_AGENT_KEYS",
         "apps/web/src/api/services/prompts.ts#CORE_PROMPT_REGISTRY",
         "apps/web/src/ui/pages/agents/outputs/index.ts#AGENT_OUTPUTS"
-      ]
+      ],
+      "requires": {
+        "surfaces": ["example-agent-research-topic"]
+      }
     },
     {
       "id": "example-feature",
@@ -166,7 +177,9 @@
         ".claude/skills/rf-agent-replay/**",
         "packages/shared/src/ai/agents.ts",
         "apps/web/src/plugins/api/agent-runs.ts",
-        "apps/web/tests/api/plugin-agent-runs.test.ts"
+        "apps/web/tests/api/plugin-agent-runs.test.ts",
+        "apps/web/tests/api/agent-run-routes.test.ts",
+        "apps/web/tests/api/agent-run-runtime.test.ts"
       ],
       "registries": [
         "apps/web/src/worker.ts",
@@ -175,6 +188,10 @@
         "apps/web/src/plugins/types.ts#ServerPlugin.agents",
         "apps/web/src/plugins/api/jobs.ts#BackgroundMethods.startAgentRun",
         "apps/web/src/plugins/api/index.ts#StartAgentRun",
+        "apps/web/src/plugins/api/index.ts#listBindableAgents",
+        "apps/web/src/plugins/api/emit.ts#EventCtx.startAgentRun",
+        "apps/web/src/plugins/api/emit.ts#EventCtx.startBoundAgent",
+        "apps/web/src/api/services/events/subscribers.ts#agentTriggerSubscribers",
         "apps/web/tests/kit/unit.ts#recordingAgentRuns"
       ]
     },
@@ -216,21 +233,25 @@
       "anchor": "apps/web/src/api/services/ai/deterministic-embedding.ts",
       "paths": ["apps/web/src/api/services/ai/deterministic-embedding.ts"],
       "registries": ["apps/web/scripts/seed.ts#seedDemo"]
+    },
+    {
+      "id": "threat-model",
+      "kind": "example",
+      "label": "The threat model the security audit reads (yours to rewrite; also manual, so an upgrade only shows the kit's diff)",
+      "anchor": "docs/THREAT-MODEL.md",
+      "paths": ["docs/THREAT-MODEL.md"],
+      "registries": []
     }
   ],
   "neverPort": [
     "LICENSE",
-    "CONTRIBUTING.md",
+    "LICENSES/**",
     "SECURITY.md",
-    "CODE_OF_CONDUCT.md",
     "pnpm-lock.yaml",
     "CHANGELOG.md",
     "docs/ADAPTING.md",
     ".claude/skills/rf-adapt/**",
-    "scripts/install.sh",
     "scripts/rename.mjs",
-    "scripts/lib/rename-lib.mjs",
-    "scripts/lib/rename-lib.d.mts",
     "apps/web/wrangler.toml",
     "apps/web/wrangler.staging.toml",
     "apps/web/.dev.vars.example",
@@ -239,12 +260,28 @@
     "apps/web/src/ui/public/**",
     ".rocketflare.json"
   ],
-  "$kitOnly": "The kit's OWN tests: true of the kit repository and of nothing made from it — its release notes and version chain, the release and rename machinery, the maintainer hooks, the plugin CI plugin repositories call from here, and this file's kit-state invariants (docs/CONCEPTS.md §13) — and the kit's OWN workflows: kit.yml (the renamed-copy and default-plugins gates, the porting-note and plugin-API checks), plugin-ci.yml (what plugin repositories call) and notify-plugins.yml. `scripts/rename.mjs` deletes every file under these globs when a copy is born and unwires their vitest project (`kit-only`); `pnpm kit:upgrade` never ports one (it also honours the TARGET kit's list); and `apps/web/tests/config/kit-manifest.test.ts` fails a copy that carries one. `apps/web/tests/kit-only/**` is also the built-in floor (`KIT_ONLY_PATHS` in scripts/lib/upgrade-lib.mjs) for a copy whose manifest predates this key.",
+  "$kitOnly": "What is true of the kit repository and of nothing made from it. The kit's OWN tests (its release notes and version chain, the release and rename machinery, the maintainer hooks, the plugin CI plugin repositories call from here, this file's kit-state invariants, and the tests of the kit's tooling — scripts/** and the rf-security runner, which a copy runs but receives already tested — docs/CONCEPTS.md §13), the kit's OWN workflows (kit.yml, plugin-ci.yml, notify-plugins.yml), its maintainer scripts (the release cutter, the porting-note and release-site nudges, the default-plugins CI helper, the curl installer) and its project files (CONTRIBUTING.md, CODE_OF_CONDUCT.md). `scripts/rename.mjs` deletes every file under these globs when a copy is born, unwires their vitest project (`kit-only`), drops every package.json script and `.claude/settings.json` hook that names one; `pnpm kit:upgrade` never ports one (it also honours the TARGET kit's list); and `apps/web/tests/config/kit-manifest.test.ts` fails a copy that carries one. `apps/web/tests/kit-only/**` is also the built-in floor (`KIT_ONLY_PATHS` in scripts/lib/upgrade-lib.mjs) for a copy whose manifest predates this key.",
   "kitOnly": [
     "apps/web/tests/kit-only/**",
+    "docs/plans/**",
+    "apps/evals/datasets/kit-only/**",
+    "docs/research/**",
     ".github/workflows/kit.yml",
     ".github/workflows/plugin-ci.yml",
-    ".github/workflows/notify-plugins.yml"
+    ".github/workflows/notify-plugins.yml",
+    "scripts/release.mjs",
+    "scripts/release.d.mts",
+    "scripts/changelog-nudge.mjs",
+    "scripts/release-site-nudge.mjs",
+    "scripts/lib/nudge-lib.mjs",
+    "scripts/lib/nudge-lib.d.mts",
+    "scripts/default-plugins.mjs",
+    "scripts/default-plugins.d.mts",
+    ".github/ci-plugins.json",
+    "scripts/install.sh",
+    "CONTRIBUTING.md",
+    "CODE_OF_CONDUCT.md",
+    "docs/upgrades/unreleased.md"
   ],
   "manual": [
     "README.md",
@@ -254,7 +291,10 @@
     "apps/*/package.json",
     "packages/*/package.json",
     ".github/workflows/**",
-    "apps/web/src/ui/components/shared/LogoMark.tsx"
+    "apps/web/src/ui/components/shared/LogoMark.tsx",
+    "apps/web/src/api/services/events/app-handlers.ts",
+    "apps/web/src/api/services/knowledge/entity-types.ts",
+    "docs/THREAT-MODEL.md"
   ],
   "core": [
     "apps/web/src/**",

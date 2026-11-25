@@ -1,5 +1,5 @@
 /**
- * Live run progress on the client (issue #7): the transport's cursor, the hook's cache rule, and
+ * Live run progress on the client: the transport's cursor, the hook's cache rule, and
  * the one thing that quietly turns the whole feature back into a poll — a realtime nudge landing
  * on the key the stream is appending to.
  */

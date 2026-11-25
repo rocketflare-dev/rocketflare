@@ -8,31 +8,38 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > before assuming a capability exists; update it when you change one.**
 > **Setup**: asked for setup help → run `/rf-setup` (it drives `scripts/bootstrap.sh --no-dev`, then
 > starts the server): show each `✔ n/10` line, stop on failure. By hand: `SETUP.md` Part 1.
-> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-setup`, `/rf-adapt`, `/rf-preflight`,
-> `/rf-traces`, `/rf-evals`, `/rf-agent-replay` and `/rf-plugin` you
-> may run yourself; **`/rf-provision` is user-invoked only** (it creates paid resources and prompts for
-> tokens on a TTY) — asked to deploy, tell the user to run `/rf-provision`.
+> **Starting a new app?** `/rf-start`: detach, setup, the design conversation (`/rf-design`, writes
+> `docs/design/`), then the rename. Settle nothing about the app's design before it asks.
+> **Fresh copy?** `/rf-adapt <slug>`, then `docs/ADAPTING.md`. `/rf-start`, `/rf-design`, `/rf-setup`,
+> `/rf-adapt`, `/rf-preflight`, `/rf-how-do-i`,
+> `/rf-upgrade`, `/rf-traces`, `/rf-evals`, `/rf-agent-replay`, `/rf-agent-docs`, `/rf-mcp` and `/rf-plugin`
+> you may run yourself; **`/rf-security` only when asked** (a security audit spends agent calls, about
+> $35–200+; agree the mode and budget first, `docs/SECURITY-AUDIT.md`); **`/rf-provision` is
+> user-invoked only** (it creates paid resources and prompts for tokens on a TTY) — asked to deploy,
+> tell the user to run `/rf-provision`.
 > **Plugins** (D31, `docs/CONCEPTS.md` §16): a plugin is a git repository copied in, wired through six
 > barrels — `pnpm plugin add|upgrade|remove|list|check`, driven by `/rf-plugin`, which always shows the
-> plan before `--apply`. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
-> generated and diff-checked) and receives everything else as injected context. `.rocketflare.json`'s `defaultPlugins` is what a fresh clone installs
-> (bootstrap step `6/10 plugins`).
+> plan before `--apply`. `pnpm plugin list --available` lists what is published: check it before building. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
+> generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
+> `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
-> recreates a surface whose anchor file is gone. **A behaviour change here needs an entry in
-> `docs/upgrades/unreleased.md` in the same commit** — CI fails without one, and the tag gate refuses
-> a release with no note. `pnpm kit:release <version>` writes the release assets.
+> recreates a surface whose anchor file is gone. **In the kit repository only** (`.rocketflare.json`
+> `app` is null): a behaviour change needs an entry in `docs/upgrades/unreleased.md` in the same
+> commit — `kit.yml` fails without one — and `pnpm kit:release <version>` cuts the release. **In an
+> app** neither exists (the rename removes them): never write a kit porting note; release by bumping
+> the root `package.json` version and tagging it, and keep your own `CHANGELOG.md`.
 
 ## Stack
 
 - **Runtime**: Cloudflare Workers (`nodejs_compat`); one Worker exports `fetch`+`queue`+`scheduled`
-  + DO/Workflow classes (`src/worker.ts`). Node 24, pnpm 10
+  + DO/Workflow classes (`src/worker.ts`). Node 26, pnpm 10
 - **API**: Hono 4, zod contracts from `@rocketflare/shared`, CASL. **DB**: Postgres 17 + pgvector —
   Docker locally; deployed, `DATABASE_DRIVER` (D35) picks Drizzle over the Neon serverless driver
   (`neon`, HTTP + a WS pool for transactions — the kit's tomls) or `postgres.js` via Hyperdrive
   (`postgres`, any Postgres — a missing var, and local/`.dev.vars`); `openDatabase(env)`, 1 client/request;
   raw results only through `rows()`/`affected()`
-- **Auth**: arctic (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
+- **Auth**: openid-client (Google, Microsoft, any OIDC issuer — jose-verified `id_token`, off by default) + magic link + dev-login; `__Host-session`; API keys; KV rate limit
 - **Async / realtime**: Queues (`JOBS_QUEUE`), `NotificationsHub` DO `/ws`, R2 (`FILES`), cron, Workflows
 - **AI**: `services/ai/resolve` (`agent_models` → tenant `ai_configs` → platform key → Workers AI via
   `[ai]`, zero key → 503); Anthropic / OpenAI-compatible / Workers AI chat streamed as **AG-UI**
@@ -43,11 +50,15 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
   spans → Langfuse/Phoenix/any backend, always also `ai_spans` → `rocketflare traces`); evals (D33:
   `apps/evals`, vitest-evals on vitest 4, `pnpm eval`, never in the gate) + thumbs feedback →
   `rocketflare evals promote`
-- **Analytics**: not core — the `analytics` PLUGIN (D31, the one `defaultPlugins` entry, installed
-  by the bootstrap): drizzle-cube at `/cubejs-api`+`/mcp`, fact tables on the `:15` cron, dashboards
-- **UI**: React 18 + Vite, DaisyUI 5 / Tailwind v4, React Router 6, TanStack Query 5; served as `ASSETS`
-- **CLI**: commander + chalk + open; `tsx` in dev, `tsc` → `dist/cli.js` (bin `rocketflare`)
-- **Tests**: vitest projects `api` · `api-isolated` · `driver` · `ui` · `config` · `kit-only` (the kit's own
+- **MCP**: core server at `/mcp` and `/mcp/t/<slug>` (`services/mcp/`, `routes/mcp.ts`); OAuth only,
+  the app is its own authorization server (no API keys, no cookies); dark unless `FEATURES_ENABLED`
+  names `mcp`. A feature reaches MCP as a TOOL (`.claude/rules/tools.md`), never a route (`/rf-mcp`)
+- **Analytics**: not core — the opt-in `analytics` PLUGIN (D31, `/rf-plugin add analytics`; the
+  bootstrap skips it): drizzle-cube at `/cubejs-api`, its cube tools through `tools` (so MCP too),
+  `:15`-cron fact tables, dashboards
+- **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
+- **CLI**: commander + chalk + open; `tsx` in dev, esbuild → `dist/cli.js` (bin `rocketflare`)
+- **Tests**: vitest projects `api` · `api-isolated` · `api-fixtures` · `driver` · `ui` · `ui-isolated` · `config` · `config-isolated` · `kit-only` (the kit's own
   tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; the
   suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
   local proxy); cli; the eval kit's unit tests (`apps/evals/tests`). Evals themselves are
@@ -57,21 +68,24 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 ## Commands (from the workspace root)
 
 ```bash
-pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online toggle [ai]) / read-only check
+pnpm bootstrap · pnpm preflight  # first run in one go (--offline/--online: DEV_WORKERS_AI in .dev.vars) / read-only check
 pnpm dev:db:up && pnpm db:migrate  # Postgres on the first free port from :5432 → DATABASE_URL; role → migrations → grants
 pnpm seed [--demo] && pnpm dev  # tenant/users/key (+ populated workspace); wrangler :3001 + vite :3000 (strict ports)
 pnpm dev:stop · pnpm dev:status · pnpm dev:db:status  # kill this repo's dev tree / port holders / every dev database
 pnpm cli login --server http://localhost:3001  # browser → ~/.rocketflare/config.json, then whoami
 pnpm gate [step…] · pnpm gate --list [--json]  # THE gate: lint → typecheck → test → build (CI's one job, Launch's ship gate)
+pnpm gate --changed[=<ref>]  # local commits: each step over what the branch changed; full gate before a push
 pnpm test  # every package; starts the test DB + Neon proxy; suite under postgres, then driver under neon
+pnpm test api|ui|config|driver [file…]  # the inner loop: one suite (shared + isolated projects), DB expected up
 TEST_DATABASE_BRANCH=gate-… pnpm test  # a sandbox gate: no Docker, the whole suite on a Neon gate branch (CONCEPTS §4)
 pnpm dev:db:up --neon|--postgres  # D35: local dev on either driver
 pnpm eval [suite] [--model x] [--compare] · pnpm eval:baseline · pnpm eval:view  # real-model evals (D33, docs/EVALS.md)
 pnpm web agent:replay <agent> --tenant <slug> [--candidate f] [--live]  # D38: today's agent code over past runs, read-only
+pnpm security:sandbox build|verify|test --run <dir>|down  # the /rf-security sandbox (Docker); the audit drives it
 pnpm lint · pnpm typecheck · pnpm build  # workspace-wide
 pnpm web <script>  # any apps/web script (test:api, db:check…)
-pnpm db:generate · pnpm db:studio · pnpm deploy[:staging] · pnpm provision all  # (or one phase: --help)
-pnpm kit:upgrade [--to X.Y.Z] [--apply] · pnpm kit:release X.Y.Z  # port a kit release into a copy / cut one
+pnpm db:generate · pnpm db:studio · pnpm run deploy[:staging] · pnpm provision all  # (or one phase: --help)
+pnpm kit:upgrade [--to X.Y.Z] [--apply]  # port a later kit release into this app (the kit repo also has kit:release)
 ```
 
 `wrangler` lives in `apps/web`: `pnpm --filter @rocketflare/web exec wrangler …`, never at the root. No
@@ -86,13 +100,13 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │  src/config.ts   loadConfig(env): zod over Cloudflare.Env; routes read c.get('config')
 │  src/permissions/  CASL owner/admin/member/support + isGlobalAdmin   src/db/  client, tenant-scope, schema/
 │  src/api/        index.ts (Hono app, middleware order, ASSETS catch-all) · queue.ts · scheduled.ts ·
-│                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, prompts.ts) ·
+│                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, mcp/, prompts.ts) ·
 │                  workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/ui/         React app
 │  src/plugins/    D31 seam: types.ts, api/ (the context family a plugin imports) + the
 │                  server/ui/schema/worker-exports barrels (one line per installed plugin)
 │                  + each plugin's tree — `example-feature/` vendored as the reference one, and
-│                  `analytics/` (cubes, dashboards, fact tables) once the default set is installed
+│                  `analytics/` (cubes, dashboards, fact tables) once you opt in to it
 │                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
                    plugins/ (CLI_PLUGINS barrel + each plugin's commands)
@@ -100,22 +114,18 @@ apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-p
                    suites/, datasets/*.jsonl, baselines/; `pnpm eval` only, never the gate (docs/EVALS.md)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
                    plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
-scripts/           bootstrap.sh → bootstrap.mjs (9 steps), install.sh (curl one-liner), rename.mjs,
-                   upgrade.mjs (port a kit release into a copy), release{,-check}.mjs, changelog-nudge.mjs +
-                   release-site-nudge.mjs (PreToolUse on a commit: missing porting note / version
-                   bump → update rocketflare-www),
+scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrade.mjs (port a kit
+                   release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),
-                   kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/
+                   kit-check.mjs (the Launch kit conformance check, shared with the meta-kit), lib/;
+                   kit repo only (`kitOnly`, deleted by the rename): install.sh, release.mjs,
+                   changelog-nudge.mjs + release-site-nudge.mjs (maintainer PreToolUse hooks)
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a
                    copy — kept by every copy; `node scripts/kit-check.mjs` checks it (CONCEPTS §13)
-docs/upgrades/     one porting note per kit release (+ unreleased.md) — CHANGELOG.md is the index
-.claude/skills/    rf-setup · rf-preflight · rf-adapt (+ checklist.md) · rf-provision (+ reference.md) ·
-                   rf-how-do-i (+ example-orders.md) · rf-upgrade (+ porting.md — port later kit releases) ·
-                   rf-plugin (+ reference.md — install/upgrade/remove a plugin, D31) ·
-                   rf-traces (debug a run from its span tree; pick a tracing backend, D32) ·
-                   rf-evals (+ reference.md — author, run, compare, harvest, baseline, improve; D33) ·
-                   rf-agent-replay (replay an agent's past runs with today's code, no model calls; D38)
+docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo only) — CHANGELOG.md is the index
+.claude/skills/    the rf-* skills named at the top: SKILL.md + any reference/checklist files; rf-agent-docs
+                   ships check.mjs, rf-security tools/ (runner, guard hook)
 ```
 
 **`packages/shared`.** Private, no build: `@rocketflare/shared/<module>` → `./src/<module>.ts` (incl. `ai/*`,
@@ -127,7 +137,7 @@ written justification, and `apps/web/tests/config/shared-imports.test.ts` enforc
 **`apps/cli`.** `login` opens `GET /auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; the server
 mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored `0600` in
 `~/.rocketflare/config.json` (`ROCKETFLARE_API_KEY`/`ROCKETFLARE_URL` for CI). Also `logout|whoami|status|config`,
-`members|keys|activity list --json`, `agents run <key> --input|--batch` (D39) (`.claude/rules/cli.md`)
+`members|keys|activity list --json`, `agents run <key> --input|--batch` (D39), `agents inspect <runId>` (the run timeline, D44), `docs list|search|ingest|retry`, `facts review|confirm|reject|prefer` (`.claude/rules/cli.md`)
 
 ## Config model
 
@@ -136,18 +146,26 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 `SIGNUP_MODE` (`open|invite_only|approval`; `BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) ·
 `TENANT_SCOPE_MODE` (`off|enforce`, `docs/RLS.md`) · `DATABASE_DRIVER` (`neon|postgres`, D35; missing =
 `postgres`, `neon` needs the `DATABASE_URL` secret; `.dev.vars` overrides locally, with `NEON_LOCAL_PROXY`) · `AGENT_MAX_OUTPUT_TOKENS` · `AGENT_MAX_TURNS` ·
-`AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50; 429 above) · `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` /
+`AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50; 429 above) ·
+`MAX_OWNED_TENANTS_PER_USER` (10) · `INVITATION_EMAILS_PER_USER_PER_DAY` (500) ·
+`INVITATION_EMAILS_PER_TENANT_PER_DAY` (1000) (optional, undeclared = these defaults) · `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` /
 `AGENT_TENANT_DAILY_COST_USD` (D39 budgets, unset = no cap; `meta.budget` overrides per agent) ·
+`KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap; pauses fact extraction and contextual prefixes only, never indexing or search) ·
+`AGENT_TRANSCRIPT_RETENTION_DAYS` (30 — days a settled run keeps its tool-loop journal, `agent_run_turns`) ·
+`RERANK_MIN_SCORE` (drop reranked hits below it; unset = off) · `RERANK_CANDIDATES` (chunks reranked, 20) ·
 `CHAT_KNOWLEDGE_TOOLS` (`true|false` — chat may call the knowledge tools) ·
 `CHAT_HISTORY_MAX_CHARS` (history a turn replays; older turns are summarised by `chat.compact`) ·
 `FEATURES_ENABLED` (D30 — comma-separated feature keys this deployment ships at all; fail-closed,
 consulted only for a flag marked `environmentGated`; the rollout state itself lives in Postgres) ·
 `OIDC_ISSUER`/`OIDC_CLIENT_ID`/`OIDC_LABEL`/`OIDC_SCOPES`/`AUTH_OIDC_ONLY`/`OIDC_TRUST_EMAIL`
 (optional SSO through any OIDC issuer, declared only when used — `SETUP.md` 2.3b; secret
-`OIDC_CLIENT_SECRET`).
+`OIDC_CLIENT_SECRET`) · `OIDC_MANAGED_TENANCY` +
+`OIDC_ORGS_CLAIM`/`OIDC_ROLE_MAP`/`OIDC_ADMIT_CLAIM`/`OIDC_GLOBAL_ADMIN_CLAIM`/`OIDC_SESSION_MAX_AGE_DAYS`
+(IdP-managed tenancy: tenants and roles from the id_token, `SETUP.md` 2.3c; secret
+`IDENTITY_WEBHOOK_SECRET` for its identity events).
 
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
-code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
+code-quality.md · cloudflare.md · tools.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md` · `docs/SECURITY-AUDIT.md`
 
 ## Non-Negotiables
 
@@ -172,14 +190,15 @@ code-quality.md · cloudflare.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md`
   credentials; the CLI never prints a full key; `gitleaks` in CI
 - **No `process.env` / Node-only APIs in `apps/web/src/`** (`pg`, `ws`, `node:fs`…); `build:api` catches it
 - **Release = root version**: git tag == root `package.json` `version` (ships web + cli)
-- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR,
-  **and adds an entry to `docs/upgrades/unreleased.md`** — copies of the kit absorb changes by
-  reading those notes, so a change with no note never reaches them (CI and the tag gate enforce it)
+- **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR;
+  **in the kit repository** it also adds an entry to `docs/upgrades/unreleased.md` — copies absorb
+  changes by reading those notes, so a change with no note never reaches them (`kit.yml` and the
+  tag gate enforce it). An app writes no porting note
 - **A plugin composes, it never redefines** (D31): it namespaces everything with its id (tables
   prefixed from it — `example-feature` → `example_*`, and `plugin check` fails a collision — job
   types `<id>.x`, query-key roots `<id>:…`, `/api/<id>`, CUSTOM events `<id>.` — **never `kit.`**),
   reaches core only through the six barrels, its own four published entries and the DECLARED import
-  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*` — `docs/plugin-api.md`), and ships
+  entries (`@/plugins/api`, `@/db/schema/kit`, `@testkit/*`, its own `@/host/<id>/*` — `docs/plugin-api.md`), and ships
   no migration and no toml edit — the host generates the DDL; its bindings go in BOTH tomls
 - **Released history is never rewritten**: an adopted copy pins a kit commit in `.rocketflare.json`;
   a force-push to a released tag orphans every copy that came from it

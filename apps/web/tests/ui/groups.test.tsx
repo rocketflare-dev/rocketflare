@@ -1,5 +1,5 @@
 /**
- * Settings → Groups and the visibility picker (D29). Two things worth a test: the admin flow that
+ * Settings → Groups and the visibility picker. Two things worth a test: the admin flow that
  * creates a type and a group, and the warning `AccessPicker` shows for an EMPTY selection — the
  * state that is legal, meaningful ("only me and admins") and easy to reach by accident.
  */
@@ -119,9 +119,9 @@ describe('Settings → Groups', () => {
     })
     fireEvent.click(await screen.findByLabelText('Delete Finance'))
     fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
-    // The keys come from the server's visibility registry — the kit's `documents` plus whatever
+    // The keys come from the server's visibility registry — the core `documents` plus whatever
     // an installed plugin adds (`dashboards` is the analytics plugin's) — so the sentence is built
-    // from whatever arrives rather than from a fixed pair (D31).
+    // from whatever arrives rather than from a fixed pair.
     expect(await screen.findByText(/3 documents and 1 dashboard/)).toBeInTheDocument()
     // And it says which way the change goes — narrower, never wider.
     expect(screen.getByText(/owner and to administrators only/)).toBeInTheDocument()

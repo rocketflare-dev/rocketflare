@@ -1,5 +1,5 @@
 /**
- * Document → text for the knowledge base (D18 uploads). Text-like types (`kind: 'text'` in
+ * Document → text for the knowledge base (uploads). Text-like types (`kind: 'text'` in
  * `DOCUMENT_UPLOAD_TYPES`) are decoded as UTF-8 here and never need a model. Everything else goes
  * through Workers AI Markdown Conversion on the `AI` binding (`env.AI.toMarkdown({ name, blob })`
  * — PDF, Word, Excel, OpenDocument, HTML, XML). The binding is OPTIONAL in code: without it a

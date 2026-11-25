@@ -1,5 +1,5 @@
 /**
- * The ACTIVE span (D32), carried by `AsyncLocalStorage` so the code deep inside a unit of AI work —
+ * The ACTIVE span, carried by `AsyncLocalStorage` so the code deep inside a unit of AI work —
  * a tool handler, `searchChunks`, an embeddings batch — can nest a span under whatever is running
  * without every signature between them growing a `trace` parameter. `withAgentTrace` makes its
  * handle active; `traceToolCall` makes each tool span active for its handler; anything with no
@@ -24,7 +24,7 @@ export function withActiveSpan<T>(span: TraceHandle, fn: () => T): T {
 }
 
 /**
- * Run `fn` as an EVALUATION (D33): every trace started inside it is marked `rocketflare.eval=true`,
+ * Run `fn` as an EVALUATION: every trace started inside it is marked `rocketflare.eval=true`,
  * so a backend — and `ai_spans` — can tell an eval run from production traffic. The eval targets
  * (`apps/evals/kit`) drive the real chat route and the real agent runtime in-process, so a scope is
  * the only way to say so without a flag threaded through every signature, or one a request could
@@ -80,8 +80,8 @@ export async function traceStep<T>(
 }
 
 /**
- * One tool execution as `execute_tool <name>`, called from the kit's single tool runner so every
- * tool — the kit's, a plugin's, an agent's own — is traced in chat and in runs alike. A tool that
+ * One tool execution as `execute_tool <name>`, called from the single tool runner so every
+ * tool — a built-in, a plugin's, an agent's own — is traced in chat and in runs alike. A tool that
  * ANSWERS with an error (`isError`) is an error span; an interrupt raised from a handler is a park,
  * not a failure, and ends the span without an error status.
  */

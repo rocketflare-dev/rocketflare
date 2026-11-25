@@ -19,7 +19,7 @@
  * is knowable.
  *
  * Pure apart from reading files, and nothing runs at import time, so
- * `apps/web/tests/config/surface.test.ts` drives every function with fixtures as well as over the
+ * `apps/web/tests/kit-only/surface.test.ts` drives every function with fixtures as well as over the
  * real repository. `surface.d.mts` beside this file is the hand-written type surface (no `allowJs`).
  *
  * **The one non-`node:` dependency, and why it is lazy.** Reading which symbols a file imports is a
@@ -36,12 +36,12 @@ import path from 'node:path'
 
 const require = createRequire(import.meta.url)
 
-/** @type {import('typescript') | null} */
+/** @type {import('typescript6') | null} */
 let cachedTs = null
 
 /** The TypeScript parser, loaded on first use. See the module header for why this is not a top import. */
 function typescript() {
-  if (!cachedTs) cachedTs = require('typescript')
+  if (!cachedTs) cachedTs = require('typescript6')
   return cachedTs
 }
 
@@ -245,6 +245,10 @@ export const SUGGESTED_ENTRY = [
   [
     'apps/web/src/api/services/access',
     "import { sharedWithMyGroups } from '@/plugins/api'; the scope is ctx.scope",
+  ],
+  [
+    'apps/web/src/api/services/ai/agent-loop',
+    "import { defineTool } from '@/plugins/api'; the loop is ctx.toolLoop(…)",
   ],
   [
     'apps/web/src/api/services/ai/kit',

@@ -1,5 +1,5 @@
 /**
- * Thumbs up/down on an AI answer (D33) — an assistant message in chat, or a finished agent run's
+ * Thumbs up/down on an AI answer — an assistant message in chat, or a finished agent run's
  * output. Pressing a thumb votes; pressing the same thumb again withdraws the vote. The vote is
  * stored in `ai_feedback` and recorded in the answer's trace, and a thumbs-down is where
  * `rocketflare feedback list --rating down` → `rocketflare evals promote` starts.

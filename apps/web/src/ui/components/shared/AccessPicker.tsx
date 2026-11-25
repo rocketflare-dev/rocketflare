@@ -1,5 +1,5 @@
 /**
- * Who may read this (D29). A radio for "everyone in the organisation" or "only these groups", and
+ * Who may read this. A radio for "everyone in the organisation" or "only these groups", and
  * chips grouped by type for the second.
  *
  * Three decisions worth knowing about:

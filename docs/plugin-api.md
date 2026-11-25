@@ -83,7 +83,7 @@ of the contract too, and removing one is a break the ledger catches.
 
 The server surface: the context family, and the types a plugin must be able to name.
 
-> The plugin API — the ONE module a plugin's server half imports from the host (D31).
+> The plugin API — the ONE module a plugin's server half imports from the host.
 
 - `type AbilityCheck = (action: Actions, subject: Subjects) => boolean`
   The two-argument ability check, as a plugin's own helper takes it.
@@ -107,39 +107,54 @@ The server surface: the context family, and the types a plugin must be able to n
   - `input: Input`
     Already validated against the agent's own `inputSchema`, twice: at enqueue and before `run()`.
   - `tools: Tool[]`
-    The kit's knowledge tools plus every installed plugin's, bound to this run's scope.
+    The built-in knowledge tools plus every installed plugin's, bound to this run's scope.
   - `storage(): StorageService`
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin…
+  - `emit: TenantEmit`
+    Emit a declared plugin event (D42) in the run's organisation. A side effect: wrap it in `once`, and derive its `idempotencyKey` from `runId`, so a retried step emits once.
   - `prompt(vars?: Record<string, string \| undefined>): Promise<string>`
     The system prompt for this agent's `promptKey`, with `appName`/`tenantName` filled in.
   - `step( key: string, label: string, status: 'running' \| 'done' \| 'error', detail?: string ): Promise<void>`
     A durable timeline row. Never throws — progress must not be able to fail a run.
   - `checkCancelled(): Promise<void>`
-    Throws when the run was asked to stop. Call it between model turns; the loop takes no signal.
-  - `once<T>(key: string, fn: () => Promise<T>): Promise<T>`
+    Throws when the run was asked to stop. Call it between model turns.
+  - `signal: AbortSignal`
+    Aborts when the run is asked to stop. `toolLoop` and `structured` already pass it; hand it to your own `fetch`es so a cancel reaches them in flight.
+  - `once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>`
     Run `fn` at most once per `key` across every attempt, replaying its recorded result after.
+  - `spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>`
+    Start another agent (a kit one or a plugin's) as a CHILD run and resolve with its output. This run parks while the child runs and is woken when it settles; a failed or cancelled…
   - `toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>`
-    The agentic loop, with this run's client, model, ceiling and approval plumbing already bound.
+    The agentic loop, with this run's client, model, ceiling, approval plumbing and journal already bound: a retried attempt is served the turns and tool results it already recorded,…
   - `structured<T>(options: PluginStructuredOptions<T>): Promise<T>`
     One forced tool call, zod-validated, one retry with the issues fed back.
   - `decide: AgentDecide`
-    Typed questions answered with probabilities (D37): `decide(key, { state, questions })`, `decide.sift(key, …)`, `decide.pick(key, …)`. The tenant's decisions engine answers —…
+    Typed questions answered with probabilities: `decide(key, { state, questions })`, `decide.sift(key, …)`, `decide.pick(key, …)`. The tenant's decisions engine answers — TypeSafe's…
   - `interrupt(ask: AgentInterruptAsk): Promise<AgentInterruptAnswer>`
-    Ask the person a question and park the run until they answer (issue #17) — `approval`, `choice`, `input` or `form`. The SECOND time this line runs (the run resumed after the…
+    Ask the person a question and park the run until they answer — `approval`, `choice`, `input` or `form`. The SECOND time this line runs (the run resumed after the answer,…
   - `readonly chatModel: { readonly provider: AiProvider; readonly model: string }`
     The provider and model this run resolved to (per-agent `agent_models` assignment applied) — what `recordUsage` needs to ledger a `structured` call's `onUsage`. Read-only: the…
 - `interface AgentDecide`
   `ctx.decide` — callable, with the two shapes as properties.
+- `interface AgentEventBinding<E extends EventName = EventName, Input = unknown>`
+  An OPT-IN: the agent may be started by `event` when a subject NAMES it — a form block an editor pointed at it — never by the event alone. Listed by `GET…
+- `interface AgentEventTrigger<E extends EventName = EventName, Input = unknown>`
+  An AUTOMATIC agent start: every `event` (that `where` accepts) starts the agent with `input(payload)`, through `enqueueRun` — input validated against the agent's `inputSchema`,…
 - `interface AgentInterruptAnswer`
   The answer. `status` is AG-UI's own `ResumeEntry` vocabulary and there is deliberately no `approved` boolean: two ways to say no is how a UI and a server end up disagreeing.
 - `interface AgentInterruptAsk`
   What an agent asks a person through {@link AgentContext.interrupt}.
+- `interface AgentSummary`
+  One registered agent, as a catalogue lists it: no schemas, nothing tenant-specific.
 - `interface AgentTraceContext extends Omit<TraceParams, 'name'>`
 - `class AiNotConfiguredError extends ServiceUnavailableError`
   503 `ai_not_configured`: nothing resolves for the tenant (no config row, no platform key).
 - `type AnyServerPlugin = ServerPlugin<SharedPlugin>`
   The element type of the barrels — a plugin whose shared half is not narrowed.
+- `function anyTermTsquery(query: string): string \| null`
+  The lexical half's query: every distinct word of the input, OR-ed (`a | b | c`), for `to_tsquery(SEARCH_TEXT_CONFIG, …)` to stem and stopword. ANY rather than ALL terms on purpose…
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
+- `class ApiError extends Error`
 - `type AppRouter = Hono<AppEnv>`
 - `interface BackgroundMethods`
   What every background context can do, tenant supplied per call.
@@ -151,26 +166,45 @@ The server surface: the context family, and the types a plugin must be able to n
   - `durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, tenantId: string, key?: string ): DurableObjectStub<T>`
     A per-tenant Durable Object stub, with the tenant prefix built here rather than by the caller.
   - `features(tenantId: string): Promise<readonly string[]>`
-    The feature keys one organisation has (D30) — what `auth.features` is on a request, resolved here for a tenant named per call. A cron that fans out across every organisation reads…
+    The feature keys one organisation has — what `auth.features` is on a request, resolved here for a tenant named per call. A cron that fans out across every organisation reads this…
   - `storage(): StorageService`
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. The same service `RequestCtx.storage()` returns. Write under…
   - `startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>`
     Start an agent run for one organisation and return its id — `POST /api/agents/runs` from a job, through the same `enqueueRun`: input validation (400), the exclusive slot, the…
+  - `emit: Emit`
+    Emit a declared plugin event (D42) for one organisation: validated against the declaration (400), recorded in `plugin_events`, one delivery queued per subscriber; never runs a…
+- `class BadRequestError extends ApiError`
+- `type BindableAgent = z.infer<typeof bindableAgentSchema>`
+- `function candidatePoolSize(limit: number): number`
+  "Retrieve wide, fuse narrow": how many candidates each signal contributes before fusion.
+- `async function chatModelAvailable( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'>, tenantId: string, promptKey: string ): Promise<boolean>`
+  Would a chat model resolve for this prompt key and tenant? Answers the same question `resolveChat` will, without building a client, so a plugin's route or UI can say "no model" up…
+- `class ConflictError extends ApiError`
 - `function createRouter(): Hono<AppEnv>`
 - `function createStepRealtimeFor(env: HubEnv): StepRealtime`
 - `function cronCtx(ctx: TaskContext): CronCtx`
-  Adapt the kit's `TaskContext`.
+  Adapt the core `TaskContext`.
 - `interface CronCtx extends PluginContext, BackgroundMethods`
   One cron run. `waitUntil` exists here because a scheduled invocation genuinely has one.
+  - `readonly kind: 'cron'`
+    See `JobCtx.kind`.
   - `waitUntil(promise: Promise<unknown>): void`
+- `function customEventNameIssue(pluginId: string, name: string): string \| null`
+  Why `name` is not a CUSTOM event `pluginId` may emit, or null when it may. Pure.
 - `type Database = PgDatabase<PgQueryResultHKT, typeof schema>`
 - `interface DatabaseHandle`
 - `interface Decision`
   What `ctx.decide(...)` resolves to.
+- `const DEFAULT_RESOLVE_MIN_SCORE: 0.3`
+  `pg_trgm`'s own default `similarity_threshold`: below it, two names share too little.
+- `function defaultEntityResolver( reg: EntityTypeRegistration, minScore = DEFAULT_RESOLVE_MIN_SCORE ): EntityResolver`
+  The resolver a registration with a table gets when it brings none. Builds its column set once (throwing on a bad registration, which `knowledgeEntityTypes()` has already refused).
 - `function defineTool<Input>(tool: Tool<Input>): Tool<Input>`
-  Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a kit path — but it is also where the two rules in this file's…
+  Declare a tool. A thin helper, and its only job is to be the thing a plugin imports instead of the `Tool` type from a core path — but it is also where the two rules in this file's…
 - `async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>`
   The item is gone upstream: delete its document, chunks, grants and stored original.
+- `interface DeliveredEvent<E extends EventName = EventName>`
+  One recorded event, as a subscriber receives it: re-read from `plugin_events`, re-validated.
 - `interface DetachedCtx extends PluginContext`
   What survives the handler: data and a database, no request.
   - `tenantId: string`
@@ -184,13 +218,13 @@ The server surface: the context family, and the types a plugin must be able to n
 - `class DuplicateStepNameError extends Error`
   Thrown when a run reuses a step name — see rule 1.
 - `function durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, tenantId: string, key?: string ): DurableObjectStub<T>`
-  A Durable Object stub for one tenant, **with the tenant prefix built here rather than by the caller** (D31).
+  A Durable Object stub for one tenant, **with the tenant prefix built here rather than by the caller**.
 - `const EMAIL_CATCH_ALL: "*"`
   The catch-all local part.
 - `type EmailContext = TaskContext`
   What an email handler is given — the cron's context, for the same reasons.
 - `function emailCtx(ctx: EmailContext): EmailCtx`
-  Adapt the kit's `EmailContext`. The only place a plugin's email half names a kit internal.
+  Adapt the core `EmailContext`. The only place a plugin's email half names a core internal.
 - `interface EmailCtx extends PluginContext, BackgroundMethods`
   One inbound message's context.
   - `waitUntil(promise: Promise<unknown>): void`
@@ -199,22 +233,78 @@ The server surface: the context family, and the types a plugin must be able to n
   `Receipts+Proton@Example.com` → `receipts`. Lower-cased (local parts are case-insensitive in practice, and Email Routing matches them that way) and cut at the first `+`, which is…
 - `function emailSubaddress(address: string): string \| null`
   `receipts+proton@example.com` → `proton`; null when the address carries no tag.
+- `type Emit = <E extends EventName>(event: E, input: EmitInput<E>) => Promise<EmittedEvent>`
+- `interface EmitInput<E extends EventName>`
+  The background `emit`: the tenant is named per call, as every background method takes it.
+- `interface EmittedEvent`
+  What `ctx.emit` answers.
+- `type EntityResolver = ( name: string, scope: EntityResolveScope ) => Promise<readonly EntityCandidate[]>`
+  Maps a mention ("Brightside", "order 1042") to candidate rows of the type, best first, every one in `scope.access.tenantId`. Scores are in [0, 1]; extraction links only above its…
+- `interface EntityResolveScope`
+  What a resolver is given besides the mention: a database and WHOSE tenant (and reader) it is.
+- `interface EntityTypeRegistration<F extends EntityFactsSchema = EntityFactsSchema> extends EntityTypeDeclaration<F>`
+  One registered entity type.
+- `function eventBinding<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventBinding<E, Input>, 'event'> ): AgentEventBinding<E, Input>`
+  Declare an OPT-IN: this agent may be started by `event` when a subject names it (an editor's "On submit, start" choice) — never by the event alone. Listed by…
+- `interface EventContext extends JobContext`
+  What an event handler is given: the job's context — its own DB client, config, logger, env — plus the event it is delivering. A plugin adapts it with `eventCtx(ctx)` from…
+- `function eventCtx(ctx: EventContext): EventCtx`
+  Adapt the host's `EventContext`. The only place a plugin's event half names a core internal.
+- `interface EventCtx extends PluginContext`
+  What an event handler works with, BOUND to the delivered event's tenant: nothing on it takes a tenant id, so a handler cannot reach another organisation through a method by…
+  - `readonly tenantId: string`
+    The event's organisation — the tenant predicate of every query the handler writes.
+  - `enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>`
+  - `enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>`
+  - `nudge(entity: string, id?: string): Promise<void>`
+    Nudge this organisation's open tabs. Awaited — there is no `waitUntil` in a job.
+  - `emit: TenantEmit`
+    Emit a follow-on event in the same organisation.
+  - `features(): Promise<readonly string[]>`
+    The organisation's feature keys — skip the work when your flag is off for it.
+  - `storage(): StorageService`
+    R2; write under `tenants/<ctx.tenantId>/<plugin id>/…`.
+  - `durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>`
+  - `startAgentRun(input: Omit<StartAgentRunInput, 'tenantId'>): Promise<StartedAgentRun>`
+    `startAgentRun` in this organisation (the route's own gates; each refusal throws). Pass an `idempotencyKey` derived from `event.id`. For "this event starts that agent" prefer the…
+  - `startBoundAgent(agentKey: AgentKey \| string): Promise<StartedAgentRun>`
+    Start the agent a SUBJECT named for THIS event — the form block's "On submit, start" choice, read from the plugin's own stored, published configuration, never from the payload a…
+- `interface EventHandler<E extends EventName = EventName>`
+  One subscription: a `ServerPlugin.eventHandlers` entry or an `APP_EVENT_HANDLERS` one. Each gets its OWN queued delivery per event, so one handler's failure retries alone. Throw…
+- `type EventName = EventNameOf<InstalledShared>`
+  Every event name an installed plugin declares. `never` while none does.
+- `type EventPayload = EventPayloadOf<InstalledShared, E>`
+  The parsed payload of event `E`, as the declaring plugin's schema outputs it.
+- `function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>`
+  Declare an AUTOMATIC start in an agent definition: `triggers: [eventTrigger('sites.form.submitted', { where: p => p.formName === 'contact', input: p => ({ text: p.fields.message…
+- `class ForbiddenError extends ApiError`
+- `function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]`
+  Reciprocal Rank Fusion of two ordered candidate lists (best first). Pure.
+- `interface FusedItem<T>`
 - `function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean`
   `true` when this deployment ships the surface AND this organisation has it yet.
 - `interface HookCtx extends Pick<PluginContext, 'db'>`
-  A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seedDemo`.
+  A lifecycle hook: `onTenantCreated`, `onTenantDeleted`, `seed`, `seedDemo`.
   - `tenant: Tenant`
   - `tenantId: string`
   - `userId: string \| null`
     Who caused it — the signing-up user, the approving admin. Null for a system path.
   - `features: readonly string[]`
-    The features this DEPLOYMENT ships (D30). A hook that CREATES rows is the sharpest feature door there is, because it has no nav entry to hide behind: seed nothing for a surface…
+    The features this DEPLOYMENT ships. A hook that CREATES rows is the sharpest feature door there is, because it has no nav entry to hide behind: seed nothing for a surface this…
+- `function identityFor(c: AppContext, pluginId: string): PluginIdentity`
+  Both halves, bound to this request and this plugin's namespace.
+- `type IdpAppRole = z.infer<typeof idpAppRoleSchema>`
 - `async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>`
   Index text. Small texts are indexed before this returns; larger ones return `queued`. No embeddings provider → 503 `ai_not_configured`, checked before anything is written.
 - `async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>`
   Store a file in R2 and index it — text-like types now, binary ones (PDF, Office…) through the `document.convert` job. Unsupported type → 415 `unsupported_media_type`; no `FILES`…
+- `async function ingestPlatformDocument( ctx: JobCtx \| CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>`
+  Write (or re-write) a PLATFORM document — one every tenant can read, describing the app itself. Only from a job or a cron task (`JobCtx | CronCtx`), on the owner connection,…
+- `class InvalidCustomEventError extends Error`
+  A CUSTOM name a plugin may not emit. A TYPE, so the stream can say which code it was.
 - `function isAdminLevel(session: RoleView): boolean`
   May administer members / invitations / keys: owner, admin, support, or global admin.
+- `function isApiError(error: unknown): error is ApiError`
 - `function isGlobalAdmin(session: RoleView): boolean`
   `users.isGlobalAdmin` — the platform flag, independent of any tenant role.
 - `function isOwnerLevel(session: RoleView): boolean`
@@ -222,9 +312,11 @@ The server surface: the context family, and the types a plugin must be able to n
 - `function isUniqueViolation(err: unknown): boolean`
   A unique / primary-key violation (`23505`), under either driver.
 - `function jobCtx(ctx: JobContext): JobCtx`
-  Adapt the kit's `JobContext`. The only place a plugin's job half names a kit internal.
+  Adapt the core `JobContext`. The only place a plugin's job half names a core internal.
 - `interface JobCtx extends PluginContext, BackgroundMethods`
   One queue message. `job.payload` is already narrowed to the variant this handler was registered for — `ServerPlugin.jobHandlers` is checked against the job types the plugin's own…
+  - `readonly kind: 'job'`
+    Which background context this is. A brand as much as a field: the few methods that only a job or a cron task may call (`ingestPlatformDocument`) take `JobCtx | CronCtx`, and the…
 - `type JobEnvelope = z.infer<typeof jobEnvelopeSchema>`
 - `type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>`
 - `type JobInput = z.infer<typeof jobInputSchema>`
@@ -232,10 +324,21 @@ The server surface: the context family, and the types a plugin must be able to n
   The envelope narrowed to one `type` — what a handler receives.
 - `type JobType = JobEnvelope['type']`
   Every job type this app knows, derived from the variants rather than kept beside them.
+- `async function listAgents(): Promise<readonly AgentSummary[]>`
+  Every registered agent — the kit's and every installed plugin's — as `{ key, title, description }`, the same catalogue `GET /api/agents` serves. For a plugin that lists or…
+- `async function listBindableAgents(event: EventName \| string): Promise<BindableAgent[]>`
+  The agents that opt in (`bindable`) to being started by `event` — what an editor's agent picker lists. The same list for every tenant: agents are code. A browser reads it through…
 - `type Logger = pino.Logger`
+- `interface McpToolAnnotations`
+  MCP's tool annotations — hints a client shows its person; never a security boundary.
+- `type McpToolScope = 'mcp:read' \| 'mcp:write'`
+  The OAuth scope an MCP call needs: `mcp:read` for a read, `mcp:write` for a side effect.
+- `async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>`
+  Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing something a signed state started — an OAuth connection, a consent — where the state…
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
 - `const noopTracer: Tracer`
   What a context carries when no sink is reachable (a unit test, a bare router).
+- `class NotFoundError extends ApiError`
 - `async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void>`
 - `interface NotifyInput`
 - `async function notifyMany( db: Database, userIds: string[], input: Omit<NotifyInput, 'userId'>, realtime?: Realtime )`
@@ -254,12 +357,18 @@ The server surface: the context family, and the types a plugin must be able to n
   The Postgres SQLSTATE (`23505`, `40001`…) of a driver error, wherever it hangs: both drivers put `code` on their own error (postgres.js, Neon's `NeonDbError`) and drizzle wraps…
 - `interface PickOptions<T>`
 - `interface PickResult<T>`
+- `interface PlatformDocumentInput`
+- `interface PlatformDocumentResult`
+- `class PlatformEmbeddingsError extends ServiceUnavailableError`
+  503 `platform_embeddings_not_configured`: no `EMBEDDINGS_API_KEY` and no `[ai]` binding.
 - `type PluginAgent = AgentDefinition<Input, Output>`
   A plugin's agent, as `ServerPlugin.agents` takes it.
 - `interface PluginAuth`
   Who is asking, flattened — the half of the auth context a plugin has any business reading.
   - `user: User`
   - `userId: string`
+  - `apiKeyId: string \| null`
+    The API key that authenticated this request (its `api_keys.id`), or `null` for a browser session. Never the secret. What a per-client limit or an audit line keys on: `userId` is…
   - `tenantId: string`
     The active organisation — the ONLY tenant id a query may filter by.
   - `role: MembershipRole \| null`
@@ -280,13 +389,29 @@ The server surface: the context family, and the types a plugin must be able to n
     Validated config, including whatever this plugin's `SharedPlugin.config` added to the schema.
   - `logger: PluginLogger`
   - `env: PluginBindings`
-    The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a kit binding directly is usually the sign that a method is missing from this surface.
+    The Worker bindings. A plugin reads the ones its own `plugin.json` declares; reaching for a core binding directly is usually the sign that a method is missing from this surface.
+- `interface PluginDeprovisionResult`
+  What `provision.deprovision` did in the tenant.
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
+- `interface PluginIdentity`
+  `identityFor(c, pluginId)`: sign a person in, or provision them.
+- `interface PluginIdentityUser`
+  A person as this module answers them: plain fields, never the row.
 - `interface PluginIngestFileInput extends IngestCommon`
 - `interface PluginIngestResult`
   What an ingest answers. `queued` means a `document.index` / `document.convert` job finishes it.
 - `interface PluginIngestTextInput extends IngestCommon`
 - `type PluginLogger = Pick<Logger, 'debug' \| 'info' \| 'warn' \| 'error'>`
   The four level methods, and deliberately no more.
+- `interface PluginLoginMethodDeclaration`
+  What a plugin declares; the host namespaces `id` as `<plugin id>:<id>` on the wire.
+- `interface PluginMember`
+  One row of `listMembers`: the membership and the person, plain fields.
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
   One entry of the mount table in `api/index.ts`: prefix, router, optional gate.
 - `interface PluginNavGroup`
@@ -295,8 +420,12 @@ The server surface: the context family, and the types a plugin must be able to n
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
-- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
-  One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or…
+- `interface PluginProvision`
+  Tenant-explicit user and membership writes with no session: SCIM, a directory sync.
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]`
+  One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate reads `auth.features` and there is no auth here. The prefix must be…
+- `interface PluginPublicMountOptions`
+  How the host guards one public mount before its router runs. Both are applied by the HOST (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -307,16 +436,26 @@ The server surface: the context family, and the types a plugin must be able to n
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
-  Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+  Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given.
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
+- `interface PluginSignInInput`
+  What a plugin's IdP proved about the person, handed to `signIn`.
 - `type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' \| 'maxTokens' > & { maxTokens?: number }`
   `callStructuredTool` minus what the runtime supplies.
-- `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' > & { maxTokens?: number }`
+- `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' \| 'journal' > & { maxTokens?: number }`
   `runToolLoop` minus what the runtime supplies.
+- `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
+  The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
+- `async function prunePlatformDocuments( ctx: JobCtx \| CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>`
+  Delete the platform documents of `source` whose `externalId` is not in `keepExternalIds` — what a sync calls after ingesting the current set. Answers the number deleted; an empty…
 - `const PUBLIC_MOUNT_ROOT: "/api/hooks"`
   The prefix every public mount lives under; the plugin's id is the next segment.
+- `const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"`
+  A router's per-page additions to the public CSP (JSON, `PublicSiteCsp` shape): the CSP sources of a page that embeds something, without opening them on every other page of the…
 - `function publicCtx(c: AppContext): PublicCtx`
   Build a public handler's context. The only function here that reads the Hono context.
 - `interface PublicCtx extends PluginContext, BackgroundMethods`
@@ -328,6 +467,12 @@ The server surface: the context family, and the types a plugin must be able to n
   - `badRequest(message?: string, code?: string, details?: unknown): never`
   - `forbidden(message?: string, code?: string): never`
   - `unauthorized(message?: string): never`
+- `interface PublicSiteCsp`
+  Developer-declared additions to the strict public CSP. Inline script stays banned.
+- `interface PublicSiteFormPath`
+- `interface PublicSitesDeclaration`
+  A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`). The host owns the request's order: cache lookup, rate limit (misses only),…
+- `class RateLimitedError extends ApiError`
 - `interface Realtime`
   Everything a service needs to nudge: how to defer, and the hub binding. Built by `withAuth`.
 - `function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent`
@@ -335,36 +480,40 @@ The server surface: the context family, and the types a plugin must be able to n
 - `async function recordUsage(db: Database, input: UsageInput): Promise<number \| null>`
   Returns the cost it froze onto the row (null when the model has no price).
 - `function requestCtx(c: AppContext): RequestCtx`
-  Build a plugin's request context from the kit's.
+  Build a plugin's request context from the core one.
 - `interface RequestCtx extends PluginContext, PluginAuth`
   What a route handler is handed.
   - `readonly scope: AccessScope`
-    Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id.
+    Tenant-wide visibility scope — hand it to a predicate, never to a query as a tenant id.
   - `readonly groups: readonly GroupRef[]`
     The reader's groups in this organisation, each with the name of the TYPE it belongs to.
   - `readonly visibility: RequestVisibility`
-    Read and write who may see one of this plugin's own rows (D29) — see `RequestVisibility`.
+    Read and write who may see one of this plugin's own rows — see `RequestVisibility`.
   - `guard(action: Actions, subject: Subjects): void`
     403 unless this role may `action` the `subject`. The KIND of thing, never the row.
   - `can(action: Actions, subject: Subjects): boolean`
     The same question without throwing — for branching, e.g. "may they also see the archived ones".
   - `hasFeature(name: string): boolean`
-    `true` when this deployment ships the feature AND this organisation has it (D30).
+    `true` when this deployment ships the feature AND this organisation has it.
   - `uuid(name: string): string`
     A `:id`-style parameter that must be a UUID. Anything else is a 404, never a database error — which also stops the route being a probe for which id shapes exist.
   - `valid<T>(target: 'json' \| 'query' \| 'param' \| 'form' \| 'header' \| 'cookie'): T`
     The value `validate('json' | 'query' | 'param', schema)` already parsed.
   - `page<T>( items: T[], total: number, query: PaginationQuery ): { items: T[]; pagination: PaginationMeta }`
     `{ items, pagination }` — the one list shape every consumer parses.
+  - `embeddable(contentType: string): boolean`
+    Let a same-origin page FRAME this one response (`X-Frame-Options: SAMEORIGIN` + CSP `frame-ancestors 'self'` instead of `DENY` + `'none'`) — the opt-in `/api/files/:id` uses for…
   - `defer(fn: () => Promise<unknown>): void`
     Run something that may outlive the response (an email, an audit write, a nudge). It goes through `waitUntil`, is never awaited on the response path, and LOGS rather than throws —…
   - `enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>`
     Hand work to `JOBS_QUEUE`. **A route never runs long work.** A missing binding throws rather than running inline, because silently doing the work in the request is how a 30-second…
   - `enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>`
   - `nudge(entity: string, id?: string): void`
-    Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key family root, so declaring it once covers the socket wiring (D8).
+    Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key family root, so declaring it once covers the socket wiring.
   - `storage(): StorageService`
     R2, or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes.
+  - `emit: TenantEmit`
+    Emit a declared plugin event (D42) in THIS organisation: validated (400), recorded, one delivery queued per subscriber — awaited, because the row is the durable half and a 400…
   - `durableObject<T extends Rpc.DurableObjectBranded \| undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>`
     A per-tenant Durable Object stub. The plugin never spells the name; the prefix is structural.
   - `notFound(message?: string, code?: string): never`
@@ -374,11 +523,11 @@ The server surface: the context family, and the types a plugin must be able to n
   - `conflict(message?: string, code?: string, details?: unknown): never`
   - `unavailable(message?: string, code?: string): never`
   - `detached(): DetachedCtx`
-    A snapshot of this context that outlives the handler (D31).
+    A snapshot of this context that outlives the handler.
   - `readonly realtime: Realtime`
-    The realtime handle, for a plugin service that takes `realtime?` the way the kit's do.
+    The realtime handle, for a plugin service that takes `realtime?` the way core services do.
 - `interface RequestVisibility`
-  Reading and writing who may see one of a plugin's own rows (D29, D31).
+  Reading and writing who may see one of a plugin's own rows.
   - `resolve( input: { visibility?: ResourceVisibility; groupIds?: readonly string[] } \| undefined ): Promise<SetResourceGroupsInput>`
     Validate what a CLIENT asked for, against the caller's own groups. Absent input keeps the default, which is tenant-wide; `'tenant'` always clears the grants, because leaving stale…
   - `set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>`
@@ -386,6 +535,8 @@ The server surface: the context family, and the types a plugin must be able to n
   - `grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>`
     Which groups each of these rows is shared with, in ONE query — so a badge strip on a list costs one extra round trip rather than one per row.
 - `function requireFeature(feature: FeatureName)`
+- `async function resolveOwnerTenant( db: Database, config: Pick<AppConfig, 'TENANCY_MODE'>, ownerSlug?: string ): Promise<Tenant \| null>`
+  The tenant that owns a public surface: the one tenant under `single`, the tenant named by `ownerSlug` under `multi`. Null when there is none, or when it is not `active`, so a…
 - `interface ResourceGrantRow`
   One row of `grantsForResources`, before it is grouped by resource.
 - `function rows<T = Record<string, unknown>>(result: unknown): T[]`
@@ -393,19 +544,32 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface ScheduledTask`
 - `async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>`
   Encrypt a credential for storage. The output is opaque base64; keep it in a `*_enc` column.
+- `async function searchKnowledge( ctx: Pick<PluginContext, 'db' \| 'config' \| 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>`
+  The kit's hybrid knowledge search, for a plugin: the caller's tenant documents as its `AccessScope` may read them (narrowed by `sources`), plus — only when named — the platform…
+- `interface SearchKnowledgeHit`
+- `interface SearchKnowledgeInput`
+- `interface SearchKnowledgeResult`
 - `interface SeedCtx extends Pick<PluginContext, 'db'>`
-  `pnpm seed --demo`, after the kit's own block.
+  `pnpm seed` (`hooks.seed`, every run) or `pnpm seed --demo` (`hooks.seedDemo`), after the core block.
   - `tenantId: string`
   - `ownerId: string`
   - `demoId: (key: string) => string`
   - `log: (line: string) => void`
+  - `setFeature?: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>`
+    A per-organisation override of a registered feature flag (on by default; `tenantId` defaults to the seeded tenant). Optional here so a plugin's own test can build a `SeedCtx`…
 - `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `requires?: PluginRequires`
   - `mounts?: readonly PluginMount[]`
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
-    Routes a third party calls with no session or key — an admin-consent callback, a webhook (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under…
+    Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `publicSites?: PublicSitesDeclaration`
+    Whole websites on hostnames of their own: on a claimed host this router answers every path and core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`…
+  - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
+    Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
+  - `ssoPolicy?: SsoPolicy`
+    "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain): answer `{ required: true, methodId }` — `methodId` one of THIS plugin's…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -414,23 +578,38 @@ The server surface: the context family, and the types a plugin must be able to n
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
+  - `tools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added beside the built-in knowledge tools, on every surface each tool names (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`). Bound…
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
-    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May…
+    DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is absent, and `pnpm plugin check` warns on it. A later kit release removes it.
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
+  - `knowledgeEntityTypes?: readonly EntityTypeRegistration[]`
+    Knowledge entity types (D43) whose rows extraction may attach facts to — composed with the app's own (`api/services/knowledge/entity-types.ts`) by `knowledgeEntityTypes()`. Each…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
-    Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs are appended after the kit's). A cron the kit does NOT run must also be added to…
+    Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `eventHandlers?: readonly EventHandler[]`
+    Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's, named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN…
+  - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
+    Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
-    Per-role CASL rules, applied after the kit's own matrix — additive, never a replacement.
+    Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
+  - `uploadLimits?: Readonly<Record<string, number>>`
+    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
-    D29: rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+    Rows of this plugin that a group may restrict. Read by `services/access.ts`.
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
-    Cross-plugin registries (D31 decision 6): the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on…
+    Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
+- `class ServiceUnavailableError extends ApiError`
 - `interface SetResourceGroupsInput`
 - `function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL`
   `exists (select 1 from <junction> j where j.<fk> = <resource>.id and j.group_id = any($ids))`.
@@ -441,6 +620,8 @@ The server surface: the context family, and the types a plugin must be able to n
 - `type SpanKind = 'agent' \| 'llm' \| 'tool' \| 'retrieval' \| 'embedding' \| 'job' \| 'span'`
   What a span IS — it picks the GenAI operation name and the backend's observation type.
 - `interface SpanParams`
+- `interface SsoRequirement`
+  What a plugin's `ssoPolicy` answers for an email whose domain one of its connections claims.
 - `type StartAgentRun = (input: StartAgentRunInput) => Promise<StartedAgentRun>`
 - `interface StartAgentRunInput`
   - `agentKey: AgentKey`
@@ -468,12 +649,12 @@ The server surface: the context family, and the types a plugin must be able to n
   - `realtime: StepRealtime`
     Nudges, collected and awaited before the step returns.
 - `interface StepOptions`
-  `step.do`'s options, narrowed to what the kit's own workflow uses.
+  `step.do`'s options, narrowed to what the core workflow uses.
   - `retries?: { limit: number delay: WorkflowSleepDuration \| number backoff?: 'constant' \| 'linear' \| 'exponential' }`
   - `timeout?: WorkflowSleepDuration \| number`
 - `interface StepRealtime`
   - `realtime: Realtime`
-    The `Realtime` a kit-shaped service takes as its trailing optional argument.
+    The `Realtime` a core-shaped service takes as its trailing optional argument.
   - `settle(): Promise<void>`
     Await every send collected so far. Failures are swallowed — a nudge is never load-bearing.
   - `nudgeEntity(tenantId: string, entity: string, id?: string): Promise<void>`
@@ -483,32 +664,60 @@ The server surface: the context family, and the types a plugin must be able to n
 - `interface StorageService`
 - `interface StoredObject extends StoredObjectMeta`
 - `interface StoredObjectMeta`
+- `async function streamChat(c: AppContext, options: StreamChatOptions): Promise<Response>`
+  Stream one chat turn for a plugin route, as AG-UI (SSE, or protobuf when the client's `Accept` negotiates it). Call it as the route's return value:
+- `type StreamChatEmit = (name: string, value: unknown) => Promise<void>`
+  Emit one CUSTOM event named `<plugin id>.<what>`. Any other name is refused.
+- `interface StreamChatOptions`
+- `interface StreamChatResult`
+  What the turn produced, handed to `onFinish` and returned in `RUN_FINISHED.result`.
+- `interface StreamChatToolCtx extends ToolCtx`
+  What a plugin's tool builder is handed: the usual `ToolCtx`, on the stream's client, plus `emit`.
+  - `emit: StreamChatEmit`
+- `interface StreamChatTurn`
+  One prior turn of the plugin's own conversation, oldest first.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
 - `type Tenant = typeof tenants.$inferSelect`
+- `type TenantEmit = <E extends EventName>( event: E, input: TenantEmitInput<E> ) => Promise<EmittedEvent>`
+- `type TenantEmitInput = Omit<EmitInput<E>, 'tenantId'>`
+  The same input where the context is already bound to one tenant (a request, a run, a handler).
 - `interface Tool<Input = unknown>`
   A tool the model may call. `handler` runs it; a tool WITHOUT a handler is terminal (its input is the answer).
 - `interface ToolApproval`
   An answered gate, as the loop consumes it — keyed by `toolCallId` in {@link RunToolLoopOptions.approvals}, built by the runtime from the resolved rows. The agent never assembles…
 - `interface ToolCallParams`
 - `function toolCtx(ctx: AgentToolContext): ToolCtx`
-  Adapt the runtime's tool context. The only place a plugin's tools name a kit internal.
+  Adapt the runtime's tool context. The only place a plugin's tools name a core internal.
 - `interface ToolCtx`
-  What `ServerPlugin.agentTools(ctx)` is handed, spelled as the plugin surface rather than as the runtime's internal shape.
+  What `ServerPlugin.tools(ctx)` is handed, spelled as the plugin surface rather than as the runtime's internal shape.
   - `db: Database`
   - `config: PluginConfig`
   - `env: PluginBindings`
   - `scope: AccessScope`
   - `tenantId: string`
     The run's tenant — `scope.tenantId`, surfaced because every query needs it.
+  - `can: AbilityCheck`
+    Does the requester hold this CASL grant now? Offer a tool that writes only when they hold your subject's manage (`ctx.can('manage', MY_SUBJECT)`) — never decide that from…
   - `maxDocumentChars?: number`
     The CALLER's budget for one document window, in characters. An agent run's is far larger than a chat turn's.
+  - `requesterUrls: ReadonlySet<string>`
+    The http(s) URLs the person behind this call wrote themselves, normalised with `new URL()` and no fragment: the chat person's own messages, or an agent run's input when a person…
   - `storage(): StorageService`
     R2 (the `FILES` bucket), or a 503 `storage_not_configured` — the same service every other context's `storage()` returns. Read and write under `tenants/<ctx.tenantId>/<plugin…
+  - `features(): Promise<readonly string[]>`
+    The feature keys the run's organisation has — what `ctx.features(tenantId)` answers in a job. A plugin whose tool belongs to a flagged surface returns `[]` when the flag is off,…
+  - `requester: ToolRequester \| null`
+    The person behind this call — their role, the admin-level flag (owner, admin, support or a global admin) and their groups with each group's TYPE name — or `null` for a run nobody…
 - `function toolInputSchema(schema: ZodType): JsonSchema`
   JSON Schema (draft-07, `$schema` stripped) for a tool input.
 - `interface ToolLoopCheckpoint`
   Everything a later attempt needs to carry on where this one stopped. Deliberately symmetric: what {@link RunToolLoopOptions.onCheckpoint} hands you is exactly what {@link…
 - `interface ToolLoopResult`
+- `interface ToolMcpOptions`
+  A tool's MCP presentation; see {@link Tool.mcp}.
+- `interface ToolRequester`
+  Who is behind a tool call, as the caller already knows it: the person's role in the tenant, the admin-level flag (owner, admin, support or a global admin — the same test the…
+- `type ToolSurface = (typeof TOOL_SURFACES)[number]`
 - `function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient`
   Wrap a client so each call emits a `chat <model>` child of `trace`. Unchanged when tracing is off.
 - `interface TraceHandle`
@@ -523,14 +732,23 @@ The server surface: the context family, and the types a plugin must be able to n
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the kit's. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
-    Quick links for the Home page, merged AHEAD of the kit's own (D31). A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one…
+    Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
+- `class UnauthorizedError extends ApiError`
+- `function usageFeatureIssue(pluginId: string, feature: string): string \| null`
+  Why `feature` is not a usage label `pluginId` may record under, or null when it may. Pure.
 - `type User = typeof users.$inferSelect`
 - `function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )`
 - `async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T \| null>`
@@ -556,14 +774,14 @@ The server surface: the context family, and the types a plugin must be able to n
 
 The two escape hatches that read the whole installed set. Not on the barrel, on purpose.
 
-> The two escape hatches that read the WHOLE installed set (D31).
+> The two escape hatches that read the WHOLE installed set.
 
 - `function allTables(): AllTables`
   The whole schema namespace, for a library that takes one (drizzle-cube's `createCubeApp({ schema })` is the case this exists for).
 - `type AllTables = typeof schema`
-  The merged drizzle schema: every kit table AND every installed plugin's.
+  The merged drizzle schema: every core table AND every installed plugin's.
 - `function extensions(key: string): readonly unknown[]`
-  Everything every installed plugin contributed under one `extensions` key (D31, decision 6).
+  Everything every installed plugin contributed under one `extensions` key.
 - `function extensionSources(key: string): readonly string[]`
   Which plugins contributed under a key — for the error message when one of them fails to parse.
 
@@ -571,7 +789,7 @@ The two escape hatches that read the whole installed set. Not on the barrel, on 
 
 The only host module a plugin's `ui/index.ts` may import — it ships in the main bundle.
 
-> The WIRING half of the UI kit (D31) — the only host module a plugin's `ui/index.ts` may import.
+> The WIRING half of the UI kit — the only host module a plugin's `ui/index.ts` may import.
 
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
 - `const featureGuard: (feature: NavGuard, guard: NavGuard) => NavGuard`
@@ -583,6 +801,12 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
 - `interface NavItem`
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
 - `interface PluginNavGroup`
   A nav group, placed relative to a named core group ("Organisation" by default).
   - `label?: string`
@@ -597,29 +821,37 @@ The only host module a plugin's `ui/index.ts` may import — it ships in the mai
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
 - `interface QuickLink`
 - `interface TabConfig`
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the kit's. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
-    Quick links for the Home page, merged AHEAD of the kit's own (D31). A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one…
+    Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 - `function useNavGuard(): (guard: NavGuard \| undefined) => boolean`
 
 ### `@/plugins/api/ui`
 
 Components and hooks, for a lazy PAGE. Never for the UI entry.
 
-> The COMPONENTS half of the UI kit (D31) — for a plugin's PAGES, never for its `ui/index.ts`.
+> The COMPONENTS half of the UI kit — for a plugin's PAGES, never for its `ui/index.ts`.
 
 - `function AccessBadge({ visibility, groups, className = '', }: { visibility: ResourceVisibility groups: GroupRef[] className?: string })`
   The read-only counterpart: a lock and the group names, for a list row.
@@ -633,6 +865,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Thrown for every non-2xx response. `body` is the parsed error envelope.
 - `interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'>`
 - `interface Breadcrumb`
+- `function Breadcrumbs({ items, className = '', }: { items: Breadcrumb[] className?: string })`
+  The trail above a page title, on its own for a surface with no `PageHeader` (an editor toolbar).
 - `function ConfirmModal({ isOpen, title, message, confirmText = 'Confirm', cancelText = 'Cancel', confirmButtonClass = 'btn-primary', isLoading = false, onCancel, onConfirm, }: ConfirmModalProps)`
   Two-button confirmation on the `<dialog>` Modal.
 - `function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)`
@@ -661,11 +895,16 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   DaisyUI spinner in the primary colour.
 - `function LogoMark({ className = 'w-7 h-7' }: { className?: string })`
   The Rocketflare mark — a rocket launching from a cloud — inlined so it needs no request and scales with `className`. The fills are the brand illustration colours, fixed on purpose…
+- `function MarkdownImageLink({ src, alt }: Pick<ComponentProps<'img'>, 'src' \| 'alt'>)`
 - `function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)`
   `<dialog>`-based modal: native focus trap, Escape and backdrop close, `aria-modal` for free. Controlled — the caller owns `open`. Falls back to the `open` attribute where…
 - `interface ModalProps`
 - `type NavGuard = \| 'admin' \| 'globalAdmin' \| { action: string; subject: string } \| { feature: string } \| readonly NavGuard[]`
   Coarse role flags for routing (`AdminRoute` / `GlobalAdminRoute` semantics), a CASL `{ action, subject }` pair for per-page checks, a feature flag, or a list meaning AND. Strings,…
+- `interface NavigationChecks`
+- `function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]`
+  The list, pure: the plugins and the checks are passed in, so it is unit-tested directly.
+- `interface NavigationEntry`
 - `function notifyUnauthorized(error: ApiError): void`
   Invoke the 401 handler. A stale session makes every in-flight query fail at once, so calls within the same tick are coalesced into ONE handler invocation. Called by `request()`…
 - `function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)`
@@ -685,10 +924,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function SettingToggle({ id, label, description, checked, onChange, disabled, }: SettingToggleProps)`
   Toggle variant.
 - `function setUnauthorizedHandler(handler: UnauthorizedHandler \| null): void`
-  Register the global 401 handler. One handler; the last registration wins. Pass `null` to remove it. Phase 1 calls this from `AuthProvider` with the redirect-to-login behaviour.
+  Register the global 401 handler. One handler; the last registration wins. Pass `null` to remove it. `AuthProvider` calls this with the redirect-to-login behaviour.
 - `function showToast(message: string, type: ToastType, duration?: number): void`
   Show a toast from anywhere, inside or outside React.
-- `default function SideNav({ items = navigationConfig, footer }: SideNavProps)`
+- `default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)`
 - `function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })`
   Placeholder lines on their own, for panels that stay mounted while loading.
 - `interface TabConfig`
@@ -698,18 +937,25 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function ToastContainer()`
   Bottom-right stack. Mount once.
 - `type ToastType = 'success' \| 'error' \| 'warning' \| 'info'`
+- `function uiExtensions(key: string): readonly unknown[]`
+- `function uiExtensionSources(key: string): readonly string[]`
+  Which plugins contributed under a key — for the error message when one of them does not parse.
+- `const UNLABELLED_NAV_GROUP: "Pages"`
+  The heading an unlabelled nav group gets in a list.
 - `function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)`
   Tabs whose active state lives in `?tab=`, so deep links and back/forward work.
 - `function useAuth(): AuthContextValue`
 - `function useFeature(name: FeatureName): boolean`
-  Is a feature on for this session (D30)? Reads `session.features` — the array the server resolved — and NEVER the ability: `manage all` covers `access` on every `Feature:` subject,…
+  Is a feature on for this session? Reads `session.features` — the array the server resolved — and NEVER the ability: `manage all` covers `access` on every `Feature:` subject, so an…
 - `function useGroups(typeId?: string, enabled = true)`
 - `function useGroupTypes(enabled = true)`
 - `function useMyGroups()`
   Every member may read their OWN groups — the profile list, and what the picker offers them.
+- `function useNavigationEntries(): NavigationEntry[]`
+  `navigationEntries` for the signed-in reader and the installed plugins.
 - `function usePermissions()`
 - `function useTenancyMode(): TenancyMode`
-  `'single'` hides OrgSwitcher, /select-tenant and org create/delete (D25).
+  `'single'` hides OrgSwitcher, /select-tenant and org create/delete.
 - `const useToastStore: UseBoundStore<StoreApi<ToastStore>>`
 - `function VisibilityModal({ open, onClose, name, visibility, groups, available, tenantName, isSaving = false, onSave, }: VisibilityModalProps)`
 - `interface VisibilityModalProps`
@@ -718,11 +964,17 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 
 `ServerPlugin` and `UiPlugin` — the slots a plugin fills.
 
-> The Worker half of a plugin (D31): what a plugin contributes to the server and to the UI.
+> The Worker half of a plugin: what a plugin contributes to the server and to the UI.
 
 - `type AnyServerPlugin = ServerPlugin<SharedPlugin>`
   The element type of the barrels — a plugin whose shared half is not narrowed.
 - `type AnyUiPlugin = UiPlugin<SharedPlugin>`
+- `interface PluginHeaderItem`
+  One item in the app's top bar — a search box, a help button. Rendered by the shell inside `Layout` for every signed-in page with a tenant, behind `guard`, inside its OWN…
+- `type PluginHeaderPlacement = 'center' \| 'end'`
+  Where in the top bar a plugin header item sits.
+- `interface PluginHomeCard`
+  One card in Home's "what needs doing" section (`UiPlugin.homeCards`): something the reader is asked to act on — approvals waiting, an inbox to triage. The host sorts, guards and…
 - `type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]`
   One entry of the mount table in `api/index.ts`: prefix, router, optional gate.
 - `interface PluginNavGroup`
@@ -731,8 +983,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `before?: string`
     Insert before the core group with this label; appended when the label is not found.
   - `items: NavItem[]`
-- `type PluginPublicMount = readonly [string, Hono<AppEnv>]`
-  One UNAUTHENTICATED mount (D34): prefix and router, no gate — a feature gate reads `auth.features`, and there is no auth here. The prefix must be `/api/hooks/<plugin id>` or…
+- `type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]`
+  One UNAUTHENTICATED mount: prefix, router and optional guards — no gate, because a feature gate reads `auth.features` and there is no auth here. The prefix must be…
+- `interface PluginPublicMountOptions`
+  How the host guards one public mount before its router runs. Both are applied by the HOST (`api/index.ts`), never by the plugin's handlers, so every unauthenticated prefix is…
 - `interface PluginRequires`
   What `pnpm plugin check` verifies before an install, mirrored from the plugin's manifest.
 - `interface PluginRoute`
@@ -743,17 +997,30 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   - `guard?: NavGuard`
     The SAME guard its nav item uses, so a link never points at a page its reader cannot open.
   - `tier?: PluginRouteTier`
-    Default `shell` — inside `Layout`, signed in with a tenant.
-- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public'`
+    Default `shell` — inside `Layout`, signed in with a tenant. `workspace` is the same, for a page that wants the whole space: the nav collapses to its icon rail, `<main>` has no…
+- `type PluginRouteTier = 'shell' \| 'noTenant' \| 'public' \| 'workspace'`
 - `interface PluginSeedContext`
-  Everything a plugin's `seedDemo` hook is given (`pnpm seed --demo`).
+  Everything a plugin's `seed` (`pnpm seed`) and `seedDemo` (`pnpm seed --demo`) hooks are given.
+- `interface PluginSettingsTab extends TabConfig`
+  One plugin settings tab: a `TabConfig`, plus the guard the host checks before showing it.
+- `interface PublicSiteCsp`
+  Developer-declared additions to the strict public CSP. Inline script stays banned.
+- `interface PublicSiteFormPath`
+- `interface PublicSitesDeclaration`
+  A public website answered from the Worker on its own hostnames (`api/middleware/public-sites.ts`). The host owns the request's order: cache lookup, rate limit (misses only),…
 - `interface ServerPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `requires?: PluginRequires`
   - `mounts?: readonly PluginMount[]`
     Spread into the mount table of `api/index.ts`; the prefix is `/api/<id>` by convention.
   - `publicMounts?: readonly PluginPublicMount[]`
-    Routes a third party calls with no session or key — an admin-consent callback, a webhook (D34). Mounted BEFORE the authed mounts and without `authMiddleware`, under…
+    Routes a third party calls with no session or key — an admin-consent callback, a webhook. Mounted BEFORE the authed mounts and without `authMiddleware`, under `/api/hooks/<id>`…
+  - `publicSites?: PublicSitesDeclaration`
+    Whole websites on hostnames of their own: on a claimed host this router answers every path and core is unreachable. Host claims are checked by `tests/config/plugins.test.ts`…
+  - `loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]`
+    Sign-in methods for the login page, read per request by `GET /auth/methods` (so `cfg` may decide: a dev-only method, one per configured connection). Each button navigates to its…
+  - `ssoPolicy?: SsoPolicy`
+    "SSO required" for the emails one of this plugin's connections claims (a DNS-verified domain): answer `{ required: true, methodId }` — `methodId` one of THIS plugin's…
   - `apiPrefixes?: readonly string[]`
     Extra path prefixes the Worker owns, unioned into `API_PREFIXES` — so an unmatched path under one is a JSON 404 rather than `index.html`. Adding one ALSO means adding it to…
   - `jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }`
@@ -762,41 +1029,61 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Agent definitions, one per key in `shared.agentKeys`.
   - `prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }`
     Prompt registry entries, one per key in `shared.promptKeys`.
+  - `tools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
+    Tools added beside the built-in knowledge tools, on every surface each tool names (`surfaces`: chat, agents, the MCP server; absent = all — `defineTool` in `@/plugins/api`). Bound…
   - `agentTools?: (ctx: AgentToolContext) => Tool[] \| Promise<Tool[]>`
-    Tools added to every agent run, beside the kit's three knowledge tools. Bound to the run's access scope, so a plugin tool reads what its REQUESTER may read and nothing more. May…
+    DEPRECATED — renamed {@link ServerPlugin.tools}, same signature. Read only when `tools` is absent, and `pnpm plugin check` warns on it. A later kit release removes it.
+  - `knowledgeSources?: (scope: AccessScope) => readonly string[] \| Promise<readonly string[]>`
+    PLATFORM knowledge sources (`<id>:<kind>`, written with `ingestPlatformDocument`) the kit's `search_knowledge` tool also searches for this reader — chat and every agent run.…
+  - `knowledgeEntityTypes?: readonly EntityTypeRegistration[]`
+    Knowledge entity types (D43) whose rows extraction may attach facts to — composed with the app's own (`api/services/knowledge/entity-types.ts`) by `knowledgeEntityTypes()`. Each…
   - `scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>`
-    Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron the kit already runs are appended after the kit's). A cron the kit does NOT run must also be added to…
+    Cron expression → tasks, merged into `SCHEDULED_TASKS` (tasks on a cron core already runs are appended after core's). A cron core does NOT run is declared in `plugin.json`…
   - `emailHandlers?: readonly EmailHandler[]`
     Inbound email (Cloudflare Email Routing → the Worker's `email` handler), merged into `EMAIL_HANDLERS` in `api/email.ts` and matched on the recipient's local part (`receipts` takes…
+  - `eventHandlers?: readonly EventHandler[]`
+    Subscriptions to plugin events (D42) — this plugin's own or any other installed plugin's, named by `event` and declared in some `SharedPlugin.events`. Each entry gets its OWN…
+  - `deploymentFeatures?: (config: AppConfig) => readonly string[]`
+    Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
-    Per-role CASL rules, applied after the kit's own matrix — additive, never a replacement.
+    Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadPaths?: readonly string[]`
+    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
+  - `uploadLimits?: Readonly<Record<string, number>>`
+    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
     Source files the cross-tenant allow-list scan may skip, keyed the way that test keys its own: a path relative to `apps/web/` (`src/plugins/<id>/…`) mapped to the REASON it is…
   - `visibilityResources?: readonly VisibilityResource[]`
-    D29: rows of this plugin that a group may restrict. Read by `services/access.ts`.
-  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
+    Rows of this plugin that a group may restrict. Read by `services/access.ts`.
+  - `hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' \| 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }`
   - `extensions?: Readonly<Record<string, readonly unknown[]>>`
-    Cross-plugin registries (D31 decision 6): the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on…
+    Cross-plugin registries: the analytics plugin reads `extensions.cubes` and friends from every installed plugin and narrows them with zod, failing loudly on anything it cannot…
 - `interface UiPlugin<S extends SharedPlugin = SharedPlugin>`
   - `shared: S`
   - `routes: readonly PluginRoute[]`
   - `nav?: readonly PluginNavGroup[]`
-  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]`
-    Extra `/settings?tab=` tabs, appended after the kit's. `can` is the caller's ability.
+  - `settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]`
+    Extra `/settings?tab=` tabs, appended after the core tabs. `can` is the caller's ability. A tab's `guard` is the same `NavGuard` a nav item or route takes, checked by the host…
   - `homeLinks?: readonly QuickLink[]`
-    Quick links for the Home page, merged AHEAD of the kit's own (D31). A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one…
+    Quick links for the Home page, merged AHEAD of the core links. A feature somebody reaches from Home is one they were told about; a plugin that only adds a nav item is one they…
+  - `homeCards?: readonly PluginHomeCard[]`
+    Cards for Home's "what needs doing" section, above the quick links (`PluginHomeCard`): merged across plugins, ordered by `order` then plugin id, each behind its guard, `Suspense`…
+  - `header?: readonly PluginHeaderItem[]`
+    Top-bar items (`PluginHeaderItem`): merged across plugins, ordered by `order` then plugin id, rendered by `PluginHeaderSlot` in `Layout`'s `headerCenter` / `headerEnd`.
   - `queryKeys?: Readonly<Record<string, unknown>>`
     Families merged into `queryKeys`; every root must start with `<id>:`.
   - `agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>`
     `AGENT_FORMS` entries for the agents this plugin registers. Optional per agent: `formFor` falls back to a form generated from the agent's own JSON Schema, then to a JSON textarea.
+  - `extensions?: Readonly<Record<string, readonly unknown[]>>`
+    Cross-plugin registries for the browser, the UI twin of `ServerPlugin.extensions`: another plugin reads every installed plugin's entries under a key with `uiExtensions(key)` (from…
 
 ### `@/db/schema/kit`
 
 The build-time schema symbols. A `pgTable(...)` runs at module scope, so these cannot be injected.
 
-> The schema kit (D31) — the build-time symbols a plugin's table file needs at MODULE scope.
+> The schema kit — the build-time symbols a plugin's table file needs at MODULE scope.
 
 - `const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }`
 - `const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }`
@@ -805,34 +1092,44 @@ The build-time schema symbols. A `pgTable(...)` runs at module scope, so these c
 - `function membershipIsolation()`
   `users` has no `tenant_id` — a user is global and belongs to MANY tenants through `tenant_users` — so it is scoped by MEMBERSHIP of the active tenant instead.
 - `const RESOURCE_VISIBILITY_VALUES: readonly ["tenant", "groups"]`
-  The values of a resource's `visibility` column (D29): `tenant` = every member of the organisation, `groups` = only the groups granted in that resource's junction table (plus the…
+  The values of a resource's `visibility` column: `tenant` = every member of the organisation, `groups` = only the groups granted in that resource's junction table (plus the owner…
 - `function tenantIsolation(table: string, column = sql`tenant_id`)`
   ONE policy predicate, shared by every table. Do not inline a copy per table: drizzle-kit diffs the rendered SQL text, so a stray space shows up as N spurious `ALTER POLICY`…
 - `function tenantRef(tenants: { id: AnyPgColumn })`
   `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`.
-- `const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }`
-- `const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }`
+- `const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, externalOrgId, idpSyncedAt, seedDataCreated, lastAccessedAt }`
+- `const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }`
 - `function timestamps()`
   `created_at` / `updated_at` as `timestamptz`, both defaulting to now(). Spread into a table.
-- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }`
+- `const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt, blockedSource }`
 
 ### `@rocketflare/shared/plugins/api`
 
 What a plugin's CONTRACT module imports: the error envelope, pagination, `SharedPlugin`.
 
-> The shared plugin API (D31) — what a plugin's CONTRACT module imports from the kit.
+> The shared plugin API — what a plugin's CONTRACT module imports from the host.
 
 - `type Actions = (typeof ACTIONS)[number]`
 - `type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]`
   The agent keys one plugin declares — what its `ServerPlugin.agents` must cover, exhaustively.
 - `type ApiErrorBody = z.infer<typeof apiErrorSchema>`
-- `const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, "strip", z.ZodTypeAny, { error: string; statusCode: number; code?: string \| undefined; details?: unknown; }, { error: string; statusCode: number; code?: string \| unde… (truncated)`
+- `const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, z.core.$strip>`
   The ONE error envelope every API response uses — from `app.onError`, `notFound`, the zValidator hook, and `ApiError` thrown in routes. The UI's `api-client.ts` parses this into…
 - `type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never`
   The value of an OPTIONAL `SharedPlugin` field across the whole barrel, skipping the plugins that do not declare it.
 - `const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)`
   Well-known `code` values shared by API and UI. Extend per app.
 - `type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]`
+- `const EVENT_NAME_RE: RegExp`
+  One segment after the plugin id: lower-case, digits, `-` and `_`, dot-separated.
+- `type EventNameOf = Extract< EventsOf<S> extends infer R ? (R extends unknown ? keyof R : never) : never, string >`
+  The event names one plugin (or a union of plugins) declares.
+- `function eventNameProblem(pluginId: string, name: string): string \| null`
+  `null` when `name` is an event `pluginId` may declare, else the sentence saying why not: it must be `<pluginId>.<something>`, well formed, and never in the core `kit.` namespace.…
+- `type EventPayloadOf = E extends unknown ? EventsOf<S> extends infer R ? R extends Record<E, infer Schema> ? Schema extends ZodTypeAny ? TypeOf<Schema> : never : never : never : never`
+  The parsed payload of event `E`, from whichever plugin in `S` declares it. A union of names gives the union of their payloads, so a handler list typed over every event still…
+- `type EventsOf = NonNullable<DeclaredBy<S, 'events'>>`
+  The events one plugin declares — its `events` record. Distributive, so over a UNION of plugins it is a union of records; `EventNameOf` / `EventPayloadOf` read names and payloads…
 - `interface FeatureDefinition`
 - `type FeatureFlagState = z.infer<typeof featureFlagStateSchema>`
 - `type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >`
@@ -840,26 +1137,28 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
 - `type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>`
 - `type GroupRef = z.infer<typeof groupRefSchema>`
 - `function isPluginId(value: string): boolean`
+- `function isSameOriginPath(value: string): boolean`
+  True only for a same-origin path: `/settings`, `/search?q=a#x`; never `//host` or `https://…`.
 - `type JobInput = z.infer<typeof jobInputSchema>`
 - `type JobOf = Extract<JobEnvelope, { type: T }>`
   The envelope narrowed to one `type` — what a handler receives.
 - `type JobType = JobEnvelope['type']`
   Every job type this app knows, derived from the variants rather than kept beside them.
-- `type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number] >['type']`
+- `type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type'] >`
   The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover.
-- `type JobVariant = ZodDiscriminatedUnionOption<'type'>`
+- `type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>`
   One job envelope variant: a zod object whose `type` is the discriminant. Spelled as zod's own discriminated-union option type, so a variant that would not compose into…
 - `type MembershipRole = z.infer<typeof membershipRoleSchema>`
 - `function paginatedResponse<T extends z.ZodTypeAny>(item: T)`
   `paginatedResponse(itemSchema)` → `{ items: Item[], pagination: PaginationMeta }`
 - `function paginationMeta(page: number, pageSize: number, total: number): PaginationMeta`
 - `type PaginationMeta = z.infer<typeof paginationMetaSchema>`
-- `const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; total: number; totalPages: number; }, { page: number; pageSize: number; total: number; totalPages: number; }>`
+- `const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, z.core.$strip>`
 - `type PaginationQuery = z.infer<typeof paginationQuerySchema>`
-- `const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodNumber>; pageSize: z.ZodDefault<z.ZodNumber>; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; }, { page?: number \| undefined; pageSize?: number \| undefined; }>`
+- `const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodCoercedNumber<unknown>>; pageSize: z.ZodDefault<z.ZodCoercedNumber<unknown>>; }, z.core.$strip>`
   Page-based pagination (page-based). Query: `?page=1&pageSize=25`.
 - `const PLUGIN_ID_RE: RegExp`
-  `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: a plugin is written in the kit's vocabulary so `scripts/rename.mjs` can translate it into a renamed app on the way in, and…
+  `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: an id carrying the app's original name would be rewritten with everything else when the app is renamed.
 - `function pluginNamespace(id: string): string`
   `<id>:` — the prefix every query-key root and demo-seed id a plugin owns must carry.
 - `type PromptKeyOf = NonNullable<DeclaredBy<S, 'promptKeys'>>[number]`
@@ -883,11 +1182,13 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
   - `readonly subjects?: readonly string[]`
     CASL subjects this plugin adds, unioned into `Subjects`. A subject is a NOUN the plugin owns (`Order`), and the rules that grant it live in `ServerPlugin.grants`.
   - `readonly features?: Readonly<Record<string, FeatureDefinition>>`
-    Feature-flag definitions keyed by flag key (D30), merged into `FEATURE_FLAGS`. A flag is configuration, not a permission: gate with `hasFeature(auth.features, …)`, never with CASL.
+    Feature-flag definitions keyed by flag key, merged into `FEATURE_FLAGS`. A flag is configuration, not a permission: gate with `hasFeature(auth.features, …)`, never with CASL.
   - `readonly config?: ZodRawShape`
-    Extra `[vars]` / secrets, merged into the Worker's config schema (`apps/web/src/config.ts`). A zod raw shape rather than a whole object so the kit's schema stays one schema.
+    Extra `[vars]` / secrets, merged into the Worker's config schema (`apps/web/src/config.ts`). A zod raw shape rather than a whole object so the core schema stays one schema.
   - `readonly realtimeRoots?: readonly string[]`
-    Query-key roots that `access.changed` should invalidate (D29): a plugin whose rows carry `visibility` has to be re-fetched when somebody's group membership moves under them.
+    Query-key roots that `access.changed` should invalidate: a plugin whose rows carry `visibility` has to be re-fetched when somebody's group membership moves under them.
+  - `readonly events?: Readonly<Record<string, ZodTypeAny>>`
+    Events this plugin EMITS (D42), name → payload schema. Every name is `<id>.<name>` — this plugin's id, a dot, then lower-case segments (`sites.form.submitted`) — and never `kit.`.…
 - `type SubjectOf = NonNullable<DeclaredBy<S, 'subjects'>>[number]`
   The CASL subjects one plugin declares.
 - `type Subjects = CoreSubject \| PluginSubject \| FeatureSubject`
@@ -896,7 +1197,7 @@ What a plugin's CONTRACT module imports: the error envelope, pagination, `Shared
 
 The CLI half: the one `fetch` site, the exit codes, the output helpers.
 
-> The CLI plugin API (D31) — what a plugin's command module imports from the kit.
+> The CLI plugin API — what a plugin's command module imports from the CLI.
 
 - `type ActionWrapper = ( handler: (ctx: CommandContext, command: Command) => Promise<void> ) => (...args: unknown[]) => Promise<void>`
   `action()` in `cli.ts`: builds the context from the global options and maps any error.
@@ -916,7 +1217,7 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 - `const EXIT_FORBIDDEN: 3`
 - `const EXIT_NOT_LOGGED_IN: 2`
 - `const EXIT_OK: 0`
-  CLI error types and the exit-code mapping (D26): 0 ok · 1 error · 2 not logged in · 3 forbidden. Commands throw; `cli.ts` catches once, prints once, and sets `process.exitCode`.
+  CLI error types and the exit-code mapping: 0 ok · 1 error · 2 not logged in · 3 forbidden. Commands throw; `cli.ts` catches once, prints once, and sets `process.exitCode`.
 - `function exitCodeForStatus(status: number): number`
 - `function formatCell(value: unknown): string`
 - `function formatDate(value: Date \| string \| null \| undefined): string`
@@ -924,6 +1225,8 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 - `function formatJson(value: unknown): string`
 - `function formatPagination(meta: { page: number totalPages: number total: number pageSize: number }): string`
   `Page 2/5 · 113 items` — footer for paginated lists.
+- `function neutralise(text: string): string`
+  Text that came from a server or another user, made inert for a terminal: C0 controls (a carriage return becomes a line break, a tab and a line break stay), DEL and C1 are removed,…
 - `class NotLoggedInError extends CliError`
 - `type OpenLike = (url: string) => Promise<unknown>`
 - `interface Output`
@@ -940,7 +1243,7 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 
 `CliPlugin` and the `action()` wrapper it registers with.
 
-> The CLI half of a plugin (D31).
+> The CLI half of a plugin.
 
 - `type ActionWrapper = ( handler: (ctx: CommandContext, command: Command) => Promise<void> ) => (...args: unknown[]) => Promise<void>`
   `action()` in `cli.ts`: builds the context from the global options and maps any error.
@@ -954,11 +1257,19 @@ The CLI half: the one `fetch` site, the exit codes, the output helpers.
 
 The harness: a real database, the real Hono app, real bindings-shaped stubs, the provider tree.
 
-> `@testkit/integration` — the host's test harness, as a DECLARED entry (D31).
+> `@testkit/integration` — the host's test harness, as a DECLARED entry.
 
+- `async function aguiFrames(res: Response): Promise<KitAguiEvent[]>`
+  Parse an AG-UI SSE body into the typed events it carried. Spec AG-UI frames are `data:` only — a test that finds an `event:` line here should fail, so `sseEventFields` exists to…
+- `function aguiTypes(events: KitAguiEvent[]): string[]`
+  The event types of a run, in order — what a sequence assertion actually cares about.
 - `function bearerHeader(key: string): Record<string, string>`
+- `async function callMcpTool( db: Database, toolName: string, options: { as: string tenant: string args?: Record<string, unknown> scopes?: McpScope[] exposure?: UpdateMcpSettingsRequest['exposure'] exposedTools?: string[] env?: TestEnv } ): Promise<McpToolCallResult>`
+  Call one tool over the REAL `/mcp` as `as` in `tenant`, the way a connected client would: the organisation's MCP switch is turned on (with `exposure`, default `all`, so the tool…
 - `async function cleanDatabase(db: Database): Promise<void>`
   TRUNCATE every table in `public` (drizzle's bookkeeping lives in schema `drizzle`).
+- `async function connectMcp( db: Database, env: TestEnv, input: { tenantId: string userId: string scopes?: McpScope[] slug?: string clientId?: string expiresAt?: Date } ): Promise<TestMcpConnection>`
+  A live connection for `userId` in `tenantId` — what a completed consent leaves behind.
 - `function createExecutionContext(): TestExecutionContext`
 - `async function createTestApiKey( db: Database, tenantId: string, userId: string, overrides: Partial<Omit<NewApiKey, 'keyHash' \| 'keyPrefix'>> = {} )`
   A tenant API key created by `userId` (who must be a member). Returns the plaintext `key` for an `Authorization: Bearer` header plus the stored row.
@@ -974,9 +1285,15 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )`
   Tenant + one member in one call (default `owner`).
 - `async function createTestUser(db: Database, overrides: Partial<NewUser> = {})`
+- `function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]`
+  The kit CUSTOM events of a run, `name` → `value`, in order.
+- `async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>`
 - `async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>`
   Runs every task registered for `cron` and returns a per-task report (used by tests).
+- `async function enableMcp( db: Database, tenantId: string, userId: string, patch: UpdateMcpSettingsRequest = {} )`
+  Turn MCP on for a tenant (plus any other settings), as an admin's PUT would.
 - `function errorResponse(status: number, error = 'Error', code?: string)`
+- `interface EventDelivery`
 - `const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }`
 - `async function json<T = unknown>(res: Response): Promise<T>`
 - `function jsonResponse(body: unknown, status = 200)`
@@ -987,9 +1304,19 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
   A signed-in owner of Acme by default. Pass `tenant: null` for the "no active tenant" states; `permissions` follows `tenant.role`/`user.isGlobalAdmin` unless given explicitly.
 - `function makeTenant(overrides: Partial<TenantSummary> = {}): TenantSummary`
 - `function makeUser(overrides: Partial<User> = {}): User`
+- `async function mcpClient( env: TestEnv, token: string, options: { path?: string; mode?: 'legacy' \| 'auto' \| { pin: string } } = {} ): Promise<Client>`
+  The SDK client over `request()` — the real app, a real JSON-RPC exchange in either era.
+- `function mcpTestEnv(overrides: Record<string, unknown> = {}): TestEnv`
+  A test env whose deployment ships the MCP server.
+- `interface McpToolCallResult`
+  What `callMcpTool` saw: whether the client was offered the tool, and what calling it answered.
 - `const notFoundResponse: () => Response`
 - `function paged<T>(items: T[], pageSize = 25)`
   `{ items, pagination }` for a one-page list response.
+- `interface PlatformChatCall`
+  What the platform model was asked, one entry per chat call.
+- `interface PlatformChatTurn`
+  One model turn of {@link scriptPlatformChat}: what the platform model answers.
 - `interface RecordedMessage<T = unknown>`
 - `function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )`
 - `async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>`
@@ -1001,8 +1328,10 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `function rulesFor( role: MembershipRole \| null, isGlobalAdmin = false, features: string[] = [] )`
   Packed rules EXACTLY as the server emits them for this role (same matrix, same packer).
 - `const SCHEDULED_TASKS: Record<string, ScheduledTask[]>`
-  Core tasks plus every installed plugin's (D31). A plugin naming a cron the kit already runs APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop…
+  Core tasks plus every installed plugin's. A plugin naming a cron core already runs APPENDS to it — each task is try/caught on its own, so a plugin's failure cannot stop core's…
 - `interface ScheduledTask`
+- `function scriptPlatformChat( env: { AI?: unknown }, script: PlatformChatTurn[] \| ((call: PlatformChatCall, index: number) => PlatformChatTurn) ): PlatformChatCall[]`
+  Script the PLATFORM chat model — the `AI` binding's stub — so a request resolves a real chat client through the real seam (`resolveChat` → `platformChat` → the Workers AI adapter)…
 - `const SESSION_COOKIE_NAME: "__Host-session"`
   The login cookie. `middleware/csrf.ts` re-exports this so the CSRF check names the same cookie.
 - `function sessionCookieHeader(token: string): Record<string, string>`
@@ -1021,11 +1350,14 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 - `function testDatabaseUrl(): string`
 - `type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }`
   Structurally `Cloudflare.Env` so it can be passed straight to `app.request`, `queue()` and `scheduled()`. The bindings are in-memory stubs cast to the platform types; reach the…
+- `interface TestMcpConnection`
 - `interface TestSeed`
   Plain, JSON-serialisable — vitest's `provide()` requires it.
+- `function toolJson<T = unknown>(result: unknown): T`
+  The text of a tool result with the untrusted-data notice line removed, parsed as JSON.
 - `const unauthorizedResponse: () => Response`
 - `function uniqueId(): string`
-  Unique suffix for parallel-safe fixtures.
+  Unique suffix for parallel-safe fixtures, and SLUG-SAFE: lower-case letters and digits around one hyphen, so `test-org-${uniqueId()}` passes the kit's own `SLUG_RE` (and `slugify`…
 - `async function waitOnExecutionContext(ctx: TestExecutionContext): Promise<void>`
   Await everything passed to `waitUntil`, including promises enqueued while draining.
 
@@ -1033,7 +1365,7 @@ The harness: a real database, the real Hono app, real bindings-shaped stubs, the
 
 Builders for the context family, for tests that never touch data.
 
-> `@testkit/unit` — builders for the plugin context family (D31).
+> `@testkit/unit` — builders for the plugin context family.
 
 - `interface BackgroundCtxOptions extends BaseOptions`
   What every background builder accepts beyond the base.
@@ -1041,7 +1373,7 @@ Builders for the context family, for tests that never touch data.
 - `type FakeCronCtx = CronCtx & RecordsAgentRuns`
 - `type FakeEmailCtx = EmailCtx & RecordsAgentRuns`
 - `type FakeJobCtx = JobCtx & RecordsAgentRuns`
-- `type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> settle(): Promise<void> }`
+- `type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> readonly framed: boolean settle(): Promise<void> }`
   What a fake request context carries beyond the real one: the deferred work it collected.
 - `type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }`
   The fake step recorder, so a test can assert the NAMES a run asked for and their order.
@@ -1053,7 +1385,7 @@ Builders for the context family, for tests that never touch data.
 - `function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx`
   A `RequestCtx` with no request behind it.
 - `function makeToolCtx(options: ToolCtxOptions): ToolCtx`
-  What `ServerPlugin.agentTools(ctx)` is handed, through the kit's own `toolCtx` adapter.
+  What `ServerPlugin.tools(ctx)` is handed, through the kit's own `toolCtx` adapter.
 - `function makeWorkflowCtx(options: WorkflowCtxOptions): FakeWorkflowCtx`
   A `WorkflowCtx` over a recording step.
 - `interface RecordedAgentRun`
@@ -1063,6 +1395,24 @@ Builders for the context family, for tests that never touch data.
 - `interface RequestCtxOptions extends BaseOptions`
 - `interface ToolCtxOptions extends BaseOptions`
 - `interface WorkflowCtxOptions extends BaseOptions`
+
+## Your own host files, and what the manifest writes outside your roots
+
+- **`@/host/<id>/*`** — `apps/web/src/host/<id>/`, code the plugin seeded through `hostFiles`
+  and the developer owns since (a generated content module, say). A plugin may import its OWN
+  id's directory and no other (`tests/helpers/plugins.ts`); it resolves through the existing
+  `@/*` alias, so no tsconfig, Vite or wrangler change. Not ledgered: the kit provides none of it.
+- **`skills`** — `skills/<dir>/` → `.claude/skills/<dir>/`, `<dir>` being `<id>` or `<id>-*`.
+  Replaced on upgrade, deleted on remove.
+- **`claudeHooks`** — `{ "<Event>": [{ "command", "matcher"?, "timeout"? }] }`, merged into
+  `.claude/settings.json`. A command is only `node "$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>"`
+  (plus plain flags) over a script one of its declared skills ships; the skill directory is how the
+  plugin's entries are found again. Replaced on upgrade, removed exactly on remove.
+- **`hostFiles`** — `[{ "path", "from" }]`, a file or a directory seeded into `docs/<id>/`,
+  `apps/web/public/<id>/` or `apps/web/src/host/<id>/` only where absent. Never touched by
+  upgrade, left in place by remove.
+- **`coreEdits`** and **`appOwned`** — anchored lines in a core file, and paths inside the
+  plugin's own roots that the developer owns (`apps/web/src/plugins/CLAUDE.md`).
 
 ## Surface ledger
 
@@ -1093,22 +1443,30 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: AgentCtx.input :: input: Input
 @/plugins/api :: member :: AgentCtx.tools :: tools: Tool[]
 @/plugins/api :: member :: AgentCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: AgentCtx.emit :: emit: TenantEmit
 @/plugins/api :: member :: AgentCtx.prompt :: prompt(vars?: Record<string, string | undefined>): Promise<string>
 @/plugins/api :: member :: AgentCtx.step :: step( key: string, label: string, status: 'running' | 'done' | 'error', detail?: string ): Promise<void>
 @/plugins/api :: member :: AgentCtx.checkCancelled :: checkCancelled(): Promise<void>
-@/plugins/api :: member :: AgentCtx.once :: once<T>(key: string, fn: () => Promise<T>): Promise<T>
+@/plugins/api :: member :: AgentCtx.signal :: signal: AbortSignal
+@/plugins/api :: member :: AgentCtx.once :: once<T>(key: string, fn: () => Promise<T>, options?: { inputs?: unknown }): Promise<T>
+@/plugins/api :: member :: AgentCtx.spawn :: spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
 @/plugins/api :: member :: AgentCtx.toolLoop :: toolLoop(options: PluginToolLoopOptions): Promise<ToolLoopResult>
 @/plugins/api :: member :: AgentCtx.structured :: structured<T>(options: PluginStructuredOptions<T>): Promise<T>
 @/plugins/api :: member :: AgentCtx.decide :: decide: AgentDecide
 @/plugins/api :: member :: AgentCtx.interrupt :: interrupt(ask: AgentInterruptAsk): Promise<AgentInterruptAnswer>
 @/plugins/api :: member :: AgentCtx.chatModel :: readonly chatModel: { readonly provider: AiProvider; readonly model: string }
 @/plugins/api :: interface :: AgentDecide :: interface AgentDecide
+@/plugins/api :: interface :: AgentEventBinding :: interface AgentEventBinding<E extends EventName = EventName, Input = unknown>
+@/plugins/api :: interface :: AgentEventTrigger :: interface AgentEventTrigger<E extends EventName = EventName, Input = unknown>
 @/plugins/api :: interface :: AgentInterruptAnswer :: interface AgentInterruptAnswer
 @/plugins/api :: interface :: AgentInterruptAsk :: interface AgentInterruptAsk
+@/plugins/api :: interface :: AgentSummary :: interface AgentSummary
 @/plugins/api :: interface :: AgentTraceContext :: interface AgentTraceContext extends Omit<TraceParams, 'name'>
 @/plugins/api :: class :: AiNotConfiguredError :: class AiNotConfiguredError extends ServiceUnavailableError
 @/plugins/api :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
+@/plugins/api :: function :: anyTermTsquery :: function anyTermTsquery(query: string): string | null
 @/plugins/api :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
+@/plugins/api :: class :: ApiError :: class ApiError extends Error
 @/plugins/api :: type :: AppRouter :: type AppRouter = Hono<AppEnv>
 @/plugins/api :: interface :: BackgroundMethods :: interface BackgroundMethods
 @/plugins/api :: member :: BackgroundMethods.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
@@ -1118,16 +1476,27 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: BackgroundMethods.features :: features(tenantId: string): Promise<readonly string[]>
 @/plugins/api :: member :: BackgroundMethods.storage :: storage(): StorageService
 @/plugins/api :: member :: BackgroundMethods.startAgentRun :: startAgentRun(input: StartAgentRunInput): Promise<StartedAgentRun>
+@/plugins/api :: member :: BackgroundMethods.emit :: emit: Emit
+@/plugins/api :: class :: BadRequestError :: class BadRequestError extends ApiError
+@/plugins/api :: type :: BindableAgent :: type BindableAgent = z.infer<typeof bindableAgentSchema>
+@/plugins/api :: function :: candidatePoolSize :: function candidatePoolSize(limit: number): number
+@/plugins/api :: function :: chatModelAvailable :: async function chatModelAvailable( ctx: Pick<PluginContext, 'db' | 'config' | 'env'>, tenantId: string, promptKey: string ): Promise<boolean>
+@/plugins/api :: class :: ConflictError :: class ConflictError extends ApiError
 @/plugins/api :: function :: createRouter :: function createRouter(): Hono<AppEnv>
 @/plugins/api :: function :: createStepRealtimeFor :: function createStepRealtimeFor(env: HubEnv): StepRealtime
 @/plugins/api :: function :: cronCtx :: function cronCtx(ctx: TaskContext): CronCtx
 @/plugins/api :: interface :: CronCtx :: interface CronCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: CronCtx.kind :: readonly kind: 'cron'
 @/plugins/api :: member :: CronCtx.waitUntil :: waitUntil(promise: Promise<unknown>): void
+@/plugins/api :: function :: customEventNameIssue :: function customEventNameIssue(pluginId: string, name: string): string | null
 @/plugins/api :: type :: Database :: type Database = PgDatabase<PgQueryResultHKT, typeof schema>
 @/plugins/api :: interface :: DatabaseHandle :: interface DatabaseHandle
 @/plugins/api :: interface :: Decision :: interface Decision
+@/plugins/api :: const :: DEFAULT_RESOLVE_MIN_SCORE :: const DEFAULT_RESOLVE_MIN_SCORE: 0.3
+@/plugins/api :: function :: defaultEntityResolver :: function defaultEntityResolver( reg: EntityTypeRegistration, minScore = DEFAULT_RESOLVE_MIN_SCORE ): EntityResolver
 @/plugins/api :: function :: defineTool :: function defineTool<Input>(tool: Tool<Input>): Tool<Input>
 @/plugins/api :: function :: deleteIngestedDocument :: async function deleteIngestedDocument( ctx: PluginContext, input: { tenantId: string; source: string; externalId: string } ): Promise<boolean>
+@/plugins/api :: interface :: DeliveredEvent :: interface DeliveredEvent<E extends EventName = EventName>
 @/plugins/api :: interface :: DetachedCtx :: interface DetachedCtx extends PluginContext
 @/plugins/api :: member :: DetachedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: DetachedCtx.userId :: userId: string
@@ -1146,28 +1515,67 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: EmailHandler :: interface EmailHandler
 @/plugins/api :: function :: emailLocalPart :: function emailLocalPart(address: string): string
 @/plugins/api :: function :: emailSubaddress :: function emailSubaddress(address: string): string | null
+@/plugins/api :: type :: Emit :: type Emit = <E extends EventName>(event: E, input: EmitInput<E>) => Promise<EmittedEvent>
+@/plugins/api :: interface :: EmitInput :: interface EmitInput<E extends EventName>
+@/plugins/api :: interface :: EmittedEvent :: interface EmittedEvent
+@/plugins/api :: type :: EntityResolver :: type EntityResolver = ( name: string, scope: EntityResolveScope ) => Promise<readonly EntityCandidate[]>
+@/plugins/api :: interface :: EntityResolveScope :: interface EntityResolveScope
+@/plugins/api :: interface :: EntityTypeRegistration :: interface EntityTypeRegistration<F extends EntityFactsSchema = EntityFactsSchema> extends EntityTypeDeclaration<F>
+@/plugins/api :: function :: eventBinding :: function eventBinding<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventBinding<E, Input>, 'event'> ): AgentEventBinding<E, Input>
+@/plugins/api :: interface :: EventContext :: interface EventContext extends JobContext
+@/plugins/api :: function :: eventCtx :: function eventCtx(ctx: EventContext): EventCtx
+@/plugins/api :: interface :: EventCtx :: interface EventCtx extends PluginContext
+@/plugins/api :: member :: EventCtx.tenantId :: readonly tenantId: string
+@/plugins/api :: member :: EventCtx.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
+@/plugins/api :: member :: EventCtx.enqueueMany :: enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
+@/plugins/api :: member :: EventCtx.nudge :: nudge(entity: string, id?: string): Promise<void>
+@/plugins/api :: member :: EventCtx.emit :: emit: TenantEmit
+@/plugins/api :: member :: EventCtx.features :: features(): Promise<readonly string[]>
+@/plugins/api :: member :: EventCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: EventCtx.durableObject :: durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>
+@/plugins/api :: member :: EventCtx.startAgentRun :: startAgentRun(input: Omit<StartAgentRunInput, 'tenantId'>): Promise<StartedAgentRun>
+@/plugins/api :: member :: EventCtx.startBoundAgent :: startBoundAgent(agentKey: AgentKey | string): Promise<StartedAgentRun>
+@/plugins/api :: interface :: EventHandler :: interface EventHandler<E extends EventName = EventName>
+@/plugins/api :: type :: EventName :: type EventName = EventNameOf<InstalledShared>
+@/plugins/api :: type :: EventPayload :: type EventPayload = EventPayloadOf<InstalledShared, E>
+@/plugins/api :: function :: eventTrigger :: function eventTrigger<E extends EventName, Input = unknown>( event: E, spec: Omit<AgentEventTrigger<E, Input>, 'event'> ): AgentEventTrigger<E, Input>
+@/plugins/api :: class :: ForbiddenError :: class ForbiddenError extends ApiError
+@/plugins/api :: function :: fuseByRank :: function fuseByRank<T>( dense: T[], lexical: T[], keyOf: (item: T) => string, k = RRF_K ): FusedItem<T>[]
+@/plugins/api :: interface :: FusedItem :: interface FusedItem<T>
 @/plugins/api :: function :: hasFeature :: function hasFeature(auth: Pick<PluginAuth, 'features'>, name: string): boolean
 @/plugins/api :: interface :: HookCtx :: interface HookCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: HookCtx.tenant :: tenant: Tenant
 @/plugins/api :: member :: HookCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: HookCtx.userId :: userId: string | null
 @/plugins/api :: member :: HookCtx.features :: features: readonly string[]
+@/plugins/api :: function :: identityFor :: function identityFor(c: AppContext, pluginId: string): PluginIdentity
+@/plugins/api :: type :: IdpAppRole :: type IdpAppRole = z.infer<typeof idpAppRoleSchema>
 @/plugins/api :: function :: ingestDocument :: async function ingestDocument( ctx: PluginContext, input: PluginIngestTextInput ): Promise<PluginIngestResult>
 @/plugins/api :: function :: ingestDocumentFile :: async function ingestDocumentFile( ctx: PluginContext, input: PluginIngestFileInput ): Promise<PluginIngestResult>
+@/plugins/api :: function :: ingestPlatformDocument :: async function ingestPlatformDocument( ctx: JobCtx | CronCtx, input: PlatformDocumentInput ): Promise<PlatformDocumentResult>
+@/plugins/api :: class :: InvalidCustomEventError :: class InvalidCustomEventError extends Error
 @/plugins/api :: function :: isAdminLevel :: function isAdminLevel(session: RoleView): boolean
+@/plugins/api :: function :: isApiError :: function isApiError(error: unknown): error is ApiError
 @/plugins/api :: function :: isGlobalAdmin :: function isGlobalAdmin(session: RoleView): boolean
 @/plugins/api :: function :: isOwnerLevel :: function isOwnerLevel(session: RoleView): boolean
 @/plugins/api :: function :: isUniqueViolation :: function isUniqueViolation(err: unknown): boolean
 @/plugins/api :: function :: jobCtx :: function jobCtx(ctx: JobContext): JobCtx
 @/plugins/api :: interface :: JobCtx :: interface JobCtx extends PluginContext, BackgroundMethods
+@/plugins/api :: member :: JobCtx.kind :: readonly kind: 'job'
 @/plugins/api :: type :: JobEnvelope :: type JobEnvelope = z.infer<typeof jobEnvelopeSchema>
 @/plugins/api :: type :: JobHandler :: type JobHandler = ( job: Extract<JobEnvelope, { type: T }>, ctx: JobContext ) => Promise<void>
 @/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
 @/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
+@/plugins/api :: function :: listAgents :: async function listAgents(): Promise<readonly AgentSummary[]>
+@/plugins/api :: function :: listBindableAgents :: async function listBindableAgents(event: EventName | string): Promise<BindableAgent[]>
 @/plugins/api :: type :: Logger :: type Logger = pino.Logger
+@/plugins/api :: interface :: McpToolAnnotations :: interface McpToolAnnotations
+@/plugins/api :: type :: McpToolScope :: type McpToolScope = 'mcp:read' | 'mcp:write'
+@/plugins/api :: function :: memberCan :: async function memberCan( ctx: PluginContext, who: { tenantId: string; userId: string }, action: Actions, subject: Subjects ): Promise<boolean>
 @/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
 @/plugins/api :: const :: noopTracer :: const noopTracer: Tracer
+@/plugins/api :: class :: NotFoundError :: class NotFoundError extends ApiError
 @/plugins/api :: function :: notify :: async function notify(db: Database, input: NotifyInput, realtime?: Realtime): Promise<void>
 @/plugins/api :: interface :: NotifyInput :: interface NotifyInput
 @/plugins/api :: function :: notifyMany :: async function notifyMany( db: Database, userIds: string[], input: Omit<NotifyInput, 'userId'>, realtime?: Realtime )
@@ -1180,10 +1588,14 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: pgErrorCode :: function pgErrorCode(err: unknown): string | undefined
 @/plugins/api :: interface :: PickOptions :: interface PickOptions<T>
 @/plugins/api :: interface :: PickResult :: interface PickResult<T>
+@/plugins/api :: interface :: PlatformDocumentInput :: interface PlatformDocumentInput
+@/plugins/api :: interface :: PlatformDocumentResult :: interface PlatformDocumentResult
+@/plugins/api :: class :: PlatformEmbeddingsError :: class PlatformEmbeddingsError extends ServiceUnavailableError
 @/plugins/api :: type :: PluginAgent :: type PluginAgent = AgentDefinition<Input, Output>
 @/plugins/api :: interface :: PluginAuth :: interface PluginAuth
 @/plugins/api :: member :: PluginAuth.user :: user: User
 @/plugins/api :: member :: PluginAuth.userId :: userId: string
+@/plugins/api :: member :: PluginAuth.apiKeyId :: apiKeyId: string | null
 @/plugins/api :: member :: PluginAuth.tenantId :: tenantId: string
 @/plugins/api :: member :: PluginAuth.role :: role: MembershipRole | null
 @/plugins/api :: member :: PluginAuth.isAdmin :: isAdmin: boolean
@@ -1197,27 +1609,42 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginContext.config :: config: PluginConfig
 @/plugins/api :: member :: PluginContext.logger :: logger: PluginLogger
 @/plugins/api :: member :: PluginContext.env :: env: PluginBindings
+@/plugins/api :: interface :: PluginDeprovisionResult :: interface PluginDeprovisionResult
+@/plugins/api :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/api :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/api :: interface :: PluginHomeCard :: interface PluginHomeCard
+@/plugins/api :: interface :: PluginIdentity :: interface PluginIdentity
+@/plugins/api :: interface :: PluginIdentityUser :: interface PluginIdentityUser
 @/plugins/api :: interface :: PluginIngestFileInput :: interface PluginIngestFileInput extends IngestCommon
 @/plugins/api :: interface :: PluginIngestResult :: interface PluginIngestResult
 @/plugins/api :: interface :: PluginIngestTextInput :: interface PluginIngestTextInput extends IngestCommon
 @/plugins/api :: type :: PluginLogger :: type PluginLogger = Pick<Logger, 'debug' | 'info' | 'warn' | 'error'>
+@/plugins/api :: interface :: PluginLoginMethodDeclaration :: interface PluginLoginMethodDeclaration
+@/plugins/api :: interface :: PluginMember :: interface PluginMember
 @/plugins/api :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/api :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api :: member :: PluginNavGroup.before :: before?: string
 @/plugins/api :: member :: PluginNavGroup.items :: items: NavItem[]
-@/plugins/api :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
+@/plugins/api :: interface :: PluginProvision :: interface PluginProvision
+@/plugins/api :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
+@/plugins/api :: interface :: PluginPublicMountOptions :: interface PluginPublicMountOptions
 @/plugins/api :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/api :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/api :: member :: PluginRoute.path :: path: string
 @/plugins/api :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/api :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/api :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/api :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
+@/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
-@/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' > & { maxTokens?: number }
+@/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal' > & { maxTokens?: number }
+@/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
+@/plugins/api :: function :: prunePlatformDocuments :: async function prunePlatformDocuments( ctx: JobCtx | CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
+@/plugins/api :: const :: PUBLIC_SITE_PAGE_CSP_HEADER :: const PUBLIC_SITE_PAGE_CSP_HEADER: "x-public-site-page-csp"
 @/plugins/api :: function :: publicCtx :: function publicCtx(c: AppContext): PublicCtx
 @/plugins/api :: interface :: PublicCtx :: interface PublicCtx extends PluginContext, BackgroundMethods
 @/plugins/api :: member :: PublicCtx.appUrl :: readonly appUrl: string
@@ -1226,6 +1653,10 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PublicCtx.badRequest :: badRequest(message?: string, code?: string, details?: unknown): never
 @/plugins/api :: member :: PublicCtx.forbidden :: forbidden(message?: string, code?: string): never
 @/plugins/api :: member :: PublicCtx.unauthorized :: unauthorized(message?: string): never
+@/plugins/api :: interface :: PublicSiteCsp :: interface PublicSiteCsp
+@/plugins/api :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
+@/plugins/api :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
+@/plugins/api :: class :: RateLimitedError :: class RateLimitedError extends ApiError
 @/plugins/api :: interface :: Realtime :: interface Realtime
 @/plugins/api :: function :: realtimeEvent :: function realtimeEvent( type: RealtimeEventType, tenantId: string, payload?: unknown ): RealtimeEvent
 @/plugins/api :: function :: recordActivity :: async function recordActivity(db: Database, input: ActivityInput): Promise<void>
@@ -1241,11 +1672,13 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestCtx.uuid :: uuid(name: string): string
 @/plugins/api :: member :: RequestCtx.valid :: valid<T>(target: 'json' | 'query' | 'param' | 'form' | 'header' | 'cookie'): T
 @/plugins/api :: member :: RequestCtx.page :: page<T>( items: T[], total: number, query: PaginationQuery ): { items: T[]; pagination: PaginationMeta }
+@/plugins/api :: member :: RequestCtx.embeddable :: embeddable(contentType: string): boolean
 @/plugins/api :: member :: RequestCtx.defer :: defer(fn: () => Promise<unknown>): void
 @/plugins/api :: member :: RequestCtx.enqueue :: enqueue(input: JobInput, options?: { delaySeconds?: number }): Promise<JobEnvelope>
 @/plugins/api :: member :: RequestCtx.enqueueMany :: enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
 @/plugins/api :: member :: RequestCtx.nudge :: nudge(entity: string, id?: string): void
 @/plugins/api :: member :: RequestCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: RequestCtx.emit :: emit: TenantEmit
 @/plugins/api :: member :: RequestCtx.durableObject :: durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>( namespace: DurableObjectNamespace<T>, key?: string ): DurableObjectStub<T>
 @/plugins/api :: member :: RequestCtx.notFound :: notFound(message?: string, code?: string): never
 @/plugins/api :: member :: RequestCtx.badRequest :: badRequest(message?: string, code?: string, details?: unknown): never
@@ -1260,33 +1693,50 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: RequestVisibility.set :: set(kind: string, resourceId: string, input: SetResourceGroupsInput): Promise<string[]>
 @/plugins/api :: member :: RequestVisibility.grantsFor :: grantsFor(kind: string, resourceIds: readonly string[]): Promise<Map<string, GroupRef[]>>
 @/plugins/api :: function :: requireFeature :: function requireFeature(feature: FeatureName)
+@/plugins/api :: function :: resolveOwnerTenant :: async function resolveOwnerTenant( db: Database, config: Pick<AppConfig, 'TENANCY_MODE'>, ownerSlug?: string ): Promise<Tenant | null>
 @/plugins/api :: interface :: ResourceGrantRow :: interface ResourceGrantRow
 @/plugins/api :: function :: rows :: function rows<T = Record<string, unknown>>(result: unknown): T[]
 @/plugins/api :: interface :: ScheduledTask :: interface ScheduledTask
 @/plugins/api :: function :: sealSecret :: async function sealSecret(config: PluginConfig, plaintext: string): Promise<string>
+@/plugins/api :: function :: searchKnowledge :: async function searchKnowledge( ctx: Pick<PluginContext, 'db' | 'config' | 'env'> & { scope: AccessScope }, input: SearchKnowledgeInput ): Promise<SearchKnowledgeResult>
+@/plugins/api :: interface :: SearchKnowledgeHit :: interface SearchKnowledgeHit
+@/plugins/api :: interface :: SearchKnowledgeInput :: interface SearchKnowledgeInput
+@/plugins/api :: interface :: SearchKnowledgeResult :: interface SearchKnowledgeResult
 @/plugins/api :: interface :: SeedCtx :: interface SeedCtx extends Pick<PluginContext, 'db'>
 @/plugins/api :: member :: SeedCtx.tenantId :: tenantId: string
 @/plugins/api :: member :: SeedCtx.ownerId :: ownerId: string
 @/plugins/api :: member :: SeedCtx.demoId :: demoId: (key: string) => string
 @/plugins/api :: member :: SeedCtx.log :: log: (line: string) => void
+@/plugins/api :: member :: SeedCtx.setFeature :: setFeature?: (key: string, enabled?: boolean, tenantId?: string) => Promise<void>
 @/plugins/api :: interface :: ServerPlugin :: interface ServerPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/api :: member :: ServerPlugin.shared :: shared: S
 @/plugins/api :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/api :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/api :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/api :: member :: ServerPlugin.publicSites :: publicSites?: PublicSitesDeclaration
+@/plugins/api :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+@/plugins/api :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/api :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/api :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/api :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
+@/plugins/api :: member :: ServerPlugin.tools :: tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/api :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/api :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
+@/plugins/api :: member :: ServerPlugin.knowledgeEntityTypes :: knowledgeEntityTypes?: readonly EntityTypeRegistration[]
 @/plugins/api :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/api :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/api :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
+@/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
+@/plugins/api :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/api :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/api :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
+@/plugins/api :: class :: ServiceUnavailableError :: class ServiceUnavailableError extends ApiError
 @/plugins/api :: interface :: SetResourceGroupsInput :: interface SetResourceGroupsInput
 @/plugins/api :: function :: sharedWithMyGroups :: function sharedWithMyGroups( scope: AccessScope, junction: string, foreignKey: string, resourceId: SQL ): SQL
 @/plugins/api :: interface :: SiftOptions :: interface SiftOptions<T>
@@ -1294,6 +1744,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: function :: signState :: async function signState( config: PluginConfig, purpose: string, payload: Record<string, unknown>, opts: { ttlSeconds?: number } = {} ): Promise<string>
 @/plugins/api :: type :: SpanKind :: type SpanKind = 'agent' | 'llm' | 'tool' | 'retrieval' | 'embedding' | 'job' | 'span'
 @/plugins/api :: interface :: SpanParams :: interface SpanParams
+@/plugins/api :: interface :: SsoRequirement :: interface SsoRequirement
 @/plugins/api :: type :: StartAgentRun :: type StartAgentRun = (input: StartAgentRunInput) => Promise<StartedAgentRun>
 @/plugins/api :: interface :: StartAgentRunInput :: interface StartAgentRunInput
 @/plugins/api :: member :: StartAgentRunInput.agentKey :: agentKey: AgentKey
@@ -1322,8 +1773,17 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: StorageService :: interface StorageService
 @/plugins/api :: interface :: StoredObject :: interface StoredObject extends StoredObjectMeta
 @/plugins/api :: interface :: StoredObjectMeta :: interface StoredObjectMeta
+@/plugins/api :: function :: streamChat :: async function streamChat(c: AppContext, options: StreamChatOptions): Promise<Response>
+@/plugins/api :: type :: StreamChatEmit :: type StreamChatEmit = (name: string, value: unknown) => Promise<void>
+@/plugins/api :: interface :: StreamChatOptions :: interface StreamChatOptions
+@/plugins/api :: interface :: StreamChatResult :: interface StreamChatResult
+@/plugins/api :: interface :: StreamChatToolCtx :: interface StreamChatToolCtx extends ToolCtx
+@/plugins/api :: member :: StreamChatToolCtx.emit :: emit: StreamChatEmit
+@/plugins/api :: interface :: StreamChatTurn :: interface StreamChatTurn
 @/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
 @/plugins/api :: type :: Tenant :: type Tenant = typeof tenants.$inferSelect
+@/plugins/api :: type :: TenantEmit :: type TenantEmit = <E extends EventName>( event: E, input: TenantEmitInput<E> ) => Promise<EmittedEvent>
+@/plugins/api :: type :: TenantEmitInput :: type TenantEmitInput = Omit<EmitInput<E>, 'tenantId'>
 @/plugins/api :: interface :: Tool :: interface Tool<Input = unknown>
 @/plugins/api :: interface :: ToolApproval :: interface ToolApproval
 @/plugins/api :: interface :: ToolCallParams :: interface ToolCallParams
@@ -1334,11 +1794,18 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ToolCtx.env :: env: PluginBindings
 @/plugins/api :: member :: ToolCtx.scope :: scope: AccessScope
 @/plugins/api :: member :: ToolCtx.tenantId :: tenantId: string
+@/plugins/api :: member :: ToolCtx.can :: can: AbilityCheck
 @/plugins/api :: member :: ToolCtx.maxDocumentChars :: maxDocumentChars?: number
+@/plugins/api :: member :: ToolCtx.requesterUrls :: requesterUrls: ReadonlySet<string>
 @/plugins/api :: member :: ToolCtx.storage :: storage(): StorageService
+@/plugins/api :: member :: ToolCtx.features :: features(): Promise<readonly string[]>
+@/plugins/api :: member :: ToolCtx.requester :: requester: ToolRequester | null
 @/plugins/api :: function :: toolInputSchema :: function toolInputSchema(schema: ZodType): JsonSchema
 @/plugins/api :: interface :: ToolLoopCheckpoint :: interface ToolLoopCheckpoint
 @/plugins/api :: interface :: ToolLoopResult :: interface ToolLoopResult
+@/plugins/api :: interface :: ToolMcpOptions :: interface ToolMcpOptions
+@/plugins/api :: interface :: ToolRequester :: interface ToolRequester
+@/plugins/api :: type :: ToolSurface :: type ToolSurface = (typeof TOOL_SURFACES)[number]
 @/plugins/api :: function :: traceChatClient :: function traceChatClient( client: ChatClient, trace: TraceHandle, meta: TraceClientMeta, tracer?: Tracer ): ChatClient
 @/plugins/api :: interface :: TraceHandle :: interface TraceHandle
 @/plugins/api :: interface :: Tracer :: interface Tracer
@@ -1349,10 +1816,15 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: UiPlugin.shared :: shared: S
 @/plugins/api :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/api :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/api :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
+@/plugins/api :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
+@/plugins/api :: class :: UnauthorizedError :: class UnauthorizedError extends ApiError
+@/plugins/api :: function :: usageFeatureIssue :: function usageFeatureIssue(pluginId: string, feature: string): string | null
 @/plugins/api :: type :: User :: type User = typeof users.$inferSelect
 @/plugins/api :: function :: validate :: function validate<T extends ZodSchema, Target extends keyof ValidationTargets>( target: Target, schema: T )
 @/plugins/api :: function :: verifyState :: async function verifyState<T = Record<string, unknown>>( config: PluginConfig, purpose: string, token: string ): Promise<T | null>
@@ -1377,6 +1849,9 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: interface :: NavGroup :: interface NavGroup
 @/plugins/api/ui-wiring :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
 @/plugins/api/ui-wiring :: interface :: NavItem :: interface NavItem
+@/plugins/api/ui-wiring :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/api/ui-wiring :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/api/ui-wiring :: interface :: PluginHomeCard :: interface PluginHomeCard
 @/plugins/api/ui-wiring :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.label :: label?: string
 @/plugins/api/ui-wiring :: member :: PluginNavGroup.before :: before?: string
@@ -1386,17 +1861,21 @@ nothing in the comparison that can throw.
 @/plugins/api/ui-wiring :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/api/ui-wiring :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/api/ui-wiring :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/api/ui-wiring :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
+@/plugins/api/ui-wiring :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
 @/plugins/api/ui-wiring :: interface :: QuickLink :: interface QuickLink
 @/plugins/api/ui-wiring :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui-wiring :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/api/ui-wiring :: member :: UiPlugin.shared :: shared: S
 @/plugins/api/ui-wiring :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
+@/plugins/api/ui-wiring :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/api/ui-wiring :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/api/ui-wiring :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/api/ui-wiring :: function :: useNavGuard :: function useNavGuard(): (guard: NavGuard | undefined) => boolean
 @/plugins/api/ui :: function :: AccessBadge :: function AccessBadge({ visibility, groups, className = '', }: { visibility: ResourceVisibility groups: GroupRef[] className?: string })
 @/plugins/api/ui :: function :: AccessPicker :: function AccessPicker({ visibility, groupIds, available, onChange, tenantName, disabled = false, idPrefix = 'access', }: AccessPickerProps)
@@ -1406,6 +1885,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: class :: ApiError :: class ApiError extends Error
 @/plugins/api/ui :: interface :: ApiRequestOptions :: interface ApiRequestOptions<T = unknown> extends Omit<RequestInit, 'body'>
 @/plugins/api/ui :: interface :: Breadcrumb :: interface Breadcrumb
+@/plugins/api/ui :: function :: Breadcrumbs :: function Breadcrumbs({ items, className = '', }: { items: Breadcrumb[] className?: string })
 @/plugins/api/ui :: function :: ConfirmModal :: function ConfirmModal({ isOpen, title, message, confirmText = 'Confirm', cancelText = 'Cancel', confirmButtonClass = 'btn-primary', isLoading = false, onCancel, onConfirm, }: ConfirmModalProps)
 @/plugins/api/ui :: function :: DocumentCard :: function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)
 @/plugins/api/ui :: interface :: DocumentCardProps :: interface DocumentCardProps
@@ -1423,9 +1903,13 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: initials :: function initials(name: string | null | undefined, email?: string): string
 @/plugins/api/ui :: function :: LoadingIndicator :: function LoadingIndicator({ size = 'md', centered = false, fullPage = false, className = '', }: LoadingIndicatorProps)
 @/plugins/api/ui :: function :: LogoMark :: function LogoMark({ className = 'w-7 h-7' }: { className?: string })
+@/plugins/api/ui :: function :: MarkdownImageLink :: function MarkdownImageLink({ src, alt }: Pick<ComponentProps<'img'>, 'src' | 'alt'>)
 @/plugins/api/ui :: function :: Modal :: function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)
 @/plugins/api/ui :: interface :: ModalProps :: interface ModalProps
 @/plugins/api/ui :: type :: NavGuard :: type NavGuard = | 'admin' | 'globalAdmin' | { action: string; subject: string } | { feature: string } | readonly NavGuard[]
+@/plugins/api/ui :: interface :: NavigationChecks :: interface NavigationChecks
+@/plugins/api/ui :: function :: navigationEntries :: function navigationEntries( plugins: readonly AnyUiPlugin[], { canAccess, can }: NavigationChecks ): NavigationEntry[]
+@/plugins/api/ui :: interface :: NavigationEntry :: interface NavigationEntry
 @/plugins/api/ui :: function :: notifyUnauthorized :: function notifyUnauthorized(error: ApiError): void
 @/plugins/api/ui :: function :: PageHeader :: function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)
 @/plugins/api/ui :: function :: PaginationControls :: function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)
@@ -1437,19 +1921,23 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: SettingToggle :: function SettingToggle({ id, label, description, checked, onChange, disabled, }: SettingToggleProps)
 @/plugins/api/ui :: function :: setUnauthorizedHandler :: function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void
 @/plugins/api/ui :: function :: showToast :: function showToast(message: string, type: ToastType, duration?: number): void
-@/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer }: SideNavProps)
+@/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)
 @/plugins/api/ui :: function :: SkeletonRows :: function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })
 @/plugins/api/ui :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui :: function :: timeAgo :: function timeAgo(value: Date | null | undefined, fallback = 'never'): string
 @/plugins/api/ui :: interface :: Toast :: interface Toast
 @/plugins/api/ui :: function :: ToastContainer :: function ToastContainer()
 @/plugins/api/ui :: type :: ToastType :: type ToastType = 'success' | 'error' | 'warning' | 'info'
+@/plugins/api/ui :: function :: uiExtensions :: function uiExtensions(key: string): readonly unknown[]
+@/plugins/api/ui :: function :: uiExtensionSources :: function uiExtensionSources(key: string): readonly string[]
+@/plugins/api/ui :: const :: UNLABELLED_NAV_GROUP :: const UNLABELLED_NAV_GROUP: "Pages"
 @/plugins/api/ui :: function :: URLTabs :: function URLTabs({ tabs, defaultTab, param = 'tab', className = '', actions, }: URLTabsProps)
 @/plugins/api/ui :: function :: useAuth :: function useAuth(): AuthContextValue
 @/plugins/api/ui :: function :: useFeature :: function useFeature(name: FeatureName): boolean
 @/plugins/api/ui :: function :: useGroups :: function useGroups(typeId?: string, enabled = true)
 @/plugins/api/ui :: function :: useGroupTypes :: function useGroupTypes(enabled = true)
 @/plugins/api/ui :: function :: useMyGroups :: function useMyGroups()
+@/plugins/api/ui :: function :: useNavigationEntries :: function useNavigationEntries(): NavigationEntry[]
 @/plugins/api/ui :: function :: usePermissions :: function usePermissions()
 @/plugins/api/ui :: function :: useTenancyMode :: function useTenancyMode(): TenancyMode
 @/plugins/api/ui :: const :: useToastStore :: const useToastStore: UseBoundStore<StoreApi<ToastStore>>
@@ -1457,46 +1945,67 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: interface :: VisibilityModalProps :: interface VisibilityModalProps
 @/plugins/types :: type :: AnyServerPlugin :: type AnyServerPlugin = ServerPlugin<SharedPlugin>
 @/plugins/types :: type :: AnyUiPlugin :: type AnyUiPlugin = UiPlugin<SharedPlugin>
+@/plugins/types :: interface :: PluginHeaderItem :: interface PluginHeaderItem
+@/plugins/types :: type :: PluginHeaderPlacement :: type PluginHeaderPlacement = 'center' | 'end'
+@/plugins/types :: interface :: PluginHomeCard :: interface PluginHomeCard
 @/plugins/types :: type :: PluginMount :: type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
 @/plugins/types :: interface :: PluginNavGroup :: interface PluginNavGroup
 @/plugins/types :: member :: PluginNavGroup.label :: label?: string
 @/plugins/types :: member :: PluginNavGroup.before :: before?: string
 @/plugins/types :: member :: PluginNavGroup.items :: items: NavItem[]
-@/plugins/types :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>]
+@/plugins/types :: type :: PluginPublicMount :: type PluginPublicMount = readonly [string, Hono<AppEnv>, PluginPublicMountOptions?]
+@/plugins/types :: interface :: PluginPublicMountOptions :: interface PluginPublicMountOptions
 @/plugins/types :: interface :: PluginRequires :: interface PluginRequires
 @/plugins/types :: interface :: PluginRoute :: interface PluginRoute
 @/plugins/types :: member :: PluginRoute.path :: path: string
 @/plugins/types :: member :: PluginRoute.Component :: Component: LazyExoticComponent<ComponentType>
 @/plugins/types :: member :: PluginRoute.guard :: guard?: NavGuard
 @/plugins/types :: member :: PluginRoute.tier :: tier?: PluginRouteTier
-@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public'
+@/plugins/types :: type :: PluginRouteTier :: type PluginRouteTier = 'shell' | 'noTenant' | 'public' | 'workspace'
 @/plugins/types :: interface :: PluginSeedContext :: interface PluginSeedContext
+@/plugins/types :: interface :: PluginSettingsTab :: interface PluginSettingsTab extends TabConfig
+@/plugins/types :: interface :: PublicSiteCsp :: interface PublicSiteCsp
+@/plugins/types :: interface :: PublicSiteFormPath :: interface PublicSiteFormPath
+@/plugins/types :: interface :: PublicSitesDeclaration :: interface PublicSitesDeclaration
 @/plugins/types :: interface :: ServerPlugin :: interface ServerPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/types :: member :: ServerPlugin.shared :: shared: S
 @/plugins/types :: member :: ServerPlugin.requires :: requires?: PluginRequires
 @/plugins/types :: member :: ServerPlugin.mounts :: mounts?: readonly PluginMount[]
 @/plugins/types :: member :: ServerPlugin.publicMounts :: publicMounts?: readonly PluginPublicMount[]
+@/plugins/types :: member :: ServerPlugin.publicSites :: publicSites?: PublicSitesDeclaration
+@/plugins/types :: member :: ServerPlugin.loginMethods :: loginMethods?: (cfg: AppConfig) => readonly PluginLoginMethodDeclaration[]
+@/plugins/types :: member :: ServerPlugin.ssoPolicy :: ssoPolicy?: SsoPolicy
 @/plugins/types :: member :: ServerPlugin.apiPrefixes :: apiPrefixes?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.jobHandlers :: jobHandlers?: { [T in JobTypeOf<S> & string]: JobHandler<Extract<T, JobType>> }
 @/plugins/types :: member :: ServerPlugin.agents :: agents?: { [K in AgentKeyOf<S> & string]: AnyAgentDefinition }
 @/plugins/types :: member :: ServerPlugin.prompts :: prompts?: { [K in PromptKeyOf<S> & string]: PromptDefinition }
+@/plugins/types :: member :: ServerPlugin.tools :: tools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
 @/plugins/types :: member :: ServerPlugin.agentTools :: agentTools?: (ctx: AgentToolContext) => Tool[] | Promise<Tool[]>
+@/plugins/types :: member :: ServerPlugin.knowledgeSources :: knowledgeSources?: (scope: AccessScope) => readonly string[] | Promise<readonly string[]>
+@/plugins/types :: member :: ServerPlugin.knowledgeEntityTypes :: knowledgeEntityTypes?: readonly EntityTypeRegistration[]
 @/plugins/types :: member :: ServerPlugin.scheduledTasks :: scheduledTasks?: Readonly<Record<string, ScheduledTask[]>>
 @/plugins/types :: member :: ServerPlugin.emailHandlers :: emailHandlers?: readonly EmailHandler[]
+@/plugins/types :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
+@/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
+@/plugins/types :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.unscopedAllowlist :: unscopedAllowlist?: Readonly<Record<string, string>>
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: visibilityResources?: readonly VisibilityResource[]
-@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
+@/plugins/types :: member :: ServerPlugin.hooks :: hooks?: { onTenantCreated?: ( db: Database, tenant: Tenant, userId: string, features: readonly string[] ) => Promise<void> onTenantDeleted?: (db: Database, tenantId: string, env: AppBindings) => Promise<void> onTenantStatusChanged?: ( db: Database, tenantId: string, status: 'active' | 'suspended', env: AppBindings ) => Promise<void> seed?: (db: Database, ctx: PluginSeedContext) => Promise<void> seedDemo?: (db: Database, ctx: PluginSeedContext) => Promise<void> }
 @/plugins/types :: member :: ServerPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/plugins/types :: interface :: UiPlugin :: interface UiPlugin<S extends SharedPlugin = SharedPlugin>
 @/plugins/types :: member :: UiPlugin.shared :: shared: S
 @/plugins/types :: member :: UiPlugin.routes :: routes: readonly PluginRoute[]
 @/plugins/types :: member :: UiPlugin.nav :: nav?: readonly PluginNavGroup[]
-@/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => TabConfig[]
+@/plugins/types :: member :: UiPlugin.settingsTabs :: settingsTabs?: (ctx: { can: (action: string, subject: string) => boolean }) => PluginSettingsTab[]
 @/plugins/types :: member :: UiPlugin.homeLinks :: homeLinks?: readonly QuickLink[]
+@/plugins/types :: member :: UiPlugin.homeCards :: homeCards?: readonly PluginHomeCard[]
+@/plugins/types :: member :: UiPlugin.header :: header?: readonly PluginHeaderItem[]
 @/plugins/types :: member :: UiPlugin.queryKeys :: queryKeys?: Readonly<Record<string, unknown>>
 @/plugins/types :: member :: UiPlugin.agentForms :: agentForms?: Readonly<Partial<Record<AgentKeyOf<S> & string, AgentForm>>>
+@/plugins/types :: member :: UiPlugin.extensions :: extensions?: Readonly<Record<string, readonly unknown[]>>
 @/db/schema/kit :: const :: activityEvents :: const activityEvents: table "activity_events" { id, tenantId, userId, type, subjectType, subjectId, metadata, createdAt }
 @/db/schema/kit :: const :: groupMembers :: const groupMembers: table "group_members" { tenantId, groupId, userId, createdAt }
 @/db/schema/kit :: const :: groups :: const groups: table "groups" { createdAt, updatedAt, id, tenantId, groupTypeId, name, description }
@@ -1505,35 +2014,41 @@ nothing in the comparison that can throw.
 @/db/schema/kit :: const :: RESOURCE_VISIBILITY_VALUES :: const RESOURCE_VISIBILITY_VALUES: readonly ["tenant", "groups"]
 @/db/schema/kit :: function :: tenantIsolation :: function tenantIsolation(table: string, column = sql`tenant_id`)
 @/db/schema/kit :: function :: tenantRef :: function tenantRef(tenants: { id: AnyPgColumn })
-@/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, seedDataCreated, lastAccessedAt }
-@/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, joinedAt, invitedByUserId }
+@/db/schema/kit :: const :: tenants :: const tenants: table "tenants" { createdAt, updatedAt, id, name, slug, status, externalOrgId, idpSyncedAt, seedDataCreated, lastAccessedAt }
+@/db/schema/kit :: const :: tenantUsers :: const tenantUsers: table "tenant_users" { tenantId, userId, role, source, idpSyncedAt, joinedAt, invitedByUserId }
 @/db/schema/kit :: function :: timestamps :: function timestamps()
-@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, emailVerifiedAt, lastLoginAt, blockedAt }
+@/db/schema/kit :: const :: users :: const users: table "users" { createdAt, updatedAt, id, email, name, avatarUrl, isGlobalAdmin, globalAdminSource, emailVerifiedAt, lastLoginAt, blockedAt, blockedSource }
 @rocketflare/shared/plugins/api :: type :: Actions :: type Actions = (typeof ACTIONS)[number]
 @rocketflare/shared/plugins/api :: type :: AgentKeyOf :: type AgentKeyOf = NonNullable<DeclaredBy<S, 'agentKeys'>>[number]
 @rocketflare/shared/plugins/api :: type :: ApiErrorBody :: type ApiErrorBody = z.infer<typeof apiErrorSchema>
-@rocketflare/shared/plugins/api :: const :: apiErrorSchema :: const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, "strip", z.ZodTypeAny, { error: string; statusCode: number; code?: string | undefined; details?: unknown; }, { error: string; statusCode: number; code?: string | unde… (truncated)
+@rocketflare/shared/plugins/api :: const :: apiErrorSchema :: const apiErrorSchema: z.ZodObject<{ error: z.ZodString; statusCode: z.ZodNumber; code: z.ZodOptional<z.ZodString>; details: z.ZodOptional<z.ZodUnknown>; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: type :: DeclaredBy :: type DeclaredBy = Extract<P, Record<K, unknown>> extends infer Declaring ? Declaring extends Record<K, unknown> ? Declaring[K] : never : never
 @rocketflare/shared/plugins/api :: const :: ERROR_CODES :: const ERROR_CODES: { readonly validationFailed: "validation_failed"; readonly unauthorized: "unauthorized"; readonly sessionExpired: "session_expired"; readonly forbidden: "forbidden"; readonly notFound: "not_found"; readonly conflict: "conflict"; readonly rateLimited: "rate_limited"; readonly pendingApproval: "pendin… (truncated)
 @rocketflare/shared/plugins/api :: type :: ErrorCode :: type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]
+@rocketflare/shared/plugins/api :: const :: EVENT_NAME_RE :: const EVENT_NAME_RE: RegExp
+@rocketflare/shared/plugins/api :: type :: EventNameOf :: type EventNameOf = Extract< EventsOf<S> extends infer R ? (R extends unknown ? keyof R : never) : never, string >
+@rocketflare/shared/plugins/api :: function :: eventNameProblem :: function eventNameProblem(pluginId: string, name: string): string | null
+@rocketflare/shared/plugins/api :: type :: EventPayloadOf :: type EventPayloadOf = E extends unknown ? EventsOf<S> extends infer R ? R extends Record<E, infer Schema> ? Schema extends ZodTypeAny ? TypeOf<Schema> : never : never : never : never
+@rocketflare/shared/plugins/api :: type :: EventsOf :: type EventsOf = NonNullable<DeclaredBy<S, 'events'>>
 @rocketflare/shared/plugins/api :: interface :: FeatureDefinition :: interface FeatureDefinition
 @rocketflare/shared/plugins/api :: type :: FeatureFlagState :: type FeatureFlagState = z.infer<typeof featureFlagStateSchema>
 @rocketflare/shared/plugins/api :: type :: FeatureKeyOf :: type FeatureKeyOf = Extract< NonNullable<DeclaredBy<S, 'features'>> extends infer F ? F extends unknown ? keyof F : never : never, string >
 @rocketflare/shared/plugins/api :: type :: FeatureRolloutUnit :: type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
 @rocketflare/shared/plugins/api :: type :: GroupRef :: type GroupRef = z.infer<typeof groupRefSchema>
 @rocketflare/shared/plugins/api :: function :: isPluginId :: function isPluginId(value: string): boolean
+@rocketflare/shared/plugins/api :: function :: isSameOriginPath :: function isSameOriginPath(value: string): boolean
 @rocketflare/shared/plugins/api :: type :: JobInput :: type JobInput = z.infer<typeof jobInputSchema>
 @rocketflare/shared/plugins/api :: type :: JobOf :: type JobOf = Extract<JobEnvelope, { type: T }>
 @rocketflare/shared/plugins/api :: type :: JobType :: type JobType = JobEnvelope['type']
-@rocketflare/shared/plugins/api :: type :: JobTypeOf :: type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number] >['type']
-@rocketflare/shared/plugins/api :: type :: JobVariant :: type JobVariant = ZodDiscriminatedUnionOption<'type'>
+@rocketflare/shared/plugins/api :: type :: JobTypeOf :: type JobTypeOf = TypeOf< NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type'] >
+@rocketflare/shared/plugins/api :: type :: JobVariant :: type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>
 @rocketflare/shared/plugins/api :: type :: MembershipRole :: type MembershipRole = z.infer<typeof membershipRoleSchema>
 @rocketflare/shared/plugins/api :: function :: paginatedResponse :: function paginatedResponse<T extends z.ZodTypeAny>(item: T)
 @rocketflare/shared/plugins/api :: function :: paginationMeta :: function paginationMeta(page: number, pageSize: number, total: number): PaginationMeta
 @rocketflare/shared/plugins/api :: type :: PaginationMeta :: type PaginationMeta = z.infer<typeof paginationMetaSchema>
-@rocketflare/shared/plugins/api :: const :: paginationMetaSchema :: const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; total: number; totalPages: number; }, { page: number; pageSize: number; total: number; totalPages: number; }>
+@rocketflare/shared/plugins/api :: const :: paginationMetaSchema :: const paginationMetaSchema: z.ZodObject<{ page: z.ZodNumber; pageSize: z.ZodNumber; total: z.ZodNumber; totalPages: z.ZodNumber; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: type :: PaginationQuery :: type PaginationQuery = z.infer<typeof paginationQuerySchema>
-@rocketflare/shared/plugins/api :: const :: paginationQuerySchema :: const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodNumber>; pageSize: z.ZodDefault<z.ZodNumber>; }, "strip", z.ZodTypeAny, { page: number; pageSize: number; }, { page?: number | undefined; pageSize?: number | undefined; }>
+@rocketflare/shared/plugins/api :: const :: paginationQuerySchema :: const paginationQuerySchema: z.ZodObject<{ page: z.ZodDefault<z.ZodCoercedNumber<unknown>>; pageSize: z.ZodDefault<z.ZodCoercedNumber<unknown>>; }, z.core.$strip>
 @rocketflare/shared/plugins/api :: const :: PLUGIN_ID_RE :: const PLUGIN_ID_RE: RegExp
 @rocketflare/shared/plugins/api :: function :: pluginNamespace :: function pluginNamespace(id: string): string
 @rocketflare/shared/plugins/api :: type :: PromptKeyOf :: type PromptKeyOf = NonNullable<DeclaredBy<S, 'promptKeys'>>[number]
@@ -1551,6 +2066,7 @@ nothing in the comparison that can throw.
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.features :: readonly features?: Readonly<Record<string, FeatureDefinition>>
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.config :: readonly config?: ZodRawShape
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.realtimeRoots :: readonly realtimeRoots?: readonly string[]
+@rocketflare/shared/plugins/api :: member :: SharedPlugin.events :: readonly events?: Readonly<Record<string, ZodTypeAny>>
 @rocketflare/shared/plugins/api :: type :: SubjectOf :: type SubjectOf = NonNullable<DeclaredBy<S, 'subjects'>>[number]
 @rocketflare/shared/plugins/api :: type :: Subjects :: type Subjects = CoreSubject | PluginSubject | FeatureSubject
 '../api' (apps/cli/src/plugins/api.ts) :: type :: ActionWrapper :: type ActionWrapper = ( handler: (ctx: CommandContext, command: Command) => Promise<void> ) => (...args: unknown[]) => Promise<void>
@@ -1574,6 +2090,7 @@ nothing in the comparison that can throw.
 '../api' (apps/cli/src/plugins/api.ts) :: function :: formatDate :: function formatDate(value: Date | string | null | undefined): string
 '../api' (apps/cli/src/plugins/api.ts) :: function :: formatJson :: function formatJson(value: unknown): string
 '../api' (apps/cli/src/plugins/api.ts) :: function :: formatPagination :: function formatPagination(meta: { page: number totalPages: number total: number pageSize: number }): string
+'../api' (apps/cli/src/plugins/api.ts) :: function :: neutralise :: function neutralise(text: string): string
 '../api' (apps/cli/src/plugins/api.ts) :: class :: NotLoggedInError :: class NotLoggedInError extends CliError
 '../api' (apps/cli/src/plugins/api.ts) :: type :: OpenLike :: type OpenLike = (url: string) => Promise<unknown>
 '../api' (apps/cli/src/plugins/api.ts) :: interface :: Output :: interface Output
@@ -1587,8 +2104,12 @@ nothing in the comparison that can throw.
 './types' (apps/cli/src/plugins/types.ts) :: interface :: CliPlugin :: interface CliPlugin<S extends SharedPlugin = SharedPlugin>
 './types' (apps/cli/src/plugins/types.ts) :: member :: CliPlugin.shared :: shared: S
 './types' (apps/cli/src/plugins/types.ts) :: member :: CliPlugin.register :: register(program: Command, action: ActionWrapper): void
+@testkit/integration :: function :: aguiFrames :: async function aguiFrames(res: Response): Promise<KitAguiEvent[]>
+@testkit/integration :: function :: aguiTypes :: function aguiTypes(events: KitAguiEvent[]): string[]
 @testkit/integration :: function :: bearerHeader :: function bearerHeader(key: string): Record<string, string>
+@testkit/integration :: function :: callMcpTool :: async function callMcpTool( db: Database, toolName: string, options: { as: string tenant: string args?: Record<string, unknown> scopes?: McpScope[] exposure?: UpdateMcpSettingsRequest['exposure'] exposedTools?: string[] env?: TestEnv } ): Promise<McpToolCallResult>
 @testkit/integration :: function :: cleanDatabase :: async function cleanDatabase(db: Database): Promise<void>
+@testkit/integration :: function :: connectMcp :: async function connectMcp( db: Database, env: TestEnv, input: { tenantId: string userId: string scopes?: McpScope[] slug?: string clientId?: string expiresAt?: Date } ): Promise<TestMcpConnection>
 @testkit/integration :: function :: createExecutionContext :: function createExecutionContext(): TestExecutionContext
 @testkit/integration :: function :: createTestApiKey :: async function createTestApiKey( db: Database, tenantId: string, userId: string, overrides: Partial<Omit<NewApiKey, 'keyHash' | 'keyPrefix'>> = {} )
 @testkit/integration :: function :: createTestEnv :: function createTestEnv(overrides: Partial<TestEnv> = {}): TestEnv
@@ -1598,8 +2119,12 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: createTestTenant :: async function createTestTenant(db: Database, overrides: Partial<NewTenant> = {})
 @testkit/integration :: function :: createTestTenantWithUser :: async function createTestTenantWithUser( db: Database, role: MembershipRole = 'owner', userOverrides: Partial<NewUser> = {}, tenantOverrides: Partial<NewTenant> = {} )
 @testkit/integration :: function :: createTestUser :: async function createTestUser(db: Database, overrides: Partial<NewUser> = {})
+@testkit/integration :: function :: customEvents :: function customEvents(events: KitAguiEvent[]): { name: string; value: unknown }[]
+@testkit/integration :: function :: deliverEvents :: async function deliverEvents(env: TestEnv, db: Database): Promise<EventDelivery[]>
 @testkit/integration :: function :: dispatchScheduled :: async function dispatchScheduled( cron: string, env: AppBindings, ctx: Pick<ExecutionContext, 'waitUntil'>, registry: Record<string, ScheduledTask[]> = SCHEDULED_TASKS ): Promise<TaskReport[]>
+@testkit/integration :: function :: enableMcp :: async function enableMcp( db: Database, tenantId: string, userId: string, patch: UpdateMcpSettingsRequest = {} )
 @testkit/integration :: function :: errorResponse :: function errorResponse(status: number, error = 'Error', code?: string)
+@testkit/integration :: interface :: EventDelivery :: interface EventDelivery
 @testkit/integration :: const :: IDS :: const IDS: { user: string; otherUser: string; tenant: string; otherTenant: string; }
 @testkit/integration :: function :: json :: async function json<T = unknown>(res: Response): Promise<T>
 @testkit/integration :: function :: jsonResponse :: function jsonResponse(body: unknown, status = 200)
@@ -1607,8 +2132,13 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: makeSession :: function makeSession(overrides: Partial<SessionResponse> = {}): SessionResponse
 @testkit/integration :: function :: makeTenant :: function makeTenant(overrides: Partial<TenantSummary> = {}): TenantSummary
 @testkit/integration :: function :: makeUser :: function makeUser(overrides: Partial<User> = {}): User
+@testkit/integration :: function :: mcpClient :: async function mcpClient( env: TestEnv, token: string, options: { path?: string; mode?: 'legacy' | 'auto' | { pin: string } } = {} ): Promise<Client>
+@testkit/integration :: function :: mcpTestEnv :: function mcpTestEnv(overrides: Record<string, unknown> = {}): TestEnv
+@testkit/integration :: interface :: McpToolCallResult :: interface McpToolCallResult
 @testkit/integration :: const :: notFoundResponse :: const notFoundResponse: () => Response
 @testkit/integration :: function :: paged :: function paged<T>(items: T[], pageSize = 25)
+@testkit/integration :: interface :: PlatformChatCall :: interface PlatformChatCall
+@testkit/integration :: interface :: PlatformChatTurn :: interface PlatformChatTurn
 @testkit/integration :: interface :: RecordedMessage :: interface RecordedMessage<T = unknown>
 @testkit/integration :: function :: renderWithProviders :: function renderWithProviders( ui: ReactElement, { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {} )
 @testkit/integration :: function :: request :: async function request( path: string, init: RequestInit = {}, options: RequestOptions = {} ): Promise<Response>
@@ -1618,6 +2148,7 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: rulesFor :: function rulesFor( role: MembershipRole | null, isGlobalAdmin = false, features: string[] = [] )
 @testkit/integration :: const :: SCHEDULED_TASKS :: const SCHEDULED_TASKS: Record<string, ScheduledTask[]>
 @testkit/integration :: interface :: ScheduledTask :: interface ScheduledTask
+@testkit/integration :: function :: scriptPlatformChat :: function scriptPlatformChat( env: { AI?: unknown }, script: PlatformChatTurn[] | ((call: PlatformChatCall, index: number) => PlatformChatTurn) ): PlatformChatCall[]
 @testkit/integration :: const :: SESSION_COOKIE_NAME :: const SESSION_COOKIE_NAME: "__Host-session"
 @testkit/integration :: function :: sessionCookieHeader :: function sessionCookieHeader(token: string): Record<string, string>
 @testkit/integration :: function :: setupTestDatabase :: function setupTestDatabase(): Database
@@ -1628,7 +2159,9 @@ nothing in the comparison that can throw.
 @testkit/integration :: interface :: TaskReport :: interface TaskReport
 @testkit/integration :: function :: testDatabaseUrl :: function testDatabaseUrl(): string
 @testkit/integration :: type :: TestEnv :: type TestEnv = AppBindings & { DATABASE_URL: string [secret: string]: unknown }
+@testkit/integration :: interface :: TestMcpConnection :: interface TestMcpConnection
 @testkit/integration :: interface :: TestSeed :: interface TestSeed
+@testkit/integration :: function :: toolJson :: function toolJson<T = unknown>(result: unknown): T
 @testkit/integration :: const :: unauthorizedResponse :: const unauthorizedResponse: () => Response
 @testkit/integration :: function :: uniqueId :: function uniqueId(): string
 @testkit/integration :: function :: waitOnExecutionContext :: async function waitOnExecutionContext(ctx: TestExecutionContext): Promise<void>
@@ -1637,7 +2170,7 @@ nothing in the comparison that can throw.
 @testkit/unit :: type :: FakeCronCtx :: type FakeCronCtx = CronCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeEmailCtx :: type FakeEmailCtx = EmailCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeJobCtx :: type FakeJobCtx = JobCtx & RecordsAgentRuns
-@testkit/unit :: type :: FakeRequestCtx :: type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> settle(): Promise<void> }
+@testkit/unit :: type :: FakeRequestCtx :: type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> readonly framed: boolean settle(): Promise<void> }
 @testkit/unit :: type :: FakeWorkflowCtx :: type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }
 @testkit/unit :: function :: makeCronCtx :: function makeCronCtx(options: CronCtxOptions): FakeCronCtx
 @testkit/unit :: function :: makeEmailCtx :: function makeEmailCtx(options: CronCtxOptions): FakeEmailCtx

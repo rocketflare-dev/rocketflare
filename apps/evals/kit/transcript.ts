@@ -1,5 +1,5 @@
 /**
- * Turning what a target DID into a transcript (D33) — pure, so it is unit-tested without a model.
+ * Turning what a target DID into a transcript — pure, so it is unit-tested without a model.
  *
  * A chat turn arrives as the AG-UI events `streamChatTurn` emitted; an agent run as its
  * `agent_run_events` rows. Both become the same shape: the output, the tool calls (name, arguments,
@@ -92,7 +92,8 @@ export function transcriptFromAgui(events: KitAguiEvent[], question: string): Tr
       case 'TOOL_CALL_RESULT': {
         const call = calls.get(event.toolCallId)
         if (!call) break
-        call.result = event.content
+        call.result =
+          typeof event.content === 'string' ? event.content : JSON.stringify(event.content)
         out.push({ type: 'tool_call', id: call.id, name: call.name, arguments: call.arguments })
         out.push({
           type: 'tool_result',
@@ -155,7 +156,10 @@ export function transcriptFromRunEvents(
       result?: unknown
       isError?: boolean
       toolCallId?: string
+      kind?: string
     }
+    // A model call the runtime recorded is not a tool call the agent's scorers grade.
+    if (data.kind === 'model') return
     if (row.type === 'tool.start' && data.name) {
       const call: TranscriptToolCall = {
         id: data.toolCallId ?? `call_${index}`,

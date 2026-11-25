@@ -1,7 +1,7 @@
 /**
  * The run's input, ABOVE the two columns and above the fold — one home, not a tab.
  *
- * It used to be `?tab=input`, a `<pre>` of the validated body four clicks away from the thing it
+ * Not a `?tab=input` tab, a `<pre>` of the validated body four clicks away from the thing it
  * explains. "What was it asked?" is the first question anybody has about a run they did not start,
  * and two homes for one fact is the trap this feature avoids everywhere else (an interrupt appears
  * pinned *and* inline, but the FORM exists only in the pinned copy).

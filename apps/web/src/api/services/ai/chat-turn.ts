@@ -1,6 +1,6 @@
 /**
  * ONE implementation of a streamed chat turn, in AG-UI. Both entry points call it —
- * `POST /api/chat/conversations/:id/messages` (the kit's own UI) and `POST /api/agui/run` (the
+ * `POST /api/chat/conversations/:id/messages` (the app's own UI) and `POST /api/agui/run` (the
  * protocol endpoint) — so there is exactly one place the sequence below can drift.
  *
  * ```
@@ -17,8 +17,8 @@
  *
  * - **Failure** closes any open text/tool message and emits `RUN_ERROR`. There is no `RUN_FINISHED`
  *   after it and nothing is persisted.
- * - **Cancellation emits nothing at all.** AG-UI 0.0.59 has no cancellation event, so the contract
- *   is: *a run whose body closes with neither `RUN_FINISHED` nor `RUN_ERROR` was cancelled by the
+ * - **Cancellation emits nothing at all**, not AG-UI 1.0's `RUN_FINISHED` `cancelled` outcome
+ *   (a known gap, `docs/CONCEPTS.md` §9), so the contract is: *a run whose body closes with neither `RUN_FINISHED` nor `RUN_ERROR` was cancelled by the
  *   client.* The abort is checked explicitly rather than swallowed, so a real write failure still
  *   surfaces as `RUN_ERROR`.
  *
@@ -41,7 +41,6 @@ import {
   CHAT_MAX_TOOL_TURNS,
   CONVERSATION_TITLE_LENGTH,
 } from '@rocketflare/shared/ai/chat'
-import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 import { and, desc, eq } from 'drizzle-orm'
 import { stream } from 'hono/streaming'
 import type { Database } from '../../../db/client'
@@ -52,14 +51,16 @@ import type { AppContext } from '../../types'
 import { ConflictError, isUniqueViolation } from '../../utils/core/errors'
 import { streamDatabase, withAuthAndDb } from '../../utils/routes/route-helpers'
 import { accessScopeOf } from '../access'
-import { buildAgentTools, CHAT_GET_DOCUMENT_MAX_CHARS } from '../agents/tools'
+import { CHAT_GET_DOCUMENT_MAX_CHARS, toolsFor } from '../agents/tools'
+import { requesterUrlsFromTexts } from '../agents/tools/requester-urls'
 import { enqueueJob } from '../jobs'
+import { authRequester } from '../member-ability'
 import { resolvePrompt } from '../prompts'
-import { aguiTextSegmenter, createAguiEncoder, kitCustom } from './agui'
+import { runStreamingChat, type Tool } from './agent-loop'
+import { aguiTextSegmenter, aguiToolEvents, createAguiEncoder, kitCustom } from './agui'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
 import { workersAiStreamsTools } from './client'
 import { AiError, describeAiError, normalizeAiError } from './errors'
-import { runStreamingChat, type Tool } from './kit'
 import { type ResolvedChat, resolveChat } from './resolve'
 import type { ChatMessage, SystemPrompt } from './types'
 import { recordUsage } from './usage'
@@ -119,7 +120,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
     }
     const tools = await params.buildTools(sdb)
     const text = aguiTextSegmenter(emit, assistantMessageId)
-    const openToolCalls = new Set<string>()
+    const toolEvents = aguiToolEvents(emit, text)
 
     try {
       await emit({ type: AguiEventType.RUN_STARTED, threadId: conversation.id, runId })
@@ -140,9 +141,9 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
           provider: resolved.provider,
           model: resolved.model,
           tools: tools.map(t => t.name),
-          // Chat has no human-in-the-loop path yet (agent RUNS do — issue #17). Declaring it
+          // Chat has no human-in-the-loop path yet (agent RUNS do). Declaring it
           // honestly is the point: a client that reads `supported: true` renders an approve button,
-          // and here that button would do nothing at all. `feedback` (D33) is real: a thumbs on the
+          // and here that button would do nothing at all. `feedback` is real: a thumbs on the
           // answer is `POST /api/feedback` with the `assistantMessageId` from `kit.chat.ids`.
           capabilities: { humanInTheLoop: { supported: false, feedback: true } },
         },
@@ -190,43 +191,8 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
             maxTurns: params.maxTurns,
             signal: abort.signal,
             onDelta: delta => text.delta(delta),
-            onToolStart: async call => {
-              // A turn's text ends where its tool calls begin: one text message per model turn.
-              await text.close()
-              openToolCalls.add(call.toolUseId)
-              await emit({
-                type: AguiEventType.TOOL_CALL_START,
-                toolCallId: call.toolUseId,
-                toolCallName: call.name,
-                parentMessageId: text.parentMessageId(),
-              })
-              // The kit's adapters surface a tool input whole, so the args are one chunk.
-              await emit({
-                type: AguiEventType.TOOL_CALL_ARGS,
-                toolCallId: call.toolUseId,
-                delta: JSON.stringify(call.input ?? {}),
-              })
-              await emit({ type: AguiEventType.TOOL_CALL_END, toolCallId: call.toolUseId })
-              openToolCalls.delete(call.toolUseId)
-            },
-            onToolEnd: async call => {
-              // The tool's own JSON, unmodified: the AG-UI-native representation a third-party
-              // client renders. `ToolCallResultEvent` has no error flag in 0.0.59.
-              await emit({
-                type: AguiEventType.TOOL_CALL_RESULT,
-                messageId: crypto.randomUUID(),
-                toolCallId: call.toolUseId,
-                content: call.result,
-                role: 'tool',
-              })
-              // …then the documents it named, as cards (D18). A kit CUSTOM event rather than
-              // "let the UI parse the result": that JSON is the knowledge tool's internal shape,
-              // retuned whenever its context budget changes, and a React component must not be
-              // coupled to it. The mapper is pure and never queries, so it cannot widen scope.
-              for (const card of documentCardsFromToolResult(call.name, call.result)) {
-                await emit(kitCustom(KIT_CUSTOM_EVENTS.document, { card }))
-              }
-            },
+            onToolStart: toolEvents.onToolStart,
+            onToolEnd: toolEvents.onToolEnd,
           })
         }
       )
@@ -245,7 +211,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
         // without it a thread whose provider changed cannot be priced or explained after the fact.
         provider: resolved.provider,
         model: resolved.model,
-        // D32: `rocketflare traces show <this message id>` resolves through this column.
+        // `rocketflare traces show <this message id>` resolves through this column.
         traceId,
       })
       await sdb
@@ -298,9 +264,7 @@ export function streamChatTurn(c: AppContext, params: ChatTurnParams): Response 
       const aiError = err instanceof AiError ? err : normalizeAiError(err, resolved.provider)
       logger.warn({ err: aiError, conversationId: conversation.id }, 'chat: stream failed')
       try {
-        for (const toolCallId of openToolCalls) {
-          await emit({ type: AguiEventType.TOOL_CALL_END, toolCallId })
-        }
+        await toolEvents.closeOpen()
         await text.close()
         await emit({
           type: AguiEventType.RUN_ERROR,
@@ -433,17 +397,27 @@ export async function prepareChatTurn(
     // interactive reply shares the Worker's CPU and subrequest budget, so it gets the lower cap.
     buildTools: cfg.CHAT_KNOWLEDGE_TOOLS
       ? sdb =>
-          buildAgentTools({
+          toolsFor('chat', {
             db: sdb,
             cfg,
             env: c.env,
-            // D29: the chatting person's own visibility — chat cannot surface a document its
+            // The chatting person's own visibility — chat cannot surface a document its
             // reader could not open on the Knowledge page.
             scope,
+            can: (action, subject) => auth.ability.can(action, subject),
+            // The request's own flags — `lookup_facts` rides on `knowledge-facts`.
+            features: auth.features,
+            requester: authRequester(auth),
             // An agent run may read 50 000 characters of a document because that is the job; a chat
             // turn may not, because the result sits in the same window as the history and every
             // turn after it. The prompt already discourages it — this is the limit.
             maxDocumentChars: CHAT_GET_DOCUMENT_MAX_CHARS,
+            // What this person typed — their own turns (a conversation has one owner) and this
+            // one. Never the assistant's turns, a tool result or the summary of older turns.
+            requesterUrls: requesterUrlsFromTexts([
+              ...window.filter(m => m.role === 'user').map(m => m.content),
+              turnText,
+            ]),
           })
       : async () => [],
     maxTurns: Math.min(cfg.AGENT_MAX_TURNS, CHAT_MAX_TOOL_TURNS),

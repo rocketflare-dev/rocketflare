@@ -1,0 +1,117 @@
+{
+  "suite": "chat-conflicts",
+  "createdAt": "2026-11-17T12:23:33.620Z",
+  "sha": "8c1e25b",
+  "model": "claude-haiku-5-5",
+  "judgeModel": null,
+  "cases": {
+    "conflict-leaf-clearance-price-gbp": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-winter-gritting-annual-plan-price-gbp": {
+      "avgScore": 0,
+      "scores": {
+        "Rubric": 0
+      }
+    },
+    "conflict-st-wilfrid-s-primary-school-gritting-included": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-harbour-view-dental-monthly-fee-gbp": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-harbour-view-dental-account-manager": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-northgate-veterinary-surgery-account-manager": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-ashcombe-business-park-primary-contact": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-the-old-mill-hotel-monthly-fee-gbp": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-the-old-mill-hotel-contract-renewal-date": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-fenwick-daughters-solicitors-payment-terms-days": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-riverside-lodge-care-home-visit-day": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-kingsgate-retail-park-payment-terms-days": {
+      "avgScore": 0,
+      "scores": {
+        "Rubric": 0
+      }
+    },
+    "conflict-thornley-leisure-centre-contract-renewal-date": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-northgate-veterinary-surgery-contact-phone": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-greenleaf-horticultural-supplies-lead-time-days": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-northern-salt-grit-co-primary-contact": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-northern-salt-grit-co-contact-email": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    },
+    "conflict-northern-salt-grit-co-minimum-order-gbp": {
+      "avgScore": 1,
+      "scores": {
+        "Rubric": 1
+      }
+    }
+  }
+}

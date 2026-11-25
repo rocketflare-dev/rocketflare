@@ -1,5 +1,5 @@
 /**
- * `JOBS_QUEUE` producer (D7): `enqueueJob(env.JOBS_QUEUE, input)` validates the input against
+ * `JOBS_QUEUE` producer: `enqueueJob(env.JOBS_QUEUE, input)` validates the input against
  * `jobInputSchema`, stamps the envelope (`id`, `enqueuedAt`) and sends. Routes and services call
  * this instead of doing the work inline — "a route never runs long work; it enqueues".
  *

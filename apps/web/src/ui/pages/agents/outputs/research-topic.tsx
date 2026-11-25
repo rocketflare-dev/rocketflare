@@ -1,5 +1,5 @@
 /**
- * `research-topic`'s answer (D7, D18): the Markdown answer and the documents it actually drew on.
+ * `research-topic`'s answer: the Markdown answer and the documents it actually drew on.
  * Citations are filtered server-side against what the tools returned, so a title here is a document
  * the run really read — the link opens the viewer, not a search narrowed to it.
  */

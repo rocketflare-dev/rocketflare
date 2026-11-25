@@ -1,5 +1,5 @@
 /**
- * Groups (D29) — `group_types`, `groups` and `group_members`.
+ * Groups — `group_types`, `groups` and `group_members`.
  *
  * A tenant declares group TYPES ("Department", "Region", "Client"); each type holds groups; each
  * group holds tenant members. Two decisions worth stating, because both are places the app this

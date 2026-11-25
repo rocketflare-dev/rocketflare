@@ -1,6 +1,6 @@
 /**
  * `.github/workflows/kit.yml` — the kit's OWN checks, which no copy carries (`kitOnly`). What it
- * promises lives only in YAML, so it is pinned here: the renamed copy and the default plugins are
+ * promises lives only in YAML, so it is pinned here: the renamed copy and the CI plugins are
  * gated with the same `pnpm gate` a copy runs (the plugins pass with the whole suite under neon —
  * the driver seam's backstop), and the checks that are only the kit's business (the published
  * plugin API, the vendored plugin's audit, the porting note, `defaultPlugins`) run beside them.
@@ -30,14 +30,14 @@ describe('kit.yml', () => {
     expect(deploy).not.toMatch(/uses: \.\/\.github\/workflows\/kit\.yml/)
   })
 
-  it('kit-checks: the porting note, the published plugin API, the plugin audit, defaultPlugins', () => {
+  it('kit-checks: the porting note, the published plugin API, the plugin audit, the CI plugins', () => {
     const checks = job('kit-checks')
     expect(checks).toContain('node scripts/release-check.mjs --unreleased')
     expect(checks).toMatch(
       /node scripts\/plugin-api-doc\.mjs\n\s+git diff --exit-code -- docs\/plugin-api\.md/
     )
     expect(checks).toContain('node scripts/plugin.mjs check')
-    expect(checks).toContain('node scripts/default-plugins.mjs --github-output')
+    expect(checks).toContain('node scripts/default-plugins.mjs --ci --github-output')
   })
 
   it('kit-checks and renamed: the Launch kit check, on the kit and on the renamed copy (D36)', () => {
@@ -52,15 +52,21 @@ describe('kit.yml', () => {
   it('renamed: renames to a hyphenated slug, proves the kit-only files are gone, runs pnpm gate', () => {
     const renamed = job('renamed')
     expect(renamed).toContain('node scripts/rename.mjs my-app')
-    for (const file of ['kit.yml', 'plugin-ci.yml', 'notify-plugins.yml']) {
-      expect(renamed).toContain(`.github/workflows/${file}`)
-    }
+    // Every kitOnly path, read from the manifest in the job itself, plus the wiring that calls one.
+    expect(renamed).toContain('require("./.rocketflare.json").kitOnly')
+    expect(renamed).toMatch(/changelog-nudge\|release-site-nudge/)
+    expect(renamed).toContain('scripts["kit:release"]')
+    // The Launch fixture is copied out first: the rename deletes tests/kit-only/.
+    expect(renamed.indexOf('kit-fixture.mjs "$RUNNER_TEMP')).toBeLessThan(
+      renamed.indexOf('node scripts/rename.mjs')
+    )
     expect(renamed).toMatch(/- run: pnpm gate\s*$/)
   })
 
-  it('plugins: installs the defaults, then the whole suite under neon', () => {
+  it('plugins: installs the CI plugins (defaults + .github/ci-plugins.json), then the suite under neon', () => {
     const plugins = job('plugins')
     expect(plugins).toContain("needs.kit-checks.outputs.count != '0'")
+    expect(plugins).toContain('node scripts/default-plugins.mjs --ci --tsv')
     expect(plugins).toMatch(/- run: pnpm gate\n\s+env:\n\s+GATE_SUITE_DRIVER: neon/)
   })
 

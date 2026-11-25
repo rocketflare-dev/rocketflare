@@ -1,5 +1,5 @@
 /**
- * `POST /api/ai/documents/upload` (D18) end to end over the in-memory R2 bucket and the AI stub:
+ * `POST /api/ai/documents/upload` end to end over the in-memory R2 bucket and the AI stub:
  * a Markdown file (declared type empty, as browsers send `.md`) is decoded and indexed inline —
  * object under `tenants/<t>/documents/`, `files` row scope `documents`, `fileId` on the document,
  * chunks present; a PDF returns `pending` with a `document.convert` job on the queue and no
@@ -281,7 +281,8 @@ describe('POST /api/ai/documents/upload', () => {
     const otherCookie = sessionCookieHeader(await createTestSession(db, other.id, tenant.id))
 
     const mine = documentSchema.parse(await json(await upload(env, memberCookie, md())))
-    const theirs = documentSchema.parse(await json(await upload(env, otherCookie, md())))
+    // Another file name (= another source): the same bytes under one source would deduplicate.
+    const theirs = documentSchema.parse(await json(await upload(env, otherCookie, md('theirs.md'))))
     expect(
       (
         await request(

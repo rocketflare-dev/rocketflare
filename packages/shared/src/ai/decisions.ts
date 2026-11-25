@@ -1,5 +1,5 @@
 /**
- * Decisions (D37): typed questions an agent asks about a structured state, answered with a
+ * Decisions: typed questions an agent asks about a structured state, answered with a
  * probability rather than prose. The vocabulary is TypeSafe's System One API (`noul` = yes/no,
  * `choice` = one of named options, `score` = a position on ordered levels) so the `typesafe`
  * provider is a 1:1 mapping; the LLM fallback answers the same shapes.

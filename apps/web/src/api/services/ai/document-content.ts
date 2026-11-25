@@ -1,12 +1,12 @@
 /**
- * Reading a knowledge document (D18) — the ONE implementation behind three callers: the
+ * Reading a knowledge document — the ONE implementation behind three callers: the
  * `get_document` agent tool, `GET /api/ai/documents/:id/content|passages|card`, and the document
  * viewer. Before this existed the tool sliced the text in JS, which meant pulling a 500 000-char
  * `content` column into the isolate to return 20 000 of it; every window here is cut in Postgres
  * (`substring(content from :offset+1 for :maxChars)` + `char_length`), so the bytes crossing the
  * wire are the bytes asked for.
  *
- * Every query carries the tenant predicate AND the reader's visibility predicate (D29). An unknown
+ * Every query carries the tenant predicate AND the reader's visibility predicate. An unknown
  * id, another tenant's id and a document this reader may not see are the SAME answer
  * (`document_not_found`) so the API is not an existence oracle in either direction. The failure
  * branch carries `title` and `error` because the tool builds a sentence out of them.

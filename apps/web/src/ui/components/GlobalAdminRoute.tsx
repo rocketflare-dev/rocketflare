@@ -1,5 +1,5 @@
 /**
- * Gates the cross-tenant /admin area on `users.isGlobalAdmin` (D10). Cosmetic — the real
+ * Gates the cross-tenant /admin area on `users.isGlobalAdmin`. Cosmetic — the real
  * enforcement is the global-admin middleware on `/api/admin/*`.
  */
 import type { ReactNode } from 'react'

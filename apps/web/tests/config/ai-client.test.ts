@@ -1,0 +1,1608 @@
+/**
+ * `services/ai/client.ts` with an INJECTED fetch (no globals mocked): OpenAI-compatible
+ * SSE parsing incl. tool-call deltas and usage; error normalisation 401→auth, 429→rate_limit,
+ * 404→invalid_request; the Anthropic path through the real SDK against a fake SSE body (bearer
+ * `authToken` for compatible vendors, explicit `thinking: disabled`, `reconcileThinking`);
+ * embeddings over OpenAI-shaped `/embeddings` and the Workers AI binding; Workers AI CHAT over the
+ * binding (non-streamed `{ response, tool_calls, usage }`, an SSE `ReadableStream`, the forced-tool
+ * instruction that stands in for `tool_choice`, and the non-streamed replay when tools are present).
+ */
+
+import { ADAPTIVE_THINKING_MIN_MAX_TOKENS, defaultModelFor } from '@rocketflare/shared/ai/config'
+import { priceFor } from '@rocketflare/shared/ai/pricing'
+import { describe, expect, it } from 'vitest'
+import {
+  createChatClient,
+  createEmbeddingsClient,
+  extractJsonObject,
+  type FetchLike,
+  forcedToolInstruction,
+  parseToolCallMarkup,
+  reconcileThinking,
+  recoverForcedToolCall,
+  ToolCallAssembler,
+  workersAiChatInputs,
+  workersAiStreamsTools,
+  workersAiSupportsToolChoice,
+} from '@/api/services/ai/client'
+import { AiError, describeAiError, normalizeAiError, redactSecrets } from '@/api/services/ai/errors'
+import { providerInfo, WORKERS_AI_TOOL_CHOICE_MODELS } from '@/api/services/ai/providers'
+import { type ChatDelta, textOf } from '@/api/services/ai/types'
+import { sseResponse } from '../helpers/ai'
+import { RecordingAi } from '../mocks/bindings'
+
+interface Captured {
+  url: string
+  headers: Record<string, string>
+  body: Record<string, unknown>
+}
+
+/** A fetch that records the request and answers with `respond()`. */
+function fakeFetch(respond: (req: Captured) => Response | Promise<Response>) {
+  const calls: Captured[] = []
+  const impl: FetchLike = async (input, init) => {
+    const headers: Record<string, string> = {}
+    new Headers(init?.headers).forEach((v, k) => {
+      headers[k] = v
+    })
+    const captured: Captured = {
+      url: String(input instanceof Request ? input.url : input),
+      headers,
+      body: init?.body ? JSON.parse(String(init.body)) : {},
+    }
+    calls.push(captured)
+    return respond(captured)
+  }
+  return { fetch: impl, calls }
+}
+
+async function collect(iter: AsyncIterable<ChatDelta>): Promise<ChatDelta[]> {
+  const out: ChatDelta[] = []
+  for await (const d of iter) out.push(d)
+  return out
+}
+
+const openAiChunk = (delta: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+  `data: ${JSON.stringify({ id: 'x', model: 'fake-1', choices: [{ index: 0, delta, finish_reason: null }], ...extra })}\n\n`
+
+describe('OpenAI-compatible chat client', () => {
+  it('streams text deltas, assembles tool calls from argument fragments, and reports usage', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      sseResponse([
+        openAiChunk({ role: 'assistant', content: 'Hel' }),
+        openAiChunk({ content: 'lo' }),
+        openAiChunk({
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'search', arguments: '{"q":' },
+            },
+          ],
+        }),
+        openAiChunk({ tool_calls: [{ index: 0, function: { arguments: '"cats"}' } }] }),
+        `data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] })}\n\n`,
+        `data: ${JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 7, prompt_tokens_details: { cached_tokens: 4 } } })}\n\n`,
+        'data: [DONE]\n\n',
+      ])
+    )
+    const client = createChatClient({
+      provider: 'openai_compatible',
+      apiKey: 'k',
+      baseUrl: 'http://mock/v1/',
+      fetch,
+    })
+    const deltas = await collect(
+      client.stream({
+        model: 'fake-1',
+        maxTokens: 50,
+        system: { stable: 'SYS', volatile: 'now' },
+        messages: [{ role: 'user', content: 'hi' }],
+        tools: [{ name: 'search', description: 'd', inputSchema: { type: 'object' } }],
+        toolChoice: { type: 'auto' },
+      })
+    )
+    expect(deltas.map(d => d.type)).toEqual(['text', 'text', 'tool_use', 'usage', 'end'])
+    expect(deltas[2]).toEqual({
+      type: 'tool_use',
+      id: 'call_1',
+      name: 'search',
+      input: { q: 'cats' },
+    })
+    const end = deltas.at(-1)
+    expect(end?.type === 'end' && end.result).toMatchObject({
+      stopReason: 'tool_use',
+      model: 'fake-1',
+      // `prompt_tokens` (11) INCLUDES the 4 cached, so uncached input is 7 — priced once, not twice.
+      usage: { inputTokens: 7, outputTokens: 7, cacheReadTokens: 4 },
+      content: [
+        { type: 'text', text: 'Hello' },
+        { type: 'tool_use', name: 'search' },
+      ],
+    })
+    expect(calls[0]?.url).toBe('http://mock/v1/chat/completions')
+    expect(calls[0]?.headers.authorization).toBe('Bearer k')
+    expect(calls[0]?.body).toMatchObject({
+      stream: true,
+      stream_options: { include_usage: true },
+      max_tokens: 50,
+      messages: [
+        { role: 'system', content: 'SYS\n\nnow' },
+        { role: 'user', content: 'hi' },
+      ],
+      tools: [{ type: 'function', function: { name: 'search' } }],
+      tool_choice: 'auto',
+    })
+  })
+
+  it('complete() round-trips tool_result turns as role=tool messages', async () => {
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            model: 'fake-1',
+            choices: [
+              { index: 0, finish_reason: 'stop', message: { role: 'assistant', content: 'Done' } },
+            ],
+            usage: { prompt_tokens: 3, completion_tokens: 1 },
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const client = createChatClient({
+      provider: 'openai_compatible',
+      apiKey: 'k',
+      baseUrl: 'https://compat.test/v1',
+      fetch,
+    })
+    const result = await client.complete({
+      model: 'fake-1',
+      maxTokens: 10,
+      messages: [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: [{ type: 'tool_use', id: 'c1', name: 'search', input: { q: 'x' } }],
+        },
+        { role: 'user', content: [{ type: 'tool_result', toolUseId: 'c1', content: 'found' }] },
+      ],
+    })
+    expect(result).toEqual({
+      content: [{ type: 'text', text: 'Done' }],
+      stopReason: 'end_turn',
+      usage: { inputTokens: 3, outputTokens: 1 },
+      model: 'fake-1',
+    })
+    expect(calls[0]?.url).toBe('https://compat.test/v1/chat/completions')
+    expect(calls[0]?.body.messages).toEqual([
+      { role: 'user', content: 'q' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'c1', type: 'function', function: { name: 'search', arguments: '{"q":"x"}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: 'found' },
+    ])
+  })
+
+  it.each([
+    [401, 'auth'],
+    [403, 'auth'],
+    [429, 'rate_limit'],
+    [404, 'invalid_request'],
+    [400, 'invalid_request'],
+    [503, 'unavailable'],
+  ] as const)('HTTP %i → AiError code %s, body never leaks a key', async (status, code) => {
+    const { fetch } = fakeFetch(
+      () => new Response(`{"error":"bad key sk-abcdefghijklmnopqrstuvwxyz012345"}`, { status })
+    )
+    const client = createChatClient({
+      provider: 'openai_compatible',
+      apiKey: 'sk-secret',
+      baseUrl: 'http://mock/v1',
+      fetch,
+    })
+    const err = await client
+      .complete({ model: 'm', maxTokens: 1, messages: [{ role: 'user', content: 'x' }] })
+      .catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect(err.code).toBe(code)
+    expect(err.status).toBe(status)
+    expect(err.message).not.toContain('abcdefghijklmnopqrstuvwxyz')
+    expect(describeAiError(err)).toMatch(/provider/i)
+  })
+
+  it('requires a key and a base URL up front', () => {
+    expect(() => createChatClient({ provider: 'openai_compatible', apiKey: 'k' })).toThrow(AiError)
+    expect(() => createChatClient({ provider: 'openai', apiKey: '' })).toThrow(AiError)
+    expect(() => createChatClient({ provider: 'workers_ai', apiKey: 'k' })).toThrow(
+      /AI binding is not configured/
+    )
+  })
+})
+
+/** An Anthropic Messages SSE body for one text reply. */
+function anthropicStream(text: string, toolUse?: { id: string; name: string; json: string }) {
+  const ev = (type: string, data: Record<string, unknown>) =>
+    `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
+  const chunks = [
+    ev('message_start', {
+      message: {
+        id: 'msg_1',
+        type: 'message',
+        role: 'assistant',
+        model: 'claude-x',
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: {
+          input_tokens: 12,
+          output_tokens: 1,
+          cache_read_input_tokens: 5,
+          cache_creation_input_tokens: 0,
+        },
+      },
+    }),
+    ev('content_block_start', { index: 0, content_block: { type: 'text', text: '' } }),
+    ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: text.slice(0, 3) } }),
+    ev('content_block_delta', { index: 0, delta: { type: 'text_delta', text: text.slice(3) } }),
+    ev('content_block_stop', { index: 0 }),
+  ]
+  if (toolUse) {
+    chunks.push(
+      ev('content_block_start', {
+        index: 1,
+        content_block: { type: 'tool_use', id: toolUse.id, name: toolUse.name, input: {} },
+      }),
+      ev('content_block_delta', {
+        index: 1,
+        delta: { type: 'input_json_delta', partial_json: toolUse.json },
+      }),
+      ev('content_block_stop', { index: 1 })
+    )
+  }
+  chunks.push(
+    ev('message_delta', {
+      delta: { stop_reason: toolUse ? 'tool_use' : 'end_turn', stop_sequence: null },
+      usage: { output_tokens: 9 },
+    }),
+    ev('message_stop', {})
+  )
+  return chunks
+}
+
+describe('Anthropic chat client (real SDK, fake transport)', () => {
+  it('anthropic_compatible sends Authorization: Bearer to the base URL, thinking disabled explicitly, cache breakpoints on', async () => {
+    const { fetch, calls } = fakeFetch(() =>
+      sseResponse(anthropicStream('Hi there', { id: 'tu_1', name: 'search', json: '{"q":"x"}' }))
+    )
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch,
+    })
+    const deltas = await collect(
+      client.stream({
+        model: 'accounts/x/models/y',
+        maxTokens: 64,
+        system: 'SYS',
+        messages: [{ role: 'user', content: 'hello' }],
+        tools: [
+          { name: 'search', description: 'd', inputSchema: { type: 'object', properties: {} } },
+        ],
+      })
+    )
+    expect(deltas.map(d => d.type)).toEqual(['text', 'text', 'tool_use', 'usage', 'end'])
+    expect(deltas[2]).toEqual({ type: 'tool_use', id: 'tu_1', name: 'search', input: { q: 'x' } })
+    const end = deltas.at(-1)
+    expect(end?.type === 'end' && end.result).toMatchObject({
+      model: 'claude-x',
+      stopReason: 'tool_use',
+      usage: { inputTokens: 12, outputTokens: 9, cacheReadTokens: 5, cacheWriteTokens: 0 },
+      content: [
+        { type: 'text', text: 'Hi there' },
+        { type: 'tool_use', id: 'tu_1' },
+      ],
+    })
+    const req = calls[0]
+    expect(req?.url).toBe('https://compat.test/inference/v1/messages')
+    expect(req?.headers.authorization).toBe('Bearer fw-token')
+    expect(req?.headers['x-api-key']).toBeUndefined()
+    expect(req?.body).toMatchObject({
+      model: 'accounts/x/models/y',
+      max_tokens: 64,
+      stream: true,
+      thinking: { type: 'disabled' },
+      system: [{ type: 'text', text: 'SYS', cache_control: { type: 'ephemeral' } }],
+      messages: [
+        {
+          role: 'user',
+          content: [{ type: 'text', text: 'hello', cache_control: { type: 'ephemeral' } }],
+        },
+      ],
+      tools: [{ name: 'search' }],
+    })
+  })
+
+  it('anthropic_compatible retries once without thinking when the vendor rejects `disabled`, and remembers', async () => {
+    // Fireworks maps `thinking: disabled` to reasoning effort `none`; gpt-oss refuses it with a 400.
+    const refusal = () =>
+      new Response(
+        JSON.stringify({
+          type: 'error',
+          error: { type: 'invalid_request_error', message: 'Invalid reasoning effort: none' },
+        }),
+        { status: 400, headers: { 'content-type': 'application/json' } }
+      )
+    const { fetch, calls } = fakeFetch(req =>
+      req.body.thinking ? refusal() : sseResponse(anthropicStream('Hello'))
+    )
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch,
+    })
+    const params = {
+      model: 'accounts/fireworks/models/gpt-oss-120b',
+      maxTokens: 64,
+      messages: [{ role: 'user' as const, content: 'hi' }],
+    }
+    const deltas = await collect(client.stream(params))
+    const text = deltas.map(d => (d.type === 'text' ? d.text : '')).join('')
+    expect(text).toBe('Hello')
+    expect(calls.map(c => 'thinking' in c.body)).toEqual([true, false])
+    // Remembered: the next call goes straight out without the field.
+    await collect(client.stream(params))
+    expect(calls.map(c => 'thinking' in c.body)).toEqual([true, false, false])
+
+    // A different 400 is not retried, and first-party Anthropic never is.
+    const other = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'invalid_request_error', message: 'bad' },
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const strict = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch: other.fetch,
+    })
+    await expect(collect(strict.stream(params))).rejects.toBeInstanceOf(AiError)
+    expect(other.calls).toHaveLength(1)
+  })
+
+  it('anthropic sends the key as Authorization: Bearer and maps 401/429/overloaded to codes', async () => {
+    let status = 401
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            type: 'error',
+            error: { type: 'authentication_error', message: 'invalid x-api-key' },
+          }),
+          { status }
+        )
+    )
+    const client = createChatClient({ provider: 'anthropic', apiKey: 'sk-ant-secret', fetch })
+    const params = {
+      model: 'claude-x',
+      maxTokens: 5,
+      messages: [{ role: 'user' as const, content: 'x' }],
+      cache: false,
+    }
+    let err = await client.complete(params).catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect(err.code).toBe('auth')
+    expect(calls[0]?.headers.authorization).toBe('Bearer sk-ant-secret')
+    expect(calls[0]?.headers['x-api-key']).toBeUndefined()
+    expect(calls[0]?.headers['anthropic-version']).toBe('2026-10-21')
+    expect(calls[0]?.url).toBe('https://api.anthropic.com/v1/messages')
+    status = 529
+    err = await client.complete(params).catch(e => e)
+    expect(err.code).toBe('rate_limit')
+  })
+
+  it('reconcileThinking drops thinking on a forced tool choice and lifts max_tokens under a budget', () => {
+    const forced = reconcileThinking({
+      thinking: { type: 'enabled', budget_tokens: 2000 },
+      tool_choice: { type: 'tool', name: 'x' },
+      max_tokens: 100,
+    })
+    expect(forced).not.toHaveProperty('thinking')
+    const lifted = reconcileThinking({
+      thinking: { type: 'enabled', budget_tokens: 2000 },
+      max_tokens: 100,
+    })
+    expect(lifted.max_tokens).toBe(2512)
+    const fine = reconcileThinking({
+      thinking: { type: 'enabled', budget_tokens: 2000 },
+      max_tokens: 8000,
+    })
+    expect(fine.max_tokens).toBe(8000)
+    expect(reconcileThinking({ thinking: { type: 'disabled' }, max_tokens: 5 })).toEqual({
+      thinking: { type: 'disabled' },
+      max_tokens: 5,
+    })
+  })
+})
+
+describe('embeddings clients', () => {
+  it('OpenAI-shaped /embeddings with dimensions=1024, order restored by index', async () => {
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              { index: 1, embedding: [2] },
+              { index: 0, embedding: [1] },
+            ],
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const client = createEmbeddingsClient({
+      provider: 'openai_compatible',
+      model: 'emb',
+      apiKey: 'k',
+      baseUrl: 'http://mock/v1',
+      fetch,
+    })
+    expect(await client.embed(['a', 'b'])).toEqual([[1], [2]])
+    expect(await client.embed([])).toEqual([])
+    expect(calls[0]?.url).toBe('http://mock/v1/embeddings')
+    expect(calls[0]?.body).toEqual({ model: 'emb', input: ['a', 'b'], dimensions: 1024 })
+    expect(client.dimension).toBe(1024)
+  })
+
+  it('workers_ai runs the binding and returns 1024-dim vectors; absent binding is an AiError', async () => {
+    const ai = new RecordingAi()
+    const client = createEmbeddingsClient({ provider: 'workers_ai', model: '@cf/baai/bge-m3', ai })
+    const vectors = await client.embed(['hello', 'world'])
+    expect(vectors).toHaveLength(2)
+    expect(vectors[0]).toHaveLength(1024)
+    expect(ai.runs).toEqual([{ model: '@cf/baai/bge-m3', inputs: { text: ['hello', 'world'] } }])
+    expect(() => createEmbeddingsClient({ provider: 'workers_ai', model: 'm' })).toThrow(AiError)
+  })
+})
+
+describe('error helpers', () => {
+  it('redactSecrets scrubs headers, bearer tokens, sk-/AKIA prefixes and long tokens', () => {
+    const text =
+      'Authorization: Bearer abc.def x-api-key=sk-ant-0123456789 AKIA0123456789AB and 0123456789abcdef0123456789abcdef'
+    const out = redactSecrets(text)
+    expect(out).not.toMatch(/abc\.def|sk-ant|AKIA0|0123456789abcdef0123456789abcdef/)
+    expect(out).toContain('[redacted]')
+  })
+
+  it('normalizeAiError passes AiError through and classifies transport failures', () => {
+    const own = new AiError('auth', 'openai', 'x')
+    expect(normalizeAiError(own, 'anthropic')).toBe(own)
+    expect(normalizeAiError(new TypeError('fetch failed'), 'openai').code).toBe('unavailable')
+    const abort = new Error('aborted')
+    abort.name = 'AbortError'
+    expect(normalizeAiError(abort, 'openai').code).toBe('unavailable')
+    expect(
+      normalizeAiError(
+        Object.assign(new Error('Your credit balance is too low'), { status: 400 }),
+        'anthropic'
+      ).code
+    ).toBe('auth')
+    expect(normalizeAiError(new Error('weird'), 'openai').code).toBe('unknown')
+  })
+})
+
+describe('Workers AI chat client', () => {
+  const tool = {
+    name: 'submit_summary',
+    description: 'Submit the summary',
+    inputSchema: { type: 'object', properties: { summary: { type: 'string' } } },
+  }
+  const messages = [{ role: 'user' as const, content: 'Summarise: hello world' }]
+
+  it('retries on the flattened schema when the model rejects the tool transcript (5006)', async () => {
+    const ai = new RecordingAi()
+    // The real rejection from `@cf/meta/llama-3.3-70b-instruct-fp8-fast` when a transcript carries
+    // OpenAI tool extras: the model's schema declares `content` as a plain string.
+    let attempt = 0
+    const inner = ai.run.bind(ai)
+    ai.run = async (model: string, inputs: Record<string, unknown>) => {
+      attempt += 1
+      if (attempt === 1) {
+        throw new Error(
+          "5006: Error: oneOf at '/' not met, 0 matches: required properties at '/' are 'prompt', Type mismatch of '/messages/1/content', 'array' not in 'string'"
+        )
+      }
+      return inner(model, inputs)
+    }
+    ai.respond = () => ({ response: 'Answered from the flattened transcript.' })
+
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: 'm',
+      system: 'You research.',
+      maxTokens: 64,
+      messages: [
+        { role: 'user', content: 'Research this' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'search', input: {} }] },
+        {
+          role: 'user',
+          content: [{ type: 'tool_result', toolUseId: 't1', content: 'hits', isError: false }],
+        },
+      ],
+      tools: [tool],
+    })
+    expect(textOf(result.content)).toBe('Answered from the flattened transcript.')
+
+    // The retry carries only string content in system/user/assistant roles — no tool extras.
+    expect(ai.runs).toHaveLength(1) // only the flattened call reached the recorder
+    const inputs = ai.runs[0]?.inputs as { messages: Array<Record<string, unknown>> }
+    for (const message of inputs.messages) {
+      expect(typeof message.content).toBe('string')
+      expect(message.tool_calls).toBeUndefined()
+      expect(message.role).not.toBe('tool')
+    }
+    expect(JSON.stringify(inputs.messages)).toMatch(/Called: search/)
+    expect(JSON.stringify(inputs.messages)).toMatch(/Tool result/)
+  })
+
+  it('stops waiting on a call that never answers (env.AI.run cannot be aborted)', async () => {
+    const ai = new RecordingAi()
+    // A binding call that never settles is the shape that used to hold a Workflow step for its
+    // full 10-minute timeout and read to a person as "the agent is stuck".
+    ai.run = () => new Promise(() => {})
+    const client = createChatClient({ provider: 'workers_ai', ai, timeoutMs: 20 })
+    const err = await client
+      .complete({ model: 'm', system: 's', messages, maxTokens: 16 })
+      .catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect((err as AiError).code).toBe('unavailable') // retryable: the run's step retries, then fails
+    expect((err as AiError).message).toMatch(/did not answer/)
+  })
+
+  it('gives up immediately when the caller has already aborted', async () => {
+    const ai = new RecordingAi()
+    ai.run = () => new Promise(() => {})
+    const client = createChatClient({ provider: 'workers_ai', ai, timeoutMs: 60_000 })
+    const err = await client
+      .complete({
+        model: 'm',
+        system: 's',
+        messages,
+        maxTokens: 16,
+        signal: AbortSignal.abort(),
+      })
+      .catch(e => e)
+    expect((err as AiError).code).toBe('unavailable')
+    expect((err as AiError).message).toMatch(/cancelled/)
+  })
+
+  it("reads GLM's own tool-call markup when Workers AI passes it through as the arguments", async () => {
+    const ai = new RecordingAi()
+    // Verbatim shape from a failed translation on @cf/zai-org/glm-4.7-flash, tool_choice forced:
+    // the call is there, but its arguments are the model's chat-template markup, not JSON.
+    const markup =
+      '<tool_call>submit_translation<arg_key>translations</arg_key><arg_value>["Conçu pour les ports", "HELLO"]</arg_value><arg_key>note</arg_key><arg_value>[not json</arg_value></tool_call>'
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              {
+                id: 'c1',
+                type: 'function',
+                function: { name: 'submit_translation', arguments: markup },
+              },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(result.content).toEqual([
+      {
+        type: 'tool_use',
+        id: 'c1',
+        name: 'submit_translation',
+        input: { translations: ['Conçu pour les ports', 'HELLO'], note: '[not json' },
+      },
+    ])
+    // The same markup written as the reply's text, with no call parsed out of it.
+    ai.respond = () => ({ choices: [{ message: { content: markup }, finish_reason: 'stop' }] })
+    const prose = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(prose.content[0]).toMatchObject({
+      type: 'tool_use',
+      input: { translations: ['Conçu pour les ports', 'HELLO'] },
+    })
+    expect(parseToolCallMarkup('no markup here')).toBeUndefined()
+    // Arguments that are neither JSON nor markup stay `{ _raw }`, which no schema accepts.
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            tool_calls: [{ id: 'c2', function: { name: 'submit_translation', arguments: 'oops' } }],
+          },
+        },
+      ],
+    })
+    const bad = await client.complete({
+      model: '@cf/zai-org/glm-4.7-flash',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_translation' },
+    })
+    expect(bad.content[0]).toMatchObject({ input: { _raw: 'oops' } })
+  })
+
+  it('completes over env.AI.run with OpenAI-shaped messages/tools and no tool_choice; a forced tool is a system instruction', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: '',
+      tool_calls: [{ name: 'submit_summary', arguments: { summary: 'hi' } }], // legacy shape
+      usage: { prompt_tokens: 12, completion_tokens: 5, total_tokens: 17 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({
+      model: '@cf/mistralai/mistral-small-3.1-24b-instruct',
+      system: 'You summarise.',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_summary' },
+    })
+    expect(result.stopReason).toBe('tool_use')
+    expect(result.content).toEqual([
+      {
+        type: 'tool_use',
+        id: expect.any(String),
+        name: 'submit_summary',
+        input: { summary: 'hi' },
+      },
+    ])
+    expect(result.usage).toEqual({ inputTokens: 12, outputTokens: 5 })
+
+    const [run] = ai.runs
+    expect(run?.model).toBe('@cf/mistralai/mistral-small-3.1-24b-instruct')
+    const inputs = run?.inputs as {
+      messages: Array<{ role: string; content: string }>
+      tools: unknown[]
+      stream: boolean
+      max_tokens: number
+      tool_choice?: unknown
+    }
+    expect(inputs.stream).toBe(false)
+    expect(inputs.max_tokens).toBe(64)
+    expect(inputs.tool_choice).toBeUndefined()
+    expect(inputs.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'submit_summary',
+          description: 'Submit the summary',
+          parameters: tool.inputSchema,
+        },
+      },
+    ])
+    expect(inputs.messages[0]?.role).toBe('system')
+    expect(inputs.messages[0]?.content).toContain('You summarise.')
+    expect(inputs.messages[0]?.content).toContain('calling the "submit_summary" tool')
+    expect(inputs.messages[1]).toEqual({ role: 'user', content: 'Summarise: hello world' })
+  })
+
+  it('accepts OpenAI-shaped tool_calls (string arguments) and a plain-text answer', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: 'Sure.',
+      tool_calls: [
+        {
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'submit_summary', arguments: '{"summary":"x"}' },
+        },
+      ],
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({ model: 'm', messages, maxTokens: 8, tools: [tool] })
+    expect(result.content).toEqual([
+      { type: 'text', text: 'Sure.' },
+      { type: 'tool_use', id: 'call_1', name: 'submit_summary', input: { summary: 'x' } },
+    ])
+    expect(result.usage).toEqual({ inputTokens: 0, outputTokens: 0 })
+
+    ai.respond = () => ({
+      response: 'Just text',
+      usage: { prompt_tokens: 2, completion_tokens: 2, total_tokens: 4 },
+    })
+    const plain = await client.complete({ model: 'm', messages, maxTokens: 8 })
+    expect(plain).toMatchObject({
+      stopReason: 'end_turn',
+      content: [{ type: 'text', text: 'Just text' }],
+    })
+  })
+
+  it('reads the OpenAI-shaped answer the newer Workers AI models return', async () => {
+    // Workers AI answers in TWO shapes and the model decides which. The newer models — the ones
+    // that also accept `tool_choice` — return the chat-completions envelope; reading only
+    // `{ response }` made them look like they had answered with nothing at all.
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      id: 'chatcmpl-1',
+      object: 'chat.completion',
+      choices: [
+        { index: 0, message: { role: 'assistant', content: 'Hello!' }, finish_reason: 'stop' },
+      ],
+      usage: { prompt_tokens: 11, completion_tokens: 4, total_tokens: 15 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const result = await client.complete({ model: 'm', maxTokens: 32, messages })
+    expect(result.content).toEqual([{ type: 'text', text: 'Hello!' }])
+    expect(result.stopReason).toBe('end_turn')
+    expect(result.usage).toMatchObject({ inputTokens: 11, outputTokens: 4 })
+
+    // Tool calls and a length stop come out of the same envelope.
+    ai.respond = () => ({
+      choices: [
+        {
+          message: {
+            content: null,
+            tool_calls: [
+              { id: 'c1', function: { name: 'search_knowledge', arguments: '{"query":"fleet"}' } },
+            ],
+          },
+          finish_reason: 'tool_calls',
+        },
+      ],
+    })
+    const withTools = await client.complete({ model: 'm', maxTokens: 32, messages })
+    expect(withTools.content).toEqual([
+      { type: 'tool_use', id: 'c1', name: 'search_knowledge', input: { query: 'fleet' } },
+    ])
+    expect(withTools.stopReason).toBe('tool_use')
+
+    ai.respond = () => ({ choices: [{ message: { content: 'cut' }, finish_reason: 'length' }] })
+    expect((await client.complete({ model: 'm', maxTokens: 4, messages })).stopReason).toBe(
+      'max_tokens'
+    )
+  })
+
+  it('replays for a model not verified to stream tools, and streams for one that is', async () => {
+    // The allow-list exists because the two behaviours are genuinely different and undocumented:
+    // one model streams tool calls and keeps producing text, another loops and emits none.
+    const tool = { name: 't', description: 'd', inputSchema: { type: 'object' } }
+    const withTools = { model: 'm', messages, maxTokens: 8, tools: [tool] }
+
+    const replaying = new RecordingAi()
+    replaying.respond = () => ({ response: 'Answered in one go.' })
+    const a = createChatClient({ provider: 'workers_ai', ai: replaying })
+    await collect(a.stream(withTools))
+    // Not on the list: one non-streamed call (`stream: true` never sent).
+    expect(replaying.runs[0]?.inputs).not.toMatchObject({ stream: true })
+
+    const streaming = new RecordingAi()
+    streaming.respond = () => sseResponse(['data: {"response":"Hi"}\n\n', 'data: [DONE]\n\n']).body
+    const b = createChatClient({ provider: 'workers_ai', ai: streaming })
+    await collect(b.stream({ ...withTools, model: WORKERS_AI_TOOL_CHOICE_MODELS[0] as string }))
+    expect(streaming.runs[0]?.inputs).toMatchObject({ stream: true })
+
+    // The offered models were each driven through a real two-turn tool loop; a legacy one a stored
+    // config might still name keeps the conservative replay.
+    for (const model of WORKERS_AI_TOOL_CHOICE_MODELS)
+      expect(workersAiStreamsTools(model)).toBe(true)
+    expect(workersAiStreamsTools('@cf/meta/llama-3.3-70b-instruct-fp8-fast')).toBe(false)
+  })
+
+  it('assembles a tool call that arrives in fragments across frames', async () => {
+    // What ten of the eleven offered models send: the first frame names the tool with empty
+    // arguments, later frames carry only fragments keyed by `index`.
+    const params = {
+      model: WORKERS_AI_TOOL_CHOICE_MODELS[0] as string,
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+    }
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"{\\"q\\": "}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"\\"cats\\""}}]}}]}\n\n',
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":null,"function":{"name":null,"arguments":"}"}}]}}]}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream(params))
+    const toolUses = deltas.filter(d => d.type === 'tool_use')
+    expect(toolUses).toHaveLength(1)
+    expect(toolUses[0]).toEqual({
+      type: 'tool_use',
+      id: 'call_1',
+      name: 'search',
+      input: { q: 'cats' },
+    })
+  })
+
+  it('ToolCallAssembler keeps parallel calls apart and takes a whole call in one frame', () => {
+    const fragmented = new ToolCallAssembler()
+    fragmented.add([
+      { index: 0, id: 'a', function: { name: 'one', arguments: '{"x":' } },
+      { index: 1, id: 'b', function: { name: 'two', arguments: '{"y":' } },
+    ])
+    fragmented.add([
+      { index: 1, function: { name: null, arguments: '2}' } },
+      { index: 0, function: { name: null, arguments: '1}' } },
+    ])
+    // Index is the identity, not arrival order, and the result is index-ordered.
+    expect(fragmented.done()).toEqual([
+      { id: 'a', name: 'one', arguments: '{"x":1}' },
+      { id: 'b', name: 'two', arguments: '{"y":2}' },
+    ])
+
+    // A single-frame call (what `glm-4.7-flash` sends) is just the one-fragment case…
+    const whole = new ToolCallAssembler()
+    whole.add([
+      { index: 0, id: 'c', type: 'function', function: { name: 'one', arguments: '{"x":1}' } },
+    ])
+    expect(whole.done()).toEqual([{ id: 'c', name: 'one', arguments: '{"x":1}' }])
+
+    // …and pre-parsed object arguments REPLACE rather than concatenate, or they stringify to junk.
+    const parsed = new ToolCallAssembler()
+    parsed.add([{ index: 0, id: 'd', name: 'one', arguments: { x: 1 } }])
+    expect(parsed.done()).toEqual([{ id: 'd', name: 'one', arguments: '{"x":1}' }])
+  })
+
+  it('streams OpenAI-shaped deltas as well as the legacy `response` ones', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+        'data: {"usage":{"prompt_tokens":3,"completion_tokens":2,"total_tokens":5}}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream({ model: 'm', messages, maxTokens: 8 }))
+    expect(deltas.filter(d => d.type === 'text')).toEqual([
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+    ])
+    const end = deltas.at(-1)
+    expect(end?.type === 'end' && end.result.content).toEqual([{ type: 'text', text: 'Hello' }])
+  })
+
+  it('streams SSE frames from the binding as text deltas, then usage and end', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () =>
+      sseResponse([
+        'data: {"response":"Hel"}\n\n',
+        'data: {"response":"lo"}\n\n',
+        'data: {"response":"","usage":{"prompt_tokens":4,"completion_tokens":2,"total_tokens":6}}\n\n',
+        'data: [DONE]\n\n',
+      ]).body
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(client.stream({ model: 'm', messages, maxTokens: 8 }))
+    expect(ai.runs[0]?.inputs).toMatchObject({ stream: true })
+    expect(deltas).toEqual([
+      { type: 'text', text: 'Hel' },
+      { type: 'text', text: 'lo' },
+      { type: 'usage', usage: { inputTokens: 4, outputTokens: 2 } },
+      {
+        type: 'end',
+        result: {
+          content: [{ type: 'text', text: 'Hello' }],
+          stopReason: 'end_turn',
+          usage: { inputTokens: 4, outputTokens: 2 },
+          model: 'm',
+        },
+      },
+    ])
+  })
+
+  it('with tools, stream() runs ONE non-streamed call and replays it (tool calls in a stream are undocumented)', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response: 'Calling.',
+      tool_calls: [{ name: 'submit_summary', arguments: { summary: 's' } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const deltas = await collect(
+      client.stream({
+        model: 'm',
+        messages,
+        maxTokens: 8,
+        tools: [tool],
+        toolChoice: { type: 'any' },
+      })
+    )
+    expect(ai.runs[0]?.inputs).toMatchObject({ stream: false })
+    expect(deltas.map(d => d.type)).toEqual(['text', 'tool_use', 'usage', 'end'])
+    expect(deltas[1]).toMatchObject({
+      type: 'tool_use',
+      name: 'submit_summary',
+      input: { summary: 's' },
+    })
+    expect((deltas[3] as { result: { stopReason: string } }).result.stopReason).toBe('tool_use')
+  })
+
+  it('a forced tool answered as a JSON object in prose is recovered as that tool call (Mistral on short inputs)', async () => {
+    const ai = new RecordingAi()
+    ai.respond = () => ({
+      response:
+        'Here you go:\n```json\n{\n  "summary": "Short.",\n  "keyPoints": ["Short."]\n}\n```',
+      usage: { prompt_tokens: 9, completion_tokens: 9, total_tokens: 18 },
+    })
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const forced = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'tool', name: 'submit_summary' },
+    })
+    expect(forced.stopReason).toBe('tool_use')
+    expect(forced.content).toEqual([
+      {
+        type: 'tool_use',
+        id: expect.any(String),
+        name: 'submit_summary',
+        input: { summary: 'Short.', keyPoints: ['Short.'] },
+      },
+    ])
+    // `any` with exactly one tool is the same; with tool_choice auto the prose stays prose.
+    const any = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'any' },
+    })
+    expect(any.content[0]?.type).toBe('tool_use')
+    const auto = await client.complete({
+      model: 'm',
+      messages,
+      maxTokens: 64,
+      tools: [tool],
+      toolChoice: { type: 'auto' },
+    })
+    expect(auto.content).toEqual([{ type: 'text', text: expect.stringContaining('```json') }])
+  })
+
+  it('recoverForcedToolCall unwraps { name, arguments }, ignores non-JSON prose and a real tool call', () => {
+    const base = {
+      model: 'm',
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+      toolChoice: { type: 'tool' as const, name: 'submit_summary' },
+    }
+    const prose = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      model: 'm',
+    })
+    expect(
+      recoverForcedToolCall(
+        base,
+        prose('{"name":"submit_summary","arguments":{"summary":"s","keyPoints":[]}}')
+      ).content[0]
+    ).toMatchObject({ type: 'tool_use', input: { summary: 's', keyPoints: [] } })
+    expect(recoverForcedToolCall(base, prose('I cannot summarise that.')).content[0]?.type).toBe(
+      'text'
+    )
+    const real = {
+      ...prose(''),
+      content: [{ type: 'tool_use' as const, id: 'c1', name: 'submit_summary', input: { a: 1 } }],
+    }
+    expect(recoverForcedToolCall(base, real)).toBe(real)
+    expect(extractJsonObject('[1,2]')).toBeUndefined()
+    expect(extractJsonObject('x {"a": {"b": 1}} y')).toEqual({ a: { b: 1 } })
+  })
+
+  it('recoverForcedToolCall unwraps the call envelopes models actually emit', () => {
+    const base = {
+      model: 'm',
+      messages,
+      maxTokens: 8,
+      tools: [tool],
+      toolChoice: { type: 'tool' as const, name: 'submit_summary' },
+    }
+    const prose = (text: string) => ({
+      content: [{ type: 'text' as const, text }],
+      stopReason: 'end_turn' as const,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      model: 'm',
+    })
+    const args = { summary: 's', keyPoints: ['a'] }
+    const recovered = (text: string) => recoverForcedToolCall(base, prose(text)).content[0]
+
+    // Verbatim from a failed run: Llama 3.3 70B on Workers AI puts the arguments under
+    // `parameters`, inside a `type: "function"` envelope.
+    expect(
+      recovered(JSON.stringify({ type: 'function', name: 'submit_summary', parameters: args }))
+    ).toMatchObject({ type: 'tool_use', input: args })
+    // `arguments` as a JSON STRING — the OpenAI wire shape.
+    expect(
+      recovered(JSON.stringify({ name: 'submit_summary', arguments: JSON.stringify(args) }))
+    ).toMatchObject({ input: args })
+    // Nested under `function`, fenced.
+    expect(
+      recovered(
+        '```json\n' +
+          JSON.stringify({
+            type: 'function',
+            function: { name: 'submit_summary', arguments: args },
+          }) +
+          '\n```'
+      )
+    ).toMatchObject({ input: args })
+    // A BARE arguments object is passed through untouched…
+    expect(recovered(JSON.stringify(args))).toMatchObject({ input: args })
+    // …and so is one whose own schema happens to have a `parameters` field: without a name or a
+    // `type: "function"` there is no envelope to strip, and stripping it would lose the answer.
+    const bare = { summary: 's', parameters: { nested: true } }
+    expect(recovered(JSON.stringify(bare))).toMatchObject({ input: bare })
+  })
+
+  it('forced-tool instruction only for tool/any; tools omitted under toolChoice none', () => {
+    const base = { model: 'm', messages, maxTokens: 8, tools: [tool] }
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'tool', name: 'x' } })).toContain(
+      '"x"'
+    )
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'any' } })).toContain(
+      'one of the available tools'
+    )
+    expect(forcedToolInstruction({ ...base, toolChoice: { type: 'auto' } })).toBeUndefined()
+    expect(
+      forcedToolInstruction({ ...base, tools: [], toolChoice: { type: 'any' } })
+    ).toBeUndefined()
+    expect(
+      workersAiChatInputs({ ...base, toolChoice: { type: 'none' } }, false).tools
+    ).toBeUndefined()
+  })
+
+  it('sends tool_choice to the models that declare it, and the instruction to the rest', () => {
+    const tools = [tool]
+    const forced = {
+      messages,
+      maxTokens: 8,
+      tools,
+      toolChoice: { type: 'tool' as const, name: 'x' },
+    }
+    // Verified against `wrangler ai models schema`: glm and nemotron declare `tool_choice`,
+    // llama-3.3 does not. A model on the list is CONSTRAINED…
+    for (const model of ['@cf/zai-org/glm-4.7-flash', '@cf/nvidia/nemotron-3-120b-a12b']) {
+      expect(workersAiSupportsToolChoice(model)).toBe(true)
+      const inputs = workersAiChatInputs({ ...forced, model }, false)
+      expect(inputs.tool_choice).toEqual({ type: 'function', function: { name: 'x' } })
+      // …and is never ALSO asked in the prompt: one constraint, not a rule plus a plea.
+      expect(forcedToolInstruction({ ...forced, model })).toBeUndefined()
+      expect(
+        workersAiChatInputs({ ...forced, model, toolChoice: { type: 'any' } }, false).tool_choice
+      ).toBe('required')
+      // `auto` is the model's own default — nothing is sent, so there is no extra field for a
+      // per-model schema to refuse mid-run.
+      expect(
+        workersAiChatInputs({ ...forced, model, toolChoice: { type: 'auto' } }, false).tool_choice
+      ).toBeUndefined()
+    }
+    // A model off the list keeps the prose path exactly as it was.
+    const legacy = '@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+    expect(workersAiSupportsToolChoice(legacy)).toBe(false)
+    expect(workersAiChatInputs({ ...forced, model: legacy }, false).tool_choice).toBeUndefined()
+    expect(forcedToolInstruction({ ...forced, model: legacy })).toContain('"x"')
+  })
+
+  it('the picker offers exactly the models a forced tool can constrain', () => {
+    // One list, two jobs. If these ever diverge the settings page is recommending a model the
+    // runtime can only ASK to call a tool, which is the failure this pairing exists to prevent.
+    const offered = providerInfo('workers_ai').suggestedModels.chat
+    expect(offered.length).toBeGreaterThan(1)
+    for (const model of offered) expect(workersAiSupportsToolChoice(model)).toBe(true)
+    expect([...offered]).toEqual([...WORKERS_AI_TOOL_CHOICE_MODELS])
+    // Everything offered is priced, or the Usage page reports it as an unpriced call.
+    for (const model of offered) expect(priceFor('workers_ai', model)).not.toBeNull()
+  })
+
+  it('no binding → AiError; a thrown binding error is normalised (unknown, no status) and never leaks a key-shaped string', async () => {
+    expect(() => createChatClient({ provider: 'workers_ai' })).toThrow(AiError)
+    const ai = new RecordingAi()
+    ai.respond = () => {
+      throw new Error('AiError: 3040 inference failed sk-ant-0123456789abcdef')
+    }
+    const client = createChatClient({ provider: 'workers_ai', ai })
+    const err = await client.complete({ model: 'm', messages, maxTokens: 8 }).catch(e => e)
+    expect(err).toBeInstanceOf(AiError)
+    expect((err as AiError).provider).toBe('workers_ai')
+    expect((err as AiError).code).toBe('unknown')
+    expect((err as AiError).message).not.toContain('sk-ant-0123456789abcdef')
+  })
+})
+
+/** A non-streamed Anthropic Messages answer. */
+function anthropicMessage(content: unknown[], stop = 'end_turn') {
+  return new Response(
+    JSON.stringify({
+      id: 'msg_1',
+      type: 'message',
+      role: 'assistant',
+      model: 'claude-x',
+      content,
+      stop_reason: stop,
+      stop_sequence: null,
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }),
+    { headers: { 'content-type': 'application/json' } }
+  )
+}
+
+const anthropic400 = (message: string) =>
+  new Response(
+    JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message } }),
+    { status: 400, headers: { 'content-type': 'application/json' } }
+  )
+
+const SEARCH_TOOL = {
+  name: 'search',
+  description: 'd',
+  inputSchema: { type: 'object', properties: {} },
+}
+
+describe('Anthropic chat client — per-model rules (Claude 4.5 → 5.5)', () => {
+  const send = async (
+    model: string,
+    params: Record<string, unknown> = {},
+    thinking?: { enabled: boolean; budgetTokens?: number }
+  ) => {
+    const { fetch, calls } = fakeFetch(() => anthropicMessage([{ type: 'text', text: 'ok' }]))
+    const client = createChatClient({
+      provider: 'anthropic',
+      apiKey: 'k',
+      fetch,
+      defaults: thinking ? { thinking } : undefined,
+    })
+    await client.complete({
+      model,
+      maxTokens: 64,
+      cache: false,
+      messages: [{ role: 'user', content: 'hi' }],
+      ...params,
+    })
+    return calls[0]?.body as Record<string, unknown>
+  }
+
+  it('Opus 5.5 always thinks: no `thinking` field, no temperature, a forced tool becomes an instruction, room to think', async () => {
+    const body = await send('claude-opus-5-5', {
+      temperature: 0,
+      system: 'SYS',
+      tools: [SEARCH_TOOL],
+      toolChoice: { type: 'tool', name: 'search' },
+    })
+    expect(body).not.toHaveProperty('thinking')
+    expect(body).not.toHaveProperty('temperature')
+    expect(body.tool_choice).toEqual({ type: 'auto' })
+    expect(JSON.stringify(body.system)).toContain(
+      'You must answer by calling the \\"search\\" tool'
+    )
+    expect(body.max_tokens).toBe(ADAPTIVE_THINKING_MIN_MAX_TOKENS)
+  })
+
+  it('Sonnet 5.5 turns thinking down with `between_tools`; on is adaptive and a stored budget is not sent', async () => {
+    expect((await send('claude-sonnet-5-5')).thinking).toEqual({ type: 'between_tools' })
+    const on = await send('claude-sonnet-5-5', {}, { enabled: true, budgetTokens: 2048 })
+    expect(on.thinking).toEqual({ type: 'adaptive' })
+    expect(on.max_tokens).toBe(ADAPTIVE_THINKING_MIN_MAX_TOKENS)
+  })
+
+  it('Haiku 5.5 takes `disabled` and a forced tool, but never a temperature', async () => {
+    const body = await send('claude-haiku-5-5', {
+      temperature: 0,
+      tools: [SEARCH_TOOL],
+      toolChoice: { type: 'tool', name: 'search' },
+    })
+    expect(body.thinking).toEqual({ type: 'disabled' })
+    expect(body.tool_choice).toEqual({ type: 'tool', name: 'search' })
+    expect(body).not.toHaveProperty('temperature')
+    expect(body.max_tokens).toBe(64)
+  })
+
+  it('Claude 4.5 keeps the budget contract; API 2026-10-21 takes no temperature on any model', async () => {
+    const off = await send('claude-haiku-4-5-20251001', { temperature: 0.2 })
+    expect(off.thinking).toEqual({ type: 'disabled' })
+    expect(off).not.toHaveProperty('temperature')
+    const on = await send(
+      'claude-sonnet-4-5',
+      { temperature: 0.2 },
+      {
+        enabled: true,
+        budgetTokens: 2048,
+      }
+    )
+    expect(on.thinking).toEqual({ type: 'enabled', budget_tokens: 2048 })
+    expect(on).not.toHaveProperty('temperature')
+  })
+
+  it('an Anthropic-compatible vendor still gets the temperature the Claude API no longer takes', async () => {
+    const { fetch, calls } = fakeFetch(() => anthropicMessage([{ type: 'text', text: 'ok' }]))
+    const client = createChatClient({
+      provider: 'anthropic_compatible',
+      apiKey: 'fw-token',
+      baseUrl: 'https://compat.test/inference',
+      fetch,
+    })
+    await client.complete({
+      model: 'accounts/x/models/y',
+      maxTokens: 64,
+      temperature: 0.2,
+      cache: false,
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    expect(calls[0]?.body).toMatchObject({ temperature: 0.2 })
+  })
+
+  it('thinking blocks ride the transcript opaque and go back unmodified; another provider’s are dropped', async () => {
+    const thinking = { type: 'thinking', thinking: '', signature: 'sig-1' }
+    const { fetch, calls } = fakeFetch(() =>
+      anthropicMessage(
+        [thinking, { type: 'tool_use', id: 'tu_1', name: 'search', input: { q: 'x' } }],
+        'tool_use'
+      )
+    )
+    const client = createChatClient({ provider: 'anthropic', apiKey: 'k', fetch })
+    const first = await client.complete({
+      model: 'claude-haiku-5-5',
+      maxTokens: 64,
+      cache: false,
+      messages: [{ role: 'user', content: 'q' }],
+      tools: [SEARCH_TOOL],
+    })
+    expect(first.content[0]).toEqual({ type: 'reasoning', provider: 'anthropic', data: thinking })
+    expect(textOf(first.content)).toBe('')
+
+    await client.complete({
+      model: 'claude-haiku-5-5',
+      maxTokens: 64,
+      cache: false,
+      tools: [SEARCH_TOOL],
+      messages: [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', provider: 'openai', data: { type: 'reasoning', id: 'rs_1' } },
+            ...first.content,
+          ],
+        },
+        { role: 'user', content: [{ type: 'tool_result', toolUseId: 'tu_1', content: 'found' }] },
+      ],
+    })
+    const messages = calls[1]?.body.messages as Array<{ content: unknown[] }>
+    const sent = messages[1]?.content
+    expect(sent).toEqual([
+      thinking,
+      { type: 'tool_use', id: 'tu_1', name: 'search', input: { q: 'x' } },
+    ])
+  })
+
+  it('a replayed thinking block the API refuses is stripped for that call and the call retried', async () => {
+    const { fetch, calls } = fakeFetch(req =>
+      JSON.stringify(req.body).includes('sig-stale')
+        ? anthropic400('messages.1.content.0: Invalid `signature` in `thinking` block.')
+        : anthropicMessage([{ type: 'text', text: 'ok' }])
+    )
+    const client = createChatClient({ provider: 'anthropic', apiKey: 'k', fetch })
+    const result = await client.complete({
+      model: 'claude-sonnet-5-5',
+      maxTokens: 64,
+      cache: false,
+      messages: [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: [
+            {
+              type: 'reasoning',
+              provider: 'anthropic',
+              data: { type: 'thinking', thinking: '', signature: 'sig-stale' },
+            },
+            { type: 'text', text: 'earlier' },
+          ],
+        },
+        { role: 'user', content: 'again' },
+      ],
+    })
+    expect(textOf(result.content)).toBe('ok')
+    expect(calls).toHaveLength(2)
+    expect(JSON.stringify(calls[1]?.body)).not.toContain('sig-stale')
+  })
+
+  it('a model the traits misread recovers once from a refused `thinking`, and remembers', async () => {
+    const { fetch, calls } = fakeFetch(req =>
+      req.body.thinking
+        ? anthropic400('"thinking.type.disabled" is not supported for this model.')
+        : anthropicMessage([{ type: 'text', text: 'ok' }])
+    )
+    const client = createChatClient({ provider: 'anthropic', apiKey: 'k', fetch })
+    const params = {
+      model: 'claude-haiku-5-5',
+      maxTokens: 64,
+      cache: false,
+      messages: [{ role: 'user' as const, content: 'hi' }],
+    }
+    await client.complete(params)
+    await client.complete(params)
+    expect(calls.map(c => 'thinking' in c.body)).toEqual([true, false, false])
+  })
+})
+
+/** One Responses-API SSE event. */
+const responsesEvent = (type: string, data: Record<string, unknown>) =>
+  `event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`
+
+describe('OpenAI Responses client (first-party `openai`)', () => {
+  const reasoningItem = {
+    type: 'reasoning',
+    id: 'rs_1',
+    summary: [],
+    encrypted_content: 'enc-1',
+  }
+  const callItem = {
+    type: 'function_call',
+    id: 'fc_1',
+    call_id: 'call_1',
+    name: 'search',
+    arguments: '{"q":"x"}',
+    status: 'completed',
+  }
+  const usage = {
+    input_tokens: 100,
+    input_tokens_details: { cached_tokens: 30, cache_write_tokens: 10 },
+    output_tokens: 7,
+    output_tokens_details: { reasoning_tokens: 3 },
+  }
+
+  it('complete(): posts a stateless Responses body and reads items back in order, usage made disjoint', async () => {
+    const { fetch, calls } = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            model: 'gpt-6-luna',
+            status: 'completed',
+            output: [
+              reasoningItem,
+              {
+                type: 'message',
+                role: 'assistant',
+                content: [{ type: 'output_text', text: 'Looking', annotations: [] }],
+              },
+              callItem,
+            ],
+            usage,
+          }),
+          { headers: { 'content-type': 'application/json' } }
+        )
+    )
+    const client = createChatClient({ provider: 'openai', apiKey: 'k', fetch })
+    const result = await client.complete({
+      model: 'gpt-6-luna',
+      maxTokens: 512,
+      temperature: 0,
+      system: { stable: 'SYS', volatile: 'NOW' },
+      tools: [SEARCH_TOOL],
+      toolChoice: { type: 'tool', name: 'search' },
+      messages: [
+        { role: 'user', content: 'q' },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'reasoning', provider: 'openai', data: { ...reasoningItem, id: 'rs_0' } },
+            { type: 'reasoning', provider: 'anthropic', data: { type: 'thinking' } },
+            { type: 'text', text: 'Checking' },
+            { type: 'tool_use', id: 'call_0', name: 'search', input: { q: 'a' } },
+          ],
+        },
+        { role: 'user', content: [{ type: 'tool_result', toolUseId: 'call_0', content: 'found' }] },
+      ],
+    })
+
+    const req = calls[0]
+    expect(req?.url).toBe('https://api.openai.com/v1/responses')
+    expect(req?.headers.authorization).toBe('Bearer k')
+    expect(req?.body).toMatchObject({
+      model: 'gpt-6-luna',
+      store: false,
+      stream: false,
+      instructions: 'SYS\n\nNOW',
+      max_output_tokens: 512,
+      // Thinking off on Luna = effort `none`, which also leaves temperature legal.
+      reasoning: { effort: 'none' },
+      temperature: 0,
+      tool_choice: { type: 'function', name: 'search' },
+      tools: [{ type: 'function', name: 'search', description: 'd', strict: false }],
+    })
+    expect(req?.body.input).toEqual([
+      { role: 'user', content: 'q' },
+      { ...reasoningItem, id: 'rs_0' },
+      { role: 'assistant', content: 'Checking' },
+      { type: 'function_call', call_id: 'call_0', name: 'search', arguments: '{"q":"a"}' },
+      { type: 'function_call_output', call_id: 'call_0', output: 'found' },
+    ])
+    expect(result).toEqual({
+      content: [
+        { type: 'reasoning', provider: 'openai', data: reasoningItem },
+        { type: 'text', text: 'Looking' },
+        { type: 'tool_use', id: 'call_1', name: 'search', input: { q: 'x' } },
+      ],
+      stopReason: 'tool_use',
+      usage: { inputTokens: 60, outputTokens: 7, cacheReadTokens: 30, cacheWriteTokens: 10 },
+      model: 'gpt-6-luna',
+    })
+  })
+
+  it('stream(): text deltas, whole tool calls from `output_item.done`, usage and an incomplete stop', async () => {
+    const { fetch } = fakeFetch(() =>
+      sseResponse([
+        responsesEvent('response.created', { response: { status: 'in_progress' } }),
+        responsesEvent('response.output_item.added', { output_index: 0, item: reasoningItem }),
+        responsesEvent('response.output_item.done', { output_index: 0, item: reasoningItem }),
+        responsesEvent('response.output_text.delta', { output_index: 1, delta: 'Hel' }),
+        ': keep-alive\n\n',
+        responsesEvent('response.output_text.delta', { output_index: 1, delta: 'lo' }),
+        responsesEvent('response.output_item.done', {
+          output_index: 1,
+          item: {
+            type: 'message',
+            content: [{ type: 'output_text', text: 'Hello' }],
+          },
+        }),
+        responsesEvent('response.function_call_arguments.delta', { output_index: 2, delta: '{' }),
+        responsesEvent('response.output_item.done', { output_index: 2, item: callItem }),
+        responsesEvent('response.incomplete', {
+          response: {
+            model: 'gpt-6-luna',
+            status: 'incomplete',
+            incomplete_details: { reason: 'max_output_tokens' },
+            usage,
+          },
+        }),
+      ])
+    )
+    const client = createChatClient({ provider: 'openai', apiKey: 'k', fetch })
+    const deltas = await collect(
+      client.stream({
+        model: 'gpt-6-luna',
+        maxTokens: 64,
+        tools: [SEARCH_TOOL],
+        messages: [{ role: 'user', content: 'q' }],
+      })
+    )
+    expect(deltas.map(d => d.type)).toEqual(['text', 'text', 'tool_use', 'usage', 'end'])
+    const end = deltas.at(-1)
+    expect(end?.type === 'end' && end.result).toEqual({
+      content: [
+        { type: 'reasoning', provider: 'openai', data: reasoningItem },
+        { type: 'text', text: 'Hello' },
+        { type: 'tool_use', id: 'call_1', name: 'search', input: { q: 'x' } },
+      ],
+      stopReason: 'max_tokens',
+      usage: { inputTokens: 60, outputTokens: 7, cacheReadTokens: 30, cacheWriteTokens: 10 },
+      model: 'gpt-6-luna',
+    })
+  })
+
+  it('a model that refuses `none` gets `low` (known up front, or learned once); thinking on sends no effort', async () => {
+    const astra = fakeFetch(() => new Response(JSON.stringify({ status: 'completed', output: [] })))
+    const client = createChatClient({ provider: 'openai', apiKey: 'k', fetch: astra.fetch })
+    await client.complete({
+      model: 'gpt-6-astra',
+      maxTokens: 64,
+      temperature: 0,
+      messages: [{ role: 'user', content: 'q' }],
+    })
+    expect(astra.calls[0]?.body.reasoning).toEqual({ effort: 'low' })
+    expect(astra.calls[0]?.body).not.toHaveProperty('temperature')
+    expect(astra.calls[0]?.body.max_output_tokens).toBe(ADAPTIVE_THINKING_MIN_MAX_TOKENS)
+
+    const learning = fakeFetch(req =>
+      (req.body.reasoning as { effort?: string } | undefined)?.effort === 'none'
+        ? new Response(
+            JSON.stringify({ error: { message: "Unsupported value: 'reasoning.effort' none" } }),
+            { status: 400 }
+          )
+        : new Response(JSON.stringify({ status: 'completed', output: [] }))
+    )
+    const unknown = createChatClient({ provider: 'openai', apiKey: 'k', fetch: learning.fetch })
+    const params = {
+      model: 'gpt-7-nova',
+      maxTokens: 64,
+      messages: [{ role: 'user' as const, content: 'q' }],
+    }
+    await unknown.complete(params)
+    await unknown.complete(params)
+    expect(learning.calls.map(c => (c.body.reasoning as { effort: string }).effort)).toEqual([
+      'none',
+      'low',
+      'low',
+    ])
+
+    const on = fakeFetch(() => new Response(JSON.stringify({ status: 'completed', output: [] })))
+    await createChatClient({
+      provider: 'openai',
+      apiKey: 'k',
+      fetch: on.fetch,
+      defaults: { thinking: { enabled: true } },
+    }).complete({ model: 'gpt-6-luna', maxTokens: 64, messages: [{ role: 'user', content: 'q' }] })
+    expect(on.calls[0]?.body).not.toHaveProperty('reasoning')
+
+    // A non-reasoning model takes no reasoning field and keeps its temperature.
+    const old = fakeFetch(() => new Response(JSON.stringify({ status: 'completed', output: [] })))
+    await createChatClient({ provider: 'openai', apiKey: 'k', fetch: old.fetch }).complete({
+      model: 'gpt-4.1-mini',
+      maxTokens: 64,
+      temperature: 0.3,
+      messages: [{ role: 'user', content: 'q' }],
+    })
+    expect(old.calls[0]?.body).not.toHaveProperty('reasoning')
+    expect(old.calls[0]?.body.temperature).toBe(0.3)
+  })
+
+  it('a failed response is an AiError, never a silent empty answer', async () => {
+    const { fetch } = fakeFetch(() =>
+      sseResponse([
+        responsesEvent('response.failed', {
+          response: { status: 'failed', error: { message: 'model overloaded' } },
+        }),
+      ])
+    )
+    const client = createChatClient({ provider: 'openai', apiKey: 'k', fetch })
+    await expect(
+      collect(
+        client.stream({
+          model: 'gpt-6-luna',
+          maxTokens: 8,
+          messages: [{ role: 'user', content: 'q' }],
+        })
+      )
+    ).rejects.toBeInstanceOf(AiError)
+  })
+})
+
+describe('provider catalog', () => {
+  it('suggests current models and defaults to Haiku 5.5 / GPT-6 Luna', () => {
+    expect(providerInfo('anthropic').suggestedModels.chat).toContain('claude-haiku-5-5')
+    expect(providerInfo('anthropic').suggestedModels.chat).not.toContain('claude-opus-4-1')
+    expect(providerInfo('anthropic').defaultModel).toBe('claude-haiku-5-5')
+    expect(defaultModelFor('openai', 'chat')).toBe('gpt-6-luna')
+    // Every suggested chat model is priced, so the Usage page never shows it as unpriced.
+    for (const id of ['anthropic', 'openai'] as const) {
+      for (const model of providerInfo(id).suggestedModels.chat) {
+        expect(priceFor(id, model), `${id} ${model}`).not.toBeNull()
+      }
+    }
+  })
+})

@@ -1,5 +1,5 @@
 /**
- * `/agents/runs/:runId` — a run as a PAGE (issue #17), not a modal over a list.
+ * `/agents/runs/:runId` — a run as a PAGE, not a modal over a list.
  *
  * A modal is the wrong home for something a person is asked to *act* on, arrives at from a
  * notification, may need to read a document before deciding, and may leave and come back to. So:
@@ -31,7 +31,7 @@ import { ChevronLeftIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react
 import type { AgentInfo, AgentRunWithEvents } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows, URLTabs } from '@/ui/components/shared'
 import { useAgentList, useAgentRun } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'
@@ -41,6 +41,7 @@ import { outputFor } from './outputs'
 import { RunStatusBadge } from './RunStatusBadge'
 import { ActionRequiredPanel } from './run/ActionRequiredPanel'
 import { RunArtifactsTab } from './run/output/RunArtifactsTab'
+import { RunInspectTab } from './run/output/RunInspectTab'
 import { RunOutputTab } from './run/output/RunOutputTab'
 import { RunUsageTab } from './run/output/RunUsageTab'
 import { RunErrorAlert } from './run/RunErrorAlert'
@@ -74,10 +75,10 @@ const LAYOUT_COLUMNS: Record<RunLayoutSplit, string> = {
  * layout, which is a different control from a two-state toggle and must not claim to be one.
  *
  * **It is a CHILD of the timeline panel, and rides that panel's own right edge** (`right-0` +
- * `translate-x-1/2`, `top-1` so it tucks just under the corner). It used to be absolutely
- * positioned over the grid at `left-[60%]`, which is wrong and cannot be made right by tuning the
+ * `translate-x-1/2`, `top-1` so it tucks just under the corner). Absolute positioning
+ * over the grid at `left-[60%]` is wrong and cannot be made right by tuning the
  * number: with `grid-cols-[3fr_2fr] gap-8` the panel's border sits at `3/5 × (W − gap)`, so the
- * handle floated `0.6 × gap` to the right of it, and every widening of the gutter made it worse.
+ * handle floats `0.6 × gap` to the right of it, and every widening of the gutter makes it worse.
  * Anchored to the element that OWNS the border, it is correct for any fraction and any gap.
  *
  * Hidden below `lg`, where the columns stack and there is no split to move.
@@ -109,7 +110,11 @@ export default function RunPage() {
   return (
     <div className="max-w-7xl">
       <PageHeader
-        breadcrumbs={[{ label: 'Agents', to: '/agents' }, { label: title }]}
+        breadcrumbs={[
+          { label: 'Agents', to: '/agents' },
+          ...(run.data ? [{ label: title, to: `/agents/${run.data.agentKey}` }] : []),
+          { label: run.data ? `Run ${run.data.id.slice(0, 8)}` : title },
+        ]}
         title={title}
         badge={run.data && <RunStatusBadge status={run.data.status} />}
       />
@@ -153,8 +158,9 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
     return parsed?.success && entry?.artifacts ? entry.artifacts(parsed.data, run.id) : []
   }, [rows, run.artifacts, run.agentKey, run.output, run.id])
 
-  const requestedBy =
-    run.requestedByUserId === null
+  const requestedBy = run.triggerEvent
+    ? `the ${run.triggerEvent} event`
+    : run.requestedByUserId === null
       ? 'system'
       : run.requestedByUserId === user?.id
         ? 'you'
@@ -189,6 +195,10 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
       label: 'Usage',
       content: <RunUsageTab run={run} stats={stats} requestedBy={requestedBy} />,
     },
+    // The operator's view: every record, versions, spend against the budget.
+    ...(isAdminLevel()
+      ? [{ id: 'inspect', label: 'Inspect', content: <RunInspectTab runId={run.id} /> }]
+      : []),
   ]
 
   return (
@@ -221,7 +231,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
               setLayoutOverride(layout === 'timeline-major' ? 'output-major' : 'timeline-major')
             }
           />
-          <RunTimeline events={run.events} />
+          <RunTimeline events={run.events} settled={!isRunActive(run.status)} />
           {isRunActive(run.status) && <SteerComposer runId={run.id} />}
         </SectionPanel>
         <div className="order-1 lg:order-2 space-y-3 min-w-0">

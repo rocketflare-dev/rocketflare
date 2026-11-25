@@ -6,7 +6,7 @@ import { defineConfig } from 'vite'
 import { devAllowedHosts, devPorts } from '../../scripts/lib/dev-ports.mjs'
 
 /** Prevent proxy errors from crashing Vite when the API (wrangler dev) is restarting */
-function onProxyError(proxy: HttpProxy.Server) {
+function onProxyError(proxy: HttpProxy.ProxyServer) {
   proxy.on('error', (err: Error, _req: http.IncomingMessage, res: unknown) => {
     console.warn(`[proxy] ${err.message}`)
     const response = res as http.ServerResponse
@@ -42,7 +42,6 @@ export default defineConfig({
   build: {
     outDir: '../../dist/ui',
     emptyOutDir: true,
-    minify: 'esbuild',
   },
   server: {
     port: ports.ui,
@@ -54,10 +53,12 @@ export default defineConfig({
     ...(allowedHosts.length > 0 ? { allowedHosts } : {}),
     ...(tunnelHost ? { hmr: { protocol: 'wss', host: tunnelHost, clientPort: 443 } } : {}),
     watch: {
-      // The UI only depends on src/ui and src/shared — allowlist those so API/migration/doc
-      // edits don't churn the Vite watcher. wrangler dev watches the API side.
+      // The UI only depends on src/ui, src/shared and the plugins' UI halves (src/plugins/*/ui,
+      // reached through the src/plugins/ui.ts barrel) — allowlist those so API/migration/doc edits
+      // don't churn the Vite watcher. wrangler dev watches the API side. Leaving src/plugins out
+      // meant a plugin's UI edits never hot-reloaded: the browser kept the module it had.
       ignored: (filePath: string) => {
-        const rel = path.relative(__dirname, filePath)
+        const rel = path.relative(import.meta.dirname, filePath)
         if (rel.startsWith('..')) return false
         if (rel === '' || rel === 'src') return false
         if (rel.startsWith('node_modules')) return false
@@ -65,26 +66,33 @@ export default defineConfig({
           rel === 'vite.config.ts' ||
           rel === 'postcss.config.js' ||
           rel.startsWith('src/ui') ||
-          rel.startsWith('src/shared')
+          rel.startsWith('src/shared') ||
+          rel.startsWith('src/plugins')
         )
       },
     },
     // Everything the Worker serves in production is proxied to `wrangler dev` here.
-    // An installed plugin's own prefixes are added here by hand on install — this file is core,
-    // and a plugin edits no core file (D31). The analytics plugin's are `/cubejs-api` and `/mcp`.
+    // An installed plugin's own prefixes land here as `coreEdits` its manifest declares — `pnpm
+    // plugin add` writes them and `remove` reverts them. The analytics plugin's is `/cubejs-api`.
     proxy: {
       '/api': proxyTo(),
       '/auth': proxyTo(),
       '/ws': proxyTo(`ws://localhost:${ports.api}`, { ws: true }),
+      // The MCP server, its authorization server and the OAuth discovery documents — so a client
+      // pointed at the UI's port (a tunnel to it, say) reaches them. The consent PAGE is `/consent`,
+      // a client route Vite serves itself.
+      '/mcp': proxyTo(),
+      '/oauth': proxyTo(),
+      '^/\\.well-known/(oauth-|openid-configuration)': proxyTo(),
     },
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
-      // An installed plugin may need an alias of its own, and this is a core file it cannot
-      // write — `pnpm plugin add` prints the lines as a numbered step (D31). The analytics plugin
+      '@': path.resolve(import.meta.dirname, './src'),
+      // An installed plugin may need an alias of its own: a `coreEdits` entry in its manifest,
+      // which `pnpm plugin add` writes here and `remove` reverts. The analytics plugin
       // needs two: `'@nivo/heatmap'` pointed at its own stub (drizzle-cube's heat-map chunk names
-      // that OPTIONAL peer, and Rollup fails the build without the package), and `'recharts'`
+      // that OPTIONAL peer, and Rolldown fails the build without the package), and `'recharts'`
       // added to `dedupe` below, because drizzle-cube's chart chunks import it.
     },
     dedupe: ['react', 'react-dom'],

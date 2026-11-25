@@ -1,5 +1,5 @@
 /**
- * `@testkit/unit` — builders for the plugin context family (D31).
+ * `@testkit/unit` — builders for the plugin context family.
  *
  * Every execution context a plugin is handed (`RequestCtx`, `JobCtx`, `CronCtx`, `WorkflowCtx`,
  * `ToolCtx`) is built here from plain options, so a test can exercise a handler's BRANCHING without
@@ -23,11 +23,13 @@
  * builds. `makeRequestCtx` is the exception and says so on itself.
  */
 
+import { isEmbeddableMimeType } from '@rocketflare/shared/files'
 import type { GroupRef } from '@rocketflare/shared/groups'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import type { MembershipRole } from '@rocketflare/shared/tenants'
 import type { AgentToolContext } from '@/api/services/agents/tools'
+import { requesterUrlsFromTexts } from '@/api/services/agents/tools/requester-urls'
 import { createR2Storage } from '@/api/services/storage'
 import {
   BadRequestError,
@@ -49,6 +51,7 @@ import type { ToolCtx } from '@/plugins/api/ai'
 import { toolCtx } from '@/plugins/api/ai'
 import type { EmailCtx } from '@/plugins/api/email'
 import { emailCtx } from '@/plugins/api/email'
+import { tenantEmitter } from '@/plugins/api/emit'
 import type { RequestCtx } from '@/plugins/api/http'
 import type {
   CronCtx,
@@ -94,13 +97,15 @@ export interface RequestCtxOptions extends BaseOptions {
   /** The active organisation — the only tenant id a query may filter by. */
   tenantId: string
   userId?: string
+  /** The API key the request came in on — `null` (the default) is a browser session. */
+  apiKeyId?: string | null
   /** A real row when the test has one; otherwise a plausible one is built from `userId`. */
   user?: User
   role?: MembershipRole | null
   isGlobalAdmin?: boolean
-  /** Flags ON for this organisation — what `ctx.hasFeature` reads, never the ability (D30). */
+  /** Flags ON for this organisation — what `ctx.hasFeature` reads, never the ability. */
   features?: readonly string[]
-  /** Group memberships, for a visibility predicate (D29). */
+  /** Group memberships, for a visibility predicate. */
   groupIds?: string[]
   /**
    * The same memberships WITH their type names — what `ctx.groups` answers, and what anything
@@ -123,6 +128,8 @@ export interface RequestCtxOptions extends BaseOptions {
  */
 export type FakeRequestCtx = RequestCtx & {
   readonly deferred: ReadonlyArray<() => Promise<unknown>>
+  /** Whether `ctx.embeddable(...)` let the response be framed — there is no response to read. */
+  readonly framed: boolean
   /** Run everything deferred so far, swallowing failures exactly as `defer` does. */
   settle(): Promise<void>
 }
@@ -145,6 +152,7 @@ function fakeUser(userId: string, isGlobalAdmin: boolean): User {
     emailVerifiedAt: now,
     lastLoginAt: null,
     blockedAt: null,
+    blockedSource: null,
     createdAt: now,
     updatedAt: now,
   } as User
@@ -176,6 +184,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
   const isAdmin = isGlobalAdmin || role === 'owner' || role === 'admin' || role === 'support'
   const isOwner = isGlobalAdmin || role === 'owner'
 
+  let framed = false
   const deferred: Array<() => Promise<unknown>> = []
   const defer = (fn: () => Promise<unknown>) => {
     deferred.push(fn)
@@ -198,6 +207,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
 
     user,
     userId,
+    apiKeyId: options.apiKeyId ?? null,
     tenantId: options.tenantId,
     role,
     isAdmin,
@@ -250,6 +260,16 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
     },
 
     page: <T>(items: T[], total: number, query: PaginationQuery) => paginated(items, total, query),
+    // The same decision as the real adapter, recorded on `framed` instead of a header.
+    embeddable: contentType => {
+      const type = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
+      if (!isEmbeddableMimeType(type)) return false
+      framed = true
+      return true
+    },
+    get framed() {
+      return framed
+    },
 
     defer,
     enqueue: async (input, opts) => {
@@ -271,6 +291,9 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
       return createR2Storage(env.FILES)
     },
     durableObject: (namespace, key) => durableObject(namespace, options.tenantId, key),
+    // The REAL emitter over the real handle: a test of a route that emits proves the row and the
+    // queued deliveries (`stubs(env).queue.messages`), not a recording.
+    emit: tenantEmitter({ db, config, logger, env }, options.tenantId),
 
     notFound: (message = 'Not found', code?: string) => {
       throw new NotFoundError(message, code)
@@ -479,14 +502,21 @@ export interface ToolCtxOptions extends BaseOptions {
   /** Who the run is FOR. A tool reads what its requester may read, never a tenant it chose itself. */
   userId?: string | null
   groupIds?: string[]
-  /** Admin-level requesters are not narrowed by visibility (D29). Defaults to `true`, as a system run. */
+  /** Admin-level requesters are not narrowed by visibility. Defaults to `true`, as a system run. */
   bypass?: boolean
+  /** The requester's CASL grant, for a tool gated on one. Omitted: every check is `false`. */
+  can?: AgentToolContext['can']
   /** The CALLER's budget for one document window — an agent run's is far larger than a chat turn's. */
   maxDocumentChars?: number
+  /**
+   * The URLs the requester wrote (`ToolCtx.requesterUrls`), as strings; each is normalised the
+   * way the kit normalises them. Omitted = none.
+   */
+  requesterUrls?: readonly string[]
 }
 
 /**
- * What `ServerPlugin.agentTools(ctx)` is handed, through the kit's own `toolCtx` adapter.
+ * What `ServerPlugin.tools(ctx)` is handed, through the kit's own `toolCtx` adapter.
  *
  * The tenant arrives as part of a `scope`, not as a bare id, and that is the whole safety property:
  * a tool bound to a scope answers what the person who STARTED the run may read. A `tenantId` on a
@@ -504,7 +534,11 @@ export function makeToolCtx(options: ToolCtxOptions): ToolCtx {
       groupIds: options.groupIds ?? [],
       bypass: options.bypass ?? true,
     },
+    ...(options.can && { can: options.can }),
     ...(options.maxDocumentChars !== undefined && { maxDocumentChars: options.maxDocumentChars }),
+    ...(options.requesterUrls && {
+      requesterUrls: requesterUrlsFromTexts(options.requesterUrls),
+    }),
   }
   return toolCtx(agentToolContext)
 }

@@ -1,5 +1,5 @@
 /**
- * AI usage (D18): `GET /api/ai/usage/summary?from&to` — token totals per (provider, model,
+ * AI usage: `GET /api/ai/usage/summary?from&to` — token totals per (provider, model,
  * feature) for the tenant. Admin+ (`manage AiConfig`). The query is keyed on the PRESET
  * (`{ days }`), not on the timestamps: computing `new Date()` into the key would change it on
  * every render and refetch forever. The window is derived inside `queryFn`.

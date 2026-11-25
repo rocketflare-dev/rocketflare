@@ -1,6 +1,6 @@
 /**
- * Header avatar dropdown: who you are, where to manage yourself, sign out (D10 for which links
- * show — the same `useNavGuard()` the SideNav uses). Theme lives in `ThemeToggle` beside it.
+ * Header avatar dropdown: who you are, where to manage yourself, sign out (which links
+ * show comes from the same `useNavGuard()` the SideNav uses). Theme lives in `ThemeToggle` beside it.
  */
 import {
   ArrowRightStartOnRectangleIcon,
@@ -9,8 +9,9 @@ import {
   ShieldCheckIcon,
   UserCircleIcon,
 } from '@heroicons/react/24/outline'
+import { roleLabel } from '@rocketflare/shared/tenants'
 import { useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { initials } from '@/ui/lib/format'
@@ -43,8 +44,8 @@ export function UserMenu() {
             <div className="text-sm font-medium truncate">{user.name}</div>
             <div className="text-xs text-muted truncate">{user.email}</div>
             {tenant && (
-              <div className="text-xs text-muted mt-0.5 capitalize">
-                {tenant.role} · {tenant.name}
+              <div className="text-xs text-muted mt-0.5">
+                {roleLabel(tenant.role)} · {tenant.name}
               </div>
             )}
           </div>

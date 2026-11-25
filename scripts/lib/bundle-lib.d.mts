@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `bundle-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/bundle-lib.test.ts` typechecks against this.
+ * exports there; `apps/web/tests/kit-only/bundle-lib.test.ts` typechecks against this.
  */
 export const BUNDLE_PROTOCOL: number
 

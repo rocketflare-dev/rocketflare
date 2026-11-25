@@ -1,5 +1,5 @@
 /**
- * The shared plugin API (D31) — what a plugin's CONTRACT module imports from the kit.
+ * The shared plugin API — what a plugin's CONTRACT module imports from the host.
  *
  * A plugin's shared entry is the one of its four published files that all three consumers read, so
  * it is also the one with the strictest rule about what IT may read. Two constraints shape this
@@ -40,6 +40,8 @@ export {
   paginationMetaSchema,
   paginationQuerySchema,
 } from '../pagination'
+/** The rule a return path must pass — the one `redirectToSchema` and the SPA use. */
+export { isSameOriginPath } from '../paths'
 export type { Actions, Subjects } from '../permissions'
 export type { RealtimeEvent, RealtimeEventType } from '../realtime'
 export type { MembershipRole } from '../tenants'
@@ -47,6 +49,9 @@ export type { MembershipRole } from '../tenants'
 export type {
   AgentKeyOf,
   DeclaredBy,
+  EventNameOf,
+  EventPayloadOf,
+  EventsOf,
   FeatureKeyOf,
   JobTypeOf,
   JobVariant,
@@ -54,4 +59,10 @@ export type {
   SharedPlugin,
   SubjectOf,
 } from './types'
-export { isPluginId, PLUGIN_ID_RE, pluginNamespace } from './types'
+export {
+  EVENT_NAME_RE,
+  eventNameProblem,
+  isPluginId,
+  PLUGIN_ID_RE,
+  pluginNamespace,
+} from './types'

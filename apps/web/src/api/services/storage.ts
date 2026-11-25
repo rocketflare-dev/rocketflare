@@ -1,5 +1,5 @@
 /**
- * Object storage seam over the native `FILES` R2 binding (D23). Routes and services depend on
+ * Object storage seam over the native `FILES` R2 binding. Routes and services depend on
  * `StorageService`, never on `R2Bucket`, so a test can pass an in-memory bucket and an app can
  * swap the backend without touching callers. Keys are tenant-prefixed
  * (`tenants/<tenantId>/<scope>/<uuid>-<name>`) so one prefix scopes a whole tenant for listing
@@ -85,7 +85,7 @@ function toMeta(obj: R2Object): StoredObjectMeta {
   }
 }
 
-/** The kit's `StorageService`: a thin adapter over the R2 binding. */
+/** The built-in `StorageService`: a thin adapter over the R2 binding. */
 export function createR2Storage(bucket: R2Bucket): StorageService {
   return {
     async put(key, body, options) {
@@ -178,7 +178,7 @@ export function tenantStoragePrefix(tenantId: string, scope?: FileScope): string
 }
 
 /**
- * Delete every object of a tenant, a page at a time, and answer how many went (D31 tenant purge).
+ * Delete every object of a tenant, a page at a time, and answer how many went (tenant purge).
  *
  * This is the other half of what the FK cascade does in Postgres: `tenants/<tenantId>/` is the one
  * prefix that scopes an organisation's bytes, which is exactly why keys carry it. It is

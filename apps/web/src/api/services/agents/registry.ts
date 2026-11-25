@@ -1,5 +1,5 @@
 /**
- * The agent registry (D7, D17): `AGENTS` maps every `AgentKey` to a definition = the shared
+ * The agent registry: `AGENTS` maps every `AgentKey` to a definition = the shared
  * `AgentMeta` (key, title, schemas, promptKey, exclusive) + a server-side `run(ctx)`. The runtime
  * (`runtime.ts`, driven by `workflows/agent-run.ts`) owns the lifecycle — claim, trace, client,
  * cancellation, persistence, events — so an agent is a declarative meta and one async function that
@@ -21,8 +21,16 @@ import type { Database } from '../../../db/client'
 import { serverPlugins } from '../../../plugins/server'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
-import { type Tool, type ToolApproval, type ToolLoopCheckpoint, toolInputSchema } from '../ai/kit'
+import {
+  type Tool,
+  type ToolApproval,
+  type ToolLoopCheckpoint,
+  type ToolLoopJournal,
+  toolInputSchema,
+} from '../ai/agent-loop'
 import type { AiEnv, ChatClient } from '../ai/types'
+import type { EventName } from '../events/registry'
+import type { AgentEventBinding, AgentEventTrigger } from '../events/types'
 import type { JobsQueue } from '../jobs'
 import type { RegistryPromptKey } from '../prompts'
 import type { MeteredCall } from './budget'
@@ -31,6 +39,7 @@ import { researchTopicAgent } from './examples/research-topic'
 import { summarizeTextAgent } from './examples/summarize-text'
 import { triageResearchAgent } from './examples/triage-research'
 import type { MapOptions } from './fanout'
+import type { AgentRunsEnv } from './runs'
 
 /** Emitted by the run into `agent_run_events` (and nudged to viewers). */
 export interface AgentEvent {
@@ -42,6 +51,10 @@ export interface AgentEvent {
 export interface AgentRunEnv {
   AI?: AiEnv['AI']
   JOBS_QUEUE?: JobsQueue | null
+  /** For `ctx.spawn` and a version `rerun`: a run starting another run. */
+  AGENT_RUN_WORKFLOW?: AgentRunsEnv['AGENT_RUN_WORKFLOW']
+  /** The Worker deployment the attempt runs on (`[version_metadata]`). */
+  CF_VERSION_METADATA?: { id: string }
 }
 
 /** What an agent asks a person through {@link AgentContext.interrupt}. */
@@ -49,7 +62,7 @@ export interface AgentInterruptAsk {
   /**
    * **Yours, and it must be stable across attempts.** A resumed or retried `execute` step
    * re-enters `run()` from the TOP and reaches this call again; `(run_id, key)` is what makes the
-   * second call find the ANSWER rather than opening a second question (T2). Derive it from
+   * second call find the ANSWER rather than opening a second question. Derive it from
    * something durable — the entity id, the step name — never from a counter or `Date.now()`.
    */
   key: string
@@ -75,7 +88,7 @@ export interface AgentInterruptAnswer {
   resolvedByUserId: string | null
 }
 
-/** How a replay (D38) treats one `ctx.once` — see {@link AgentContext.once}. */
+/** How a replay treats one `ctx.once` — see {@link AgentContext.once}. */
 export interface OnceOptions {
   /**
    * `'serve'` (default) — hand back the recording; `'rerun'` — a live replay calls `fn` again (a
@@ -83,6 +96,13 @@ export interface OnceOptions {
    * it. `'inner'` is for a `once` that only memoises other recorded calls — `ctx.map`'s items.
    */
   replay?: 'serve' | 'rerun' | 'inner'
+  /**
+   * What makes THIS call different from another with the same label — the query, the item id.
+   * The recorded key becomes `label#<hash of inputs>`, so `for (q of queries) ctx.once('search',
+   * fn, { inputs: q })` is one record per query rather than the first query's result three times.
+   * jsonb-shaped; must be the same value on every attempt.
+   */
+  inputs?: unknown
 }
 
 /** What `run()` receives. Never carries a client-supplied tenant id. */
@@ -102,10 +122,16 @@ export interface AgentContext<Input = unknown> {
   emit(event: AgentEvent): Promise<void>
   /** Throws `AgentCancelledError` when the run was asked to stop — call between model turns. */
   checkCancelled(): Promise<void>
+  /**
+   * Aborts the moment a cancel is requested (polled every few seconds while the attempt runs).
+   * Every call through `ctx.chat.client` already carries it; pass it to `runToolLoop` as `signal`
+   * and to your own `fetch`es, so a cancel reaches work in flight instead of waiting for it.
+   */
+  signal: AbortSignal
   /** The resolved (traced) client for `meta.promptKey` and the model/max_tokens to pass it. */
   chat: { client: ChatClient; model: string; maxOutputTokens: number }
   /**
-   * The kit's built-in tools, tenant-scoped to this run (`tools/`: `search_knowledge` over
+   * The built-in tools, tenant-scoped to this run (`tools/`: `search_knowledge` over
    * everything indexed in the knowledge base, `get_document` to read one in full or by window).
    * Hand them to `runToolLoop` alongside the agent's own tools; a forced single-tool agent may
    * ignore them.
@@ -122,26 +148,46 @@ export interface AgentContext<Input = unknown> {
     save(checkpoint: ToolLoopCheckpoint): Promise<void>
   }
   /**
+   * The tool loop's journal (`agent_run_turns`) — hand it to `runToolLoop` as `journal`. Every
+   * model turn and tool result is recorded as it settles, so a retried attempt is never billed for
+   * a turn it already took and never re-runs a tool that already finished, even part-way through a
+   * turn; a `Tool.sideEffects` call that may have run settles as an unknown outcome instead. It is
+   * also what a strict `agent:replay` answers a tool-loop agent from. Scoped like every keyed
+   * primitive, so a loop inside `ctx.map` has a journal of its own.
+   */
+  journal: ToolLoopJournal
+  /**
    * Run `fn` at most once per `key` across every attempt of this run, replaying its recorded result
    * afterwards. **Anything with a side effect the run must not repeat goes through here** — an
    * ingest, a ledger write, an outbound call — because an `execute` retry re-enters `run()` from the
-   * top. `key` is yours and must be stable across attempts. The result is stored as jsonb: return
-   * ids and scalars, not rows. At-least-once with a recorded result, not exactly-once.
+   * top. `key` is yours and must be stable across attempts; **the same key twice in one attempt
+   * throws `EffectKeyConflictError`** — a call that repeats with different arguments passes them
+   * as `options.inputs`, which become part of the key. The result is stored as jsonb: return ids
+   * and scalars, not rows. At-least-once with a recorded result, not exactly-once.
    *
-   * `options.replay` matters only to a REPLAY of the run (D38, `agent:replay`), never to the run
+   * `options.replay` matters only to a REPLAY of the run (`agent:replay`), never to the run
    * itself: `'rerun'` marks `fn` as a pure model call a live replay may make again — so a changed
    * prompt shows up as a changed answer — where the default `'serve'` hands back the recording,
    * because `fn` may have a side effect.
    */
   once<T>(key: string, fn: () => Promise<T>, options?: OnceOptions): Promise<T>
   /**
-   * Ask a person, and suspend the run until they answer (issue #17).
+   * Start another agent as a CHILD run — its own instance and attempts, `parent_run_id` = this
+   * run — and resolve with its output. While it runs, this run parks (it costs nothing) and is
+   * woken when the child settles. `key` is yours and must be stable across attempts, like every
+   * key: it is what a retried or resumed run uses to find the same child. A child that failed or
+   * was cancelled throws `ChildRunFailedError` (catch it to carry on). Its budget is what this run
+   * could still spend; a cancel of this run cancels it. For a short sub-task, call inline instead.
+   */
+  spawn<Output = unknown>(key: string, agentKey: AgentKey, input: unknown): Promise<Output>
+  /**
+   * Ask a person, and suspend the run until they answer.
    *
    * Three things are true of every call and each one has bitten somebody:
    *
    * 1. **`key` is yours and must be stable across attempts.** A resumed `execute` re-enters
    *    `run()` from the top and reaches this line again; `UNIQUE (run_id, key)` is what makes the
-   *    second call find the answer instead of asking again, forever (T2).
+   *    second call find the answer instead of asking again, forever.
    * 2. **Everything after this call is on the far side of a Worker deploy.** The run may resume
    *    days later, in a different isolate, on different code. Anything with a side effect goes
    *    behind {@link AgentContext.once}, exactly as it would after any retry.
@@ -174,7 +220,7 @@ export interface AgentContext<Input = unknown> {
    */
   approvals: ReadonlyMap<string, ToolApproval>
   /**
-   * Ask typed questions about a state and get probabilities back (D37) — `ctx.decide(key, { state,
+   * Ask typed questions about a state and get probabilities back — `ctx.decide(key, { state,
    * questions })`, or the shapes `ctx.decide.sift(key, …)` (the same yes/no of every item, one
    * request) and `ctx.decide.pick(key, …)` (one item, or none). Answered by the tenant's decisions
    * engine — TypeSafe's Jev when configured, else the chat model (`llm_self_report`, uncalibrated)
@@ -201,12 +247,12 @@ export interface AgentContext<Input = unknown> {
   ): Promise<void>
   /**
    * This context with every keyed primitive — `once`, `decide`, `interrupt`, `artifact`, `step` —
-   * namespaced under `prefix` (D39), so the same code can run for many items without their keys
+   * namespaced under `prefix`, so the same code can run for many items without their keys
    * colliding. Scopes nest. A scope has no checkpoint (a tool loop inside one restarts on a retry).
    */
   scope(prefix: string): AgentContext<Input>
   /**
-   * Run `fn` over `items`, a few at a time (D39, `fanout.ts`): each item is a `once` keyed
+   * Run `fn` over `items`, a few at a time (`fanout.ts`): each item is a `once` keyed
    * `key[index]` (or `key[keyOf(item)]`) and gets its own `scope`, so a retried step replays the
    * items that finished and runs only the rest. Concurrency is `min(options.concurrency ?? 4, 6)`.
    * The first error stops scheduling; asks from several items become ONE park. `fn`'s result is
@@ -220,7 +266,7 @@ export interface AgentContext<Input = unknown> {
   ): Promise<R[]>
   /**
    * Ledger a model call that did NOT go through `ctx.chat.client` or `ctx.decide` — a client of
-   * the agent's own (D39). One `ai_usage` row carrying this run's id, counted toward its budget.
+   * the agent's own. One `ai_usage` row carrying this run's id, counted toward its budget.
    * Calls through `ctx.chat.client` and `ctx.decide` are metered already: never record those.
    */
   recordUsage(call: MeteredCall): Promise<void>
@@ -229,12 +275,27 @@ export interface AgentContext<Input = unknown> {
 export interface AgentDefinition<Input = unknown, Output = unknown> {
   meta: AgentMeta<Input, Output>
   run(ctx: AgentContext<Input>): Promise<Output>
+  /**
+   * Plugin events that START this agent on their own (D42) — `eventTrigger(event, { where?, input })`
+   * from `@/plugins/api`. Each matching event is one run through `enqueueRun` (input validated, the
+   * exclusive slot, the active-run cap, the daily budget), idempotent per (event, agent), with no
+   * requester (`requestedByUserId` NULL, so the knowledge tools read tenant-visible documents only)
+   * and `triggerEvent` naming the event on the run and its activity row.
+   */
+  triggers?: readonly AgentEventTrigger<EventName, Input>[]
+  /**
+   * Plugin events this agent OPTS IN to being started by when a subject names it (D42) — an editor
+   * pointing a form block at it. Never started by the event alone: the subject's own handler calls
+   * `EventCtx.startBoundAgent(key)`, which re-checks this list. `GET /api/agents/bindable?event=`
+   * is the picker's source.
+   */
+  bindable?: readonly AgentEventBinding<EventName, Input>[]
 }
 
 // biome-ignore lint/suspicious/noExplicitAny: the catalog mixes agent input/output types.
 export type AnyAgentDefinition = AgentDefinition<any, any>
 
-/** The kit's own agents. A plugin adds its own through `ServerPlugin.agents`. */
+/** The built-in agents. A plugin adds its own through `ServerPlugin.agents`. */
 const CORE_AGENTS = {
   'summarize-text': summarizeTextAgent,
   'research-topic': researchTopicAgent,
@@ -242,7 +303,7 @@ const CORE_AGENTS = {
 } satisfies Record<string, AnyAgentDefinition>
 
 /**
- * Core plus every installed plugin's (D31). `AGENT_KEYS` already carries a plugin's keys, and the
+ * Core plus every installed plugin's. `AGENT_KEYS` already carries a plugin's keys, and the
  * plugin's own `agents` is checked against the keys IT declared — so the only thing this merge
  * asserts is that the two halves together cover the union.
  */

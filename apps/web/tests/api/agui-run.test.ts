@@ -1,5 +1,3 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
  * `POST /api/agui/run` — the AG-UI `RunAgentInput` endpoint. What is actually under test is the
  * reconciliation rule, because that is the part a protocol client will disagree with: **the server
@@ -14,8 +12,9 @@
 import { decode as decodeProto } from '@ag-ui/proto'
 import { KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { AiNotConfiguredError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import { conversations, messages } from '@/db/schema'
 import { aguiFrames, aguiTypes, customEvent, FakeChatClient } from '../helpers/ai'
 import {
@@ -31,20 +30,15 @@ import { json, request } from '../helpers/request'
 
 const state: { client: FakeChatClient | null } = { client: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible',
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible',
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 

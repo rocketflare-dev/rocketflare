@@ -1,5 +1,5 @@
 /**
- * Settings → Agent models (D17): the table shows each prompt key with its effective provider/model
+ * Settings → Agent models: the table shows each prompt key with its effective provider/model
  * and source badge; Override validates with the shared schema (at least one of config/model) and
  * PUTs exactly what is set; "Use default" DELETEs; a member sees the table read-only.
  */
@@ -57,9 +57,9 @@ const ENTRIES = {
       },
     },
     {
-      promptKey: 'summarize-text',
-      title: 'Summarize text',
-      assignment: { promptKey: 'summarize-text', aiConfigId: CHEAP, model: null, updatedAt: now },
+      promptKey: 'agent-decide',
+      title: 'Decisions fallback',
+      assignment: { promptKey: 'agent-decide', aiConfigId: CHEAP, model: null, updatedAt: now },
       effective: {
         source: 'assignment',
         provider: 'anthropic',
@@ -90,11 +90,11 @@ describe('Settings → Agent models', () => {
     expect(chatRow).toHaveTextContent('claude-sonnet-4-5')
     expect(chatRow).toHaveTextContent('tenant')
     expect(chatRow).toHaveTextContent('Prod')
-    const agentRow = screen.getByText('Summarize text').closest('tr') as HTMLElement
+    const agentRow = screen.getByText('Decisions fallback').closest('tr') as HTMLElement
     expect(agentRow).toHaveTextContent('claude-haiku-4-5')
     expect(agentRow).toHaveTextContent('agent')
     expect(
-      screen.getByRole('button', { name: 'Use default for Summarize text' })
+      screen.getByRole('button', { name: 'Use default for Decisions fallback' })
     ).toBeInTheDocument()
     expect(
       screen.queryByRole('button', { name: 'Use default for Chat assistant' })
@@ -156,14 +156,15 @@ describe('Settings → Agent models', () => {
   })
 
   it('"Use default" DELETEs the assignment', async () => {
-    const fetchMock = mount({ 'DELETE /api/ai/agent-models/summarize-text': undefined })
-    fireEvent.click(await screen.findByRole('button', { name: 'Use default for Summarize text' }))
+    const fetchMock = mount({ 'DELETE /api/ai/agent-models/agent-decide': undefined })
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Use default for Decisions fallback' })
+    )
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(
           ([input, init]) =>
-            String(input).endsWith('/api/ai/agent-models/summarize-text') &&
-            init?.method === 'DELETE'
+            String(input).endsWith('/api/ai/agent-models/agent-decide') && init?.method === 'DELETE'
         )
       ).toBe(true)
     )

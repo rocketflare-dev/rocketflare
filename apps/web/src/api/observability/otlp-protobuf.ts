@@ -1,8 +1,8 @@
 /**
- * `ExportTraceServiceRequest` as protobuf, hand-encoded (D32). Needed because the OTLP/HTTP spec
+ * `ExportTraceServiceRequest` as protobuf, hand-encoded. Needed because the OTLP/HTTP spec
  * makes JSON optional and some backends — Arize Phoenix among them — accept only
  * `application/x-protobuf`. The request is the SAME model the JSON path serialises, so the two
- * cannot drift; only the fields the kit writes are encoded. Field numbers are from
+ * cannot drift; only the fields the app writes are encoded. Field numbers are from
  * `opentelemetry/proto/{collector/trace,trace,resource,common}/v1/*.proto` and are a wire format.
  */
 import type { OtlpAnyValue, OtlpExportRequest, OtlpKeyValue, OtlpSpan } from './otlp-fetch'
@@ -124,7 +124,7 @@ function span(w: Writer, s: OtlpSpan) {
 
 /**
  * ExportTraceServiceRequest{1 resource_spans} → ResourceSpans{1 resource{1 attributes} ·
- * 2 scope_spans} → ScopeSpans{1 scope{1 name · 2 version} · 2 spans}.
+ * 2 scope_spans} → ScopeSpans{1 scope{1 name · 2 version} · 2 spans · 3 schema_url}.
  */
 export function encodeOtlpProtobuf(request: OtlpExportRequest): Uint8Array<ArrayBuffer> {
   const w = new Writer()
@@ -138,6 +138,7 @@ export function encodeOtlpProtobuf(request: OtlpExportRequest): Uint8Array<Array
             if (ss.scope.version) scope.string(2, ss.scope.version)
           })
           for (const s of ss.spans) sc.message(2, m => span(m, s))
+          if (ss.schemaUrl) sc.string(3, ss.schemaUrl)
         })
       }
     })

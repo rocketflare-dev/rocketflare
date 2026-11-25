@@ -10,21 +10,7 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="theme-color" content="#2563eb" />
 
-    <!-- Apply the saved theme before React mounts so there is no flash. Only the two known
-         theme names are accepted; anything else falls back to the OS preference so a stale
-         value can never desync the toggle (ThemeToggle.tsx normalises the same way). -->
-    <script>
-      ;(function () {
-        var saved = localStorage.getItem('theme')
-        if (saved !== 'rocketflare-light' && saved !== 'rocketflare-dark') {
-          saved =
-            window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches
-              ? 'rocketflare-dark'
-              : 'rocketflare-light'
-        }
-        document.documentElement.setAttribute('data-theme', saved)
-      })()
-    </script>
+    <script src="/assets/theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

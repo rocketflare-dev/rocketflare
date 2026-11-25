@@ -1,15 +1,15 @@
 /**
- * `agent_runs` lifecycle service (D7 — the pg-boss → Workflows handoff, 09 §4.5 / 05 §1.3):
- *   enqueueRun  — validate input → (an active run already holds this run's exclusive SLOT — the
- *                 tenant for an `exclusive` agent, or the caller's `concurrencyKey`? return it,
- *                 `deduplicated`) → the tenant's active-run cap (429 `agent_runs_limit`) and daily
+ * `agent_runs` lifecycle service:
+ *   enqueueRun  — validate input → the tenant is active (403 `tenant_suspended`) → (an active
+ *                 run already holds this run's exclusive SLOT — the tenant for an `exclusive`
+ *                 agent, or the caller's `concurrencyKey`? return it, `deduplicated`) → the tenant's active-run cap (429 `agent_runs_limit`) and daily
  *                 spend (429 `ai_budget_exceeded`) → insert `queued` with the slot (the partial
  *                 unique index rejects a second active run in it → the existing one) →
  *                 `AGENT_RUN_WORKFLOW.create({ id: runId })` → store `instanceId`. No binding →
  *                 `AgentRunsNotConfiguredError` (503) BEFORE any write. An `idempotencyKey` derives
  *                 the run id from (tenant, agent, key), so a second call — a redelivered job —
  *                 answers the run the first one started, whatever its status, `deduplicated`.
- *   enqueueRunBatch — D39: up to `AGENT_RUN_BATCH_MAX` inputs of ONE non-exclusive agent, one
+ *   enqueueRunBatch — up to `AGENT_RUN_BATCH_MAX` inputs of ONE non-exclusive agent, one
  *                 multi-row insert sharing a `batch_id`, one `createBatch()`; when that call fails,
  *                 each instance is created on its own so only the inputs that really cannot start
  *                 are marked failed.
@@ -20,7 +20,7 @@
  *                 is stale → settle it. `not_found` is an ANSWER, not an error; no binding → no-op.
  *                 A caller with the run's log in hand passes `lastEventAt` and a recent row skips
  *                 the subrequest entirely — see RECONCILE_LIVENESS_MS.
- *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge (D8).
+ *   appendEvent — durable progress row + `entity.changed { entity: 'agent-run' }` nudge.
  *   loadCheckpoint / saveCheckpoint — the tool loop's resume point on `agent_runs.checkpoint`, so a
  *                 retried `execute` continues the conversation instead of replaying it. Cleared by
  *                 `settle`; an unparseable value reads as "no checkpoint", never as a failure.
@@ -38,30 +38,35 @@ import {
   ACTIVE_RUN_STATUSES,
   AGENT_RESUME_EVENT,
   CLAIMABLE_RUN_STATUSES,
+  isRunActive,
 } from '@rocketflare/shared/ai/agents'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, asc, count, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, count, desc, eq, inArray, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../../config'
 import { type Database, isUniqueViolation, rows } from '../../../db/client'
 import {
   type AgentRunEventRow,
+  type AgentRunInterruptRow,
   type AgentRunRow,
   agentRunEffects,
   agentRunEvents,
   agentRuns,
+  tenants,
 } from '../../../db/schema'
 import { traceIdForRun } from '../../observability/trace-ids'
 import {
   ApiError,
   BadRequestError,
+  ForbiddenError,
   ServiceUnavailableError,
   ValidationError,
 } from '../../utils/core/errors'
-import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/kit'
+import { parseToolLoopCheckpoint, type ToolLoopCheckpoint } from '../ai/agent-loop'
 import { nudge, type Realtime, realtimeEvent } from '../realtime'
 import { assertTenantDailyBudget } from './budget'
-import { expireInterrupts, listInterrupts } from './interrupts'
-import { getAgent } from './registry'
+import { TIMEOUT_REJECTION_NOTE } from './hitl'
+import { expireInterrupts, listInterrupts, resolveInterrupt } from './interrupts'
+import { getAgent, isAgentKey } from './registry'
 
 /** `{ runId, tenantId }` — everything else is re-read from the row (a retry must not trust a message). */
 export interface AgentRunParams {
@@ -73,7 +78,7 @@ export interface AgentRunParams {
 export interface AgentRunWorkflowBinding {
   create(options: { id: string; params: AgentRunParams }): Promise<{ id: string }>
   /**
-   * D39: up to 100 instances in one call. All or nothing — an id that already exists fails the
+   * Up to 100 instances in one call. All or nothing — an id that already exists fails the
    * whole call — so `enqueueRunBatch` falls back to `create()` per instance when it throws.
    */
   createBatch?(batch: { id: string; params: AgentRunParams }[]): Promise<{ id: string }[]>
@@ -81,7 +86,7 @@ export interface AgentRunWorkflowBinding {
     status(): Promise<{ status: string; error?: { name: string; message: string } }>
     /** Kills the instance mid-step — the escape hatch behind a forced cancel. */
     terminate(): Promise<void>
-    /** Wakes a parked instance sitting on `step.waitForEvent` (issue #17). */
+    /** Wakes a parked instance sitting on `step.waitForEvent`. */
     sendEvent(event: { type: string; payload?: unknown }): Promise<void>
   }>
 }
@@ -109,6 +114,11 @@ export class AgentCancelledError extends Error {
   }
 }
 
+/** `meta.version`, `1` when the agent declares none. */
+export function agentVersionOf(meta: { version?: number }): number {
+  return meta.version ?? 1
+}
+
 export function toAgentRun(row: AgentRunRow): AgentRun {
   return {
     id: row.id,
@@ -127,6 +137,11 @@ export function toAgentRun(row: AgentRunRow): AgentRun {
     createdAt: row.createdAt,
     exclusive: row.concurrencyKey !== null,
     batchId: row.batchId,
+    triggerEvent: row.triggerEvent,
+    triggerEventId: row.triggerEventId,
+    agentVersion: row.agentVersion,
+    workerVersionId: row.workerVersionId,
+    parentRunId: row.parentRunId,
   }
 }
 
@@ -135,7 +150,7 @@ export function toAgentRunEvent(row: AgentRunEventRow): AgentRunEvent {
 }
 
 /**
- * The three status lists diverge on purpose (decision 1), and collapsing them back into one is how
+ * The three status lists diverge on purpose, and collapsing them back into one is how
  * a parked run gets claimed by nobody or failed by the backstop:
  *
  * - `ACTIVE` ({@link ACTIVE_RUN_STATUSES}, incl. `awaiting_input`) — "still owes an answer": the
@@ -198,6 +213,20 @@ export interface EnqueueRunInput {
    * so a redelivered message cannot start the same work twice.
    */
   idempotencyKey?: string
+  /** The plugin event that started the run (D42), stored as `trigger_event` / `trigger_event_id`. */
+  trigger?: { event: string; eventId: string }
+  /**
+   * The person named by `userId` typed `input` (the API routes only) — `input_from_requester`, which
+   * makes the URLs in it `ToolCtx.requesterUrls`. Never set from a plugin or an event.
+   */
+  inputFromRequester?: boolean
+  /**
+   * The run spawning this one (`ctx.spawn`). A child holds no exclusive slot — its parent is what
+   * the slot protects — and is left out of the runs list.
+   */
+  parentRunId?: string
+  /** A cap below the agent's own `meta.budget`: a child's share of its parent's remainder. */
+  budget?: { maxTokens?: number; maxCostUsd?: number }
 }
 
 export interface EnqueueRunResult {
@@ -270,7 +299,21 @@ export async function countActiveRuns(db: Database, tenantId: string): Promise<n
 }
 
 /**
- * The two tenant-wide gates every enqueue passes (D39): the active-run cap, counting the runs this
+ * A suspended organisation starts no runs, whoever asks — a route, a plugin, an event trigger.
+ * 403 `tenant_suspended`, the refusal its members get at sign-in; a missing tenant reads the same.
+ */
+export async function assertTenantActive(db: Database, tenantId: string): Promise<void> {
+  const tenant = await db.query.tenants.findFirst({
+    columns: { status: true },
+    where: eq(tenants.id, tenantId),
+  })
+  if (tenant?.status !== 'active') {
+    throw new ForbiddenError('Organisation is suspended', ERROR_CODES.tenantSuspended)
+  }
+}
+
+/**
+ * The two tenant-wide gates every enqueue passes: the active-run cap, counting the runs this
  * call would ADD, and the daily agent spend. Both are counted then inserted, not locked — a burst
  * of simultaneous requests can overshoot the cap by a few, which is fine for a brake.
  */
@@ -307,7 +350,10 @@ export async function enqueueRun(
   const agent = getAgent(input.agentKey)
   const parsed = agent.meta.inputSchema.safeParse(input.input)
   if (!parsed.success) throw new ValidationError(parsed.error.issues, 'Invalid agent input')
-  const concurrencyKey = input.concurrencyKey ?? (agent.meta.exclusive ? '' : null)
+  await assertTenantActive(db, input.tenantId)
+  const concurrencyKey = input.parentRunId
+    ? (input.concurrencyKey ?? null)
+    : (input.concurrencyKey ?? (agent.meta.exclusive ? '' : null))
   const runId = input.idempotencyKey
     ? await idempotentRunId(input.tenantId, input.agentKey, input.idempotencyKey)
     : crypto.randomUUID()
@@ -332,7 +378,7 @@ export async function enqueueRun(
     ;[row] = await db
       .insert(agentRuns)
       .values({
-        // Minted here rather than by the column default so the trace id (D32) — derived from it —
+        // Minted here rather than by the column default so the trace id — derived from it —
         // is on the row from the first write.
         id: runId,
         traceId: traceIdForRun(runId),
@@ -344,6 +390,14 @@ export async function enqueueRun(
         concurrencyKey,
         input: parsed.data,
         requestedByUserId: input.userId,
+        inputFromRequester: input.inputFromRequester === true && input.userId !== null,
+        agentVersion: agentVersionOf(agent.meta),
+        parentRunId: input.parentRunId ?? null,
+        budget: input.budget ?? null,
+        ...(input.trigger && {
+          triggerEvent: input.trigger.event,
+          triggerEventId: input.trigger.eventId,
+        }),
       })
       .returning()
   } catch (err) {
@@ -429,6 +483,8 @@ export interface EnqueueBatchInput {
   inputs: unknown[]
   userId: string | null
   realtime?: Realtime
+  /** As `EnqueueRunInput.inputFromRequester`. */
+  inputFromRequester?: boolean
 }
 
 /** One input's fate — `row` whenever a row exists, `error` whenever it did not start. */
@@ -444,7 +500,7 @@ export interface EnqueueBatchResult {
 }
 
 /**
- * D39: many runs of ONE non-exclusive agent. The order of the gates is the contract:
+ * Many runs of ONE non-exclusive agent. The order of the gates is the contract:
  *
  * 1. no binding → 503; an exclusive agent → 400 `agent_exclusive` (it can only ever run one)
  * 2. every input is validated against the agent's schema; an invalid one is an item error with no
@@ -485,6 +541,7 @@ export async function enqueueRunBatch(
     }
   })
   if (valid.length === 0) return { batchId, items }
+  await assertTenantActive(db, input.tenantId)
   await assertCapacity(db, cfg, input.tenantId, valid.length)
 
   const ids = valid.map(() => crypto.randomUUID())
@@ -499,6 +556,8 @@ export async function enqueueRunBatch(
         status: 'queued' as const,
         input: v.data,
         requestedByUserId: input.userId,
+        inputFromRequester: input.inputFromRequester === true && input.userId !== null,
+        agentVersion: agentVersionOf(agent.meta),
         batchId,
       }))
     )
@@ -622,7 +681,7 @@ export function cancelRun(db: Database, tenantId: string, runId: string) {
 }
 
 /**
- * Park a run on a human decision: `running → awaiting_input` (issue #17).
+ * Park a run on a human decision: `running → awaiting_input`.
  *
  * **This is deliberately NOT `settle()`** — `finishedAt` stays NULL and, above all, **the
  * checkpoint survives**, which is the entire reason a resume is cheap: the resumed `execute` step
@@ -652,8 +711,8 @@ export async function parkRun(
 }
 
 /**
- * Un-park a run: `awaiting_input → running`, compare-and-set. **The answer IS the transition**
- * (decision 2): the resolve route calls this BEFORE it nudges or restarts the instance, which is
+ * Un-park a run: `awaiting_input → running`, compare-and-set. **The answer IS the transition**:
+ * the resolve route calls this BEFORE it nudges or restarts the instance, which is
  * what lets `claimRun` keep its narrow `queued|running` predicate — a restarted instance's `claim`
  * step finds a `running` row because somebody answered, and finds nothing when nobody did.
  *
@@ -703,6 +762,29 @@ export async function requestCancel(
   realtime?: Realtime,
   env?: AgentRunsEnv
 ): Promise<AgentRunRow | null> {
+  const result = await requestCancelOne(db, tenantId, runId, realtime, env)
+  // A child cancelled before its instance ran ends no Workflow, so nothing else wakes its parent.
+  if (result?.parentRunId && !isRunActive(result.status) && env) {
+    await wakeParent(db, env, tenantId, result.parentRunId, realtime)
+  }
+  // A cancel cascades to the run's children (`ctx.spawn`), and through this same call to theirs.
+  const children = await db
+    .select({ id: agentRuns.id, status: agentRuns.status })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.parentRunId, runId)))
+  for (const child of children) {
+    if (isRunActive(child.status)) await requestCancel(db, tenantId, child.id, realtime, env)
+  }
+  return result
+}
+
+async function requestCancelOne(
+  db: Database,
+  tenantId: string,
+  runId: string,
+  realtime?: Realtime,
+  env?: AgentRunsEnv
+): Promise<AgentRunRow | null> {
   const row = await getRun(db, tenantId, runId)
   if (!row) return null
   // `queued` and `awaiting_input` are the two states where nothing is executing, so both settle
@@ -727,10 +809,22 @@ export async function requestCancel(
       await expireInterrupts(db, tenantId, runId)
       await sendResumeEvent(env, updated ?? row, { interruptId: null })
     }
+    if (updated) await recordOutOfBandSettle(db, updated, 'cancel_requested', realtime)
     nudgeRun(realtime, tenantId, runId)
     return updated ?? getRun(db, tenantId, runId)
   }
   if (row.status !== 'running') return row
+
+  // No sign of life for longer than a step can run: no attempt holds this run (the Worker was
+  // restarted, the isolate evicted), so there is no poll to wait for — cancel it now, as a force
+  // would. A retried attempt that does turn up finds it settled and claims nothing.
+  if (Date.now() - (await lastSignOfLife(db, row)).getTime() > ATTEMPT_DEAD_MS) {
+    await terminateInstance(env, row)
+    const settled = await cancelRun(db, tenantId, runId)
+    if (settled) await recordOutOfBandSettle(db, settled, 'no_live_attempt', realtime)
+    nudgeRun(realtime, tenantId, runId)
+    return settled ?? getRun(db, tenantId, runId)
+  }
 
   if (!row.cancelRequestedAt) {
     const [updated] = await db
@@ -743,9 +837,56 @@ export async function requestCancel(
   }
 
   await terminateInstance(env, row)
-  const settled = (await cancelRun(db, tenantId, runId)) ?? row
+  const forced = await cancelRun(db, tenantId, runId)
+  if (forced) await recordOutOfBandSettle(db, forced, 'forced', realtime)
   nudgeRun(realtime, tenantId, runId)
-  return settled
+  return forced ?? row
+}
+
+/**
+ * An attempt runs inside a step with a 10-minute timeout, so a `running` row silent for longer
+ * than that (plus a margin for the engine's own bookkeeping) has no live attempt.
+ */
+export const ATTEMPT_DEAD_MS = 12 * 60 * 1000
+
+/** The newest of the row's own update and its newest event: what a live attempt keeps moving. */
+async function lastSignOfLife(db: Database, row: AgentRunRow): Promise<Date> {
+  const [latest] = await db
+    .select({ at: agentRunEvents.at })
+    .from(agentRunEvents)
+    .where(and(eq(agentRunEvents.tenantId, row.tenantId), eq(agentRunEvents.runId, row.id)))
+    .orderBy(desc(agentRunEvents.seq))
+    .limit(1)
+  const candidates = [row.updatedAt, row.startedAt, latest?.at].filter(
+    (at): at is Date => at instanceof Date
+  )
+  return new Date(Math.max(...candidates.map(at => at.getTime()), row.createdAt.getTime()))
+}
+
+/**
+ * A run settled from OUTSIDE its attempt — a cancel, a force, the sweeper or a read reconciling
+ * with the engine — still ends its log with a `status` event, as one settled by its own attempt
+ * does. Without it the log's last word is whatever the dead attempt last wrote ("step running"),
+ * and the run's timeline, its AG-UI projection and the inspector all read a story that never ends.
+ * Best-effort: the ROW is the truth, so a failed append is logged by the caller's absence of it.
+ */
+async function recordOutOfBandSettle(
+  db: Database,
+  run: AgentRunRow,
+  reason: 'cancel_requested' | 'forced' | 'no_live_attempt' | 'reconciled',
+  realtime?: Realtime
+): Promise<void> {
+  try {
+    await appendEventAtomic(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      type: 'status',
+      data: { status: run.status, reason, ...(run.error && { error: run.error }) },
+      realtime,
+    })
+  } catch {
+    // The settle already happened; an event the log lacks is cosmetic, a thrown cancel is not.
+  }
 }
 
 /** Best-effort kill of the run's Workflow instance. Every failure is ignored on purpose. */
@@ -758,7 +899,7 @@ async function terminateInstance(env: AgentRunsEnv | undefined, run: AgentRunRow
   }
 }
 
-// ---- Suspend / resume (issue #17) -----------------------------------------------------------
+// ---- Suspend / resume -----------------------------------------------------------
 
 /** Best-effort wake of a parked instance. Returns false when it could not be delivered. */
 async function sendResumeEvent(
@@ -779,17 +920,17 @@ async function sendResumeEvent(
 /**
  * The instance id a restart should take: `<runId>` → `<runId>-r1` → `<runId>-r2`.
  *
- * Hyphen, not colon (T5): a colon is not a documented-legal instance-id character, while a uuid
+ * Hyphen, not colon: a colon is not a documented-legal instance-id character, while a uuid
  * already proves hyphens are, and 36 + 3 is comfortably inside the 64-character limit.
  */
 export function nextInstanceId(runId: string, current: string | null): string {
-  const match = current && current.startsWith(`${runId}-r`) ? /-r(\d+)$/.exec(current) : null
+  const match = current?.startsWith(`${runId}-r`) ? /-r(\d+)$/.exec(current) : null
   const round = match?.[1] ? Number(match[1]) + 1 : 1
   return `${runId}-r${round}`
 }
 
 /**
- * Wake the parked run, and **create a new instance when the old one is gone** (T4/T5).
+ * Wake the parked run, and **create a new instance when the old one is gone**.
  *
  * `instance.not_found` is an ANSWER, not an error — the same reading `reconcileRun` already takes.
  * An instance disappears for ordinary reasons: a `wrangler dev` restart, or retention expiring
@@ -799,7 +940,7 @@ export function nextInstanceId(runId: string, current: string | null): string {
  *
  * **The coupling to hold in your head:** the new instance's first step is `claim`, and `claimRun`
  * only takes `queued|running`. It succeeds solely because the caller already flipped the row with
- * {@link resumeRun} — *the answer is the transition* (decision 2). Call this AFTER that, never
+ * {@link resumeRun} — *the answer is the transition*. Call this AFTER that, never
  * before.
  *
  * `agent_runs.instanceId` therefore becomes *the latest* instance rather than "the run id"; it
@@ -840,7 +981,7 @@ export async function nudgeOrRestartInstance(
 }
 
 /**
- * The read-path safety net for a park whose instance no longer exists (T6). Lives here, beside
+ * The read-path safety net for a park whose instance no longer exists. Lives here, beside
  * {@link reconcileRun}, because it settles a run — and is called from the same place, on read.
  *
  * A parked run whose asks have **all passed their deadline** settles `cancelled` with `error` NULL:
@@ -855,30 +996,121 @@ export async function expireParkedRun(
   db: Database,
   run: AgentRunRow,
   realtime?: Realtime,
-  now: Date = new Date()
+  now: Date = new Date(),
+  /** The Workflow binding, which `onTimeout: 'reject'` needs to wake the run it answered. */
+  env?: AgentRunsEnv
 ): Promise<AgentRunRow> {
   if (run.status !== 'awaiting_input') return run
   const pending = await listInterrupts(db, run.tenantId, run.id, 'pending')
   if (pending.length === 0) return run
   // One ask without a deadline, or one still in date, is a run that is legitimately waiting.
   if (pending.some(row => !row.expiresAt || row.expiresAt.getTime() > now.getTime())) return run
+  if (isAgentKey(run.agentKey) && getAgent(run.agentKey).meta.hitl?.onTimeout === 'reject' && env) {
+    return rejectExpiredAsks(db, env, run, pending, realtime)
+  }
   await expireInterrupts(db, run.tenantId, run.id)
   const settled = (await cancelRun(db, run.tenantId, run.id)) ?? run
   nudgeRun(realtime, run.tenantId, run.id)
   return settled
 }
 
-/** `true` when a cancel was requested for the run — the poll a run makes between turns. */
+/**
+ * Wake a parent parked on its children when none is still active and it has no ask of its own
+ * pending — the same transition an answer makes (`resumeRun`, then the instance). Called by a
+ * child's settle and by the sweeper; safe to call twice (the second finds nothing parked).
+ */
+export async function wakeParent(
+  db: Database,
+  env: AgentRunsEnv,
+  tenantId: string,
+  parentRunId: string,
+  realtime?: Realtime
+): Promise<boolean> {
+  const parent = await getRun(db, tenantId, parentRunId)
+  if (parent?.status !== 'awaiting_input') return false
+  const children = await db
+    .select({ status: agentRuns.status })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.tenantId, tenantId), eq(agentRuns.parentRunId, parentRunId)))
+  // A park with no children is not ours to end — it is waiting on a person, or on the window
+  // between an answer and its resume.
+  if (children.length === 0 || children.some(child => isRunActive(child.status))) return false
+  if ((await listInterrupts(db, tenantId, parentRunId, 'pending')).length > 0) return false
+  const resumed = await resumeRun(db, tenantId, parentRunId)
+  if (!resumed) return false
+  nudgeRun(realtime, tenantId, parentRunId)
+  await nudgeOrRestartInstance(db, env, resumed, { interruptId: null })
+  return true
+}
+
+/**
+ * `onTimeout: 'reject'`: every expired ask is answered as a rejection — `cancelled`, by nobody,
+ * with a note saying so — and the run is woken exactly as if a person had said no: an approval
+ * gate whose `onReject` is `tell_model` tells the model, any other ask cancels the run.
+ */
+async function rejectExpiredAsks(
+  db: Database,
+  env: AgentRunsEnv,
+  run: AgentRunRow,
+  asks: AgentRunInterruptRow[],
+  realtime?: Realtime
+): Promise<AgentRunRow> {
+  for (const ask of asks) {
+    const rejected = await resolveInterrupt(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      interruptId: ask.id,
+      status: 'cancelled',
+      payload: { note: TIMEOUT_REJECTION_NOTE },
+      resolvedByUserId: null,
+    })
+    if (!rejected) continue
+    await appendEventAtomic(db, {
+      tenantId: run.tenantId,
+      runId: run.id,
+      type: 'interrupt.resolved',
+      data: {
+        interruptId: rejected.id,
+        key: rejected.key,
+        kind: rejected.kind,
+        status: rejected.status,
+        resolvedByUserId: null,
+        reason: 'timeout',
+      },
+      realtime,
+    })
+  }
+  const resumed = await resumeRun(db, run.tenantId, run.id)
+  if (!resumed) return (await getRun(db, run.tenantId, run.id)) ?? run
+  nudgeRun(realtime, run.tenantId, run.id)
+  return nudgeOrRestartInstance(db, env, resumed, { interruptId: asks[0]?.id ?? null })
+}
+
+/**
+ * `true` when a cancel was requested for the run, or its organisation is suspended — the poll a
+ * run makes between turns.
+ */
 export async function isCancelRequested(
   db: Database,
   tenantId: string,
   runId: string
 ): Promise<boolean> {
-  const row = await db.query.agentRuns.findFirst({
-    columns: { cancelRequestedAt: true, status: true },
-    where: and(eq(agentRuns.id, runId), eq(agentRuns.tenantId, tenantId)),
-  })
-  return !row || row.cancelRequestedAt !== null || row.status === 'cancelled'
+  const [row] = await db
+    .select({
+      cancelRequestedAt: agentRuns.cancelRequestedAt,
+      status: agentRuns.status,
+      tenantStatus: tenants.status,
+    })
+    .from(agentRuns)
+    .innerJoin(tenants, eq(tenants.id, agentRuns.tenantId))
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.tenantId, tenantId)))
+  // A run whose organisation was suspended mid-flight stops at its next check, as a cancel does.
+  return (
+    !row ||
+    row.cancelRequestedAt !== null ||
+    row.status === 'cancelled' ||
+    row.tenantStatus !== 'active'
+  )
 }
 
 /** `instance.not_found` and friends — a definite "nothing is running", not a lookup failure. */
@@ -917,6 +1149,16 @@ export const RECONCILE_LIVENESS_MS = 30_000
  * exactly as it always did. The whole cost of the guard is that a genuinely dead instance is
  * detected up to {@link RECONCILE_LIVENESS_MS} later than it would have been.
  */
+async function reconciled(
+  db: Database,
+  run: AgentRunRow,
+  settled: AgentRunRow | null
+): Promise<AgentRunRow> {
+  if (!settled) return run
+  await recordOutOfBandSettle(db, settled, 'reconciled')
+  return settled
+}
+
 export async function reconcileRun(
   db: Database,
   env: AgentRunsEnv,
@@ -932,7 +1174,11 @@ export async function reconcileRun(
     status = await (await env.AGENT_RUN_WORKFLOW.get(run.instanceId)).status()
   } catch (err) {
     if (!isMissingInstanceError(err)) return run
-    return (await failRun(db, run.tenantId, run.id, 'Workflow instance not found')) ?? run
+    return reconciled(
+      db,
+      run,
+      await failRun(db, run.tenantId, run.id, 'Workflow instance not found')
+    )
   }
   switch (status.status) {
     // A `waiting` instance is parked on `step.waitForEvent` and is exactly where it should be. The
@@ -943,16 +1189,45 @@ export async function reconcileRun(
       return run
     // `terminated` is what a forced cancel leaves behind — settle it as cancelled, not failed.
     case 'terminated':
-      return (await cancelRun(db, run.tenantId, run.id)) ?? run
+      return reconciled(db, run, await cancelRun(db, run.tenantId, run.id))
     case 'errored': {
       const reason = status.error?.message ?? 'Workflow instance errored'
-      return (await failRun(db, run.tenantId, run.id, reason)) ?? run
+      return reconciled(db, run, await failRun(db, run.tenantId, run.id, reason))
     }
     case 'complete':
-      return (await finishRun(db, run.tenantId, run.id, run.output ?? null)) ?? run
+      return reconciled(db, run, await finishRun(db, run.tenantId, run.id, run.output ?? null))
     default:
       return run
   }
+}
+
+/**
+ * The sweeper's per-row repair (`sweepLostRuns`, every 10 minutes): the read path's settle, for a
+ * run NOBODY is reading. Without it a run whose instance died is only settled when someone opens
+ * it, and until then it holds its exclusive slot and counts toward the tenant's active cap.
+ *
+ * - `queued` with no instance (the `create()` after the row was lost): create it now — the id is
+ *   the run id, so this is idempotent against a late original.
+ * - `queued` / `running`: `reconcileRun`, which settles only what the RUNTIME says has ended.
+ * - `awaiting_input`: `expireParkedRun`, which settles only a park whose every ask has expired.
+ *
+ * Never settles a run the runtime still holds: a slow step is `running`, a park is `waiting`.
+ */
+export async function sweepRun(
+  db: Database,
+  env: AgentRunsEnv,
+  run: AgentRunRow,
+  options: { lastEventAt?: Date | null; realtime?: Realtime } = {}
+): Promise<{ run: AgentRunRow; action: 'none' | 'dispatched' | 'settled' }> {
+  if (run.status === 'queued' && !run.instanceId && env.AGENT_RUN_WORKFLOW) {
+    const row = await ensureInstance(db, env.AGENT_RUN_WORKFLOW, run, run.tenantId)
+    return { run: row, action: row.instanceId ? 'dispatched' : 'none' }
+  }
+  const reconciled = await reconcileRun(db, env, run, { lastEventAt: options.lastEventAt })
+  const settled = await expireParkedRun(db, reconciled, options.realtime, new Date(), env)
+  if (settled.status === run.status) return { run: settled, action: 'none' }
+  nudgeRun(options.realtime, run.tenantId, run.id)
+  return { run: settled, action: 'settled' }
 }
 
 // ---- Events ---------------------------------------------------------------------------------------
@@ -963,7 +1238,7 @@ export function nudgeRun(realtime: Realtime | undefined, tenantId: string, runId
 }
 
 /**
- * The nudge for the ASKS of a run, distinct from the run's own (issue #17). It exists so a screen
+ * The nudge for the ASKS of a run, distinct from the run's own. It exists so a screen
  * that only watches the inbox — the "3 waiting" badge — refreshes on an answer without subscribing
  * to every progress row the runtime writes, which is most of them.
  */

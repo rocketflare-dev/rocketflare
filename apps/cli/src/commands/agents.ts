@@ -1,5 +1,5 @@
 /**
- * `rocketflare agents list|run|runs list` — start agent runs from a terminal (D39).
+ * `rocketflare agents list|run|runs list` — start agent runs from a terminal.
  *
  * `run <key> --input x.json` is one run (`POST /api/agents/runs`); `run <key> --batch x.jsonl` is
  * one run per line (`POST /api/agents/runs/batch`), sent in chunks of `AGENT_RUN_BATCH_MAX` — so a
@@ -9,6 +9,7 @@
  * batch.
  */
 import { readFile } from 'node:fs/promises'
+import { agentRunTimelineSchema } from '@rocketflare/shared/ai/agent-timeline'
 import {
   AGENT_RUN_BATCH_MAX,
   type AgentRunBatchItem,
@@ -34,7 +35,11 @@ export async function runAgentsList(ctx: CommandContext): Promise<void> {
     renderTable(data.items, [
       { header: 'Key', value: a => a.key },
       { header: 'Title', value: a => a.title },
-      { header: 'Batch', value: a => (a.exclusive ? chalk.dim('no — exclusive') : 'yes') },
+      {
+        header: 'Batch',
+        value: a => (a.exclusive ? 'no — exclusive' : 'yes'),
+        style: (text, a) => (a.exclusive ? chalk.dim(text) : text),
+      },
     ])
   )
 }
@@ -104,7 +109,8 @@ async function runBatch(
       { header: 'Run', value: r => r.item.run?.id ?? '' },
       {
         header: 'Status',
-        value: r => (r.item.error ? chalk.red(r.item.error.code) : (r.item.run?.status ?? '')),
+        value: r => r.item.error?.code ?? r.item.run?.status ?? '',
+        style: (text, r) => (r.item.error ? chalk.red(text) : text),
       },
       { header: 'Batch', value: r => r.batchId },
     ])
@@ -156,6 +162,12 @@ export interface AgentRunsListOptions {
   agent?: string
   status?: string
   batch?: string
+  /** One run's children (`ctx.spawn`); without it, children are left out. */
+  parent?: string
+  /** Runs created at or after this ISO date or time. */
+  since?: string
+  /** Runs recorded under this `meta.version`. */
+  agentVersion?: number
   page?: number
   pageSize?: number
 }
@@ -170,6 +182,9 @@ export async function runAgentRunsList(
       agentKey: options.agent,
       status: options.status,
       batchId: options.batch,
+      parentRunId: options.parent,
+      since: options.since,
+      agentVersion: options.agentVersion,
       page: options.page,
       pageSize: options.pageSize,
     },
@@ -179,12 +194,62 @@ export async function runAgentRunsList(
       { header: 'Created', value: r => formatDate(r.createdAt) },
       { header: 'Run', value: r => r.id },
       { header: 'Agent', value: r => r.agentKey },
+      { header: 'v', value: r => String(r.agentVersion) },
       {
         header: 'Status',
-        value: r => (r.status === 'failed' ? chalk.red(r.status) : r.status),
+        value: r => r.status,
+        style: (text, r) => (r.status === 'failed' ? chalk.red(text) : text),
       },
       { header: 'Error', value: r => (r.error ? r.error.slice(0, 60) : '') },
     ])
   )
   ctx.out.text(formatPagination(data.pagination))
+}
+
+const usd = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`
+
+/**
+ * `agents inspect <runId>` — the run's timeline (`GET /api/agents/runs/:id/timeline`): every
+ * record it left, by time, with its versions, its children and its spend against its budget.
+ */
+export async function runAgentsInspect(ctx: CommandContext, runId: string): Promise<void> {
+  if (!runId) throw new CliError('Give the run id: rocketflare agents inspect <runId>')
+  const { data, raw } = await requireClient(ctx).request(
+    'GET',
+    `/api/agents/runs/${encodeURIComponent(runId)}/timeline`,
+    { schema: agentRunTimelineSchema }
+  )
+  ctx.out.data(raw, () => {
+    const { run, versions, spend, children, entries } = data
+    const status = run.status === 'failed' ? chalk.red(run.status) : run.status
+    const moved =
+      versions.currentAgentVersion !== null &&
+      versions.currentAgentVersion !== versions.agentVersion
+        ? chalk.yellow(` (deployed: v${versions.currentAgentVersion})`)
+        : ''
+    const lines = [
+      `${chalk.bold(run.agentKey)} ${run.id}  ${status}  attempt ${run.attempt}`,
+      `version v${versions.agentVersion}${moved}  worker ${versions.workerVersionId ?? '—'}${
+        run.parentRunId ? `  parent ${run.parentRunId}` : ''
+      }`,
+      `spend ${spend.own.tokens} tokens ${usd(spend.own.costUsd)} in ${spend.own.calls} calls` +
+        (children.length
+          ? `; with children ${spend.tree.tokens} tokens ${usd(spend.tree.costUsd)}`
+          : '') +
+        (spend.budget.maxTokens !== undefined ? `  / max ${spend.budget.maxTokens} tokens` : '') +
+        (spend.budget.maxCostUsd !== undefined ? `  / max ${usd(spend.budget.maxCostUsd)}` : ''),
+    ]
+    if (run.error) lines.push(chalk.red(`error: ${run.error}`))
+    lines.push('')
+    const start = entries[0]?.at.getTime() ?? 0
+    lines.push(
+      renderTable(entries, [
+        { header: '+s', value: e => ((e.at.getTime() - start) / 1000).toFixed(1) },
+        { header: 'Kind', value: e => e.kind, style: text => chalk.dim(text) },
+        { header: 'What', value: e => e.label },
+        { header: 'Ref', value: e => e.ref ?? '' },
+      ])
+    )
+    return lines.join('\n')
+  })
 }

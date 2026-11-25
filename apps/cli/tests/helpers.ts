@@ -1,4 +1,4 @@
-/** Shared test helpers (D26): temp config dirs, a fetch mock, and an in-memory command context. */
+/** Shared test helpers: temp config dirs, a fetch mock, and an in-memory command context. */
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

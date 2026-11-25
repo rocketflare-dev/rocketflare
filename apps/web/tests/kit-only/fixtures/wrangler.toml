@@ -1,0 +1,212 @@
+# FIXTURE for tests/kit-only/patch-toml.test.ts: a snapshot of the kit's apps/web/wrangler.toml as it
+# shipped (unprovisioned). Never deployed; never edited by Launch or by `pnpm provision`.
+# Production Worker config. Staging is a standalone copy (wrangler.staging.toml) — keep the
+# two files in sync: same bindings/classes/limits, differing ONLY in name, routes, [vars]
+# URLs/APP_ENV, and resource ids. tests/config/wrangler-parity.test.ts enforces this and
+# fails while any <PLACEHOLDER> remains. See docs/DEPLOY.md and scripts/cf-provision.sh.
+#
+# ADAPTING: rename `rocketflare` → your app (worker name, queue/workflow names, buckets).
+
+name = "rocketflare"
+main = "src/worker.ts"
+compatibility_date = "2026-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Custom domain (wrangler creates the DNS record on deploy). Uncomment once the zone exists.
+# routes = [{ pattern = "app.rocketflare.dev", custom_domain = true }]
+
+[vars]
+APP_ENV = "production"                 # development | staging | production
+APP_URL = "https://app.rocketflare.dev"    # public origin; derives OAuth redirect URIs, magic links, CSRF
+APP_NAME = "Rocketflare"
+# Overridden at deploy time by CI: `wrangler deploy --var RELEASE_VERSION:<tag>`
+RELEASE_VERSION = "dev"
+LOG_LEVEL = "info"
+EMAIL_FROM = "Rocketflare <noreply@rocketflare.dev>"
+TENANCY_MODE = "multi"                 # multi | single   (docs/CONCEPTS.md → Tenancy)
+SIGNUP_MODE = "invite_only"            # open | invite_only | approval
+TENANT_SCOPE_MODE = "off"              # off | enforce    (docs/RLS.md — enforce needs an app-role connection)
+DATABASE_DRIVER = "neon"               # neon | postgres (D35, docs/DEPLOY.md § Database driver). Missing = postgres.
+                                       # neon: the DATABASE_URL Worker secret (pooled Neon URI), no Hyperdrive.
+                                       # postgres: the [[hyperdrive]] block below, any Postgres. Locally .dev.vars wins.
+AGENT_MAX_OUTPUT_TOKENS = "16384"      # AI (D17): per-call max_tokens when a tenant config sets none
+AGENT_MAX_TURNS = "30"                 # AI (D17): turn cap for every tool loop
+CHAT_KNOWLEDGE_TOOLS = "true"          # AI (D18): chat may call the knowledge tools ("false" = tool-free chat)
+CHAT_HISTORY_MAX_CHARS = "24000"       # AI (D17): history a chat turn replays; older turns are summarised
+AGENT_INTERRUPT_TIMEOUT = "168 hours"   # Agents (#17): how long a run parked on a human waits (step.waitForEvent timeout)
+AGENT_MAX_ACTIVE_RUNS_PER_TENANT = "50"  # Agents (D39): runs one tenant may have queued/running/parked at once (429 above)
+# Agent budgets (D39) — unset = no cap; add to BOTH files to turn one on (docs/CONCEPTS.md §9):
+#   AGENT_RUN_MAX_TOKENS = "200000"       # per run, every call and decision, cached tokens included (meta.budget overrides)
+#   AGENT_RUN_MAX_COST_USD = "1.00"       # per run, priced calls only (meta.budget overrides)
+#   AGENT_TENANT_DAILY_COST_USD = "50"    # per tenant per UTC day, checked at enqueue and per call
+# Knowledge (D43) — unset = 20 candidates, no threshold, no cap; add to BOTH files to set one (docs/CONCEPTS.md §9):
+#   RERANK_CANDIDATES = "50"              # chunks sent to the reranker (5-100, default 20); more = slower
+#   RERANK_MIN_SCORE = "0.15"             # drop reranked search hits below this (0-1, per-model scale)
+#   KNOWLEDGE_TENANT_DAILY_COST_USD = "5" # per tenant per UTC day; only extraction pauses at it
+FEATURES_ENABLED = ""                  # Feature flags (D30): keys this environment ships at all; blank = none (fail-closed)
+OBSERVABILITY_CAPTURE_CONTENT = "false"  # Tracing (D32): "true" records prompts/completions/tool I/O in the export AND ai_spans
+OBSERVABILITY_SPAN_RETENTION_DAYS = "14"   # Tracing (D32): days of ai_spans the nightly prune keeps
+# Tracing backend (D32) — add these to BOTH files when you pick one (docs/DEPLOY.md § Tracing):
+#   OBSERVABILITY_PRESET = "langfuse"    # langfuse | phoenix | generic (unset + Langfuse keys = langfuse)
+#   OTEL_EXPORTER_OTLP_ENDPOINT = "https://…"   # unset + Langfuse keys = <LANGFUSE_BASE_URL>/api/public/otel
+#   OBSERVABILITY_TRACE_URL = "https://cloud.langfuse.com/project/<id>/traces/{traceId}"
+#   Headers are a SECRET: `wrangler secret put OTEL_EXPORTER_OTLP_HEADERS` (k=v,k=v)
+# Single sign-on through any OIDC issuer — add these to BOTH files (SETUP.md "Sign in with any OIDC issuer"):
+#   OIDC_ISSUER = "https://idp.example.com/realms/acme"   # exactly the issuer's `issuer`; redirect URI {APP_URL}/auth/oidc/callback
+#   OIDC_CLIENT_ID = "rocketflare"
+#   OIDC_LABEL = "Acme SSO"                 # button text (default "Single sign-on")
+#   OIDC_SCOPES = "openid email profile"    # default; add "groups" if your issuer needs it
+#   AUTH_OIDC_ONLY = "false"                # "true" = login page shows only the SSO button, other methods hidden
+#   OIDC_TRUST_EMAIL = "false"              # "true" = a MISSING email_verified counts as verified (single-tenant Entra); explicit false is always refused
+#   The client secret is a SECRET: `wrangler secret put OIDC_CLIENT_SECRET` (omit for a public client)
+#   IdP-managed tenancy (SETUP.md 2.3c) — tenants and roles from the id_token; needs TENANCY_MODE = "multi":
+#   OIDC_MANAGED_TENANCY = "true"
+#   OIDC_ORGS_CLAIM = "orgs"                # claim holding [{ id, name, slug?, role }]
+#   OIDC_ROLE_MAP = "admin:admin,member:member"   # issuerRole:admin|member pairs
+#   OIDC_ADMIT_CLAIM = ""                   # optional boolean claim admitting a person with no orgs
+#   OIDC_GLOBAL_ADMIN_CLAIM = ""            # optional boolean claim granting global admin
+#   OIDC_SESSION_MAX_AGE_DAYS = "7"         # every session's hard cap (at most 30)
+#   Identity events: `wrangler secret put IDENTITY_WEBHOOK_SECRET` (whsec_…) enables POST /api/identity/events
+# Secrets are NOT here: `wrangler secret put <NAME>` for every non-var in .dev.vars.example
+
+[placement]
+mode = "smart"                          # run near the database (Neon region), not the user
+
+# [limits]
+# cpu_ms = 30000   # Default. NOTE: Workflows bound CPU *per step* by this value too; if you
+#                  # raise it, raise it identically in wrangler.staging.toml (parity test).
+
+[observability]
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+# One log line per request (method, URL, status, Ray ID, duration), searchable in the dashboard's
+# Workers Logs: it is what tells "the Worker answered 403" from "Cloudflare did, before the
+# Worker". Each counts toward the plan's log events (Workers Paid includes 20M a month); lower
+# head_sampling_rate on a high-traffic app rather than turn these off.
+invocation_logs = true
+
+# React SPA served from Workers Static Assets, deployed atomically with the Worker. API
+# routes are matched by Hono first; the catch-all serves assets with SPA fallback.
+[assets]
+directory = "./dist/ui"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# The asset router runs BEFORE the Worker, and `single-page-application` answers any request it
+# considers a navigation with index.html — without ever invoking `fetch`. `Sec-Fetch-Mode: navigate`
+# is not just the address bar: an `<object>`/`<iframe>` embed and an `<a download>` click are
+# navigations too, so `GET /api/files/:id` was served the SPA shell instead of the file (the
+# document viewer's PDF embed, D18). These prefixes are the app's server surface — the same list the
+# catch-all in `api/index.ts` JSON-404s — and they must reach the Worker whatever the request mode.
+run_worker_first = [
+  "/api",
+  "/api/*",
+  "/auth",
+  "/auth/*",
+  "/ws",
+  "/ws/*",
+  # The MCP server (a POST endpoint, but a client may probe it with a navigation-shaped GET).
+  "/mcp",
+  "/mcp/*",
+  # Its authorization server, and the three OAuth discovery documents a client fetches first.
+  "/oauth",
+  "/oauth/*",
+  "/.well-known/oauth-protected-resource",
+  "/.well-known/oauth-protected-resource/*",
+  "/.well-known/oauth-authorization-server",
+  "/.well-known/oauth-authorization-server/*",
+  "/.well-known/openid-configuration",
+  "/.well-known/openid-configuration/*",
+  # An installed plugin's own prefixes go here too, in barrel order (D31) — the analytics plugin
+  # adds "/cubejs-api". `pnpm plugin add` prints the step; `pnpm provision cloudflare
+  # <env>` writes it. The parity test reads `API_PREFIXES`, so a forgotten one fails the gate.
+]
+
+# Postgres (D35). Under DATABASE_DRIVER = "neon" there is NO [[hyperdrive]] block — wrangler refuses
+# to deploy one whose id does not exist — and the Worker reads the DATABASE_URL secret instead.
+# `pnpm provision cloudflare production --driver postgres` switches: it creates the Hyperdrive config, adds
+# the block below to BOTH files and sets DATABASE_DRIVER = "postgres". The block it writes:
+#   [[hyperdrive]]
+#   binding = "HYPERDRIVE"
+#   id = "<id>"
+#   localConnectionString = "<.dev.vars DATABASE_URL>"
+
+# KV for auth rate limiting + per-tenant operation locks. Create: wrangler kv namespace create RATE_LIMIT
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "<KV_RATE_LIMIT_ID>"
+
+# Plugin bindings (D31) are appended to the sections above by `pnpm provision cloudflare <env>`,
+# which reads each installed plugin’s plugin.json (bindings, crons, apiPrefixes, vars) and writes
+# the same declarations into BOTH tomls. Never hand-edit one of a plugin’s blocks in one file only.
+
+# Cron triggers — dispatched by src/api/scheduled.ts keyed on event.cron.
+[triggers]
+crons = [
+  "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
+  "*/10 * * * *",  # Every 10 minutes — settle agent runs whose Workflow instance ended unsettled
+  # An installed plugin's crons go here too, identical in both files (D31): a plugin declares the
+  # EXPRESSION in its `plugin.json` and contributes the TASK through `ServerPlugin.scheduledTasks`,
+  # and a task registered under an expression no toml declares simply never runs. The analytics
+  # plugin's is "15 * * * *" — hourly, rebuilding its fact tables per tenant.
+]
+
+# Background jobs (D7): one queue, one consumer; `src/api/queue.ts` dispatches on `batch.queue`.
+# Create: wrangler queues create rocketflare-jobs && wrangler queues create rocketflare-jobs-dlq
+# (`pnpm provision cloudflare` creates both). A message whose handler threw on every one of its
+# `max_retries` attempts lands in the dead-letter queue instead of vanishing. NO consumer is bound
+# to it, deliberately: its name shares the `rocketflare-jobs` prefix `queue.ts` dispatches on, so a
+# consumer would reprocess it. Inspect it from the dashboard (Queues → rocketflare-jobs-dlq → Messages).
+[[queues.producers]]
+binding = "JOBS_QUEUE"
+queue = "rocketflare-jobs"
+
+[[queues.consumers]]
+queue = "rocketflare-jobs"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+retry_delay = 60
+dead_letter_queue = "rocketflare-jobs-dlq"
+
+# Realtime (D8): stateless WebSocket hub Durable Object, one instance per tenant
+# (`idFromName(tenantId)`), hibernation API. Implementing a DO in-script disables preview URLs.
+[[durable_objects.bindings]]
+name = "NOTIFICATIONS_HUB"
+class_name = "NotificationsHub"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["NotificationsHub"]
+
+# File storage (D23): R2 behind `services/storage.ts`. Create: wrangler r2 bucket create rocketflare-files
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "rocketflare-files"
+
+# Workers AI (D17/D18): the zero-key floor for chat (`@cf/meta/llama-3.3-70b-instruct-fp8-fast`),
+# embeddings (`@cf/baai/bge-m3`, 1024-dim) and document conversion (`AI.toMarkdown`); billed to this
+# account. Optional in code: the resolver falls through to keys / tenant providers when absent.
+[ai]
+binding = "AI"
+# Workers AI has no local emulation: wrangler dev calls Cloudflare even in dev (needs `wrangler login`).
+# To run locally without it, set DEV_WORKERS_AI=off in .dev.vars (`pnpm bootstrap --offline`): local
+# wrangler dev then uses a generated copy of this file without [ai] — never comment this block out
+# for that. Embeddings then fall back to EMBEDDINGS_API_KEY or "none".
+remote = true
+
+# Agent runs (D7): the ONE Workflow class — the agent runtime IS the example workflow. `name` is
+# ACCOUNT-scoped (staging uses `-staging`); binding and class_name are identical in both tomls.
+# Nothing to create: `wrangler deploy` registers the Workflow. Instance id = agent_runs.id.
+[[workflows]]
+name = "rocketflare-agent-run"
+binding = "AGENT_RUN_WORKFLOW"
+class_name = "AgentRunWorkflow"
+
+# The Worker deployment a run executes on (`agent_runs.worker_version_id`, D44): with
+# `meta.version` it is how a run parked across a deploy is told apart. No create step.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
+# ---- Added in later phases (keep this list in sync with wrangler.staging.toml) ----------
+# Phase 4 (D19): optional [[analytics_engine_datasets]] for product telemetry — not wired yet

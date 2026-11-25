@@ -2,7 +2,7 @@ name: Plugin CI
 
 # **The other half of decision 5's compatibility proof** (D31, docs/CONCEPTS.md §16).
 #
-# The kit's own CI installs its `defaultPlugins` and runs the gate (ci.yml). This file is the
+# The kit's own CI installs its CI plugins and runs the gate (kit.yml `plugins`). This file is the
 # mirror, and it lives HERE rather than in each plugin so that a change to how a plugin is proved
 # compatible reaches every plugin through one file: a plugin repository calls it with
 #
@@ -64,11 +64,13 @@ jobs:
   versions:
     name: Resolve kit versions
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       pairs: ${{ steps.resolve.outputs.pairs }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: plugin
       # **This job no longer clones the kit at all**, and that is the point of the change. It used
       # to, solely to import `satisfies`/`compareVersions` from the cloned kit's
@@ -253,6 +255,7 @@ jobs:
     name: ${{ matrix.label }} on kit ${{ matrix.kit }}
     needs: versions
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false # which END broke — the floor or the ceiling — is the whole diagnosis
       matrix:
@@ -260,8 +263,9 @@ jobs:
         # proved against its OWN floor, and a shared ceiling is normal while a shared floor is not.
         include: ${{ fromJson(needs.versions.outputs.pairs) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           path: plugin
       - name: Clone the kit at ${{ matrix.kit }}
         env:
@@ -276,7 +280,7 @@ jobs:
             url="https://x-access-token:${KIT_TOKEN}@${KIT_REPO#https://}"
           fi
           # --depth 2, not 1: the kit's own suite asserts against its real history
-          # (`mirror().isAncestor` in tests/config/upgrade-lib.test.ts resolves HEAD~1), and the
+          # (`mirror().isAncestor` in tests/kit-only/upgrade-lib.test.ts resolves HEAD~1), and the
           # kit's own CI hands it `fetch-depth: 0`. A depth-1 clone leaves HEAD~1 unresolvable,
           # so `pnpm test` below failed for EVERY plugin, at every kit version, with an error that
           # names neither the clone nor the plugin. Two commits is all that assertion needs.
@@ -288,10 +292,10 @@ jobs:
           fi
       # The pnpm version comes from the KIT's `packageManager`, not from this repository — a plugin
       # repo may have no package.json at all.
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: kit/package.json
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: kit/.nvmrc
           cache: pnpm
@@ -374,6 +378,16 @@ jobs:
         working-directory: kit
         run: |
           set -euo pipefail
+          # Prove the plugin in what an adopter runs: a copy has no `apps/web/tests/kit-only/` (the
+          # rename deletes it), and those tests check the kit repository itself (its shipped tomls,
+          # its version stamps, its release notes), which an installed plugin legitimately changes.
+          # `git rm`, not `rm`: the source scanners read `git ls-files`. Without the directory the
+          # vitest config and the test plan drop the `kit-only` project, as in a copy.
+          git rm -r -q --ignore-unmatch apps/web/tests/kit-only
+          # A kit's own `typecheck` raises the heap from 0.42.0. Before that, tsc keeps Node's
+          # default (about 2 GB on a runner), which a heavy plugin outgrows: kit 0.41.1 needs
+          # 1.8 GB alone, and with the sites plugin 2.7 GB.
+          export NODE_OPTIONS="--max-old-space-size=4096"
           if node -e "process.exit(require('./package.json').scripts?.gate ? 0 : 1)"; then
             pnpm gate
           else

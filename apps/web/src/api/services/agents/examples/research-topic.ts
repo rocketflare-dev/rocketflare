@@ -1,5 +1,5 @@
 /**
- * `research-topic` — the kit's second example agent (D7, D17, D18), and the one that shows the
+ * `research-topic` — the second example agent, and the one that shows the
  * agentic shape: `runToolLoop` over the built-in knowledge tools (`ctx.tools` — `search_knowledge`,
  * `get_document`) until the model calls the terminal `submit_answer`. Where `summarize-text` is one
  * forced tool call, this one lets the model decide how many searches it needs, capped by
@@ -10,14 +10,14 @@
  * - **A loop that ends without the terminal tool is salvaged, not failed.** The zero-key floor is
  *   Workers AI, which has no `tool_choice` (a model that answers in prose is a live failure mode,
  *   not an edge case), so `no_tool_call` / `max_turns` falls back to ONE forced call over
- *   the transcript (its `policy`, D39) — the same forced-tool + prose-JSON recovery the rest of the kit uses. Only if
+ *   the transcript (its `policy`) — the same forced-tool + prose-JSON recovery the rest of the app uses. Only if
  *   that also fails does the run fail, carrying the model's own words in the error details.
  * - **Citations are filtered to what search actually returned.** Every `documentId` the tools
  *   reported is recorded during the loop; a citation naming anything else is dropped rather than
  *   persisted, so a hallucinated id can never reach the UI. The title comes from the search hit,
  *   not from the model.
  *
- * It is also the kit's full human-in-the-loop example (issue #17). Where `summarize-text` asks
+ * It is also the full human-in-the-loop example. Where `summarize-text` asks
  * about a write IT decided to do, this one shows the three shapes a loop-driven agent needs:
  *
  * - **`index_finding` is gated by `Tool.requiresApproval`** — the MODEL decides to call it, so the
@@ -44,8 +44,8 @@ import {
 } from '@rocketflare/shared/ai/agents'
 import { choicePayloadSchema } from '@rocketflare/shared/ai/interrupts'
 import { z } from 'zod'
+import { runToolLoop, type Tool } from '../../ai/agent-loop'
 import { ingestText } from '../../ai/ingest'
-import { runToolLoop, type Tool } from '../../ai/kit'
 import type { ChatMessage } from '../../ai/types'
 import type { AgentContext, AgentDefinition } from '../registry'
 import { summariseToolResult } from '../tools'
@@ -130,9 +130,10 @@ function collectDocuments(resultText: string, into: Map<string, string>): void {
 }
 
 /**
- * Rebuild `seen` from a resumed transcript. A resumed loop does NOT replay its earlier turns, so
- * without this the documents found before the retry would be absent from `seen` and every citation
- * earned in the first attempt would be dropped by `verifyCitations` as if hallucinated. The
+ * Rebuild `seen` from the loop's final transcript. A resumed loop does NOT replay its earlier
+ * turns, and a tool result the journal serves emits no event, so `onEvent` alone would miss the
+ * documents found before a retry — and `verifyCitations` would drop every citation earned in the
+ * first attempt as if hallucinated. The
  * transcript already holds every tool result verbatim, so the map is derived from it — the state is
  * a fold of the log, which is the same reason the checkpoint is worth storing at all.
  */
@@ -160,7 +161,7 @@ function verifyCitations(
 }
 
 /**
- * `ask_human` — a `choice` interrupt raised **from inside a tool handler** (issue #17). This is the
+ * `ask_human` — a `choice` interrupt raised **from inside a tool handler**. This is the
  * natural place for "which of these three did you mean?": the model is mid-thought, it has the
  * options, and the answer goes straight back to it as the tool's result.
  *
@@ -172,7 +173,7 @@ function verifyCitations(
  * - **The `key` is derived from the QUESTION, never from the call.** A handler-raised ask parks
  *   before the loop checkpoints that turn, so the resumed loop calls the model again and may get a
  *   fresh tool-call id. A question-derived key still lands on the same `(run_id, key)` row, so the
- *   re-entered handler finds the ANSWER instead of asking again (T2). Asking the same question
+ *   re-entered handler finds the ANSWER instead of asking again. Asking the same question
  *   twice in one run is therefore also answered once, which is what you want.
  */
 function askHumanTool(ctx: AgentContext<ResearchTopicInput>): Tool {
@@ -290,7 +291,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
     exclusive: true,
     // A loop that ends without `submit_answer` (prose, or the turn cap — the live failure mode on
     // Workers AI, which has no `tool_choice`) is salvaged by ONE forced call over the transcript,
-    // not failed: the loop does it (D39), `onExhausted` below only says so on the timeline.
+    // not failed: the loop does it, `onExhausted` below only says so on the timeline.
     policy: { maxTurns: RESEARCH_MAX_TURNS, onExhaustion: 'final-answer' },
   },
 
@@ -300,13 +301,12 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
     const messages: ChatMessage[] = [{ role: 'user', content: `Research this: ${topic}` }]
     /** documentId → title, from the tools' own answers. */
     const seen = new Map<string, string>()
-    // No ledger code here (D39): `ctx.chat.client` is metered by the runtime, so every turn of the
+    // No ledger code here: `ctx.chat.client` is metered by the runtime, so every turn of the
     // loop and its salvage writes its own `ai_usage` row, carrying this run's id, as it returns.
 
     // A retried `execute` step re-enters `run()` from the top; the checkpoint is what stops it
     // paying for every turn again. Null on a first attempt (or an unreadable stored value).
     const resume = await ctx.checkpoint.load()
-    if (resume) rehydrateSeen(resume.messages, seen)
 
     await ctx.step('research', 'Searching the knowledge base', 'running')
     const loop = await runToolLoop(ctx.chat.client, {
@@ -348,6 +348,12 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
       // three attempts can never spend three times the cap.
       ...(resume ? { resume } : {}),
       onCheckpoint: checkpoint => ctx.checkpoint.save(checkpoint),
+      // The journal records each turn and tool result as it settles: a retry that dies part-way
+      // through a turn is served what already finished instead of paying for it again, and the
+      // run stays strictly replayable after it settles (the checkpoint does not survive that).
+      journal: ctx.journal,
+      // Reaches the model call in flight: a cancel no longer waits for the turn to finish.
+      signal: ctx.signal,
       // The loop takes no AbortSignal, so these two callbacks ARE the cancellation poll: once per
       // model turn, and once per tool result — a run doing slow tool work still stops promptly.
       onStep: async step => {
@@ -393,6 +399,9 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
         }
       },
     })
+    // The finished transcript is the whole record — the resumed turns, AND the tool results the
+    // journal served silently (an attempt that recorded them already emitted their events).
+    rehydrateSeen(loop.messages, seen)
     await ctx.step(
       'research',
       'Searching the knowledge base',
@@ -405,7 +414,7 @@ export const researchTopicAgent: AgentDefinition<ResearchTopicInput, ResearchTop
     const submitted = loop.terminalInput as SubmitAnswer
 
     const citations = verifyCitations(submitted.citations, seen)
-    // What this run PRODUCED, as things a person opens rather than prose to scroll (decision 4).
+    // What this run PRODUCED, as things a person opens rather than prose to scroll.
     // `key` is the upsert key, so a re-entered attempt replaces these rows instead of piling up.
     await ctx.artifact({
       key: 'answer',

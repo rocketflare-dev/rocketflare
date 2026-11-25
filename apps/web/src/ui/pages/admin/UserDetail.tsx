@@ -1,10 +1,10 @@
 /**
- * Admin → one user (D10): the global-admin flag and blocking (never on yourself), their
+ * Admin → one user: the global-admin flag and blocking (never on yourself), their
  * memberships, and linked sign-in providers.
  */
 import { ArrowLeftIcon, UserIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useParams } from 'react-router'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import {
   ConfirmModal,
@@ -41,7 +41,20 @@ export default function UserDetail() {
         badge={
           <>
             {user.isGlobalAdmin && <span className="badge badge-sm badge-info">global admin</span>}
-            {blocked && <span className="badge badge-sm badge-error">blocked</span>}
+            {blocked && (
+              <span
+                className="badge badge-sm badge-error"
+                title={
+                  user.blockedSource?.startsWith('plugin:')
+                    ? 'Deprovisioned by the identity provider: reactivating them there lifts this block, and so does Unblock'
+                    : undefined
+                }
+              >
+                {user.blockedSource?.startsWith('plugin:')
+                  ? 'blocked by identity provider'
+                  : 'blocked'}
+              </span>
+            )}
           </>
         }
         description={

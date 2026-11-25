@@ -1,5 +1,5 @@
 /**
- * In-app notifications (D8): `notify()` inserts the row that IS the truth; when the caller passes
+ * In-app notifications: `notify()` inserts the row that IS the truth; when the caller passes
  * its `Realtime`, a `notification.created` nudge goes to that user's sockets through `waitUntil`
  * and the bell re-queries. Producers: invitation accepted, member joined, access request decided.
  */

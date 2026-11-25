@@ -6,9 +6,9 @@ CLAUDE.md). Rules for queries: `.claude/rules/database.md`.
 
 ## The driver seam
 
-The app runs on two drivers (D35, `docs/NEON-DRIVER.md`): `postgres` (postgres.js: local, CI,
+The app runs on two drivers (`docs/NEON-DRIVER.md`): `postgres` (postgres.js: local, CI,
 Hyperdrive) and `neon` (the Neon serverless driver: HTTP per query, a WebSocket pool per
-transaction, the kit's deployed default). **App code is driver-agnostic by construction.**
+transaction, the deployed default). **App code is driver-agnostic by construction.**
 `client.ts` is the ONLY place the drivers differ. Every divergence is either normalised there or
 banned everywhere else, and three things hold it:
 

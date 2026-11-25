@@ -1,5 +1,5 @@
 /**
- * D35: `apps/web/src` runs on two drivers, and the one place they differ is the shape of a raw
+ * `apps/web/src` runs on two drivers, and the one place they differ is the shape of a raw
  * result. postgres.js returns the rows array itself (with `.count`); Neon returns `{ rows,
  * rowCount }`. `Database` is the base both share, so `db.execute()` is typed `unknown` and most
  * wrong reads are type errors already. What still compiles is a CAST — `(await db.execute(…)) as
@@ -34,7 +34,7 @@
  */
 import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import ts from 'typescript6'
 import { describe, expect, it } from 'vitest'
 
 const SRC = path.resolve(__dirname, '../../src')
@@ -209,7 +209,7 @@ function findViolations(file: string, text: string): string[] {
   return found
 }
 
-describe('driver-specific code (D35, the driver seam)', () => {
+describe('driver-specific code (the driver seam)', () => {
   it('src/ reads raw results, error codes and session state only in driver-agnostic ways', () => {
     const violations = sourceFiles(SRC)
       .filter(file => !EXEMPT.has(file))

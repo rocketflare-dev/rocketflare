@@ -1,5 +1,5 @@
 /**
- * `/chat` and `/chat/:conversationId` (D17): a left rail of MY conversations (new, delete,
+ * `/chat` and `/chat/:conversationId`: a left rail of MY conversations (new, delete,
  * paginated) and the thread pane — `ChatBubble` list, the streaming assistant bubble from
  * `useSendMessage`, and the composer (Enter sends, Shift+Enter newline, Stop aborts). A tenant with
  * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets an
@@ -20,8 +20,9 @@ import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import type { Conversation } from '@rocketflare/shared/ai/chat'
 import { shortModelName } from '@rocketflare/shared/ai/config'
 import { documentCardsFromToolCalls } from '@rocketflare/shared/ai/embeddings'
+import { entityCardsFromToolCalls } from '@rocketflare/shared/ai/knowledge-facts'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router'
 import { ChatBubble } from '@/ui/components/ai/ChatBubble'
 import { FeedbackThumbs } from '@/ui/components/ai/FeedbackThumbs'
 import { ConfirmModal, EmptyState, PaginationControls, SkeletonRows } from '@/ui/components/shared'
@@ -34,8 +35,10 @@ import {
   useSendMessage,
 } from '@/ui/hooks/useChat'
 import { useMyFeedback } from '@/ui/hooks/useFeedback'
+import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { isAiNotConfigured } from '@/ui/lib/aguiStream'
+import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { timeAgo } from '@/ui/lib/format'
 import { ChatStatsPanel } from './ChatStatsPanel'
 
@@ -291,7 +294,7 @@ function Transcript({
 }) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const count = messages?.length ?? 0
-  // D33: one query for the page's answers, not one per bubble.
+  // One query for the page's answers, not one per bubble.
   const answerIds = (messages ?? []).filter(m => m.role === 'assistant').map(m => m.id)
   const { data: myVotes } = useMyFeedback('message', answerIds)
 
@@ -302,6 +305,8 @@ function Transcript({
     if (el && typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'end' })
   }, [count, turn.text, turn.status, conversationId])
 
+  // Entity cards link to a page behind the flag: shown only while the reader has it.
+  const facts = useNavGuard()(KNOWLEDGE_FACTS_GUARD)
   const showTurn = turn.status !== 'idle'
   return (
     <div
@@ -326,6 +331,7 @@ function Transcript({
               usage={message.usage}
               // Derived, never stored: the same mapper the stream used, over the row's tool calls.
               documents={documentCardsFromToolCalls(message.toolCalls)}
+              entities={facts ? entityCardsFromToolCalls(message.toolCalls) : undefined}
               actions={
                 message.role === 'assistant' ? (
                   <FeedbackThumbs
@@ -348,6 +354,7 @@ function Transcript({
           toolSteps={turn.toolSteps}
           notice={turn.notice ? NOTICE_TEXT[turn.notice] : undefined}
           documents={turn.documents}
+          entities={facts ? turn.entities : undefined}
           error={turn.error?.message}
         />
       )}

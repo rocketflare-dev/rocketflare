@@ -24,9 +24,25 @@ harness (D33). Hand over to the `rf-evals` skill rather than planning a slice. A
 you're planning adds an AI surface (a new agent, a new prompt), put "a suite in `apps/evals`" in the
 plan's test section so its quality is measured from day one.
 
-## 0. First question: app, or plugin?
+## 0. First question: does a plugin already do this?
 
-Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
+Before planning anything, check whether it already exists. Run
+
+```
+pnpm plugin list --available
+```
+
+and read the descriptions against what they asked for: one line per published plugin (id, version,
+whether it is installed, what it does), read live from the plugin repositories at their newest
+release, plus a separately licensed `Commercial plugins` block when their credentials can read it.
+Exit 3 means the repositories could not be reached: say so, and do not guess from memory. If one
+fits — or fits with a small addition in the app — say which, and hand over to `/rf-plugin add <id>`
+instead of planning a slice. Builders who skip this step build what already exists.
+
+**Done when** they have agreed that no published plugin does the job (or have installed the one
+that does).
+
+**Then: app, or plugin?** Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
 §16). A **plugin** is a separate git repository copied into this app — never npm — that contributes
 contracts, schema, routes, jobs, agents, UI and CLI commands through six barrels it is the only
 thing allowed to write a line into — importing the kit only through the declared entries
@@ -81,8 +97,8 @@ than restating it here, so there is one source of truth. **Its table has two col
 and "The plugin slot", one row per layer — read the row for the answer from step 0 and quote that
 column.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
 `config` / `realtimeRoots` / `agentKeys`, `ServerPlugin.mounts` / `jobHandlers` / `agents` /
-`agentTools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
-`visibilityResources` / `hooks`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
+`tools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
+`visibilityResources` / `hooks` / `knowledgeEntityTypes`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
 `agentForms`, and `CliPlugin.register` — each reached through one of the four published entry files
 (`apps/web/src/plugins/<id>/index.ts`, `.../ui/index.ts`,
 `packages/shared/src/plugins/<id>/index.ts`, `apps/cli/src/plugins/<id>/index.ts`) and nothing else.
@@ -117,7 +133,8 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
 - **The realtime `entity` string IS the query-key family root.** `entity.changed { entity: 'order' }`
   invalidates `queryKeys.orders` only if that family is named `['order']`. Pick the string once and
   use it in the service nudge and in `lib/query-keys.ts`.
-- **Analytics is a PLUGIN** (D31), so "and a dashboard" means the analytics plugin is installed —
+- **Analytics is an opt-in PLUGIN** (D31), so "and a dashboard" means the analytics plugin is
+  installed (`/rf-plugin add analytics` if `pnpm plugin list` lacks it) —
   and where the cube goes depends on whose feature it is: inside the plugin's tree for an app that
   owns its copy, or through `analyticsExtensions({ cubes, cubeIsolationCases })` for a second
   plugin. Two rules survive the move unchanged: **cube member names are frozen** (dashboards store
@@ -156,6 +173,61 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
     client they built. `GET /api/agents/runs/:id` shows what a run cost.
   Then point them at `/rf-agent-replay` to prove a threshold change against yesterday's cases before
   it runs on today's.
+- **"Start an agent when X happens"** (D42) — a form is submitted, a note is created, a sync
+  finds a new record. Do not coach a job that calls `startAgentRun`, and never a route that starts
+  the run inline: X is a declared plugin EVENT and the agent subscribes to it. Ask one question
+  first — **does the event alone decide, or does a person choose the agent per subject?**
+  - **The event decides** → `triggers: [eventTrigger('<id>.<thing>.<happened>', { where?, input })]`
+    on the agent definition. `where` filters the payload, `input` builds the agent's input (its
+    `inputSchema` validates it; invalid input is logged and dropped, not retried). One run per
+    (event, agent), however often the delivery repeats; the run shows the event as who started it.
+  - **A person picks** ("On submit, start …" on a form block) → the agent opts in with
+    `bindable: [eventBinding(event, { input })]`; the editor's dropdown reads
+    `GET /api/agents/bindable?event=`; the subject's own `eventHandlers` entry reads the STORED
+    choice and calls `eventCtx(ctx).startBoundAgent(key)`, which re-checks the opt-in, so a forged
+    key starts nothing. Never take the agent key from the visitor's submission.
+  - **The emitter**: declare the event in the plugin's shared `events` (zod payload, `<id>.` names,
+    listed in `plugin.json` `"events"`), then `await ctx.emit(name, { payload, idempotencyKey:
+    '<thing>:<id>' })` after the row is stored. Keep the payload to ids and what subscribers need —
+    it is kept 7 days (`EVENTS_RETENTION_DAYS`) and may hold personal data; never log it.
+  - The app's own code subscribes in `apps/web/src/api/services/events/app-handlers.ts`. Worked
+    example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
+    `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
+
+- **"Let Claude / ChatGPT use our app" / "expose this to MCP"** — do not coach a new route, an API
+  key for the client, or a tool that takes a `tenantId`. The kit's MCP server (`docs/CONCEPTS.md`
+  §19) already signs the person in with the app's own login and acts as them in one organisation.
+  Connecting a client is configuration (`mcp` in `FEATURES_ENABLED`, then Settings → MCP);
+  exposing their own data is a TOOL, declared once for chat, agents and MCP, under
+  `.claude/rules/tools.md`, with `callMcpTool` tests. Run `/rf-mcp` for the steps, the local
+  tunnel test and troubleshooting.
+
+- **"The knowledge base should know facts about my customers / orders / suppliers"** (D43) — do
+  not coach a new extraction job, a prompt or a column the model fills in. **Register an entity
+  type** and the kit's `knowledge.extract` job does the rest: in the app, an entry in
+  `APP_ENTITY_TYPES` (`apps/web/src/api/services/knowledge/entity-types.ts` — its header comment is
+  the template); in a plugin, `ServerPlugin.knowledgeEntityTypes`, type `<id>.<name>` (copy
+  `apps/web/src/plugins/example-feature/knowledge/entity-types.ts`). Settle with them:
+  - **The type and its table.** `table` + `labelColumn` (+ `aliasColumns`) when the rows already
+    exist, so the default trigram resolver matches a mention to a row; no table when the thing
+    lives only in documents (facts sit on staging entities until a person promotes one). A
+    mention matched by a NUMBER or code, not a name, needs its own `resolve(name, scope)` — which
+    must filter by `scope.access.tenantId`.
+  - **The fact keys.** snake_case, a zod value schema each, and a `.describe()` that tells the
+    model what to read — that sentence IS the extraction prompt for the key. A date is
+    `z.iso.date()`, never `z.date()` (the schema must render as JSON schema). Fewer, sharper keys
+    extract better than a mirror of every column.
+  - **What it never does.** A fact never writes a domain column: confirming, merging and promoting
+    are a person's review actions. If they want the value applied to the row, that is their own
+    approval-gated action, not extraction.
+  - **Turning it on.** The `knowledge-facts` flag (default off, Admin → Feature flags) per tenant,
+    and `KNOWLEDGE_TENANT_DAILY_COST_USD` in both tomls first — extraction is one model call per
+    section of every changed document (`SETUP.md` §2.5 "Knowledge facts").
+  - **The test that enforces it.** `tests/config/knowledge-entity-types.test.ts` composes the
+    registry and fails a bad type; a type with a table needs the tenant case (the resolver never
+    finds another tenant's row — `example-feature`'s `tests/api/knowledge-entity-type.test.ts`).
+    For quality, `pnpm eval facts` over a corpus of their own documents with a `facts.jsonl` (hand
+    over to `rf-evals`).
 
 Four more when the answer to step 0 was "plugin", and every one of them is a test rather than
 advice:

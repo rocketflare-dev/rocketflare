@@ -37,8 +37,10 @@ pnpm plugin list
 Expect a clean tree, a kit name, version and commit, and either `No plugins installed.` or one line
 per installed plugin. **Say which plugins are installed before you plan** — a plugin has its own
 repository and its own release chain, the kit diff never touches a byte one owns, and each is a
-separate `pnpm plugin upgrade` AFTER this (step 6). A dirty tree: ask them to commit or stash —
-the upgrade should be one reviewable diff. **No `.rocketflare.json`:** this copy predates the
+separate `pnpm plugin upgrade` AFTER this (step 6) — except a **vendored** one (`example-feature`,
+`source.repo` the kit's own with no subdirectory), whose files this upgrade ports like core. A dirty
+tree is fine for the plan (step 2); before `--apply` ask them to commit or stash — the upgrade
+should be one reviewable diff, and `--apply` refuses a dirty tree. **No `.rocketflare.json`:** this copy predates the
 upgrade path. Find the commit it started from and stamp it, then continue:
 
 ```
@@ -54,7 +56,12 @@ No trailer either? Ask which kit version they copied and use that tag. Do not gu
 pnpm kit:upgrade $ARGUMENTS
 ```
 
-Expect six `✔ n/6` lines and a report. Read `.upgrade/work/<version>/plan.md` — it embeds every
+Expect six `✔ n/6` lines and a report. A line `upgrader <version>'s, not this copy's` after
+`1/6` is normal: the target release's own upgrader (extracted into `.upgrade/tool/`) is planning
+the jump, so every upgrader fix up to that release applies, and the `✔ n/6` lines repeat once.
+`note: …predates the hand-over` means the target's upgrader is older than the hand-over (before
+0.44.0): this copy's plans it, and an upgrader bug fixed in between can still show in the plan.
+Read `.upgrade/work/<version>/plan.md` — it embeds every
 release note in range, and each is also at the `.upgrade/work/<version>/notes/X.Y.Z.md` path the
 report prints. Then tell them, in
 three or four lines: which versions they are crossing, what each release note says it did, how many
@@ -67,7 +74,8 @@ route around:
 
 - **`skipped-plugin-owned`** (a class) — files an installed plugin owns. The script drops them because the
   plugin's own repository is what moves them, so the count is health, exactly like the other skips.
-  The report names the plugins and says to run `pnpm plugin upgrade <id>` after this.
+  The report names the plugins and says to run `pnpm plugin upgrade <id>` after this. A vendored
+  plugin is never in this class: its files are `modified` / `added` like core.
 - **`touches-plugin-registry`** (an annotation on an otherwise ordinary `modified` file, listed as
   `<path> — <plugin ids>`) — the kit changed a file an installed plugin also writes a line into. The six barrels are shared, so the kit CAN move ground under a plugin. **Apply the kit
   change, then check the plugin's line survived it** (`pnpm plugin check` is the fastest proof).
@@ -93,11 +101,26 @@ release at a time, committing each, is easier to review and easier to abandon.
 pnpm kit:upgrade --to <version> --apply
 ```
 
-Exit 0 means everything landed. **Exit 4 means some hunks rejected** — that is work remaining, not
+Exit 0 means everything landed, **staged**: `--apply` `git add`s every file it wrote (and
+`.rocketflare.json`), so `git diff --cached` is the upgrade and the gate's `git ls-files` scanners
+see the new files. Add `--apply-deletes` only when the user agrees to drop the files the kit
+deleted (listed in the plan) — it `git rm`s them; without it they stay and the report says so.
+A file whose patch no longer applies is merged 3-way first (the old and new kit versions into
+the copy's file); a clean merge is applied and staged, and the report lists it as `merged`. Most
+rejects were only import order a formatter moved, and never reach you now.
+**Exit 4 means some hunks rejected or conflicted** — that is work remaining, not
 a failure, and the script deliberately does NOT stamp the new version until it is finished. For each
 `*.rej` beside a file: read the reject, read the file, apply the intent by hand, delete the `.rej`.
+With `--3way` a conflicting file gets `<<<<<<<` / `>>>>>>>` blocks in place instead of a `.rej`:
+resolve each block. For a `manual` file (`package.json`, the tomls, `.dev.vars.example`) the
+plan's `merged/<path>` is a 3-way merge to start from — read it, never copy it over blind.
 A reject means the adopter's copy has diverged there; their version usually wins on anything they
-changed on purpose.
+changed on purpose. When the last one is gone, **`pnpm kit:upgrade --to <version> --continue`**
+records the version, commit and history the apply held back (it refuses while a `*.rej` or a
+conflict marker remains,
+and refuses a plan that no longer starts from what `.rocketflare.json` records). A file with
+rejects is left unstaged: `git add` each one you resolve. Never re-run
+`--apply` to finish: the tree is dirty, and the patch no longer applies to files it already patched.
 
 **Work each release note's `## How to apply`** (read it from `.upgrade/work/<version>/notes/`)
 **as a numbered list of self-contained steps**, top
@@ -142,7 +165,8 @@ pnpm plugin upgrade <id> --apply
 ```
 
 Three things carry over from this skill unchanged: **exit 4 means rejects remain**, and the script
-deliberately withholds the new version stamp until they are resolved; **a migration is never
+deliberately withholds the new version stamp until they are resolved — then
+`pnpm plugin upgrade <id> --to <version> --continue` finishes it; **a migration is never
 copied** — `pnpm db:generate --name plugin-<id>-<version>` writes yours; and **a vendored plugin**
 (one whose `source.repo` is the kit's own repository) answers *"upgrade it with `pnpm kit:upgrade`"*
 and does nothing, because the kit release you just applied is what moved it. Two things that are
@@ -180,5 +204,6 @@ after an upgrade are: **run it** (`pnpm dev`), **upgrade the plugins** (step 6, 
   against a kit version its author never tested it on.
 - **Never squash the releases into one commit.** The per-release commit is what makes the next
   upgrade legible.
-- Do not edit `.rocketflare.json` by hand. The script writes it, last, only when the apply is clean.
+- Do not edit `.rocketflare.json` by hand. The script writes it, last — on a clean apply, or on
+  `--continue` once the rejects are resolved.
 - `rm -rf .upgrade` is always safe — it is a cache.

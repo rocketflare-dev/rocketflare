@@ -1,5 +1,5 @@
 /**
- * Header dot for the realtime connection (D8): green when open, amber while connecting, grey when
+ * Header dot for the realtime connection: green when open, amber while connecting, grey when
  * closed. Reads the websocket store only; the label doubles as the accessible name.
  */
 import { type WebSocketStatus as Status, useWebSocketStore } from '@/ui/stores/websocketStore'

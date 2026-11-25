@@ -1,72 +1,26 @@
 /**
- * Home (D25): where you are (organisation, your role), where to go next, and — for admins — what
+ * Home: where you are (organisation, your role), where to go next, and — for admins — what
  * just happened. Deliberately generic; apps replace the quick links with their own dashboard.
+ * Installed plugins add "what needs doing" cards above the links (`UiPlugin.homeCards`) and links
+ * of their own (`homeLinks`); the core links are data in `./home-links`.
  */
-import {
-  BellIcon,
-  ClockIcon,
-  Cog6ToothIcon,
-  ShieldCheckIcon,
-  UserCircleIcon,
-} from '@heroicons/react/24/outline'
-import type { ComponentType } from 'react'
-import { Link } from 'react-router-dom'
+import { ClockIcon } from '@heroicons/react/24/outline'
+import { roleLabel } from '@rocketflare/shared/tenants'
+import { Link } from 'react-router'
 import { uiPlugins } from '@/plugins/ui'
+import { PluginHomeCards } from '@/ui/components/PluginHomeCards'
 import { RoleBadge } from '@/ui/components/RoleBadge'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import { useActivity } from '@/ui/hooks/useActivity'
 import { useAuth } from '@/ui/hooks/useAuth'
-import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
+import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { timeAgo } from '@/ui/lib/format'
-
-export interface QuickLink {
-  to: string
-  label: string
-  description: string
-  icon: ComponentType<{ className?: string }>
-  guard?: NavGuard
-}
-
-const CORE_QUICK_LINKS: QuickLink[] = [
-  {
-    to: '/profile',
-    label: 'Your account',
-    description: 'Name, avatar, sign-in methods',
-    icon: UserCircleIcon,
-  },
-  {
-    to: '/notifications',
-    label: 'Notifications',
-    description: 'Everything addressed to you',
-    icon: BellIcon,
-  },
-  {
-    to: '/settings',
-    label: 'Settings',
-    description: 'People, API keys, organisation',
-    icon: Cog6ToothIcon,
-    guard: 'admin',
-  },
-  {
-    to: '/activity',
-    label: 'Activity',
-    description: 'The audit log',
-    icon: ClockIcon,
-    guard: 'admin',
-  },
-  {
-    to: '/admin',
-    label: 'Admin',
-    description: 'Every organisation and user',
-    icon: ShieldCheckIcon,
-    guard: 'globalAdmin',
-  },
-]
+import { CORE_QUICK_LINKS, type QuickLink } from './home-links'
 
 /**
- * The kit's links, with every installed plugin's ahead of them (D31). Plugin first because a
- * plugin is what this app ADDED — the kit's own links (account, notifications, settings) are the
- * furniture — and because it reproduces where Analytics sat while it was part of the kit.
+ * The core links, with every installed plugin's ahead of them. Plugin first because a
+ * plugin is what this app ADDED — the core links (account, notifications, settings) are the
+ * furniture.
  */
 const QUICK_LINKS: QuickLink[] = [...uiPlugins.flatMap(p => p.homeLinks ?? []), ...CORE_QUICK_LINKS]
 
@@ -83,10 +37,12 @@ export default function Home() {
         badge={tenant && <RoleBadge role={tenant.role} />}
         description={
           user
-            ? `Signed in as ${user.name}${tenant ? ` · your role here is ${tenant.role}` : ''}${tenancyMode === 'single' ? '' : ' · switch organisations from the header'}`
+            ? `Signed in as ${user.name}${tenant ? ` · your role here is ${roleLabel(tenant.role)}` : ''}${tenancyMode === 'single' ? '' : ' · switch organisations from the header'}`
             : undefined
         }
       />
+
+      <PluginHomeCards plugins={uiPlugins} />
 
       <SectionPanel title="Quick links" className="mb-4">
         <ul className="grid gap-2 sm:grid-cols-2">

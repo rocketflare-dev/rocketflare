@@ -1,5 +1,5 @@
 /**
- * `activity_events` — the generic per-tenant audit log (D1, D10) and the example fact source for
+ * `activity_events` — the generic per-tenant audit log and the example fact source for
  * the analytics cubes. Append-only: `type` is what happened, `subjectType`/`subjectId` what it
  * happened to, `userId` who did it (NULL for system / cron), `metadata` the details
  * (`activityMetadataSchema`). The `(tenant_id, created_at DESC)` index serves both the activity

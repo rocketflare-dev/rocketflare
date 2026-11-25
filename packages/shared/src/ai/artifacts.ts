@@ -1,9 +1,9 @@
 /**
- * Artifacts an agent run produces (issue #17): the things a person opens, not the prose the model
+ * Artifacts an agent run produces: the things a person opens, not the prose the model
  * wrote. A draft email, a table of the rows it is about to change, the document it wrote.
  *
  * **An artifact is a TABLE row, not an event row**, and the asymmetry with a steering note is the
- * point (decision 4). An artifact is MUTABLE — a redrafted artifact must replace itself under
+ * point. An artifact is MUTABLE — a redrafted artifact must replace itself under
  * `(run_id, key)` — it is QUERIED ACROSS RUNS ("everything this agent has produced"), and it
  * OUTLIVES the run with an id a card can link to. An append-only positional log expresses none of
  * those. What goes in the log is a *thin* `artifact` event row carrying
@@ -39,7 +39,7 @@ export type ArtifactTableColumn = z.infer<typeof artifactTableColumnSchema>
 /**
  * The typed `data` jsonb. `document` and `file` carry **ids, never content**: the bytes already
  * live in `documents` / R2 behind routes that enforce tenancy and, for a document, group
- * visibility (D29). Copying them here would be a second, unscoped copy of the same bytes.
+ * visibility. Copying them here would be a second, unscoped copy of the same bytes.
  */
 export const agentArtifactDataSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('document'), documentId: z.string().uuid() }),
@@ -110,7 +110,7 @@ export type AgentArtifact = z.infer<typeof agentArtifactSchema>
 
 /**
  * The `data` of an `artifact` event row: where in the timeline it appeared, and enough to draw a
- * link. Deliberately NOT the artifact — the table is the store (decision 4).
+ * link. Deliberately NOT the artifact — the table is the store.
  */
 export const agentArtifactEventDataSchema = z.object({
   artifactId: z.string().uuid(),

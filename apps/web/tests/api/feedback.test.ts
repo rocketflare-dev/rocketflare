@@ -1,11 +1,11 @@
 /**
- * Thumbs feedback and the eval-case export (D33):
+ * Thumbs feedback and the eval-case export:
  *
  * - a member rates their OWN assistant message; voting again replaces the vote; the same thumb
  *   withdrawn is a DELETE; `GET /mine` draws the thumbs' state;
  * - **tenant isolation**: another tenant's message or run is a 404 exactly like an unknown id, the
  *   admin list only ever returns the caller tenant's rows, and another MEMBER's thread is a 404 too
- *   (D17 — admins included);
+ *   (admins included);
  * - a run is rateable by its requester and by admin-level members, nobody else;
  * - the vote lands in the answer's trace as a `feedback` span under the recorded root;
  * - `GET /api/evals/export` builds a valid `EvalCase` from a message (question, history, retrieved
@@ -41,6 +41,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv } from '../mocks/bindings'
 
@@ -135,7 +136,7 @@ async function run(tenantId: string, requestedByUserId: string) {
     .insert(agentRuns)
     .values({
       tenantId,
-      agentKey: 'research-topic',
+      agentKey: FIXTURE_AGENT_B,
       status: 'succeeded',
       input: { topic: 'What is the refund window?' },
       output: { answer: 'Thirty days.', citations: [] },
@@ -343,7 +344,7 @@ describe('GET /api/evals/export', () => {
       await json(await request(`/api/evals/export?runId=${r.id}`, { headers: a.cookie }))
     )
     expect(draft).toMatchObject({
-      agentKey: 'research-topic',
+      agentKey: FIXTURE_AGENT_B,
       input: { topic: 'What is the refund window?' },
       expected: { output: { answer: 'Thirty days.' }, tools: ['search_knowledge'] },
       context: [{ title: 'Refund policy' }],

@@ -1,5 +1,5 @@
 /**
- * The cross-tenant allow-list (D1). The invariant in `.claude/rules/database.md`: every domain query
+ * The cross-tenant allow-list. The invariant in `.claude/rules/database.md`: every domain query
  * filters by `tenantId` from the auth context. This test pins the exceptions, so a new one is a
  * deliberate edit here rather than something that arrives with a feature.
  *
@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
-import ts from 'typescript'
+import ts from 'typescript6'
 import { describe, expect, it } from 'vitest'
 import * as schema from '@/db/schema'
 import { serverPlugins } from '@/plugins/server'
@@ -41,15 +41,19 @@ const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
   'src/api/services/storage.ts':
     'deleteStoredFile removes a row by primary key that its caller already resolved under the tenant predicate',
   'src/api/services/invitations.ts':
-    'pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job',
+    "pruneInvitations is the nightly cron: expired invitations are deleted across every tenant, which is the job; revokeEveryInvitationIssuedBy ends a blocked person's pending invitations in every tenant, because a block withdraws their authority everywhere",
   'src/api/scheduled.ts':
-    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon (D32, D35)',
+    'runPruneAiSpans is the nightly trace-store retention: spans past the cutoff are deleted across every tenant in ONE statement, which Postgres answers from the (tenant_id, started_at) index — one DELETE per tenant cost a round trip each under neon; runPruneEvents is the same for plugin_events past EVENTS_RETENTION_DAYS (D42), from its (tenant_id, created_at) index; runPruneAgentTurns the same for the agent_run_turns journal of runs settled past AGENT_TRANSCRIPT_RETENTION_DAYS, from its (tenant_id, updated_at) index',
+  'src/api/utils/db/tenant-helpers.ts':
+    'assertMayOwnAnother counts the organisations ONE person owns across every tenant — that is the MAX_OWNED_TENANTS_PER_USER ceiling, read under a lock on the user row',
+  'src/api/services/mcp/retention.ts':
+    'runPruneMcp is the nightly MCP retention: calls past MCP_CALL_RETENTION_DAYS, tokens past their own expiry and spent refresh tokens past the retry grace and grants whose code was never redeemed are cleared across every tenant in one statement each, like the span prune; a stale client metadata cache row goes only when no grant in any tenant names its client',
   'src/api/observability/span-store.ts':
-    'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant — D32',
+    'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant',
 }
 
 /**
- * Plus every installed plugin's own exceptions (D31), keyed exactly the same way — a path relative
+ * Plus every installed plugin's own exceptions, keyed exactly the same way — a path relative
  * to `apps/web/` (so `src/plugins/<id>/…`) mapped to the reason it is correct. The scan already
  * walks `src/**`, so a plugin's files are checked like the kit's; what a plugin cannot do is add a
  * line to a kit test file, which is why the reason travels with the plugin instead.

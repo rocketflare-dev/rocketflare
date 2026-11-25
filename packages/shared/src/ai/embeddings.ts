@@ -1,7 +1,7 @@
 /**
- * Embeddings / retrieval contracts (D17, D18): the `documents` row the API returns (never the raw
+ * Embeddings / retrieval contracts: the `documents` row the API returns (never the raw
  * text or vectors), the text-ingest request, and the hybrid search request/response. Retrieval
- * ships WITH this ingest path so `searchChunks` is never dead code (00 §1.3). File uploads
+ * ships WITH this ingest path so `searchChunks` is never dead code. File uploads
  * (`POST /upload`, multipart) share the same `documents` row: the allowlist below is what the UI's
  * `<input accept>` offers and what the route answers 415 to.
  */
@@ -27,7 +27,7 @@ export const documentSchema = z.object({
   chunkCount: z.number().int().nonnegative(),
   status: documentStatusSchema,
   error: z.string().nullable(),
-  /** D29: `tenant` = every member; `groups` = only `groups` below, plus the owner and admins. */
+  /** `tenant` = every member; `groups` = only `groups` below, plus the owner and admins. */
   visibility: resourceVisibilitySchema,
   /** The groups it is shared with — empty under `tenant`, and empty under `groups` means private. */
   groups: z.array(groupRefSchema),
@@ -36,14 +36,83 @@ export const documentSchema = z.object({
 })
 export type Document = z.infer<typeof documentSchema>
 
+/**
+ * What `POST /ingest` and `POST /upload` answer: the document, and whether it is one that ALREADY
+ * existed. `deduplicated: true` (status `200`, not `201`) = the same text was already a
+ * tenant-wide document of the same source, and that document is returned instead of a second one.
+ */
+export const ingestDocumentResponseSchema = documentSchema.extend({
+  deduplicated: z.boolean(),
+})
+export type IngestDocumentResponse = z.infer<typeof ingestDocumentResponseSchema>
+
 /** Longest text `POST /api/ai/documents/ingest` accepts (characters; ~ the 1 MB JSON body cap). */
 export const INGEST_TEXT_MAX_CHARS = 500_000
+
+/**
+ * `GET /api/ai/documents/health` (admin+): the tenant's knowledge base at a glance. A document's
+ * embeddings are STALE when it is `indexed`, has stored text, and at least one of its chunks was
+ * embedded by a model other than `embeddingModel` (the one `resolveEmbeddings` picks today) — or by
+ * no recorded model. Such a document is still found lexically but is absent from dense search
+ * until `POST /reembed` (or the automatic re-embed after an embeddings-default change) rebuilds it.
+ * `embeddingModel` is null when no embedder resolves, and then nothing counts as stale.
+ */
+export const documentsHealthSchema = z.object({
+  documents: z.object({
+    total: z.number().int().nonnegative(),
+    pending: z.number().int().nonnegative(),
+    indexed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+  embeddingModel: z.string().nullable(),
+  /** Documents with at least one stale chunk — the unit `document.reembed` rebuilds. */
+  staleEmbeddings: z.number().int().nonnegative(),
+  /** The stale chunks themselves, across those documents. */
+  staleChunks: z.number().int().nonnegative(),
+})
+export type DocumentsHealth = z.infer<typeof documentsHealthSchema>
+
+/**
+ * `POST /api/ai/documents/reembed` (admin+) → `202`: how much is stale and whether a
+ * `document.reembed` job was enqueued (`false` when nothing is stale).
+ */
+export const reembedResponseSchema = z.object({
+  embeddingModel: z.string(),
+  staleEmbeddings: z.number().int().nonnegative(),
+  staleChunks: z.number().int().nonnegative(),
+  enqueued: z.boolean(),
+})
+export type ReembedResponse = z.infer<typeof reembedResponseSchema>
+
+/** Documents one `POST /api/ai/documents/contextualize` enqueues at most; call again for more. */
+export const CONTEXTUALIZE_BACKFILL_MAX = 200
+
+/**
+ * `POST /api/ai/documents/contextualize` (admin+, `knowledge-context` flag) → `202`: one
+ * `document.contextualize` job per indexed document that has a passage with no context yet, at most
+ * `CONTEXTUALIZE_BACKFILL_MAX`. `remaining` counts the ones left for the next call.
+ */
+export const contextualizeBackfillResponseSchema = z.object({
+  enqueued: z.number().int().nonnegative(),
+  remaining: z.number().int().nonnegative(),
+})
+export type ContextualizeBackfillResponse = z.infer<typeof contextualizeBackfillResponseSchema>
+
+/**
+ * `POST /api/ai/documents/:id/retry` (owner or admin+) → `202` with the document, now `pending`:
+ * an upload with no text yet goes back to `document.convert`, anything with text to
+ * `document.index`. A document that is not `failed` is a `409 document_not_failed`.
+ */
+export const retryDocumentResponseSchema = documentSchema.extend({
+  job: z.enum(['document.convert', 'document.index']),
+})
+export type RetryDocumentResponse = z.infer<typeof retryDocumentResponseSchema>
 
 export const ingestTextRequestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   text: z.string().min(1).max(INGEST_TEXT_MAX_CHARS),
   source: z.string().trim().min(1).max(200).optional(),
-  /** D29 — defaults to `tenant`, so an ingest that says nothing is shared with the organisation. */
+  /** Defaults to `tenant`, so an ingest that says nothing is shared with the organisation. */
   visibility: resourceVisibilitySchema.optional(),
   groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
@@ -56,13 +125,85 @@ export type DocumentListQuery = z.infer<typeof documentListQuerySchema>
 
 export const SEARCH_MAX_LIMIT = 20
 
+/** Most values one search filter list (`sources`, `contentTypes`) takes. */
+export const SEARCH_FILTER_MAX_VALUES = 50
+
+const filterValues = z
+  .array(z.string().trim().min(1).max(200))
+  .min(1)
+  .max(SEARCH_FILTER_MAX_VALUES)
+  .optional()
+
+/**
+ * Narrowing a search by what the DOCUMENT is — every filter only ever removes hits from what the
+ * reader may already see; none widens it. `sources` / `contentTypes` match `documents.source` /
+ * `documents.content_type` exactly (any of the listed values); `createdFrom` / `createdTo` are
+ * UTC calendar days, both inclusive. The values worth offering are `GET /facets`.
+ */
+export const searchFiltersSchema = z
+  .object({
+    sources: filterValues,
+    contentTypes: filterValues,
+    createdFrom: z.iso.date().optional(),
+    createdTo: z.iso.date().optional(),
+  })
+  .refine(f => !f.createdFrom || !f.createdTo || f.createdFrom <= f.createdTo, {
+    message: 'The start date must be on or before the end date',
+    path: ['createdTo'],
+  })
+export type SearchFilters = z.infer<typeof searchFiltersSchema>
+
 export const searchRequestSchema = z.object({
   query: z.string().trim().min(1).max(2000),
   limit: z.number().int().min(1).max(SEARCH_MAX_LIMIT).default(10),
   /** Restrict to one document. */
   documentId: z.string().uuid().optional(),
+  /** Restrict by the documents' source, type and date added. */
+  filters: searchFiltersSchema.optional(),
 })
 export type SearchRequest = z.infer<typeof searchRequestSchema>
+
+/** One value of a facet and how many indexed documents the reader can see carry it. */
+export const documentFacetValueSchema = z.object({
+  value: z.string(),
+  count: z.number().int().nonnegative(),
+})
+export type DocumentFacetValue = z.infer<typeof documentFacetValueSchema>
+
+/**
+ * `GET /api/ai/documents/facets`: what the search filters can offer — the distinct `source` and
+ * `contentType` values among the INDEXED documents this reader may see, most common first, and
+ * the date range they span (null with no documents). A document with no source is not listed.
+ * `staleEmbeddings` is the reader-scoped counterpart of `/health`'s (which is admin-only).
+ */
+export const documentFacetsSchema = z.object({
+  total: z.number().int().nonnegative(),
+  sources: z.array(documentFacetValueSchema),
+  contentTypes: z.array(documentFacetValueSchema),
+  oldest: z.coerce.date().nullable(),
+  newest: z.coerce.date().nullable(),
+  /**
+   * Of those documents, how many hold chunks embedded by a model other than the one the tenant
+   * resolves today — found by keyword only until `POST /reembed` rebuilds them. 0 with no embedder.
+   */
+  staleEmbeddings: z.number().int().nonnegative(),
+  /**
+   * Of those documents, how many have no passage with a contextual prefix yet — what
+   * `POST /contextualize` would fill. 0 unless the tenant has the `knowledge-context` flag.
+   */
+  withoutContext: z.number().int().nonnegative(),
+})
+export type DocumentFacets = z.infer<typeof documentFacetsSchema>
+
+/**
+ * A `documents.source` as a person reads it: `upload` → "Uploaded or pasted", `agent:<key>` →
+ * "Agent · <key>", anything else as it is (a plugin's `m365:mail`, a URL).
+ */
+export function documentSourceLabel(source: string): string {
+  if (source === 'upload') return 'Uploaded or pasted'
+  if (source.startsWith('agent:')) return `Agent · ${source.slice('agent:'.length)}`
+  return source
+}
 
 export const searchHitSchema = z.object({
   chunkId: z.string().uuid(),
@@ -73,6 +214,10 @@ export const searchHitSchema = z.object({
   seq: z.number().int().nonnegative(),
   /** How many passages the document has in total. */
   documentPassages: z.number().int().nonnegative(),
+  /** The markdown headings the passage sits under, joined with ` › `; null when none. */
+  headingPath: z.string().nullable(),
+  /** Page of the source document — null when unknown (today: always). */
+  page: z.number().int().positive().nullable(),
   /**
    * Character offset of the passage in the document's text — read around it with
    * `GET`/`get_document` at this offset. Null when it cannot be located (re-chunked since).
@@ -80,17 +225,31 @@ export const searchHitSchema = z.object({
   charOffset: z.number().int().nonnegative().nullable(),
   /** Reciprocal-rank-fusion score — higher is better; NOT a cosine similarity. */
   score: z.number(),
-  /** 1-based position in the fused order. */
+  /** 1-based position in the answer — the reranked order when a reranker ran, else the fused one. */
   rank: z.number().int().positive(),
   /** Which signal(s) found it: 1-based rank in that list, or null. */
   denseRank: z.number().int().positive().nullable(),
   lexicalRank: z.number().int().positive().nullable(),
+  /**
+   * The reranker's relevance score in [0, 1] (every reranker is mapped onto that scale); null
+   * when no reranker ran — none configured, too few candidates, or it failed or timed out.
+   */
+  rerankScore: z.number().min(0).max(1).nullable(),
 })
 export type SearchHit = z.infer<typeof searchHitSchema>
+
+/**
+ * Whether the keyword half of a search had anything to look for: `no_terms` = every word of the
+ * query is a stopword of the search's text configuration (or there was no word at all), so only
+ * meaning-based search could answer. Decided by Postgres, never by a word list in a client.
+ */
+export const searchLexicalSchema = z.enum(['used', 'no_terms'])
+export type SearchLexical = z.infer<typeof searchLexicalSchema>
 
 export const searchResponseSchema = z.object({
   query: z.string(),
   hits: z.array(searchHitSchema),
+  lexical: searchLexicalSchema,
 })
 export type SearchResponse = z.infer<typeof searchResponseSchema>
 
@@ -206,7 +365,7 @@ export const uploadDocumentFieldsSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   /** Defaults to the sanitised filename. */
   source: z.string().trim().min(1).max(200).optional(),
-  /** D29 — a multipart form carries these as text parts; `groupIds` is a JSON array of uuids. */
+  /** A multipart form carries these as text parts; `groupIds` is a JSON array of uuids. */
   visibility: resourceVisibilitySchema.optional(),
   groupIds: z.array(z.string().uuid()).max(200).optional(),
 })
@@ -332,12 +491,22 @@ export type DocumentCard = z.infer<typeof documentCardSchema>
 /** The ONE place the viewer's route is written. Deep links carry the passage they came from. */
 export function documentPath(
   id: string,
-  options: { offset?: number | null; chunk?: string | null; q?: string | null; tab?: string } = {}
+  options: {
+    offset?: number | null
+    /** Where the linked span ENDS (a fact's quote): the viewer marks `offset`…`end` only. */
+    end?: number | null
+    chunk?: string | null
+    q?: string | null
+    tab?: string
+  } = {}
 ): string {
   const params = new URLSearchParams()
   if (options.tab) params.set('tab', options.tab)
   if (typeof options.offset === 'number' && options.offset >= 0) {
     params.set('offset', String(options.offset))
+    if (typeof options.end === 'number' && options.end > options.offset) {
+      params.set('end', String(options.end))
+    }
   }
   if (options.chunk) params.set('chunk', options.chunk)
   if (options.q) params.set('q', options.q)
@@ -364,16 +533,18 @@ export function documentCardFromDocument(
   }
 }
 
-// ---- Document cards from a knowledge tool's answer (D18) ---------------------------------------
+// ---- Document cards from a knowledge tool's answer ---------------------------------------
 
 /**
- * The three built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
+ * The built-in knowledge tools, named ONCE. The server's tool modules and the chat UI's
  * labels both read these, so a rename cannot leave one of them behind.
  */
 export const KNOWLEDGE_TOOLS = {
   search: 'search_knowledge',
   get: 'get_document',
   list: 'list_documents',
+  /** Knowledge facts (D43) — offered only to a tenant with the `knowledge-facts` flag. */
+  facts: 'lookup_facts',
 } as const
 
 /** Whitespace-collapsed head of a text, ellipsised. Pure; `null` in, `null` out. */
@@ -398,9 +569,20 @@ const searchToolResultShape = z.object({
       documentId: z.string().uuid(),
       title: z.string(),
       totalPassages: z.number().int().nonnegative().optional(),
+      /** A platform document (a plugin's user guide): no card, the documents page cannot open it. */
+      platform: z.literal(true).optional(),
     })
   ),
 })
+
+/** The facts a `lookup_facts` answer (or `search_knowledge`'s `facts` block) cited — their sources. */
+const factGroupsShape = z.array(
+  z.object({
+    facts: z.array(z.object({ documentId: z.string().uuid(), documentTitle: z.string() })),
+  })
+)
+const factsToolResultShape = z.object({ entities: factGroupsShape })
+const searchFactsShape = z.object({ facts: factGroupsShape })
 
 const listToolResultShape = z.object({
   documents: z.array(
@@ -473,9 +655,27 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
     const search = searchToolResultShape.safeParse(parsed)
     if (!search.success) return []
     for (const doc of search.data.documents) {
+      // A platform document is shared by every workspace and lives outside the documents page,
+      // so a card would link to a 404. Its passages still reach the model through the result.
+      if (doc.platform) continue
       cards.push(
         cardFromTool({ id: doc.documentId, title: doc.title, passages: doc.totalPassages })
       )
+    }
+    // The facts block cites documents too — the source of each fact.
+    const facts = searchFactsShape.safeParse(parsed)
+    if (facts.success) {
+      for (const group of facts.data.facts) {
+        for (const f of group.facts)
+          cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
+      }
+    }
+  } else if (toolName === KNOWLEDGE_TOOLS.facts) {
+    const result = factsToolResultShape.safeParse(parsed)
+    if (!result.success) return []
+    for (const group of result.data.entities) {
+      for (const f of group.facts)
+        cards.push(cardFromTool({ id: f.documentId, title: f.documentTitle }))
     }
   } else if (toolName === KNOWLEDGE_TOOLS.list) {
     const list = listToolResultShape.safeParse(parsed)
@@ -506,7 +706,11 @@ export function documentCardsFromToolResult(toolName: string, result: unknown): 
     )
   }
   const seen = new Set<string>()
-  return cards.filter(c => (seen.has(c.id) ? false : (seen.add(c.id), true)))
+  return cards.filter(c => {
+    if (seen.has(c.id)) return false
+    seen.add(c.id)
+    return true
+  })
 }
 
 /** Every card a persisted assistant message's `toolCalls` imply, in call order. */

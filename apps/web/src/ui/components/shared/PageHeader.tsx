@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 
 export interface Breadcrumb {
   label: string
@@ -17,6 +17,34 @@ interface PageHeaderProps {
   className?: string
 }
 
+/** The trail above a page title, on its own for a surface with no `PageHeader` (an editor toolbar). */
+export function Breadcrumbs({
+  items,
+  className = '',
+}: {
+  items: Breadcrumb[]
+  className?: string
+}) {
+  return (
+    <nav aria-label="Breadcrumb" className={`text-xs text-muted ${className}`}>
+      <ol className="flex flex-wrap items-center gap-1">
+        {items.map((crumb, i) => (
+          <li key={crumb.to ?? crumb.label} className="flex items-center gap-1">
+            {i > 0 && <span aria-hidden="true">/</span>}
+            {crumb.to ? (
+              <Link to={crumb.to} className="hover:underline">
+                {crumb.label}
+              </Link>
+            ) : (
+              <span>{crumb.label}</span>
+            )}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  )
+}
+
 /** Page title row: breadcrumbs, a modest title (no enormous headings), description, actions. */
 export function PageHeader({
   title,
@@ -29,22 +57,7 @@ export function PageHeader({
   return (
     <div className={`mb-6 ${className}`}>
       {breadcrumbs && breadcrumbs.length > 0 && (
-        <nav aria-label="Breadcrumb" className="mb-1.5 text-xs text-muted">
-          <ol className="flex flex-wrap items-center gap-1">
-            {breadcrumbs.map((crumb, i) => (
-              <li key={crumb.to ?? crumb.label} className="flex items-center gap-1">
-                {i > 0 && <span aria-hidden="true">/</span>}
-                {crumb.to ? (
-                  <Link to={crumb.to} className="hover:underline">
-                    {crumb.label}
-                  </Link>
-                ) : (
-                  <span>{crumb.label}</span>
-                )}
-              </li>
-            ))}
-          </ol>
-        </nav>
+        <Breadcrumbs items={breadcrumbs} className="mb-1.5" />
       )}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">

@@ -1,7 +1,7 @@
 ---
 name: rf-plugin
 description: Install, upgrade, remove and audit Rocketflare plugins — a plugin is a git repository copied into this app, not an npm package. Use when someone asks to add a plugin, pull in a plugin's later releases, uninstall one, check the installed set, or author a plugin of their own.
-argument-hint: "[add <repo|path> | upgrade <id> | remove <id> | list | check]"
+argument-hint: "[add [<id|repo|path>] | upgrade <id> | remove <id> | list [--available] | check]"
 ---
 
 # /rf-plugin — the capabilities this app installs
@@ -23,7 +23,12 @@ is as trusting as merging a pull request. Every command prints a plan and stops.
 plan to the user and get an explicit yes before you ever type `--apply`.** Never chain the two.
 
 `$ARGUMENTS` is the command and its target. With none, run step 4 (`list` + `check`) and ask what
-they want to do.
+they want to do. **`add` with no target** shows the catalogue (step 2) and asks which one — never
+"which repository?".
+
+**Before anyone writes a plugin:** check that none already does the job (`pnpm plugin list
+--available`). If none fits, the feature is usually built in the app itself; a plugin is for a
+capability meant to be installed in ANOTHER app too (step 6).
 
 ## 1. Check the ground
 
@@ -39,9 +44,34 @@ and is for people who know why they are using it) because the install should be 
 
 ## 2. `add` — read the plan, then ask
 
+**No id given?** Show what exists first:
+
+```
+pnpm plugin list --available
+```
+
+Expect one line per plugin under `Plugins (github.com/rocketflare-dev/rocketflare-plugins at
+<tag>)` — `id  version  [installed]  description` — read live from the repository at its newest
+release tag, and, only when the person's git credentials can read it, a second block headed
+`Commercial plugins (…)` with a `licence:` line. Say the commercial ones are licensed separately
+and point at that line; never offer one as if it were free. Exit 3 with one `error:` line means the
+repository could not be reached: say so and stop — never answer from memory or an old list.
+`--json` gives `{ catalogues: [{ repo, tag, commercial, licence, plugins: [{ id, version,
+description, subdir, installed, installedVersion }] }] }`. Ask (`AskUserQuestion`) which to
+install, offering the ones not yet installed, then continue below with that id. People browsing
+rather than installing can read https://rocketflare.dev/plugins.
+
 ```
 pnpm plugin add <repo|path>[@ref] [--subdir <dir>]
 ```
+
+**A bare id** (`/rf-plugin add analytics`) is a first-party plugin: repo
+`https://github.com/rocketflare-dev/rocketflare-plugins.git`, `--subdir plugins/<id>`, `@` its
+newest release tag (`git ls-remote --tags --refs <repo> | sed 's#.*/##' | sort -V | tail -1`) —
+never the default branch, which can be ahead of every release. Leaving the `@ref` off does the
+same: a repository with no ref is read at its newest `X.Y.Z` tag. An id the catalogue lists under
+`Commercial plugins` is the same shape in `rocketflare-dev/rocketflare-commercial-plugins`. An id
+in neither is not published: ask for the repository.
 
 A **repo URL** is mirrored under `.upgrade/plugins/` (`--no-fetch` reuses the cache offline); a
 **local path** is read directly, which is the authoring loop (step 6). Expect a plan with these
@@ -57,8 +87,14 @@ blocks and **"Nothing written. Read the plan, then re-run with --apply to instal
   without reading anything else.
 - `Files (n)` — a count per root, plus `(not copied) migrations/` for any install fragment.
 - `Skills` — only when the plugin ships agent skills: each `.claude/skills/<dir>/` it installs.
-  Nothing to do for them; after the install, tell the person the skill exists and what it is for
+  If one is named `<id>-setup`, run it straight after the install. For the rest, tell the person the skill exists and what it is for
   (its `description`), because a skill nobody knows about is only found by accident.
+- `Claude Code hooks` — only when the plugin declares `claudeHooks`: each hook it merges into
+  `.claude/settings.json` (and whether that file is created). They run inside the person's coding
+  agent, so **show these lines verbatim** and say what each does before asking for the yes.
+- `Host files` — only when it declares `hostFiles`: each file `seeded` (absent, copied) or `kept`
+  (already there, untouched). Tell the person these are THEIRS from now on — upgrade never touches
+  them and remove leaves them.
 - `Barrel lines` — the exact line each of the six barrels gains (the sixth, `worker-exports.ts`,
   only when the plugin ships a Durable Object or Workflow class).
 - `Dependencies` — what will be installed into which package.
@@ -83,7 +119,9 @@ tables exist.**
 
 The script does not do these, and each says which KIND it is. An **agent** step is an instruction
 plus a check — run the command, then run the assertion. A **human** step is a decision: stop, and
-ask. Each appears only when the plugin declares the thing it is about.
+ask — a secret's VALUE, a migration containing `DROP`, `--archive`, retiring a Durable Object
+namespace, deleting a live Cloudflare resource. Each appears only when the plugin declares the
+thing it is about.
 
 Nothing about the barrel lines, the bindings, the crons, the route prefixes, the `[vars]` keys or a
 Durable Object's `[[migrations]]` tag is here any more: those are **declarative**, written by
@@ -114,6 +152,8 @@ Then commit: one commit, message `Install plugin <id>@<version>`, so the next up
 pnpm plugin list
 pnpm plugin check
 ```
+
+(`pnpm plugin list --available` is the other list — what could be installed, step 2.)
 
 `check` exits 1 with one `✖` line per failure, and **every line carries the edit**:
 `<file>:<line> <what is wrong> — <the exact change>`. Do what the line says; you should not need
@@ -156,7 +196,11 @@ the person before applying; a `remove` deletes a package from their `package.jso
 another installed plugin cannot use is **exit 6 with nothing written** — report the clash it names.
 
 Exit 4 means hunks rejected — **work remaining, not a failure**, and the script deliberately does
-not stamp the new version until the `*.rej` files are gone. A **vendored** plugin (its `source.repo`
+not stamp the new version until the `*.rej` files are gone: resolve each by hand, delete it, then
+`pnpm plugin upgrade <id> --to <version> --continue` (re-applies the idempotent parts — core edits,
+tomls, dependencies — and stamps; it never re-patches). An upgrade also formats every file it wrote,
+and warns when a core edit's lines were partly in the file already — check that block by eye. A
+**vendored** plugin (its `source.repo`
 is this kit's own repository with no subdirectory — `example-feature` is one) answers *"upgrade it
 with `pnpm kit:upgrade`"* and does nothing: the kit release that moves it forward is the one that
 moves it.
@@ -169,9 +213,12 @@ pnpm plugin remove <id> --archive --apply     # --archive first copies each tabl
 pnpm db:generate --name plugin-<id>-remove    # → DROP TABLE …; read it, then pnpm db:migrate
 ```
 
-Ask about `--archive` **before** applying — after the drop it is not a choice any more. The plan
+Ask about `--archive` **before** applying — after the drop it is not a choice any more. Orphaned
+tables are not a stable state — the `db:generate` above is part of the removal, not optional. The plan
 also prints what to deprovision as HUMAN steps: provisioning creates a plugin's Cloudflare resources but
-never deletes one, and `pnpm remove` on a dependency is printed rather than run.
+never deletes one, and `pnpm remove` on a dependency is printed rather than run. It removes the
+plugin's Claude Code hooks, and lists under **Left in place** the host files it seeded — relay that
+list; they are the person's to delete or keep.
 
 ## 6. Authoring a plugin
 
@@ -205,12 +252,10 @@ exists in one place. It folds `docs/upgrades/unreleased.md` into
 `docs/upgrades/X.Y.Z.md` and prepends the `CHANGELOG.md` section — the same four headings and
 `previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
 
-Everything the plugin keys carries its id: tables prefixed with the id's first hyphen-separated
-segment (`example-feature` → `example_*`; `pnpm plugin check` fails when two installed plugins
-declare one table name), job types `<id>.verb`, the API prefix
-`/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
-CUSTOM events under `<id>.`. Two manifest keys carry its compatibility, and only one of them is
-written by a person: a top-level **`minKit`** — one bare `X.Y.Z`, the oldest kit release it
+What the plugin's code may and may not do — namespacing, the declared import entries, the
+module-evaluation trap, each `ServerPlugin` / `UiPlugin` slot, the isolation test it owns — is
+`apps/web/src/plugins/CLAUDE.md`; read it before writing plugin code. Two manifest keys carry its
+compatibility, and only one of them is written by a person: a top-level **`minKit`** — one bare `X.Y.Z`, the oldest kit release it
 supports, a floor with no ceiling — and **`uses`**, the host symbols it imports. **Never hand-write
 `uses`**: `pnpm plugin export` derives it from the plugin's own imports, and a hand-written one is
 exactly the prediction this replaced. Re-export after any change to what the plugin imports, and
@@ -224,6 +269,10 @@ at `skills/<id>/SKILL.md` (or `skills/<id>-<what>/`) in the plugin repository �
 `"skills"`, and `add` installs it at `.claude/skills/<dir>/`. Companion files (`reference.md`, one
 file per provider) sit beside SKILL.md and travel with it. Never put it under the repository's own
 `.claude/`, which is never copied. `pnpm plugin export` writes installed skills back to `skills/`.
+A skill may also carry the script a **`claudeHooks`** entry runs (`node
+"$CLAUDE_PROJECT_DIR/.claude/skills/<dir>/<script>.mjs"` — the only command shape allowed), and
+content the developer should own goes in **`hostFiles`** (`docs/<id>/`, `apps/web/public/<id>/`,
+`apps/web/src/host/<id>/`, imported as `@/host/<id>/…`). `reference.md` has both.
 
 A plugin that builds on another (`requires.plugins: ["connectors"]`) is proved in CI by the kit's
 `plugin-ci.yml` with its requirements installed FIRST, resolved by id from the same repository — so

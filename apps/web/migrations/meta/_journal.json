@@ -141,6 +141,118 @@
       "when": 1792179400737,
       "tag": "0019_kit-agent-volume",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1794024503900,
+      "tag": "0020_kit-idp-managed-tenancy",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1794032010537,
+      "tag": "0021_kit-idp-blocked-source",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1794204972581,
+      "tag": "0022_kit-invitation-send-limits",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1794288358005,
+      "tag": "0023_kit-platform-knowledge",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1794295938234,
+      "tag": "0024_kit-plugin-events",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1794336958893,
+      "tag": "0025_kit-agent-runs-input-from-requester",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1794381323243,
+      "tag": "0026_kit-tenant-creation-counters",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1794899698655,
+      "tag": "0027_kit-knowledge-chunk-structure",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1794904282457,
+      "tag": "0028_kit-knowledge-facts",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1794905571768,
+      "tag": "0029_kit-knowledge-document-origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1794982493517,
+      "tag": "0030_kit-knowledge-judgements-and-refs",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1794988165549,
+      "tag": "0031_kit-agent-run-turns",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1794993530923,
+      "tag": "0032_kit-agent-durable-phase3",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1795158150699,
+      "tag": "0033_kit-mcp-server",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1795161286197,
+      "tag": "0034_kit-mcp-oauth",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1795504892086,
+      "tag": "0035_kit-knowledge-context",
+      "breakpoints": true
     }
   ]
 }

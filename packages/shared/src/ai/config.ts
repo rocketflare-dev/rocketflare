@@ -1,5 +1,5 @@
 /**
- * Tenant AI configuration contracts (D17): the provider enum, the sanitised `ai_configs` row the
+ * Tenant AI configuration contracts: the provider enum, the sanitised `ai_configs` row the
  * API returns (`hasCredential`, never the key), the write-only upsert body, the connection test
  * and the readiness summary the Home checklist / settings page render. `PROVIDER_PRESETS` and
  * `DEFAULT_MODELS` are data both the settings form and `services/ai/providers.ts` read, so the
@@ -11,7 +11,7 @@ import { z } from 'zod'
  * v1 provider set. `anthropic_compatible` = Anthropic wire format behind a bearer token
  * (Fireworks, Moonshot presets); `openai_compatible` = `/v1/chat/completions` + `/v1/embeddings`
  * behind a bearer token (any vLLM/Ollama/proxy). `workers_ai` is the zero-key binding — embeddings
- * AND chat, the floor every workspace can fall back to. `typesafe` is TypeSafe's Jev (D37): typed
+ * AND chat, the floor every workspace can fall back to. `typesafe` is TypeSafe's Jev: typed
  * judgments with probabilities, never text — it serves the `decisions` scope and nothing else.
  * Append values LAST — a Postgres enum cannot use a value in the migration that adds it.
  */
@@ -27,10 +27,12 @@ export const aiProviderSchema = z.enum(AI_PROVIDERS)
 export type AiProvider = z.infer<typeof aiProviderSchema>
 
 /**
- * Which client a config feeds: the chat/completion client, the embeddings client, or the
- * decisions client behind `ctx.decide` (D37 — typed questions answered with probabilities).
+ * Which client a config feeds: the chat/completion client, the embeddings client, the
+ * decisions client behind `ctx.decide` (typed questions answered with probabilities), or the
+ * reranker knowledge search reorders its fused candidates with (a Cohere-style `POST /rerank`
+ * endpoint, or Workers AI's `bge-reranker-base`). Append values LAST.
  */
-export const AI_SCOPES = ['chat', 'embeddings', 'decisions'] as const
+export const AI_SCOPES = ['chat', 'embeddings', 'decisions', 'rerank'] as const
 export const aiScopeSchema = z.enum(AI_SCOPES)
 export type AiScope = z.infer<typeof aiScopeSchema>
 
@@ -97,6 +99,22 @@ export type AiConfigListResponse = z.infer<typeof aiConfigListResponseSchema>
  * scope's default (the previous default is cleared in the same transaction); the first row in a
  * scope is always made default.
  */
+/** The endpoint a base URL names: host case and trailing slashes aside, absent stays absent. */
+function normalizedBaseUrl(baseUrl: string | null | undefined): string | null {
+  if (!baseUrl) return null
+  if (!URL.canParse(baseUrl)) return baseUrl
+  const url = new URL(baseUrl)
+  return `${url.origin}${url.pathname.replace(/\/+$/, '')}${url.search}`
+}
+
+/** Do two base URLs name the same endpoint? A stored key is kept only while this holds. */
+export function sameAiEndpoint(
+  a: string | null | undefined,
+  b: string | null | undefined
+): boolean {
+  return normalizedBaseUrl(a) === normalizedBaseUrl(b)
+}
+
 export const upsertAiConfigRequestSchema = z.object({
   scope: aiScopeSchema.default('chat'),
   label: z.string().trim().min(1).max(80),
@@ -160,6 +178,11 @@ export const aiReadinessSchema = z.object({
    * probabilities (uncalibrated); provider/model are then the chat model's. Ready iff chat is.
    */
   decisions: aiScopeReadinessSchema,
+  /**
+   * The reranker knowledge search uses. Optional by design: `ready: false` (`source: 'none'`)
+   * means search answers in fused order, exactly as it did before reranking existed.
+   */
+  rerank: aiScopeReadinessSchema,
 })
 export type AiReadiness = z.infer<typeof aiReadinessSchema>
 
@@ -193,11 +216,27 @@ export const DEFAULT_CHAT_MODELS: Partial<Record<AiProvider, string>> = {
   workers_ai: WORKERS_AI_CHAT_MODEL,
 }
 
+/**
+ * The zero-key reranker: Workers AI's BGE cross-encoder. Its raw scores are logits, mapped to
+ * [0, 1] by a sigmoid (`services/ai/rerank.ts`) so every reranker's score reads on one scale.
+ */
+export const WORKERS_AI_RERANK_MODEL = '@cf/baai/bge-reranker-base'
+
+/** Rerank defaults per provider (an `openai_compatible` rerank row names its vendor's model). */
+export const DEFAULT_RERANK_MODELS: Partial<Record<AiProvider, string>> = {
+  workers_ai: WORKERS_AI_RERANK_MODEL,
+  openai_compatible: '',
+}
+
 /** What a new config for `(provider, scope)` lands on — `DEFAULT_MODELS` is per provider, not per scope. */
 export const defaultModelFor = (provider: AiProvider, scope: AiScope): string =>
-  (scope === 'chat' ? DEFAULT_CHAT_MODELS[provider] : undefined) ?? DEFAULT_MODELS[provider]
+  (scope === 'chat'
+    ? DEFAULT_CHAT_MODELS[provider]
+    : scope === 'rerank'
+      ? DEFAULT_RERANK_MODELS[provider]
+      : undefined) ?? DEFAULT_MODELS[provider]
 
-/** Embedding dimension every provider is reduced to (D18); `bge-m3` is natively 1024. */
+/** Embedding dimension every provider is reduced to; `bge-m3` is natively 1024. */
 export const EMBEDDING_DIM = 1024
 
 export interface ProviderPreset {
@@ -209,6 +248,8 @@ export interface ProviderPreset {
   defaultModel: string
   /** Anthropic-compatible vendors that spend output tokens reasoning unless `thinking` is disabled. */
   note?: string
+  /** Scopes the preset is offered for; absent = every scope its provider serves. */
+  scopes?: readonly AiScope[]
 }
 
 /**
@@ -242,11 +283,50 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     baseUrl: '',
     defaultModel: '',
     note: 'Any /v1/chat/completions + /v1/embeddings endpoint (vLLM, Ollama, a proxy). Include /v1.',
+    scopes: ['chat', 'embeddings'],
+  },
+  // Rerankers: a Cohere-style `POST {base}/rerank` behind a bearer key, so an `openai_compatible`
+  // row — the request dialect (Cohere / Voyage / Fireworks) follows the base URL's host.
+  {
+    id: 'fireworks-rerank',
+    name: 'Fireworks AI',
+    provider: 'openai_compatible',
+    baseUrl: 'https://api.fireworks.ai/inference/v1',
+    defaultModel: 'fireworks/qwen3-reranker-8b',
+    scopes: ['rerank'],
+  },
+  {
+    id: 'cohere-rerank',
+    name: 'Cohere',
+    provider: 'openai_compatible',
+    baseUrl: 'https://api.cohere.com/v2',
+    defaultModel: 'rerank-v3.5',
+    scopes: ['rerank'],
+  },
+  {
+    id: 'voyage-rerank',
+    name: 'Voyage AI',
+    provider: 'openai_compatible',
+    baseUrl: 'https://api.voyageai.com/v1',
+    defaultModel: 'rerank-2.5-lite',
+    scopes: ['rerank'],
+  },
+  {
+    id: 'rerank-compatible',
+    name: 'Cohere-compatible (generic)',
+    provider: 'openai_compatible',
+    baseUrl: '',
+    defaultModel: '',
+    note: 'Any POST {base}/rerank endpoint answering { results | data: [{ index, relevance_score }] }.',
+    scopes: ['rerank'],
   },
 ]
 
-export const presetsFor = (provider: AiProvider): ProviderPreset[] =>
-  PROVIDER_PRESETS.filter(p => p.provider === provider)
+/** The presets for a provider — and, given a scope, only those offered for it. */
+export const presetsFor = (provider: AiProvider, scope?: AiScope): ProviderPreset[] =>
+  PROVIDER_PRESETS.filter(
+    p => p.provider === provider && (!scope || !p.scopes || p.scopes.includes(scope))
+  )
 
 /** Display form of a model id: the last path segment (Fireworks ids are long paths). */
 export const shortModelName = (model: string): string => model.split('/').pop() || model

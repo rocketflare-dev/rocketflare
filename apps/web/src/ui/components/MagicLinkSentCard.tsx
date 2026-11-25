@@ -1,0 +1,41 @@
+/** "Check your email": inline in Login after a request, and the `/magic-link/sent` page's body. */
+import { CheckCircleIcon } from '@heroicons/react/24/outline'
+import { Link } from 'react-router'
+
+export function MagicLinkSentCard({
+  email,
+  onReset,
+}: {
+  email: string | null
+  onReset?: () => void
+}) {
+  return (
+    <div className="text-center">
+      <CheckCircleIcon className="w-10 h-10 mx-auto mb-3 text-success" />
+      <h1 className="text-lg font-semibold mb-1">Check your email</h1>
+      <p className="text-sm text-secondary">
+        We sent a sign-in link
+        {email ? (
+          <>
+            {' '}
+            to <span className="font-medium text-base-content">{email}</span>
+          </>
+        ) : null}
+        . It expires shortly — open it on this device.
+      </p>
+      <p className="text-xs text-muted mt-4">
+        Nothing arrived? Check spam, or{' '}
+        {onReset ? (
+          <button type="button" className="link link-hover" onClick={onReset}>
+            try another address
+          </button>
+        ) : (
+          <Link to="/login" className="link link-hover">
+            request a new link
+          </Link>
+        )}
+        .
+      </p>
+    </div>
+  )
+}

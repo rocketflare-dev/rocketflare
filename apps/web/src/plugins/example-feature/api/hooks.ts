@@ -1,8 +1,8 @@
 /**
- * The plugin's lifecycle hooks (D31): what a new organisation starts with, and what
+ * The plugin's lifecycle hooks: what a new organisation starts with, and what
  * `pnpm seed --demo` fills in.
  *
- * Both obey the kit's hook contract, which is one sentence: **idempotent, post-commit,
+ * Both obey the core hook contract, which is one sentence: **idempotent, post-commit,
  * best-effort.** `onTenantCreated` runs outside the create transaction and its failure is swallowed
  * by the host, so it must never be the only way a tenant gets something it needs — here the welcome
  * note is decoration, and a tenant without one works perfectly. `seedDemo` is handed a `demoId`
@@ -21,11 +21,13 @@ import { allTables } from '@/plugins/api/peers'
 import { exampleNotes } from '../db/schema'
 
 /**
- * A new organisation gets one note, so the page is never empty on first view. Idempotent by
- * construction: it inserts only when the tenant has none, which is also what makes it safe if the
- * host ever retries the hook.
+ * A new organisation gets one note, so the page is never empty on first view — but only when it
+ * starts with the feature: a hook that creates rows has no nav entry to hide behind, so a deployment
+ * that never turned the flag on gets nothing. Idempotent by construction: it inserts only when the
+ * tenant has none, which is also what makes it safe if the host ever retries the hook.
  */
-export async function onTenantCreated({ db, tenantId }: HookCtx): Promise<void> {
+export async function onTenantCreated({ db, tenantId, features }: HookCtx): Promise<void> {
+  if (!features.includes(EXAMPLE_FEATURE_FLAG)) return
   const existing = await db.$count(exampleNotes, eq(exampleNotes.tenantId, tenantId))
   if (existing > 0) return
   await db.insert(exampleNotes).values({
@@ -45,8 +47,8 @@ export async function onTenantCreated({ db, tenantId }: HookCtx): Promise<void> 
  * whose behaviour is worth seeing, and 50% counted in organisations means this tenant may or may
  * not have it, which is the honest demonstration of a deterministic bucket rather than a bug.
  *
- * The flag row belongs to whatever SHIPS the flag, which is this plugin: a kit with this plugin
- * removed must not seed state for a key no code reads. `feature_flags` is the KIT's table, though,
+ * The flag row belongs to whatever SHIPS the flag, which is this plugin: an app with this plugin
+ * removed must not seed state for a key no code reads. `feature_flags` is a CORE table, though,
  * so it is reached through `allTables()` — the declared way to name the merged schema — and
  * **called inside the function rather than at module scope**, because that module reads the plugin
  * barrel and a module-scope call closes the cycle with one side still `undefined`.

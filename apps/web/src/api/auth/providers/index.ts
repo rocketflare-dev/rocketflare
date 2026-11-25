@@ -1,5 +1,5 @@
 /**
- * Provider registry (D11). `/auth/methods` and the generic OAuth router both read from here;
+ * Provider registry. `/auth/methods` and the generic OAuth router both read from here;
  * an id that is not in the registry, or one whose secrets are absent, is a 404.
  */
 import { type OAuthProviderName, oauthProviderNameSchema } from '@rocketflare/shared/auth'

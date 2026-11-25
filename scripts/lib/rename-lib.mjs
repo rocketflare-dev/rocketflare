@@ -45,8 +45,16 @@ export const KIT = Object.freeze({
    * `rocketflare-plugin.json` is the ECOSYSTEM's filename, identical in every plugin repository.
    * Without these three, a copy renamed to `acme` looked for `.acme.json`, `.gitignore` stopped
    * ignoring the sidecar, and an app could never install any plugin at all.
+   *
+   * `rocketflare.dev/plugins` is the published plugin catalogue `pnpm plugin list --available`
+   * points at — upstream, like the org; renamed, it became a page on the app's own domain.
    */
-  preserved: ['.rocketflare.local.json', 'rocketflare-plugin.json', '.rocketflare.json'],
+  preserved: [
+    '.rocketflare.local.json',
+    'rocketflare.dev/plugins',
+    'rocketflare-plugin.json',
+    '.rocketflare.json',
+  ],
 })
 
 export const SLUG_RE = /^[a-z][a-z0-9-]*$/
@@ -239,7 +247,6 @@ export const EXCLUDED_PATHS = Object.freeze([
   'scripts/release-check.mjs',
   'scripts/lib/upgrade-lib.mjs',
   'scripts/lib/upgrade-lib.d.mts',
-  'apps/web/tests/config/upgrade-lib.test.ts',
   'apps/web/tests/config/kit-manifest.test.ts',
   'CHANGELOG.md', // the kit's releases, described in the kit's own terms
 ])
@@ -257,9 +264,23 @@ export const EXCLUDED_PREFIXES = Object.freeze([
   'apps/web/tests/kit-only/',
 ])
 
+/**
+ * A licence or notice file, anywhere in the tree: `LICENSE`, `LICENCE.md`, `LICENSE-MIT`, `COPYING`,
+ * `NOTICE.txt`, or anything under a `LICENSES/` directory. Upper case only, so a source file such as
+ * `notice.ts` or `License.tsx` is still translated. Its words are legal text naming a licensor, so no pass
+ * may rewrite them: not the rename, and not a plugin install translating a plugin into the app's
+ * names (a commercial plugin carries its licence inside the folder it installs into).
+ */
+export function isLicenceFile(relPath) {
+  const segments = relPath.replaceAll('\\', '/').split('/')
+  if (segments.slice(0, -1).includes('LICENSES')) return true
+  return /^(LICEN[CS]E|COPYING|NOTICE)(\.(md|txt)|-[\w.-]+)?$/.test(segments.at(-1) ?? '')
+}
+
 export function isExcluded(relPath) {
   const p = relPath.replaceAll('\\', '/')
   if (EXCLUDED_PATHS.includes(p)) return true
+  if (isLicenceFile(p)) return true
   if (EXCLUDED_PREFIXES.some(prefix => p.startsWith(prefix))) return true
   return p.split('/').some(seg => EXCLUDED_DIRS.includes(seg))
 }

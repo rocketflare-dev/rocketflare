@@ -21,11 +21,16 @@ itself and runs the driver conformance pass under both drivers (docs/CONCEPTS.md
 `typecheck` regenerates `apps/web/worker-configuration.d.ts` (`wrangler types`); commit the file
 if it changed — it is not a gate check, the compile against the fresh types is.
 
+While you work, `pnpm gate --changed` runs each step over what the branch changed since its merge
+base with `origin/main`: lint on those files, typecheck/test/build in the packages they reach,
+only the web tests their imports reach. A config, lockfile, migration or harness change makes it
+the full gate. Run the full `pnpm gate` before you push (docs/CONCEPTS.md §4).
+
 ## Style (Biome 2, `biome.json`)
 
 - Single quotes, `asNeeded` semicolons, 100 columns, 2-space indent, trailing commas `es5`
 - `import type` / `export type` are errors when violated; unused variables and imports are errors
-- `pnpm lint:fix` before manual fixes; `pnpm lint` (errors only) is the gate's `lint` step
+- `pnpm lint:fix` before manual fixes; `pnpm lint` (a warning fails it, as an error does) is the gate's `lint` step
 - `apps/*/tests/**` and `apps/*/scripts/**` may use `any`; `src/**` in any package may not without a
   `// biome-ignore` line that states why
 
@@ -34,6 +39,12 @@ if it changed — it is not a gate check, the compile against the fresh types is
 - Strict, ES2022, bundler resolution, `noEmit` in `tsconfig.base.json`; each package extends it
   (`apps/web/tsconfig.json` covers its `src`, `tests`, `scripts`; `apps/cli`, `packages/shared` theirs).
   `pnpm typecheck` runs all three
+- `tsc` is TypeScript 7 (the native compiler): no `baseUrl` (removed in 7), so `paths` entries are
+  `./`-relative. TypeScript 7 has no stable JavaScript API, so code that PARSES TypeScript — the
+  source-scanning guards in `tests/config/` (`driver-results`, `driver-conformance`,
+  `shared-imports`, `unscoped-allowlist`), `scripts/lib/surface.mjs` and `plugin-api-doc.mjs` —
+  imports `typescript6` (`npm:typescript@6.0.3`, a dev dependency at the root and in `apps/web`)
+  instead. Never import `typescript` for its API
 - Alias `@/*` → `apps/web/src/*` (web only). Shared contracts are imported as `@rocketflare/shared/<module>`
   (workspace link, resolved to `packages/shared/src/<module>.ts` — TS source, no build). `packages/shared`
   imports nothing from `apps/web` or `apps/cli` — it must bundle for the browser; `apps/cli` never
@@ -53,7 +64,7 @@ Changing behaviour changes the doc in the same PR:
 
 | You changed | Update |
 |---|---|
-| any behaviour an adopted copy could want | an entry in `docs/upgrades/unreleased.md` — the ONLY thing that carries a change into the copies people are running (`docs/upgrades/README.md`); CI fails a PR touching `apps/**` or `packages/**` without one. **Write it in the note format** (`docs/upgrades/README.md` § "Writing one"): four headings, paragraph 1 of "What changed" is lifted verbatim into `CHANGELOG.md` so it is one standalone sentence of ≤ 40 words, no `###` sub-headings, "How to apply" numbered and self-contained, ≤ 150 lines, rationale linked from `docs/CONCEPTS.md` rather than restated |
+| **kit repository only:** any behaviour an adopted copy could want | an entry in `docs/upgrades/unreleased.md` — the ONLY thing that carries a change into the copies people are running (`docs/upgrades/README.md`); `kit.yml` fails a PR touching `apps/**` or `packages/**` without one. **An app built from the kit writes none** — the rename removes that check, and a kit note in an app collides with the kit's own on the next `kit:upgrade`. **Write it in the note format** (`docs/upgrades/README.md` § "Writing one"): four headings, paragraph 1 of "What changed" is lifted verbatim into `CHANGELOG.md` so it is one standalone sentence of ≤ 40 words, no `###` sub-headings, "How to apply" numbered and self-contained, aim for ≤ 150 lines (longer passes, with a warning that a release is due), rationale linked from `docs/CONCEPTS.md` rather than restated |
 | a capability, a mode, a default | `docs/CONCEPTS.md` section + its "Known gaps" |
 | a command, an env name, a setup step | `SETUP.md`, `apps/web/.dev.vars.example`, `README.md` commands; root `package.json` scripts if a new package script should be reachable from the root; `scripts/bootstrap.mjs` (the step that runs it and its verify line) and `.claude/skills/rf-setup/SKILL.md` (the step table) |
 | a skill or its flags | the skill's `SKILL.md` (and its companion `checklist.md` / `reference.md`), `README.md` "Getting started", `docs/CONCEPTS.md` §13 |

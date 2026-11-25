@@ -18,10 +18,27 @@ code conventions are in `.claude/rules/`. If this is a freshly copied kit, do
 Legend: `[ready]` works out of the box · `[config]` needs your configuration
 
 **Fix missing prerequisites proactively rather than reporting them.** If Node is missing or too
-old, install 24 (`nvm install` reads `.nvmrc`, or `fnm use`, or the system package manager). If
-pnpm is missing, `corepack enable` (it reads `packageManager` from the root `package.json`). If
+old, install 26 (`nvm install` reads `.nvmrc`, or `fnm use`, or the system package manager). If
+pnpm is missing, `npm i -g pnpm@<the packageManager version>` from that Node (Node 26 ships no
+corepack; where one exists, `corepack enable` also works). If
 Docker is unavailable on macOS, `brew install colima docker && colima start`; on Linux install Docker
 Engine and add your user to the `docker` group. Confirm the tool works, then carry on.
+
+**Windows (WSL2) — before you start.** Three things stop a fresh Windows PC before the bootstrap
+can run, and `bash scripts/bootstrap.sh` names each one (`scripts/lib/prereqs.sh`):
+1. **A normal Ubuntu user.** A distro with only `root` is refused (correctly). In it:
+   `adduser <name> && usermod -aG sudo <name>`; then from Windows PowerShell
+   `wsl -d <distro> -u <name>` (`wsl --manage <distro> --set-default-user <name>` makes it the
+   default). Clone the kit into the Linux home (`~`), not under `/mnt/c`.
+2. **Docker Desktop's WSL integration.** Settings → Resources → WSL integration → turn on the
+   distro → Apply, then **quit Docker Desktop and start it again** — restarting the distro is not
+   enough. `docker version` inside the distro must answer.
+3. **Node 26 through a version manager.** The bootstrap installs Node only through nvm or fnm
+   that is already there: `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`,
+   open a new shell, `nvm install 26`.
+WSL appends Windows' PATH to the distro's, so `corepack`, `pnpm` or `node` may resolve to a
+Windows copy under `/mnt/c` (a CRLF script: `/bin/sh^M: bad interpreter`). The bootstrap ignores any
+of them on a Windows drive and installs pnpm with the active Node's own `npm`.
 
 ---
 
@@ -32,8 +49,9 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 > line each, a `✖` line plus a `fix:` hint on the first failure — and ends with the browser open at
 > `http://localhost:3000/login?as=owner@example.test`. macOS or Linux (Windows: WSL2). Re-runnable on
 > a half-done machine: it inspects before it acts and never overwrites a value you wrote. Flags:
-> `--offline` (no Cloudflare account: comments the `[ai]` block out of both tomls), `--online`
-> (restore it), `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
+> `--offline` (no Cloudflare account: `DEV_WORKERS_AI=off` in `.dev.vars`, local `wrangler dev`
+> runs without Workers AI and no tracked file changes, §1.6), `--online` (turn it back on),
+> `--no-demo` (plain `pnpm seed`), `--no-plugins` (do not install `defaultPlugins`,
 > §1.4b), `--no-dev` (stop after step 8 and print what to run next), `--no-open`,
 > `--as <email>`, `--yes`, `--verbose`, `--db-url <url>` (an existing Postgres instead of Docker,
 > §1.4); `--check` is `pnpm preflight`. `--offline` never runs `wrangler whoami`, so step 8 makes
@@ -51,11 +69,11 @@ Engine and add your user to the `docker` group. Confirm the tool works, then car
 
 ### 1.1 Toolchain
 ```bash
-node -v            # v24.x — from .nvmrc
+node -v            # v26.x — from .nvmrc
 corepack enable && pnpm -v   # 10.x — from package.json packageManager
 docker info >/dev/null && echo docker-ok
 ```
-Verify: three lines — `v24.*`, `10.*`, `docker-ok`. `pnpm preflight` is the same check as one
+Verify: three lines — `v26.*`, `10.*`, `docker-ok`. `pnpm preflight` is the same check as one
 read-only command (toolchain, `.dev.vars`, Postgres, Cloudflare login, `pnpm dev:status`; exit 3
 when anything is missing) — `bash scripts/bootstrap.sh` installs Node through an fnm/nvm that is
 already present and pnpm through corepack, and never pipes a URL into a shell.
@@ -90,6 +108,12 @@ pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phas
 ```
 Verify: `db:up` prints the port it chose; `db:check` prints the server version; `db:migrate` ends
 with the applied migration count and no `role "rocketflare_app" does not exist` error.
+
+After a schema change, `pnpm db:generate` writes the migration and then applies every migration to
+a scratch database it creates beside this one and drops: `✔ scratch check` means the new SQL
+applies to an empty database; a `✖` names the statement Postgres refused, in the file not yet
+applied anywhere — fix it by hand (`.claude/rules/database.md`), then `pnpm db:generate --check`.
+A non-local `DATABASE_URL` skips the check with a note.
 
 **The port is chosen, not fixed.** `dev:db:up` runs `apps/web/scripts/dev-db.mjs`, which gives this
 checkout its own compose project, container and port: it keeps the port already in `DATABASE_URL`
@@ -136,6 +160,7 @@ included, lands in your shell history.
 ### 1.4b Plugins `[ready]`
 ```bash
 pnpm plugin list                  # what is installed (id, version, repo, when)
+pnpm plugin list --available      # what could be: every published plugin, read live
 pnpm plugin check                 # audit them: exit 1 with one line per failure
 ```
 A **plugin** is a git repository copied into this app — never an npm package — that contributes
@@ -172,10 +197,18 @@ cron or `[vars]` key it declares is written into both tomls by `pnpm provision c
 ```bash
 pnpm seed             # idempotent: demo tenant, owner/admin/member users, one API key
 pnpm seed --demo      # the same, plus a populated workspace (what the bootstrap runs; or SEED_DEMO=1)
+pnpm seed --feature hotel                 # + a per-organisation override: on for the seeded tenant
+pnpm seed --feature hotel=off@other-org   # off for the tenant with that slug (repeatable)
 ```
 `pnpm seed` creates the tenant `Acme` (`acme`), `owner@` / `admin@` / `member@example.test`, a
 pending invitation for `invited@example.test`, the global admin `admin@rocketflare.local` and one API
-key. `--demo` additionally fills that workspace with a logistics company in use (the tenant is
+key. The accounts are `DEV_ACCOUNTS` in `apps/web/src/ui/lib/dev-accounts.ts` — the same list the
+login page's **Dev quick login** buttons read, so an app edits its accounts there once. The API key
+prints on a line labelled `api key:` and the invite link as a `local demo link`: both are values
+for this machine's database only, safe to discard. Each installed plugin's `hooks.seed` runs on
+every `pnpm seed` (its reference data, and the per-organisation flag that shows it); `--feature
+<key>[=on|off][@<tenant-slug>]` writes the same override `/admin/feature-flags` does, after the
+plugins and the demo, so it has the last word. `--demo` additionally fills that workspace with a logistics company in use (the tenant is
 renamed `Acme Logistics` in `multi` mode) — more members, two
 sibling tenants, two weeks of activity, conversations, an indexed knowledge base, finished agent
 runs (`summarize-text`, `research-topic`), an AI usage ledger and rebuilt fact tables — so every
@@ -183,7 +216,7 @@ page has something to show. Every demo row has a fixed id and is inserted `onCon
 re-running adds nothing; the chunk vectors are deterministic stand-ins (`embeddingModel:
 'seed:deterministic'`), so a seeded passage is found by the lexical half of the hybrid search, not
 the dense half. Local database only — it is a `tsx` script over `DATABASE_URL`.
-Verify: the output lists the seeded emails and prints the API key **once** (on the first run only;
+Verify: the output lists the seeded emails and prints the `api key:` line **once** (on the first run only;
 later runs say it already exists); with `--demo` it ends with a "Workspace `acme` now holds" table.
 `pnpm db:studio` shows the rows.
 
@@ -208,23 +241,28 @@ pnpm dev              # apps/web: wrangler dev :3001 + vite :3000 (strict ports;
 > **Cloudflare login and the AI binding.** `wrangler dev` runs everything locally EXCEPT the Workers AI
 > binding (`[ai]` in `apps/web/wrangler.toml`), which always calls Cloudflare — so the first `pnpm dev`
 > on a machine that has never run `pnpm web exec wrangler login` will ask you to log in (a free account
-> is enough). To stay fully offline, comment out the `[ai]` block in BOTH tomls (the parity test keeps
-> them in sync): `pnpm bootstrap --offline` does exactly that, and `pnpm bootstrap --online` restores
-> it. Chat then needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY`
-> or report "not configured". After toggling, `pnpm typecheck` regenerates
-> `apps/web/worker-configuration.d.ts` without `AI` — restore the block (`--online`) before
-> committing so CI's typegen diff stays clean.
+> is enough). To stay fully offline, set `DEV_WORKERS_AI=off` in `apps/web/.dev.vars` (or the
+> shell): `pnpm bootstrap --offline` writes it and `pnpm bootstrap --online` sets it back to `on`.
+> Every local `wrangler dev` then runs from `apps/web/.wrangler.offline.toml`, a git-ignored copy of
+> `wrangler.toml` without `[ai]` that is regenerated at each launch; the tracked tomls and
+> `worker-configuration.d.ts` never change, so there is nothing to keep out of a commit. Chat then
+> needs a key or a tenant provider (§2.5) and embeddings resolve to `EMBEDDINGS_API_KEY` or report
+> "not configured". Do not comment the `[ai]` block out for this (an older bootstrap did): any
+> `pnpm bootstrap` run puts it back in both tomls and moves the choice to `.dev.vars`.
 
 Verify: both processes report ready; `curl -s localhost:3001/api/health` returns `{"status":"ok",…}`;
 http://localhost:3000 renders the shell. Sign in: enter the seeded owner email, copy the magic-link
 URL from the **wrangler dev console** (no `RESEND_API_KEY` → links are logged, not sent), open it,
 press **Sign in** on the confirm page, land on Home. Shortcut (dev only): `http://localhost:3000/login?as=owner@example.test` signs in
 through `/auth/dev-login` on load — honoured only when the server reports `devLogin`
-(`APP_ENV=development`) and for the four seeded accounts, so an arbitrary address does nothing.
+(`APP_ENV=development`). The page's shortcut acts only for the seeded `DEV_ACCOUNTS`, but the
+endpoint itself has no such list: in development, `POST /auth/dev-login` signs in ANY email
+address, with no password or link, and creates the user if it does not exist. It answers 404
+everywhere `APP_ENV` is not `development`.
 
-**Analytics check** (still in 1.6 — same terminal pair). Analytics is a PLUGIN from 0.6.0
-(`docs/CONCEPTS.md` §8, §16) and the bootstrap's `plugins` step installs it, so this works on a
-fresh clone unless you ran `--no-plugins`:
+**Analytics check** (still in 1.6 — same terminal pair). Analytics is an opt-in PLUGIN
+(`docs/CONCEPTS.md` §8, §16) that the bootstrap does not install, so this applies only once you
+have added it (§2.7):
 ```bash
 pnpm cli analytics check-facts       # fact-table freshness; exits 1 when any table is stale
 pnpm cli analytics refresh-facts     # enqueue a rebuild for this organisation
@@ -241,10 +279,9 @@ activity numbers. By hand, `curl -b <cookie> localhost:3001/api/analytics/pages`
 is a JSON 401, never HTML. `GET /api/analytics/facts/status` (owner/admin) shows the same freshness
 as the CLI.
 
-**With `--no-plugins` there is no analytics at all** — no nav item, no `/api/analytics`, no
+**Without the plugin there is no analytics at all** — no nav item, no `/api/analytics`, no
 `/cubejs-api`, no `/mcp`, and no drizzle-cube in either bundle. That is the kit's bare shape, and
-`pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git@1.0.2 --apply`
-(then `pnpm db:generate --name plugin-analytics-1.0.2 && pnpm db:migrate`) is how it comes back.
+`/rf-plugin add analytics` (by hand: §2.7) is how you add it.
 
 > **Cookie note.** The session cookie is `__Host-session`, and the `__Host-` prefix *requires* the
 > `Secure` flag even in development. Chrome and Firefox treat `http://localhost` as a secure context so
@@ -262,13 +299,14 @@ pnpm cli whoami
 ```
 
 > **Headless / no browser** (CI, agents): skip `pnpm cli login`. Sign in with the dev-login cookie
-> (or any session) and hit `GET /auth/cli?redirect_uri=http://127.0.0.1:8765/callback` — the
-> `Location` header carries `key=`; export it as `ROCKETFLARE_API_KEY` with `ROCKETFLARE_URL=http://localhost:3001`,
+> (or any session) and `POST /auth/cli/confirm` with `{"redirectUri":"http://127.0.0.1:8765/callback"}` — the
+> `redirectTo` in the answer carries `key=`; export it as `ROCKETFLARE_API_KEY` with `ROCKETFLARE_URL=http://localhost:3001`,
 > then `pnpm cli whoami`. In real environments create a tenant API key in Settings → API keys instead.
 
 `login` starts a loopback listener on the first free port in `127.0.0.1:8765–8770` and opens
-`/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback`; after login + tenant select the server
-mints a tenant API key named `cli:<your hostname>` and redirects back. The key is stored in
+`/auth/cli?redirect_uri=http://127.0.0.1:<port>/callback&state=<random>`; after login + tenant select
+you confirm on a page that names the port and the organisation, and the server mints a tenant API
+key named `cli:<your hostname>` and sends the browser back. The key is stored in
 `~/.rocketflare/config.json` (mode `0600`) and is never printed in full.
 Verify: `whoami` prints your email, the tenant name and a key prefix; `pnpm cli members list --json |
 head` prints JSON; `ls -l ~/.rocketflare/config.json` shows `-rw-------`; a wrong key exits `2`. For CI or
@@ -277,14 +315,14 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 ### 1.8 Tests
 ```bash
 pnpm test             # starts Postgres on :5433 + the Neon proxy on :4433 (apps/web/docker-compose.test.yml),
-                      # then every package: web api + api-isolated + driver (real DB), ui (jsdom), config (no DB);
+                      # then every package: web api + api-isolated + api-fixtures + driver (real DB), ui (jsdom), config (no DB);
                       # cli — and the driver project again under the neon driver (the seam's conformance pass)
 # No Docker (a coding sandbox's gate): the same command against a throwaway Neon GATE branch —
 # DATABASE_URL + TEST_DATABASE_BRANCH=gate-<short>-<n> + TEST_DATABASE_ENDPOINT=ep-… (docs/CONCEPTS.md
 # §4) — runs the whole suite under neon. It refuses any other remote database.
 ```
 Verify: all projects green — including every installed plugin's own tests, which run in the host's
-projects (`src/plugins/*/tests/{api,ui,config}`). The analytics plugin's `cube-isolation.test.ts`
+projects (`src/plugins/*/tests/{api,ui,config}`). With analytics added, its `cube-isolation.test.ts`
 is the one to watch: two tenants, every cube, disjoint rows.
 `apps/web/tests/config/wrangler-parity.test.ts` passes with the
 placeholder ids still in the tomls — the placeholder check only runs with `REQUIRE_PROVISIONED=1`
@@ -303,7 +341,15 @@ adapter carries its MCP transport, `docs/DEPLOY.md` "Bundle size" — and `pnpm 
 `@duckdb/node-api` peer warning; neither is a problem.
 
 ### 1.10 Public URL via tunnel `[ready]` (optional)
-For OAuth callbacks, emailed magic links or webhooks against your laptop:
+For OAuth callbacks, emailed magic links or webhooks against your laptop.
+
+> **While the tunnel runs, your development instance is on the public internet, dev sign-in
+> included.** `POST /auth/dev-login` takes no password and accepts any email (§1.6), so anyone who
+> learns the tunnel's hostname can sign in as any user — the owner, a global admin — read
+> everything in the local database, mint API keys and spend whatever AI and email keys
+> `.dev.vars` holds. Use dummy data only, keep real provider keys out of `.dev.vars` while it is
+> up, and stop the tunnel (Ctrl-C) as soon as you are done.
+
 ```bash
 pnpm web cfld setup   # once: picks a Cloudflare zone, stores apps/web/.cfld.json (git-ignored)
 pnpm dev:tunnel       # cfld → :3000; apps/web/scripts/tunnel-dev.mjs passes the URL to wrangler as APP_URL
@@ -354,13 +400,25 @@ magic link — it arrives by email.
 3. `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
 
 Absent: the button is hidden (`GET /auth/methods`). Verify: "Continue with Google" round-trips.
-An account whose `email_verified` is false is refused — for every provider.
+An account whose `email_verified` is false is refused (`email_unverified`) — for every provider —
+unless that identity is already linked to an account, which then signs in as before.
 
 ### 2.3 Microsoft OAuth (Entra ID)
 1. Azure Portal → App registrations → New; account type "any organizational directory and
    personal accounts" (the kit uses the `common` tenant)
 2. Redirect URI (Web): `{APP_URL}/auth/microsoft/callback` for each origin as in 2.2
 3. Certificates & secrets → new client secret → `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET`
+
+Account matching uses the user principal name, never the separately editable `mail` attribute,
+and only when the signing-in directory lists the UPN's domain among its verified domains (Graph
+`/organization`, read with the `User.Read` scope the app already asks for). Someone whose UPN
+differs from the address they were invited at signs in as their UPN.
+
+**Personal Microsoft accounts** (outlook.com, hotmail.com, live.com) have no directory to prove
+their address, so they are never matched to an account or admitted by it — the callback answers
+`email_unverified`. Such a person signs in another way first (magic link, Google), then links
+Microsoft from account settings; from then on "Continue with Microsoft" signs them in. The same
+holds for a work account whose UPN is on a domain its directory has not verified.
 
 Absent: button hidden. Verify: round trip. Redirect URIs are always derived from `APP_URL`; there
 is no `*_REDIRECT_URI` variable to set.
@@ -376,8 +434,8 @@ One generic OpenID Connect issuer per deployment, beside or instead of the butto
    refused), `OIDC_CLIENT_ID`, and `OIDC_CLIENT_SECRET` unless the client is public. Optional:
    `OIDC_LABEL` (button text, default "Single sign-on"), `OIDC_SCOPES` (default
    `openid email profile`), `AUTH_OIDC_ONLY=true` (the login page shows only the "Continue with <label>"
-   button — signing in is still a click, never an automatic redirect — and hides every other method; the magic-link endpoint stays live for invitations — it hides, it does
-   not disable), `OIDC_TRUST_EMAIL=true` (see Entra below). Locally these go in `.dev.vars`; deployed, everything but the secret is a
+   button — signing in is still a click, never an automatic redirect — and every other sign-in method is
+   off on the server, magic links included: invitation emails carry an accept URL, so they are unaffected), `OIDC_TRUST_EMAIL=true` (see Entra below). Locally these go in `.dev.vars`; deployed, everything but the secret is a
    `[vars]` entry in **both** tomls (commented templates are there) and `OIDC_CLIENT_SECRET` is a
    Worker secret (3.5)
 3. Issuer notes:
@@ -398,7 +456,62 @@ without issuer and client id refuses to boot (config error). Verify: `/auth/meth
 `"oidc": { "label": … }`; "Continue with <label>" round-trips; `Sign out` returns to
 `/login?signedOut=1` (through the issuer's logout page when it advertises `end_session_endpoint`).
 An account whose `email_verified` is `false` — or missing, unless `OIDC_TRUST_EMAIL=true` — is
-refused (`?error=email_unverified`); an existing kit user is linked by verified email.
+refused (`?error=email_unverified`) unless that identity is already linked; an existing kit user
+is linked by verified email.
+
+### 2.3c IdP-managed tenancy (`OIDC_MANAGED_TENANCY=true`)
+For an identity service that decides which organisations a person may use THIS app in, and with
+what role, and puts that in the id_token. With it on, every OIDC sign-in reconciles tenants,
+memberships and global admin from the claims (`docs/CONCEPTS.md` §1, §2), admission comes from the
+claims instead of `SIGNUP_MODE`, and between sign-ins the service can post signed identity events.
+
+The id_token must carry the person's orgs as an array (the claim's name is `OIDC_ORGS_CLAIM`,
+default `orgs`):
+
+```json
+{ "orgs": [{ "id": "org_123", "name": "Acme", "slug": "acme", "role": "admin" }] }
+```
+
+`id` is the org's stable id (the tenant's `external_org_id`), `slug` is optional, and `role` is the
+service's own word for the person's role there.
+
+1. Set up OIDC as in 2.3b. `TENANCY_MODE` must be `multi`
+2. Set **`OIDC_MANAGED_TENANCY=true`** (in `[vars]` of BOTH tomls, like the 2.3b keys), and map the service's roles with `OIDC_ROLE_MAP`:
+   `issuerRole:admin|member` pairs, for example `org_admin:admin,org_member:member` (default
+   `admin:admin,member:member`). An org whose role is not in the map is skipped
+3. Optional: `OIDC_ADMIT_CLAIM` names a boolean claim that admits a person with no orgs (staff who
+   may use every app, say), and `OIDC_GLOBAL_ADMIN_CLAIM` one that makes them a global admin while
+   it is true
+4. `OIDC_SESSION_MAX_AGE_DAYS` (default 7, at most 30): every session, however the person signed
+   in, ends this long after sign-in however active they are, so their claims are re-read at least
+   that often
+5. Identity events (optional): give the service `{APP_URL}/api/identity/events` as its webhook URL
+   and set its signing secret (`whsec_…`) as `IDENTITY_WEBHOOK_SECRET`, a secret
+   (`wrangler secret put IDENTITY_WEBHOOK_SECRET`; `.dev.vars` locally). Keep `OIDC_SESSION_MAX_AGE_DAYS` no longer than the service keeps an
+   undelivered event, so a missed one is healed by the next sign-in
+6. Once everyone signs in through it, set `AUTH_OIDC_ONLY=true`
+
+With Amazon Cognito, a Pre Token Generation Lambda writes the claims; one that throws to refuse a
+person lands them on `/login?error=no_access` ("You don't have access to this app"). Register
+`{APP_URL}/login?signedOut=1` as the app client's sign-out URL — the kit sends it as `logout_uri`,
+the only parameter Cognito returns on.
+
+What a sign-in does: each org in the claim becomes (or finds) the tenant with that
+`external_org_id`, named from the claim; the person gets an `idp` membership with the mapped role;
+an org no longer in the claim loses its `idp` membership. A tenant created this way has **no
+owner** — a global admin can still do owner-only things, and can make an owner from a manual
+membership. `idp` memberships are read-only in Settings → People (409 `idp_managed` from the API).
+
+What an event does: `person.suspended` ends the person's sessions, removes their `idp`
+memberships and clears a global-admin role the issuer granted (a manual grant stays); `membership.removed`, `grant.revoked` and `org.suspended` remove `idp` memberships;
+`membership.role_changed` changes one; `org.renamed` renames the tenant. Each is signed (Standard
+Webhooks), applied idempotently and in any order; `docs/CONCEPTS.md` §2 has the details.
+
+Absent (`OIDC_MANAGED_TENANCY` blank): plain OIDC, the claims are not read and
+`/api/identity/events` answers 404. Turned on without issuer and client id, or with
+`TENANCY_MODE=single`, it refuses to boot. Verify: sign in as a person with one org →
+`/auth/session` shows that tenant with the mapped role and `accessRequest: null`; the tenants table
+has a row with `external_org_id` = the org id.
 
 ### 2.4 First admin
 `BOOTSTRAP_ADMIN_EMAILS=you@example.com` (comma-separated). Promoted to global admin on the first
@@ -466,6 +579,56 @@ watch the row go `Indexing → Indexed` within the 5 s poll (the wrangler termin
 `document.convert: indexed`), search a phrase from it, and click the download icon to get the
 original back from R2. Without `[ai]` a binary upload answers 503 `conversion_not_configured`.
 
+**Reranking** (knowledge search reorders its top 20 fused candidates by relevance): with the `AI`
+binding it is on by default — Workers AI `@cf/baai/bge-reranker-base`, about $0.003 per million
+input tokens, one extra call per search. For a stronger reranker add one per tenant in Settings →
+AI → *Add reranker provider*: provider *OpenAI-compatible endpoint* with a preset (Fireworks
+`fireworks/qwen3-reranker-8b`, Cohere `rerank-v3.5`, Voyage `rerank-2.5-lite`) and the vendor's key;
+**Test connection** reranks two short documents. Without the binding or a row search keeps its
+fused order. `RERANK_MIN_SCORE=` (0–1, blank = off) drops reranked hits scored below it; its scale is
+per model, so set it from an eval run (`docs/EVALS.md`). `RERANK_CANDIDATES=` (5–100, blank = 20)
+is how many chunks go to the reranker: its latency grows with it. Verify: `curl -b <cookie>
+localhost:3001/api/ai/config/readiness` → `"rerank":{"ready":true,…}`, and a `POST
+/api/ai/documents/search` hit carries a `rerankScore`.
+
+**Knowledge spend**: every embedding, rerank, fact-extraction and contextual-prefix call is an
+`ai_usage` row (`knowledge.embeddings`, `knowledge.rerank`, `knowledge.extraction`,
+`knowledge.context`), shown on Settings → Usage. `KNOWLEDGE_TENANT_DAILY_COST_USD=` (blank = no
+cap) caps what one tenant's knowledge work may spend per UTC day; only fact extraction and
+contextual prefixes pause at it (they resume the next UTC day), indexing and search never do.
+Deployed, put it in BOTH tomls' `[vars]`.
+
+**Contextual search** (`docs/CONCEPTS.md` §9 "Contextual prefixes" — a model writes a line placing
+each passage in its document, so search finds passages that never name what they are about): off
+until the `knowledge-context` flag is on for the tenant (**Admin → Feature flags → Contextual
+search**, §2.8). New and changed documents are then contextualised by a `document.contextualize`
+job — one call per passage to the model assigned to the `knowledge-context` prompt in Settings →
+agent models (point it at a cheap one), else the tenant's chat model. Existing documents: as an
+admin, open **Search** — a notice counts the documents with no context yet — and click **Add
+context** (or `POST /api/ai/documents/contextualize`, up to 200 a call, `remaining` says how many
+are left). Verify: Settings → Usage shows
+`knowledge.context` rows, and `pnpm eval retrieval --context` measures what it does on the fixture.
+
+**Knowledge facts** (D43, `docs/CONCEPTS.md` §9 — typed facts read from documents, with conflicts
+and doubtful facts sent to a person for review): off until two things are true.
+
+1. **An entity type is registered** — the kit registers none. Add one to `APP_ENTITY_TYPES` in
+   `apps/web/src/api/services/knowledge/entity-types.ts` (the file's header shows a type over one
+   of your tables and one with no table), or from a plugin through
+   `ServerPlugin.knowledgeEntityTypes`. `pnpm web test:config` runs `knowledge-entity-types.test.ts`,
+   which refuses a bad registration.
+2. **The `knowledge-facts` flag is on for the tenant** — default off. As a global admin, open
+   **Admin → Feature flags → Knowledge facts** and set it On (every tenant), to Rollout, or force it
+   on for one organisation (§2.8).
+
+Extraction then runs on every new or changed document: one call per heading-bounded section to the
+tenant's chat model, or to the model assigned to the `knowledge-extract` prompt in Settings → agent
+models; about $0.0009 a document on Haiku. Set `KNOWLEDGE_TENANT_DAILY_COST_USD` before turning it on
+widely. Documents indexed before the flag was on are not extracted until their text changes. Verify:
+`pnpm cli features list --json` shows `knowledge-facts` on; upload a document naming one of your
+entities, then open Knowledge → **To review** or ask chat about the entity — the answer cites the
+facts with their source.
+
 **Decisions** (`ctx.decide`, D37 — typed questions agents ask, e.g. the `triage-research` example's
 relevance screen): with nothing configured the chat model answers them with its own probabilities,
 recorded `llm_self_report` and shown as *self-reported* (uncalibrated). For calibrated answers from
@@ -525,8 +688,8 @@ pnpm cli traces list                  # newest first; --agent chat · --status e
 pnpm cli traces show <traceId|runId>  # the span tree: model, tokens, latency, tool args/results
 ```
 A chat turn shows `invoke_agent chat` with `chat <model>` and `execute_tool <name>` children, and
-retrieval/embeddings under the tool. `OBSERVABILITY_CAPTURE_CONTENT=false` drops prompts and tool
-I/O. Optional backend (Langfuse keys keep working with no new setting; Phoenix locally is
+retrieval/embeddings under the tool. Prompts and tool I/O appear only with
+`OBSERVABILITY_CAPTURE_CONTENT=true` (off by default). Optional backend (Langfuse keys keep working with no new setting; Phoenix locally is
 `docker run -p 6006:6006 arizephoenix/phoenix` + `OBSERVABILITY_PRESET=phoenix` +
 `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:6006` in `.dev.vars`): `docs/DEPLOY.md` § Tracing.
 
@@ -544,9 +707,29 @@ turns a bad answer into a case. Everything else — suites, judges, baselines, C
 
 ### 2.7 Plugins `[ready]` (D31)
 
-Analytics is not part of the kit; it is the `analytics` PLUGIN, and it is the one entry in
-`.rocketflare.json` `defaultPlugins`, so `bash scripts/bootstrap.sh` installs it in its `plugins`
-step and a fresh clone has dashboards without you doing anything. Nothing to configure.
+**What exists:** `pnpm plugin list --available` prints every published plugin — id, version,
+whether it is installed here, and its one-line description — read live from
+`rocketflare-dev/rocketflare-plugins` at its newest release tag (exit 3 if it cannot be reached;
+there is no cached list). When your git credentials can read
+`rocketflare-dev/rocketflare-commercial-plugins`, its plugins follow under a separate
+`Commercial plugins` heading with a `licence:` line: they are licensed separately. To browse rather
+than install, see https://rocketflare.dev/plugins. Check it before building a feature: the order is
+an existing plugin, else build it in the app, and write a plugin only for something meant to be
+installed in another app too.
+
+`.rocketflare.json` `defaultPlugins` is empty, so the bootstrap installs nothing and a fresh clone
+has none — not even analytics (dashboards, cubes, the drizzle-cube API), which is an opt-in plugin
+like the rest. Add one with `/rf-plugin add <id>` (`/rf-plugin add` alone shows the list), or by
+hand — with no `@ref`, a repository is read at its newest release tag:
+
+```bash
+pnpm plugin add https://github.com/rocketflare-dev/rocketflare-plugins.git \
+  --subdir plugins/analytics                       # read the plan; re-run with --apply
+pnpm db:generate --name plugin-analytics-<version> && pnpm db:migrate   # the host's migration
+```
+
+Then run the plan's numbered steps (below). An app that wants it on every fresh clone lists it in
+its own `defaultPlugins` (§1.4b).
 
 ```bash
 pnpm plugin list                                   # what is installed, and from where
@@ -559,7 +742,7 @@ pnpm plugin add <repo|path>[@ref]                  # read the plan; --apply inst
 Worker and database access — it is as trusting as merging a pull request — and the plan is what you
 say yes to. It will never generate a migration, edit a wrangler toml or write a resource id: those
 arrive as numbered steps you run yourself. The analytics plugin's are the `15 * * * *` cron and the
-`/cubejs-api` + `/mcp` prefixes in both tomls, and two `resolve` entries plus two proxy lines in
+`/cubejs-api` prefix in both tomls, and a `resolve` alias plus a proxy line in
 `apps/web/vite.config.ts`.
 
 **The drizzle-cube CLI / Claude Code plugin** (optional, with analytics installed): create
@@ -569,16 +752,25 @@ origin or a deployed host. It is an ordinary Bearer key: every query it makes is
 tenant by the cubes and it is revoked in the same place. Verify: the CLI's `meta` lists
 `ActivityEvents`, `TenantActivityDaily`, `TenantUsers`, `Users`.
 
+**An SSO / SCIM plugin under `TENANCY_MODE=single`** (the identity seam, `docs/CONCEPTS.md` §16):
+the one organisation is the whole deployment, so a person the plugin's directory deactivates is
+**blocked**, not just removed — every session ends, API keys answer 403, and no other sign-in
+method lets them back in. Admin → Users shows them as "blocked by identity provider";
+reactivating them in the directory lifts it, and so does Unblock. A block you set by hand is
+yours: no directory sync lifts it. Under `multi` a deactivation only removes that organisation's
+membership. Verify (single mode): deactivate a test person in the directory → their next request
+answers 401 and a magic link lands on `/login?error=blocked`.
+
 Writing one of your own: `/rf-plugin`, or `apps/web/src/plugins/CLAUDE.md` and
 `apps/web/src/plugins/example-feature/` — the vendored reference plugin, which exists to be read
 and then deleted.
 
 ### 2.8 Feature flags `[ready]` (D30)
 
-Nothing to configure — flags work out of the box, and the kit itself ships none: the one inert demo
-flag (`example-feature`, a nav item, a page and a notes API) belongs to the reference PLUGIN of the
-same name (D31, `apps/web/src/plugins/example-feature/`), which is installed by default and safe to
-delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
+Nothing to configure — flags work out of the box. The kit core ships two: `knowledge-facts`
+(default off; §2.5 "Knowledge facts") and `mcp` (environment-gated; §2.10). The inert demo flag (`example-feature`, a nav item, a page
+and a notes API) belongs to the reference PLUGIN of the same name (D31,
+`apps/web/src/plugins/example-feature/`), which is installed by default and safe to delete. As a global admin, open **Admin → Feature flags**: set it to On and the nav item appears; to
 Rollout and the percentage decides deterministically; force it on or off for one organisation and
 that beats the percentage either way.
 
@@ -598,6 +790,40 @@ Verify: `pnpm cli features list --json` prints the effective flags for your tena
 ### 2.9 Rebrand checklist
 See [`docs/ADAPTING.md`](docs/ADAPTING.md) §1 — package names (`@rocketflare/*`), worker names, DB names,
 CLI bin / config dir / env prefix, themes, logo, `EMAIL_FROM`.
+
+### 2.10 MCP server — let AI clients connect `[ready]`
+
+The app is an MCP server at `<APP_URL>/mcp` (`docs/CONCEPTS.md` §19). It ships dark:
+
+1. Add `mcp` to `FEATURES_ENABLED` — in `apps/web/.dev.vars` locally, and in BOTH tomls' `[vars]`
+   for a deployed environment (comma-separated with any other key).
+2. As an owner or admin, open **Settings → MCP**, turn it on, and choose what is exposed (all
+   read-only tools by default) and who may connect (everyone by default).
+3. Paste the server URL into the client (Claude: Settings → Connectors → Add custom connector;
+   Claude Code: `claude mcp add --transport http <name> <APP_URL>/mcp`; ChatGPT: a custom
+   connector). The client finds the app's authorization server itself, opens the app's own sign-in
+   page, and shows a consent screen where the person picks the organisation. `<APP_URL>/mcp/t/<slug>`
+   is the same server pinned to one organisation — use it to connect a second organisation from a
+   client that allows one connector per URL (claude.ai).
+4. A client must reach the app on a public https URL to sign in (`APP_URL`); locally that means a
+   tunnel. Clients identify themselves with a metadata document (CIMD) — Claude and ChatGPT do;
+   clients that only support dynamic registration (Cursor) cannot connect.
+   `pnpm dev:tunnel` gives a persistent public URL. Claude and Claude Code connect to it;
+   ChatGPT does not, because chatgpt.com refuses the metadata fetch from local `wrangler dev`
+   (workerd) with a 403 — a deployed Worker fetches it fine, so test ChatGPT on staging.
+   **The tunnel makes the whole development instance public, its password-less dev sign-in
+   included** (§1.10): anyone with the URL can sign in as any user. Connect a client with dummy
+   data only and stop the tunnel when you are done; test with real data on staging.
+
+Optional vars, undeclared = the default: `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90),
+`MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60),
+`MCP_CALLS_PER_USER_PER_MINUTE` (120 — one person across all their connections in an
+organisation), `MCP_CALLS_PER_TENANT_PER_MINUTE` (600).
+
+Verify: `curl -si -X POST <APP_URL>/mcp` answers 401 with a `WWW-Authenticate: Bearer
+resource_metadata="…"` header, and `curl -s <APP_URL>/.well-known/oauth-authorization-server`
+answers the metadata with `"client_id_metadata_document_supported": true` (404 for either means
+`mcp` is not in `FEATURES_ENABLED`).
 
 ---
 
@@ -768,11 +994,12 @@ the staging file). Wrangler creates the DNS record on the next deploy. Set `[var
 Verify: the host serves the app over HTTPS; the parity test still passes (`routes` may differ).
 
 ### 3.7 The release dance (every subsequent deploy)
-1. `pnpm kit:release X.Y.Z` — folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`,
-   bumps the **root** `package.json` and `.rocketflare.json` `kit.version`, and prepends the
-   `CHANGELOG.md` section. Commit. (The `apps/*` versions are informational; one tag ships web and
-   cli together.) The deploy refuses a tag whose porting note is missing — that note is how every
-   copy of the kit absorbs this release.
+1. Bump the **root** `package.json` `version` to `X.Y.Z`, add its section to your `CHANGELOG.md`,
+   commit. (The `apps/*` versions are informational; one tag ships web and cli together.)
+   *Kit repository only:* `pnpm kit:release X.Y.Z` does this step instead — it also folds
+   `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md` and stamps `.rocketflare.json`
+   `kit.version`, and the deploy refuses a kit tag whose porting note is missing, because that note
+   is how every copy absorbs the release. An app has neither the command nor the check.
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate — skipped
    when that commit already has a green CI run, or is a version-only bump over a parent that has
    one, so a commit is gated once → parity

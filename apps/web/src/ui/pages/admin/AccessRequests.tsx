@@ -1,5 +1,5 @@
 /**
- * Admin → Access requests (D9, D25): the sign-up review queue. Approving either adds the requester
+ * Admin → Access requests: the sign-up review queue. Approving either adds the requester
  * to an existing organisation or mints a new one (the `new_org` branch is hidden in single mode);
  * rejecting takes an optional reason. One endpoint: `POST …/:id/decide` (`decideAccessRequestSchema`).
  */

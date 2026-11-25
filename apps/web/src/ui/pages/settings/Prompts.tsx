@@ -1,5 +1,5 @@
 /**
- * Settings → Prompts (D17): the registry (`GET /api/ai/prompts`) as a list — key, title,
+ * Settings → Prompts: the registry (`GET /api/ai/prompts`) as a list — key, title,
  * description, Overridden/Default badge — and an editor modal: the effective text, `{{variable}}`
  * chips inserted at the cursor, a live character count against `PROMPT_MAX_LENGTH`, Save (`PUT`),
  * Reset to default (`DELETE`, confirmed) and a preview through `interpolatePrompt` with sample

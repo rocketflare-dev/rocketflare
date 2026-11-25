@@ -13,7 +13,7 @@
  * this run actually do", so they belong in the same list rather than in a second one nobody reads.
  */
 import type { AgentRun } from '@rocketflare/shared/ai/agents'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Row, Section } from '@/ui/components/ai/StatRows'
 import { formatDateTime, formatDuration, runDuration } from '@/ui/lib/format'
 import { humaniseToolName, type RunWorkStats } from '../timeline/timelineModel'
@@ -44,6 +44,17 @@ export function RunUsageTab({
         <Row label="Wall clock" value={elapsed ?? '—'} hint="Started to finished, not CPU." />
         <Row label="Stages" value={String(stats.steps)} />
         <Row label="Model turns" value={String(stats.textTurns)} hint="Replies the model wrote." />
+        {stats.modelCalls > 0 && (
+          <Row
+            label="Model calls"
+            value={`${stats.modelCalls} · ${stats.inputTokens.toLocaleString()} in · ${stats.outputTokens.toLocaleString()} out`}
+            hint={
+              stats.failedModelCalls > 0
+                ? `${stats.failedModelCalls} failed.`
+                : 'Tokens of the calls that answered.'
+            }
+          />
+        )}
       </Section>
       <Section title="Tools">
         <Row label="Calls" value={String(stats.toolCalls)} />

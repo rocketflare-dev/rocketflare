@@ -1,16 +1,21 @@
 /**
- * `/api/ai/config` (D17): a tenant's AI providers. Credentials are encrypted on the way in and
+ * `/api/ai/config`: a tenant's AI providers. Credentials are encrypted on the way in and
  * NEVER come back out (`hasCredential` only). `POST /` upserts on (tenant, scope, label): omitting
- * `apiKey` on a re-save keeps the stored key; `isDefault` swaps the scope's default inside one
+ * `apiKey` on a re-save keeps the stored key while the provider and endpoint are unchanged, decided
+ * on the row the save overwrites (read `FOR UPDATE` inside the save's transaction); `isDefault` swaps the scope's default inside one
  * transaction (clear-others-then-set — the partial unique index rejects the reverse order). The
  * first row in a scope is always made default. `POST /test` spends money at a provider on demand,
  * so it is rate-limited per IP. `GET /readiness` is what the Home checklist reads. `manage AiConfig`
  * = admin+; members may `read` (the list shows what will answer them, not how to change it).
+ * A save or delete that changes which EMBEDDINGS model the tenant resolves enqueues a
+ * `document.reembed` once it has committed (`reembedAfterEmbeddingsChange`) — and still succeeds
+ * when it cannot: the stale count on `GET /api/ai/documents/health` and `POST …/reembed` remain.
  */
 import {
   type AiConfig,
   type AiScope,
   aiReadinessSchema,
+  sameAiEndpoint,
   testAiConfigRequestSchema,
   type UpsertAiConfigRequest,
   upsertAiConfigRequestSchema,
@@ -25,7 +30,8 @@ import { rateLimit } from '../middleware/rate-limit'
 import { recordActivity } from '../services/activity'
 import { testConfig } from '../services/ai/connection-test'
 import { PROVIDERS, providerInfo, providerSupportsScope } from '../services/ai/providers'
-import { readiness } from '../services/ai/resolve'
+import { reembedAfterEmbeddingsChange } from '../services/ai/reindex'
+import { readiness, resolveEmbeddingsModel } from '../services/ai/resolve'
 import { BadRequestError, NotFoundError } from '../utils/core/errors'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -54,6 +60,15 @@ export function toAiConfig(row: AiConfigRow): AiConfig {
   }
 }
 
+/**
+ * A stored credential belongs to the provider and the endpoint it was entered for: it is never sent
+ * anywhere the person who entered it did not choose, so changing either needs the key again.
+ */
+function keepsStoredKey(existing: AiConfigRow | undefined, body: UpsertAiConfigRequest): boolean {
+  if (!existing?.apiKeyEnc) return false
+  return existing.provider === body.provider && sameAiEndpoint(existing.baseUrl, body.baseUrl)
+}
+
 /** Provider × scope × field rules the contract alone cannot express. */
 function validateUpsert(body: UpsertAiConfigRequest, existing: AiConfigRow | undefined): void {
   const info = providerInfo(body.provider)
@@ -66,10 +81,8 @@ function validateUpsert(body: UpsertAiConfigRequest, existing: AiConfigRow | und
   if (info.needsBaseUrl && !body.baseUrl) {
     throw new BadRequestError(`${info.name} requires a base URL`, 'base_url_required')
   }
-  // A key is required unless the row already holds one FOR THE SAME PROVIDER (a stored credential
-  // belongs to the provider it was entered for and will not authenticate elsewhere).
-  const keepsKey = existing?.apiKeyEnc && existing.provider === body.provider
-  if (info.needsApiKey && !body.apiKey && !keepsKey) {
+  // A key is required unless the row already holds one for this provider and endpoint.
+  if (info.needsApiKey && !body.apiKey && !keepsStoredKey(existing, body)) {
     throw new BadRequestError(`${info.name} requires an API key`, 'api_key_required')
   }
   // What thinking means is per MODEL (`@rocketflare/shared/ai/models`): a budget only where the
@@ -110,6 +123,23 @@ async function makeDefault(
     .update(aiConfigs)
     .set({ isDefault: true })
     .where(and(eq(aiConfigs.tenantId, tenantId), eq(aiConfigs.id, id)))
+}
+
+/** The row a save would overwrite, locked until the transaction ends (none yet → undefined). */
+async function lockConfig(
+  tx: Database,
+  tenantId: string,
+  scope: AiScope,
+  label: string
+): Promise<AiConfigRow | undefined> {
+  const [row] = await tx
+    .select()
+    .from(aiConfigs)
+    .where(
+      and(eq(aiConfigs.tenantId, tenantId), eq(aiConfigs.scope, scope), eq(aiConfigs.label, label))
+    )
+    .for('update')
+  return row
 }
 
 async function hasDefault(tx: Database, tenantId: string, scope: AiScope): Promise<boolean> {
@@ -168,22 +198,13 @@ aiConfigRouter.post(
 // ---- POST /api/ai/config (upsert) -----------------------------------------------------------------
 
 aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c => {
-  const { db, tenantId, user, cfg, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, defer, logger } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'AiConfig')
   const body = c.req.valid('json')
-  const existing = await db.query.aiConfigs.findFirst({
-    where: and(
-      eq(aiConfigs.tenantId, tenantId),
-      eq(aiConfigs.scope, body.scope),
-      eq(aiConfigs.label, body.label)
-    ),
-  })
-  validateUpsert(body, existing)
+  const embeddingsBefore =
+    body.scope === 'embeddings' ? await resolveEmbeddingsModel(db, cfg, c.env, tenantId) : null
   const apiKeyEnc = body.apiKey ? await encrypt(body.apiKey, requireEncryptionKey(cfg)) : undefined
-  // A provider change without a new key must not carry the old provider's credential along.
-  const dropKey = !body.apiKey && existing && existing.provider !== body.provider
-
-  const values = {
+  const fields = {
     tenantId,
     scope: body.scope,
     provider: body.provider,
@@ -192,27 +213,60 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
     model: body.model,
     thinking: body.thinking ?? { enabled: false },
     serviceTier: body.serviceTier ? body.serviceTier : null,
-    ...(apiKeyEnc !== undefined ? { apiKeyEnc } : dropKey ? { apiKeyEnc: null } : {}),
   }
 
-  const saved = await db.transaction(async tx => {
-    // `isDefault` is deliberately NOT in `values`: it is a cross-row invariant applied by
-    // `makeDefault` after the row exists. `apiKeyEnc` is only in the SET when a key was supplied.
-    const [row] = await tx
-      .insert(aiConfigs)
-      .values(values)
-      .onConflictDoUpdate({
-        target: [aiConfigs.tenantId, aiConfigs.scope, aiConfigs.label],
-        set: { ...values, updatedAt: new Date() },
-      })
-      .returning()
+  // Whether the stored key stays is decided on the row this save overwrites, read under a row
+  // lock: a concurrent save to the same (tenant, scope, label) waits, then decides on what the
+  // first one wrote — so a key never ends up beside an endpoint it was not saved with.
+  const { saved, existing } = await db.transaction(async tx => {
+    let existing = await lockConfig(tx, tenantId, body.scope, body.label)
+    let row: AiConfigRow | undefined
+    if (!existing) {
+      validateUpsert(body, undefined)
+      // `isDefault` is deliberately NOT in the values: it is a cross-row invariant applied by
+      // `makeDefault` after the row exists. A concurrent first save makes this a no-op; that
+      // row is then locked and decided on below like any other.
+      ;[row] = await tx
+        .insert(aiConfigs)
+        .values({ ...fields, ...(apiKeyEnc !== undefined && { apiKeyEnc }) })
+        .onConflictDoNothing({ target: [aiConfigs.tenantId, aiConfigs.scope, aiConfigs.label] })
+        .returning()
+      if (!row) existing = await lockConfig(tx, tenantId, body.scope, body.label)
+    }
+    if (existing) {
+      validateUpsert(body, existing)
+      // A provider or endpoint change without a new key must not carry the old credential along.
+      const keyChange =
+        apiKeyEnc !== undefined
+          ? { apiKeyEnc }
+          : keepsStoredKey(existing, body)
+            ? {}
+            : { apiKeyEnc: null }
+      ;[row] = await tx
+        .update(aiConfigs)
+        .set({ ...fields, ...keyChange, updatedAt: new Date() })
+        .where(and(eq(aiConfigs.tenantId, tenantId), eq(aiConfigs.id, existing.id)))
+        .returning()
+    }
     if (!row) throw new Error('ai_configs: upsert returned no row')
     if (body.isDefault || !(await hasDefault(tx, tenantId, body.scope))) {
       await makeDefault(tx, tenantId, body.scope, row.id)
-      return { ...row, isDefault: true }
+      return { saved: { ...row, isDefault: true }, existing }
     }
-    return row
+    return { saved: row, existing }
   })
+  // After the commit: a re-embed job must never see the old default.
+  if (body.scope === 'embeddings') {
+    await reembedAfterEmbeddingsChange(
+      db,
+      cfg,
+      c.env,
+      logger,
+      c.env.JOBS_QUEUE,
+      tenantId,
+      embeddingsBefore
+    )
+  }
 
   defer(() =>
     recordActivity(db, {
@@ -235,14 +289,26 @@ aiConfigRouter.post('/', validate('json', upsertAiConfigRequestSchema), async c 
 // ---- DELETE /api/ai/config/:id --------------------------------------------------------------------
 
 aiConfigRouter.delete('/:id', async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
+  const { db, tenantId, user, cfg, defer, logger } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'AiConfig')
   const id = uuidParam(c, 'id')
+  const embeddingsBefore = await resolveEmbeddingsModel(db, cfg, c.env, tenantId)
   const [row] = await db
     .delete(aiConfigs)
     .where(and(eq(aiConfigs.id, id), eq(aiConfigs.tenantId, tenantId)))
     .returning()
   if (!row) throw new NotFoundError('AI config not found')
+  if (row.scope === 'embeddings') {
+    await reembedAfterEmbeddingsChange(
+      db,
+      cfg,
+      c.env,
+      logger,
+      c.env.JOBS_QUEUE,
+      tenantId,
+      embeddingsBefore
+    )
+  }
   defer(() =>
     recordActivity(db, {
       tenantId,

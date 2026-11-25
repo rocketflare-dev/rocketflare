@@ -1,13 +1,13 @@
 {
   "name": "rocketflare",
-  "version": "0.23.0",
+  "version": "0.44.1",
   "private": true,
   "license": "MIT",
-  "description": "Rocketflare \u2014 multi-tenant SaaS starter kit \u2014 pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
+  "description": "Rocketflare — multi-tenant SaaS for internal tools and B2B products — pnpm workspace: apps/web (Hono API + React UI on Cloudflare Workers), apps/cli, packages/shared",
   "type": "module",
-  "packageManager": "pnpm@10.18.0",
+  "packageManager": "pnpm@10.34.9",
   "engines": {
-    "node": ">=24"
+    "node": ">=26"
   },
   "scripts": {
     "dev": "pnpm --silent --filter @rocketflare/web dev",
@@ -18,10 +18,12 @@
     "dev:db:down": "pnpm --filter @rocketflare/web dev:db:down",
     "dev:db:status": "pnpm --filter @rocketflare/web dev:db:status",
     "bootstrap": "node scripts/bootstrap.mjs",
+    "design:docs": "node scripts/design-docs.mjs",
     "kit:upgrade": "node scripts/upgrade.mjs",
     "kit:release": "node scripts/release.mjs",
     "plugin": "node scripts/plugin.mjs",
     "preflight": "node scripts/bootstrap.mjs --check",
+    "security:sandbox": "node scripts/security-sandbox.mjs",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",
@@ -30,7 +32,7 @@
     "db:studio": "pnpm --filter @rocketflare/web db:studio",
     "seed": "pnpm --filter @rocketflare/web seed",
     "types": "pnpm --filter @rocketflare/web types",
-    "lint": "biome check . --diagnostic-level=error",
+    "lint": "biome check . --error-on-warnings",
     "lint:all": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format . --write",
@@ -46,13 +48,14 @@
     "clean:deep": "pnpm clean && rm -rf node_modules apps/*/node_modules packages/*/node_modules",
     "web": "pnpm --filter @rocketflare/web",
     "cli": "pnpm --filter @rocketflare/cli exec tsx src/cli.ts",
-    "deploy": "pnpm --filter @rocketflare/web deploy",
-    "deploy:staging": "pnpm --filter @rocketflare/web deploy:staging",
+    "deploy": "pnpm --filter @rocketflare/web run deploy",
+    "deploy:staging": "pnpm --filter @rocketflare/web run deploy:staging",
     "provision": "pnpm --filter @rocketflare/web provision"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.11",
-    "tsx": "^4.23.13",
-    "typescript": "^5.9.3"
+    "@biomejs/biome": "^2.6.4",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "typescript6": "npm:typescript@6.0.3"
   }
 }

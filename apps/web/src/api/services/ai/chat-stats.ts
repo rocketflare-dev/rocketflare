@@ -1,5 +1,5 @@
 /**
- * What is actually going on behind a chat thread (D17) — the data the chat inspector renders.
+ * What is actually going on behind a chat thread — the data the chat inspector renders.
  *
  * Everything here is DERIVED: from the stored rows, the live config and the shared price table.
  * Nothing is cached and nothing is written, so there is no second source of truth to drift from the
@@ -25,11 +25,11 @@ import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
 import type { ConversationRow, MessageRow } from '../../../db/schema'
 import { fullAccessScope } from '../access'
-import { buildAgentTools } from '../agents/tools'
+import { toolsFor } from '../agents/tools'
 import { resolvePrompt } from '../prompts'
+import { toToolDefinition } from './agent-loop'
 import { pendingCompaction, selectHistoryWindow, withSummary } from './chat-history'
 import { CHARS_PER_TOKEN } from './chunking'
-import { toToolDefinition } from './kit'
 import { readiness } from './resolve'
 import type { AiEnv, SystemPrompt } from './types'
 
@@ -129,7 +129,7 @@ export async function buildConversationStats(
   // Only their SCHEMAS are measured here, so a full-access scope is right: the panel reports what
   // the next turn will send, and the tool definitions do not vary by reader.
   const tools = cfg.CHAT_KNOWLEDGE_TOOLS
-    ? await buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenantId) })
+    ? await toolsFor('chat', { db, cfg, env, scope: fullAccessScope(tenantId), can: () => true })
     : []
   const knowledgeTools = tools.map(t => t.name)
   const toolSchemaChars = tools.reduce(

@@ -1,5 +1,5 @@
 /**
- * Model prices (D18) — the table that turns the token ledger into money.
+ * Model prices — the table that turns the token ledger into money.
  *
  * `ai_usage` records tokens because tokens are a fact; a price is a guess about someone else's
  * rate card. This file is that guess, kept in ONE place so an app can correct it without touching
@@ -36,7 +36,7 @@ export interface ModelPrice {
  */
 export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>>> = {
   // Claude list prices (platform.claude.com/docs/en/about-claude/pricing). `cacheWrite` is the
-  // 5-minute write, the only cache the kit asks for. The 4.5+ Opus models dropped to $5/$25 while
+  // 5-minute write, the only cache the app asks for. The 4.5+ Opus models dropped to $5/$25 while
   // Opus 4 / 4.1 stayed at $15/$75, so each has its own prefix; longest match wins.
   anthropic: {
     'claude-fable-5-1': { input: 10, output: 50, cacheRead: 0.25, cacheWrite: 12.5 },
@@ -118,6 +118,9 @@ export const MODEL_PRICES: Partial<Record<AiProvider, Record<string, ModelPrice>
     '@cf/mistralai/mistral-small-3.1-24b-instruct': { input: 0.35, output: 0.56 },
     '@cf/baai/bge-m3': { input: 0.0118, output: 0 },
     '@cf/baai/bge-large-en-v1.5': { input: 0.204, output: 0 },
+    // The zero-key reranker (`wrangler ai models list`, checked 2026-11-17). Its input tokens are
+    // estimated from characters (Workers AI reports none), so its cost is an estimate too.
+    '@cf/baai/bge-reranker-base': { input: 0.00311, output: 0 },
   },
 }
 

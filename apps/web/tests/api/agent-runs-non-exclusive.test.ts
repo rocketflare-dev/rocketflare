@@ -1,7 +1,6 @@
-// @vitest-isolate
-// Mocks the agent registry, so this file needs its own module registry.
+// @vitest-fixture-agents
 /**
- * The exclusive SLOT a run holds (D7) — `agent_runs.concurrency_key`, which the partial unique
+ * The exclusive SLOT a run holds — `agent_runs.concurrency_key`, which the partial unique
  * index reads:
  * - `meta.exclusive: false` — an agent that holds one person's conversation, where several people
  *   mid-way at once is the normal case — holds NO slot (NULL): every enqueue is a run of its own,
@@ -10,31 +9,29 @@
  * - a caller's `enqueueRun({ concurrencyKey })` narrows the slot to one active run per key, for
  *   either kind of agent.
  *
- * No kit agent is non-exclusive, so `summarize-text` is made one here by mocking the registry's
- * `getAgent` — the only place `enqueueRun` reads the definition from.
+ * The fixture agent (`tests/helpers/fixture-agents.ts`) is made non-exclusive here by swapping its
+ * `AGENTS` entry for the file, and putting it back after.
  */
 import { createAgentRunResponseSchema } from '@rocketflare/shared/ai/agents'
 import { and, eq } from 'drizzle-orm'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { AGENTS } from '@/api/services/agents/registry'
 import { enqueueRun } from '@/api/services/agents/runs'
 import { loadConfig } from '@/config'
 import { agentRuns } from '@/db/schema'
 import { createTestSession, createTestTenantWithUser, sessionCookieHeader } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 import { createTestEnv, stubs } from '../mocks/bindings'
 
-vi.mock('@/api/services/agents/registry', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/agents/registry')>()
-  return {
-    ...actual,
-    getAgent: (key: Parameters<typeof actual.getAgent>[0]) => {
-      const agent = actual.getAgent(key)
-      return key === 'summarize-text'
-        ? { ...agent, meta: { ...agent.meta, exclusive: false } }
-        : agent
-    },
-  }
+// The fixture agent, non-exclusive for this file only: the registry is shared with later files.
+const original = AGENTS[FIXTURE_AGENT]
+beforeAll(() => {
+  AGENTS[FIXTURE_AGENT] = { ...original, meta: { ...original.meta, exclusive: false } }
+})
+afterAll(() => {
+  AGENTS[FIXTURE_AGENT] = original
 })
 
 const db = setupTestDatabase()
@@ -57,8 +54,8 @@ describe('non-exclusive agents', () => {
     const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
     const env = createTestEnv()
 
-    const first = await start(cookie, env, 'summarize-text', { text: 'First text.' })
-    const second = await start(cookie, env, 'summarize-text', { text: 'Second text.' })
+    const first = await start(cookie, env, FIXTURE_AGENT, { text: 'First text.' })
+    const second = await start(cookie, env, FIXTURE_AGENT, { text: 'Second text.' })
     expect(first.status).toBe(202)
     expect(second.status).toBe(202)
     const a = createAgentRunResponseSchema.parse(await json(first))
@@ -70,7 +67,7 @@ describe('non-exclusive agents', () => {
     const rows = await db
       .select({ concurrencyKey: agentRuns.concurrencyKey, status: agentRuns.status })
       .from(agentRuns)
-      .where(and(eq(agentRuns.tenantId, tenant.id), eq(agentRuns.agentKey, 'summarize-text')))
+      .where(and(eq(agentRuns.tenantId, tenant.id), eq(agentRuns.agentKey, FIXTURE_AGENT)))
     expect(rows).toEqual([
       { concurrencyKey: null, status: 'queued' },
       { concurrencyKey: null, status: 'queued' },
@@ -82,7 +79,7 @@ describe('non-exclusive agents', () => {
     const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
     const env = createTestEnv()
 
-    const first = await start(cookie, env, 'research-topic', { topic: 'Volcanoes' })
+    const first = await start(cookie, env, FIXTURE_AGENT_B, { topic: 'Volcanoes' })
     expect(first.status).toBe(202)
     const run = createAgentRunResponseSchema.parse(await json(first))
     const [row] = await db
@@ -91,7 +88,7 @@ describe('non-exclusive agents', () => {
       .where(eq(agentRuns.id, run.id))
     expect(row?.concurrencyKey).toBe('')
 
-    const again = await start(cookie, env, 'research-topic', { topic: 'Glaciers' })
+    const again = await start(cookie, env, FIXTURE_AGENT_B, { topic: 'Glaciers' })
     expect(again.status).toBe(409)
     expect(await json(again)).toMatchObject({
       code: 'agent_run_active',
@@ -107,7 +104,7 @@ describe('per-key slots (enqueueRun({ concurrencyKey }))', () => {
     const enqueue = (concurrencyKey: string, text: string) =>
       enqueueRun(db, loadConfig(env), env, {
         tenantId: tenant.id,
-        agentKey: 'summarize-text',
+        agentKey: FIXTURE_AGENT,
         input: { text },
         userId: user.id,
         concurrencyKey,
@@ -130,7 +127,7 @@ describe('per-key slots (enqueueRun({ concurrencyKey }))', () => {
     const enqueue = (concurrencyKey: string | undefined, topic: string) =>
       enqueueRun(db, loadConfig(env), env, {
         tenantId: tenant.id,
-        agentKey: 'research-topic',
+        agentKey: FIXTURE_AGENT_B,
         input: { topic },
         userId: user.id,
         ...(concurrencyKey === undefined ? {} : { concurrencyKey }),
@@ -152,7 +149,7 @@ describe('per-key slots (enqueueRun({ concurrencyKey }))', () => {
     const rows = await db
       .select({ id: agentRuns.id, concurrencyKey: agentRuns.concurrencyKey })
       .from(agentRuns)
-      .where(and(eq(agentRuns.tenantId, tenant.id), eq(agentRuns.agentKey, 'research-topic')))
+      .where(and(eq(agentRuns.tenantId, tenant.id), eq(agentRuns.agentKey, FIXTURE_AGENT_B)))
     expect(Object.fromEntries(rows.map(r => [r.id, r.concurrencyKey]))).toEqual({
       [tenantWide.run.id]: '',
       [k1.run.id]: 'k1',

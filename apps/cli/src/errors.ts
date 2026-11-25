@@ -1,5 +1,5 @@
 /**
- * CLI error types and the exit-code mapping (D26): 0 ok · 1 error · 2 not logged in · 3 forbidden.
+ * CLI error types and the exit-code mapping: 0 ok · 1 error · 2 not logged in · 3 forbidden.
  * Commands throw; `cli.ts` catches once, prints once, and sets `process.exitCode`.
  */
 

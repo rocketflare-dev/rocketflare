@@ -1,5 +1,5 @@
 /**
- * `/api/notifications` (D8): the signed-in user's inbox within the current tenant — list,
+ * `/api/notifications`: the signed-in user's inbox within the current tenant — list,
  * unread count, mark read (ids or all). Scoped by `(tenant_id, user_id)` from the auth context.
  */
 import {

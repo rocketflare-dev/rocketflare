@@ -1,5 +1,5 @@
 /**
- * The plugin's TanStack query families (D31), declared once here and handed to the host twice: to
+ * The plugin's TanStack query families, declared once here and handed to the host twice: to
  * `UiPlugin.queryKeys`, which merges them into the app-wide `queryKeys` so anything may reach them,
  * and to this plugin's own hooks, which read them directly.
  *

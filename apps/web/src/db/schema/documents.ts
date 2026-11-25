@@ -1,5 +1,5 @@
 /**
- * `documents` — a piece of text a tenant indexed for retrieval (D18). `content` holds the text
+ * `documents` — a piece of text a tenant indexed for retrieval. `content` holds the text
  * that was chunked (pasted text, or the converted text of an upload — never returned by the API)
  * so the `document.index` job — and any future re-index after a model change — re-reads it from
  * the row, not from a queue message. An uploaded file keeps its original in R2 through `fileId`
@@ -10,10 +10,10 @@
  */
 import type { DocumentStatus } from '@rocketflare/shared/ai/embeddings'
 import { relations, sql } from 'drizzle-orm'
-import { index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
-import { RESOURCE_VISIBILITY_VALUES, tenantRef, timestamps } from './_helpers'
+import { check, index, integer, pgTable, text, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { platformTenantRef, RESOURCE_VISIBILITY_VALUES, timestamps } from './_helpers'
 import { files } from './files'
-import { tenantIsolation } from './rls'
+import { platformReadable, tenantIsolation } from './rls'
 import { tenants } from './tenants'
 import { users } from './users'
 
@@ -23,17 +23,31 @@ export const DOCUMENT_STATUS_VALUES = [
   'failed',
 ] as const satisfies readonly DocumentStatus[]
 
+/**
+ * How a document came in, for the trust of the facts read from it (D43): `upload` = a person put
+ * it in (an upload, pasted text, an agent's output — `source` `agent:<key>` tells those apart);
+ * `integration` = a plugin synced it through `ingestDocument`, which is weaker evidence.
+ */
+export const DOCUMENT_ORIGIN_VALUES = ['upload', 'integration'] as const
+export type DocumentOrigin = (typeof DOCUMENT_ORIGIN_VALUES)[number]
+
 export const documents = pgTable(
   'documents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    tenantId: tenantRef(tenants),
+    /**
+     * The owning organisation — or NULL for a PLATFORM document: content about the app itself
+     * (a plugin's user guide), readable by every tenant (`platformReadable`), written only by
+     * `ingestPlatformDocument` on the owner connection, always embedded, never listed among a
+     * tenant's documents. A platform row must carry `source` + `externalId` (the CHECK below).
+     */
+    tenantId: platformTenantRef(tenants),
     ownerUserId: uuid('owner_user_id').references(() => users.id, { onDelete: 'set null' }),
     title: text('title').notNull(),
     /** Origin marker: `upload`, `agent:summarize-text`, a URL … */
     source: text('source'),
     /**
-     * D34: the id this document has IN its source — a message id, a drive item id — so a sync that
+     * The id this document has IN its source — a message id, a drive item id — so a sync that
      * sees the same item again updates this row instead of adding a second one. Null for anything a
      * person uploaded or pasted. Unique per `(tenant, source)`, which is why a plugin's `source` is
      * namespaced (`m365:mail`): two sources may reuse one another's ids freely.
@@ -46,11 +60,18 @@ export const documents = pgTable(
     /** The uploaded original (`files` row, scope `documents`); null for pasted text. */
     fileId: uuid('file_id').references(() => files.id, { onDelete: 'set null' }),
     chunkCount: integer('chunk_count').notNull().default(0),
-    /** Which embeddings model produced this document's vectors (D18: warn before mixing). */
+    /**
+     * sha-256 (hex) of the normalised text (`contentHash` in `services/ai/ingest.ts`: CRLF → LF,
+     * trimmed). An upsert whose hash matches skips chunking and embedding; a plain ingest whose
+     * hash matches a document of the same tenant and source returns that one. Null until the text
+     * is known (an upload not yet converted) and on rows written before 0.37.0.
+     */
+    contentHash: text('content_hash'),
+    /** Which embeddings model produced this document's vectors (warn before mixing). */
     embeddingModel: text('embedding_model'),
     status: text('status', { enum: DOCUMENT_STATUS_VALUES }).notNull().default('pending'),
     /**
-     * Who may READ this document (D29). Defaults to `tenant`, so every existing row and every
+     * Who may READ this document. Defaults to `tenant`, so every existing row and every
      * ingest that says nothing keeps the pre-Groups behaviour. `groups` narrows it to
      * `document_groups` — an EMPTY grant list is legal and means owner-and-admins only.
      */
@@ -58,15 +79,33 @@ export const documents = pgTable(
       .notNull()
       .default('tenant'),
     error: text('error'),
+    /** `integration` when a plugin ingested it (`ingestDocument`); `upload` otherwise. */
+    origin: text('origin', { enum: DOCUMENT_ORIGIN_VALUES }).notNull().default('upload'),
+    /**
+     * Who is asked about the doubtful facts read from it: for an integration, the person who
+     * connected it (the plugin names them); null = the owner, else the tenant's admins.
+     */
+    reviewerUserId: uuid('reviewer_user_id').references(() => users.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
   table => [
     index('documents_tenant_created_idx').on(table.tenantId, table.createdAt.desc()),
     index('documents_tenant_owner_idx').on(table.tenantId, table.ownerUserId),
+    index('documents_tenant_source_hash_idx').on(table.tenantId, table.source, table.contentHash),
     uniqueIndex('documents_tenant_source_external_uq')
       .on(table.tenantId, table.source, table.externalId)
       .where(sql`${table.externalId} is not null`),
+    // A platform document is identified by `(source, externalId)` alone — the index above treats
+    // NULL tenants as distinct, so it cannot dedupe them.
+    uniqueIndex('documents_platform_source_external_uq')
+      .on(table.source, table.externalId)
+      .where(sql`${table.tenantId} is null`),
+    check(
+      'documents_platform_needs_source',
+      sql`${table.tenantId} is not null or (${table.source} is not null and ${table.externalId} is not null)`
+    ),
     tenantIsolation('documents'),
+    platformReadable('documents'),
   ]
 )
 

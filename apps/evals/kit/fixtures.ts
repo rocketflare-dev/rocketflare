@@ -1,5 +1,5 @@
 /**
- * One isolated world per case (D33): a fresh tenant and owner, a session cookie, the case's context
+ * One isolated world per case: a fresh tenant and owner, a session cookie, the case's context
  * documents ingested through the real `ingestText`, the `--provider`'s `ai_configs` row when it is
  * not the platform tier, and — with `--model` — an `agent_models` row pinning the prompt keys the
  * target uses. A tenant per case is what makes retrieval honest: the
@@ -8,8 +8,11 @@
  * Rows are left in the test database, as the test suites leave theirs (`.claude/rules/testing.md`).
  */
 import type { EvalCase } from '@rocketflare/shared/ai/evals'
+import { and, eq } from 'drizzle-orm'
+import { contextualizeDocument } from '@/api/services/ai/contextualize'
 import { ingestText } from '@/api/services/ai/ingest'
-import { agentModels, messages } from '@/db/schema'
+import { setTenantOverride } from '@/api/services/features'
+import { agentModels, documents, messages } from '@/db/schema'
 import {
   createTestSession,
   createTestTenantWithUser,
@@ -17,8 +20,16 @@ import {
 } from '../../web/tests/helpers/auth'
 import { setupTestDatabase } from '../../web/tests/helpers/db'
 import type { TestEnv } from '../../web/tests/mocks/bindings'
-import { EVAL_MODEL, EVAL_PROVIDER, evalConfig, evalWorkerEnv } from './env'
-import { useProvider } from './providers'
+import type { Corpus } from './corpus'
+import {
+  EVAL_CONTEXT,
+  EVAL_MODEL,
+  EVAL_PROVIDER,
+  EVAL_RERANK,
+  evalConfig,
+  evalWorkerEnv,
+} from './env'
+import { useEmbeddings, useProvider, useRerank } from './providers'
 
 export const evalDb = () => setupTestDatabase()
 
@@ -84,4 +95,106 @@ export async function seedHistory(
       createdAt: new Date(start + i * 1000),
     }))
   )
+}
+
+/** A corpus ingested into one tenant, shared by every case in the process that asks about it. */
+export interface CorpusWorld extends CaseWorld {
+  corpus: Corpus
+  /** `documents.id` → the corpus doc id, and back. */
+  docIdOf: Map<string, string>
+  documentIdOf: Map<string, string>
+}
+
+const corpusWorlds = new Map<string, Promise<CorpusWorld>>()
+
+/**
+ * Ingest `corpus` once per process (memoised by name) through the real `ingestText` — an
+ * `origin: integration` document marked as a plugin's sync would be — with a REAL
+ * embedder (`useEmbeddings`) and the `--rerank` reranker (`useRerank`), each document back-dated to its front-matter `date` so "when was this
+ * written" reads true. Every case then runs in this tenant: a corpus is too big to re-ingest per
+ * case, and its cases only read it. A document that fails to index fails the world — a corpus with
+ * a hole scores a regression that is not one.
+ */
+export function corpusWorld(corpus: Corpus, promptKeys: readonly string[]): Promise<CorpusWorld> {
+  const existing = corpusWorlds.get(corpus.name)
+  if (existing) return existing
+  const world = (async () => {
+    const db = evalDb()
+    const env = evalWorkerEnv()
+    const cfg = evalConfig(env)
+    const { user, tenant } = await createTestTenantWithUser(db, 'owner')
+    const cookie = sessionCookieHeader(await createTestSession(db, user.id, tenant.id))
+    await useProvider(db, cfg, tenant.id, EVAL_PROVIDER, EVAL_MODEL)
+    await useEmbeddings(db, cfg, tenant.id)
+    await useRerank(db, cfg, tenant.id, EVAL_RERANK)
+    if (EVAL_CONTEXT) await setTenantOverride(db, 'knowledge-context', tenant.id, true, user.id)
+    // `--context` situates passages with the target model too.
+    const keys = EVAL_CONTEXT ? [...new Set([...promptKeys, 'knowledge-context'])] : promptKeys
+    if (EVAL_MODEL && keys.length > 0) {
+      await db
+        .insert(agentModels)
+        .values(keys.map(promptKey => ({ tenantId: tenant.id, promptKey, model: EVAL_MODEL })))
+    }
+    const docIdOf = new Map<string, string>()
+    const documentIdOf = new Map<string, string>()
+    for (const doc of corpus.docs) {
+      const { document } = await ingestText(
+        db,
+        cfg,
+        env,
+        {
+          tenantId: tenant.id,
+          userId: user.id,
+          title: doc.title,
+          text: doc.text,
+          source: doc.source,
+          contentType: 'text/markdown',
+          // What `@/plugins/api` `ingestDocument` sets for a plugin's sync: the facts read from an
+          // `integration` document carry that (weaker) trust (D43).
+          origin: doc.origin,
+        },
+        { jobs: env.JOBS_QUEUE }
+      )
+      if (document.status !== 'indexed') {
+        throw new Error(
+          `corpus ${corpus.name}: ${doc.id} did not index (${document.status}: ${document.error ?? 'queued'})`
+        )
+      }
+      const written = new Date(`${doc.date}T09:00:00Z`)
+      await db
+        .update(documents)
+        .set({ createdAt: written, updatedAt: written })
+        .where(and(eq(documents.id, document.id), eq(documents.tenantId, tenant.id)))
+      docIdOf.set(document.id, doc.id)
+      documentIdOf.set(doc.id, document.id)
+    }
+    // `--context`: the queued `document.contextualize` jobs run here, before any case reads.
+    if (EVAL_CONTEXT) {
+      for (const [documentId, docId] of docIdOf) {
+        const report = await contextualizeDocument(db, cfg, env, {
+          tenantId: tenant.id,
+          documentId,
+        })
+        if (report.status !== 'contextualized' || report.written < report.pending) {
+          throw new Error(
+            `corpus ${corpus.name}: ${docId} was not contextualised (${report.status}${report.reason ? `: ${report.reason}` : ''}, ${report.written}/${report.pending})`
+          )
+        }
+      }
+    }
+    return {
+      db,
+      env,
+      cfg,
+      tenantId: tenant.id,
+      tenantName: tenant.name,
+      userId: user.id,
+      cookie,
+      corpus,
+      docIdOf,
+      documentIdOf,
+    }
+  })()
+  corpusWorlds.set(corpus.name, world)
+  return world
 }

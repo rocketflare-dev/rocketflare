@@ -1,5 +1,5 @@
 /**
- * `/api/groups` (D29): CRUD for types and groups, membership, and the three things that go wrong
+ * `/api/groups`: CRUD for types and groups, membership, and the three things that go wrong
  * when groups are bolted on carelessly — a duplicate name, a group id borrowed from another
  * tenant, and a delete that quietly changes who can see what.
  */
@@ -223,8 +223,8 @@ describe('deleting something that still grants access', () => {
       headers: ownerCookie,
     })
     expect(refused.status).toBe(409)
-    // One count per REGISTERED visibility resource — the kit's `documents`, plus one per installed
-    // plugin (D31). `toMatchObject` on the kit's own key, so installing a plugin that adds a
+    // One count per REGISTERED visibility resource — the core `documents`, plus one per installed
+    // plugin. `toMatchObject` on the core key, so installing a plugin that adds a
     // resource widens the body without failing this.
     expect(await json(refused)).toMatchObject({
       code: 'group_in_use',

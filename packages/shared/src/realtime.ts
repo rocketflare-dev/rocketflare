@@ -1,5 +1,5 @@
 /**
- * Realtime event contracts (D8). "DB is the truth, WebSocket is a nudge": an event names WHAT
+ * Realtime event contracts. "DB is the truth, WebSocket is a nudge": an event names WHAT
  * changed (its `type`, optionally an `entity.changed` payload `{ entity, id }`) and the client
  * re-queries — it never treats a payload as state. `REALTIME_INVALIDATIONS` maps each event type
  * to the TanStack query-key ROOTS the UI invalidates (the `queryKeys.<family>.all` prefixes in
@@ -14,9 +14,9 @@ export const realtimeEventTypeSchema = z.enum([
   'member.changed',
   'invitation.changed',
   'tenant.changed',
-  /** D29: this person's group membership changed — what they may READ has moved under them. */
+  /** This person's group membership changed — what they may READ has moved under them. */
   'access.changed',
-  /** D30: a feature flag moved for this tenant — what EXISTS for them has changed. */
+  /** A feature flag moved for this tenant — what EXISTS for them has changed. */
   'features.changed',
   'entity.changed',
   'ping',
@@ -53,7 +53,15 @@ const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   // Sent to the affected people only (`nudgeUsers`): their ability to see content changed, so the
   // session (which carries their groups), both visibility-bearing resources and the groups view
   // are all stale at once.
-  'access.changed': [['auth'], ['documents'], ['groups']],
+  // `knowledge` (and its badge count): a fact is read through its document, so the review items,
+  // the count and the entity pages move too.
+  'access.changed': [
+    ['auth'],
+    ['documents'],
+    ['groups'],
+    ['knowledge'],
+    ['knowledge-review-count'],
+  ],
   // Features ride the session, so the session is what has to be re-fetched; `features` covers the
   // read-only list the CLI and the debugging surface use.
   'features.changed': [['auth'], ['features']],
@@ -62,7 +70,7 @@ const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
 }
 
 /**
- * The same map with every installed plugin's `realtimeRoots` added to `access.changed` (D29, D31).
+ * The same map with every installed plugin's `realtimeRoots` added to `access.changed`.
  *
  * Only that event: a plugin whose rows carry `visibility` has to be re-fetched when somebody's
  * group membership moves under them, or they keep looking at content they can no longer open.

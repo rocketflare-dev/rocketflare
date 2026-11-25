@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `plugin-lib.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/plugin-lib.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/plugin-lib.test.ts` is what typechecks against this.
  */
 import type { Ledger, PluginUses } from './surface.d.mts'
 import type { Surface } from './upgrade-lib.d.mts'
@@ -45,9 +45,12 @@ export interface CoreEdit {
 }
 export function applyCoreEdits(text: string, edits: CoreEdit[]): string
 export function revertCoreEdits(text: string, edits: CoreEdit[]): string
+export function partialCoreEdits(text: string, edits: CoreEdit[]): string[]
+/** Where a declared core-edit line sits, as itself or as the lines a formatter wrapped it into. */
+export function findEditLine(lines: string[], line: string): { start: number; end: number } | null
 export function coreEditsByFile(manifest: { coreEdits?: CoreEdit[] }): Map<string, CoreEdit[]>
 
-export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'refused'
+export type FileRole = 'copy' | 'note' | 'fragment' | 'meta' | 'repo-only' | 'seed' | 'refused'
 export const FILE_ROLES: readonly FileRole[]
 export function pluginRoots(id: string): string[]
 export const PLUGIN_MANIFEST_FILE: string
@@ -58,12 +61,56 @@ export interface FileClassification {
   root?: string
   /** Set when the file belongs to a declared skill (`skills/<dir>/…` → `.claude/skills/<dir>/…`). */
   skill?: string
+  /** Set on a `seed`: the declared `hostFiles` path the file falls under. */
+  hostFile?: string
 }
 export function classifyPluginFile(
   relPath: string,
   id: string,
-  options?: { skills?: readonly string[] }
+  options?: { skills?: readonly string[]; hostFiles?: readonly HostFile[] }
 ): FileClassification
+
+/** `.claude/settings.json` — where a plugin's Claude Code hooks are merged. */
+export const CLAUDE_SETTINGS_FILE: string
+export const CLAUDE_HOOK_EVENTS: readonly string[]
+export const MAX_CLAUDE_HOOK_TIMEOUT: number
+/** One declared hook, flattened: `claudeHooks[event][]`. */
+export interface ClaudeHook {
+  event: string
+  matcher?: string
+  command: string
+  timeout?: number
+}
+export function parseClaudeHookCommand(command: unknown): { dir: string; script: string } | null
+export function claudeHookOwner(command: unknown, ids: readonly string[]): string | null
+export function pluginClaudeHooks(manifest: unknown): ClaudeHook[]
+export function claudeHookProblems(manifest: unknown): string[]
+export function ownedClaudeHooks(
+  settings: unknown,
+  id: string,
+  installedIds?: readonly string[]
+): ClaudeHook[]
+/** `text` null means "no file" — the input when absent, the output when nothing is left. */
+export function setClaudeHooks(
+  settingsText: string | null,
+  id: string,
+  hooks: readonly ClaudeHook[],
+  options?: { installedIds?: readonly string[] }
+): { text: string | null; added: ClaudeHook[]; removed: ClaudeHook[] }
+export function describeClaudeHook(hook: ClaudeHook): string
+
+/** One `hostFiles` entry: seeded at `path` from `from` (a file or a directory) in the plugin repo. */
+export interface HostFile {
+  path: string
+  from: string
+}
+export function hostFileRoots(id: string): string[]
+export function pluginHostFiles(manifest: unknown): HostFile[]
+export function hostFileProblems(manifest: unknown): string[]
+export function hostFileTarget(
+  relPath: string,
+  hostFiles: readonly HostFile[]
+): { target: string; entry: HostFile } | null
 
 /** `.claude/skills/` — where a plugin's declared skills land in a host. */
 export const SKILLS_ROOT: string
@@ -92,6 +139,7 @@ export const SUPPORTED_PLUGIN_BINDING_TYPES: readonly [
   'r2',
   'workflow',
   'durable_object',
+  'images',
 ]
 /** The subset an account must CREATE; `wrangler deploy` registers the other two from the toml. */
 export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
@@ -99,8 +147,47 @@ export const CREATED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2']
 export const CLASS_PLUGIN_BINDING_TYPES: readonly ['workflow', 'durable_object']
 /** The types carrying an account-scoped resource name, which must differ between environments. */
 export const NAMED_PLUGIN_BINDING_TYPES: readonly ['kv', 'queue', 'r2', 'workflow']
+/** The types whose block is a binding name and nothing else, identical in both tomls. */
+export const BARE_PLUGIN_BINDING_TYPES: readonly ['images']
 export const DO_STORAGE_KINDS: readonly ['sqlite', 'none']
 export function pluginPlatformProblems(manifest: PluginManifest): string[]
+export function publicSitesProblems(manifest: {
+  publicSites?: { hostsVar?: unknown }
+  vars?: unknown[]
+}): string[]
+export function imagesBindingProblems(
+  manifest: { bindings?: Array<{ type?: string }> },
+  installedManifests?: ReadonlyArray<{ id?: string; bindings?: Array<{ type?: string }> }>
+): string[]
+
+/** `[assets] run_worker_first` while an installed plugin serves public sites. */
+export const PUBLIC_SITES_WORKER_FIRST: readonly ['/*', '!/assets/*', '!/site-assets/*']
+export const PUBLIC_SITES_NOT_FOUND_HANDLING: 'none'
+export function pluginAppOwned(manifest: { appOwned?: unknown } | null | undefined): string[]
+export function isAppOwnedPath(file: string, owned: readonly string[]): boolean
+export function appOwnedProblems(manifest: {
+  id?: string
+  anchor?: string
+  paths?: string[]
+  appOwned?: unknown
+}): string[]
+export function declaresPublicSites(manifest: { publicSites?: unknown } | null | undefined): boolean
+export function tomlArrayExtent(text: string, key: string): { start: number; end: number } | null
+export function isWorkerFirstAll(text: string): boolean
+export function applyWorkerFirstAll(text: string): string
+export function revertWorkerFirstAll(text: string): string
+export function missingWorkerFirstPatterns(text: string, prefixes: readonly string[]): string[]
+export function workerFirstPatterns(prefixes: readonly string[]): string[]
+export function markReprovision(text: string): string
+export function awaitsReprovision(text: string): boolean
+export function settleReprovision(text: string, prefixes: readonly string[]): string
+/** `run_worker_first` without the patterns of `dropped` API prefixes (one kept for a kit path). */
+export function pruneWorkerFirst(text: string, dropped: string[]): { text: string; removed: string[] }
+export function restoreWorkerFirst(
+  text: string,
+  prefixes: readonly string[]
+): { text: string; lost: string[] }
+export function reprovisionStep(lost: readonly string[]): PlanStep
 /** `plugin-<id>-v<n>` — append-only, host-owned, never renumbered. */
 export function pluginMigrationTag(pluginId: string, n?: number): string
 export function nextPluginMigrationTag(
@@ -140,6 +227,12 @@ export interface PluginManifest {
   registries?: string[]
   /** Skill directories shipped at `skills/<dir>/`, each `<id>` or `<id>-*`; land in `.claude/skills/`. */
   skills?: string[]
+  /** Claude Code hooks merged into `.claude/settings.json`, each running a script in a declared skill. */
+  claudeHooks?: Record<string, Array<{ matcher?: string; command: string; timeout?: number }>>
+  /** Files seeded once into `docs/<id>/`, `apps/web/public/<id>/` or `apps/web/src/host/<id>/`. */
+  hostFiles?: HostFile[]
+  /** D42: the events its shared entry declares, each `<id>.<name>` (never `kit.`). */
+  events?: string[]
   requires?: PluginRequires
   dependencies?: Record<string, Record<string, string>>
   bindings?: Array<{
@@ -212,6 +305,11 @@ export function buildPluginSurface(
   }
 ): Surface
 export function surfaceDirectories(surface: Surface): string[]
+export function pluginAnchor(manifest: { id: string; anchor?: string }): string
+export function manifestPathProblems(
+  manifest: object | null | undefined,
+  id?: string
+): { field: string; path: string; problem: string }[]
 export function archiveSql(id: string, tables: readonly string[]): string
 
 export interface AddPlan {
@@ -225,6 +323,10 @@ export interface AddPlan {
   barrels: BarrelKind[]
   /** Dependencies the host, or a peer plugin, already pins at another range. */
   clashes?: readonly DependencyClash[]
+  /** Each host file the install seeds (`seed`) or finds already there (`keep`). */
+  hostSeeds?: ReadonlyArray<{ target: string; state: 'seed' | 'keep' }>
+  /** Whether `.claude/settings.json` exists; false prints "which is created" beside the hooks. */
+  settingsExists?: boolean
   verify?: string | null
 }
 export function renderAddPlan(plan: AddPlan): string[]
@@ -254,7 +356,11 @@ export function planSteps(
 ): PlanStep[]
 export function removeSteps(
   manifest: PluginManifest,
-  options?: { archive?: boolean; migrationTag?: string | null }
+  options?: {
+    archive?: boolean
+    migrationTag?: string | null
+    lostPatterns?: readonly string[]
+  }
 ): PlanStep[]
 export function renderSteps(steps: readonly PlanStep[], heading?: string): string[]
 export function addPlanJson(plan: AddPlan): Record<string, unknown>
@@ -262,6 +368,51 @@ export function renderList(
   surfaces: readonly Surface[],
   options?: { sidecarIds?: readonly string[] }
 ): string[]
+
+// ---------------------------------------------------------------- the catalogue
+
+/** The repositories `plugin list --available` reads, at their newest tag. */
+export const PLUGIN_CATALOGUES: readonly { repo: string; commercial: boolean }[]
+export const PLUGIN_CATALOGUE_URL: string
+export function repoDisplayName(repo: string): string
+export function readmeLede(text: string | null | undefined): string | null
+export interface CatalogueEntry {
+  id: string
+  label: string
+  version: string | null
+  subdir: string
+  description: string
+}
+export function catalogueEntries(
+  files: readonly string[],
+  read: (rel: string) => string | null
+): CatalogueEntry[]
+/** The files the catalogue reads, so a mirror can fetch them in one round trip. */
+export function catalogueReads(files: readonly string[]): string[]
+export interface LicenceTerms {
+  file: string
+  url: string | null
+}
+export function licenceTerms(
+  files: readonly string[],
+  read: (rel: string) => string | null,
+  where: { repo: string; ref: string }
+): LicenceTerms | null
+export interface Catalogue {
+  repo: string
+  tag: string
+  commercial: boolean
+  licence?: LicenceTerms | null
+  plugins: CatalogueEntry[]
+}
+export function renderCatalogue(
+  catalogues: readonly Catalogue[],
+  installed?: readonly Surface[]
+): string[]
+export function catalogueJson(
+  catalogues: readonly Catalogue[],
+  installed?: readonly Surface[]
+): Record<string, unknown>
 
 // ---------------------------------------------------------------- the audit
 
@@ -324,8 +475,8 @@ export interface UnresolvedPluginImport {
 
 export function loadProjectCompilerOptions(
   tsconfigPath: string,
-  options?: { ts?: typeof import('typescript') }
-): import('typescript').CompilerOptions
+  options?: { ts?: typeof import('typescript6') }
+): import('typescript6').CompilerOptions
 
 export function findProjectTsconfig(filePath: string, repoRoot?: string): string
 
@@ -337,6 +488,37 @@ export function unresolvedPluginImports(
     compilerOptions?: Record<string, unknown>
   }
 ): UnresolvedPluginImport[]
+export interface DeprecatedServerMember {
+  name: string
+  replacement: string
+  fix: string
+}
+export const DEPRECATED_SERVER_MEMBERS: readonly DeprecatedServerMember[]
+export function deprecatedServerMembers(source: string): DeprecatedServerMember[]
+
+export const TOOL_NAME_RE: RegExp
+export const CORE_TOOL_NAMES: readonly string[]
+export function isReservedPluginPath(path: string): boolean
+export function reservedMountPaths(source: string): string[]
+export function stringConstants(source: string): Map<string, string>
+export interface DeclaredTool {
+  name: string | null
+  title: string | null
+  description: string | null
+}
+export function declaredTools(source: string, constants?: Map<string, string>): DeclaredTool[]
+export interface ToolProblem {
+  severity: 'fail' | 'warn'
+  pluginId: string
+  file: string
+  tool: string
+  kind: string
+  problem: string
+  fix: string
+}
+export function toolProblems(
+  declarations: readonly { pluginId: string; file: string; tools: readonly DeclaredTool[] }[]
+): ToolProblem[]
 
 export function resolveSubdir(input: {
   flag?: string | null
@@ -459,6 +641,12 @@ export interface TableClash {
   /** The other plugins declaring the same name, sorted. */
   others: string[]
 }
+export const EVENT_NAME_RE: RegExp
+export function eventNameProblem(pluginId: string, name: unknown): string | null
+export function eventClashes(
+  manifests?: readonly ({ id?: string; events?: unknown } | null | undefined)[]
+): { event: string; id: string; others: string[] }[]
+export function undeclaredManifestEvents(events?: readonly unknown[], sharedSource?: string): string[]
 export function tableClashes(
   manifests?: ReadonlyArray<PluginManifest | null | undefined>
 ): TableClash[]

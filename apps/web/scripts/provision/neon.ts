@@ -232,7 +232,7 @@ export function buildConnectionUrl(input: {
  * The POOLED form of a Neon connection string: `ep-xyz.<region>.aws.neon.tech` →
  * `ep-xyz-pooler.<region>.aws.neon.tech` (Neon's naming convention for the transaction-mode
  * PgBouncer in front of the same compute). What a `DATABASE_DRIVER = "neon"` Worker holds as its
- * `DATABASE_URL` secret (D35) — many short-lived Worker connections share the pooler's; DDL and
+ * `DATABASE_URL` secret — many short-lived Worker connections share the pooler's; DDL and
  * Hyperdrive keep the direct host. Idempotent; a non-Neon URL is returned unchanged.
  */
 export function toPooledNeonUrl(connectionString: string): string {

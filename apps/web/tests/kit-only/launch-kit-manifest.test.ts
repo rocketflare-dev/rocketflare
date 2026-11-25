@@ -7,7 +7,7 @@
  *
  * Kit-only: it judges this checkout's own manifest and tomls, which a copy is free to change (and
  * Launch's write_config rewrites). The shape cases, on a fixture manifest, are
- * `tests/config/launch-kit-manifest.test.ts` and travel into every copy.
+ * `launch-kit-schema.test.ts` beside it.
  */
 import { readFileSync } from 'node:fs'
 import path from 'node:path'

@@ -1,5 +1,5 @@
 /**
- * Realtime bridge (D8, 06 §b): connects the singleton `websocketClient` once `useAuth()` is
+ * Realtime bridge: connects the singleton `websocketClient` once `useAuth()` is
  * authenticated AND has a tenant, reconnects when the tenant changes, disconnects on sign-out.
  * Every event becomes query invalidations through `invalidationsFor` (`@rocketflare/shared/realtime`) —
  * the client re-queries, it never applies a payload as state — and a `notification.created` shows

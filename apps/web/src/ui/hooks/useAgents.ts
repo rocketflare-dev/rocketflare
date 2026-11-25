@@ -1,11 +1,12 @@
 /**
- * Agent runs (D7, D8, D17, D20): the registry (`GET /api/agents`), runs paginated with filters
+ * Agent runs: the registry (`GET /api/agents`), runs paginated with filters
  * (`GET /runs`), one run with its durable events (`GET /runs/:id`), start (`POST /runs` → 202) and
  * cancel (`POST /runs/:id/cancel`). "DB is the truth, WebSocket is a nudge": the runs family root
  * is `agent-run`, the entity named by the server's `entity.changed` nudge, so `WebSocketProvider`
  * invalidates it generically; an active run ALSO polls every `RUN_POLL_MS` in case the socket is
  * down. Members see their own runs, admin+ every run — the route decides, the hook just lists.
  */
+import { agentRunTimelineSchema } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
   type AgentRunEvent,
@@ -14,6 +15,7 @@ import {
   agentRunEventSchema,
   agentRunSchema,
   agentRunWithEventsSchema,
+  agentStatsResponseSchema,
   type CreateAgentRunRequest,
   createAgentRunResponseSchema,
 } from '@rocketflare/shared/ai/agents'
@@ -48,8 +50,7 @@ export interface AgentRunsFilters {
 }
 
 /**
- * Whether the SERVER still owes this run an answer — **narrower than `isRunActive`, on purpose**
- * (issue #17).
+ * Whether the SERVER still owes this run an answer — **narrower than `isRunActive`, on purpose**.
  *
  * `isRunActive` widened to include `awaiting_input`, because the exclusive index and "is this agent
  * busy?" genuinely include a parked run. Refreshing does not: a run parked on a question changes
@@ -138,6 +139,27 @@ export function useAgentRun(id: string | undefined) {
   })
 }
 
+/** Per-agent runs, outcomes, tokens, cost and mean duration over `days`, plus each last run. */
+export function useAgentStats(days = 30) {
+  return useQuery({
+    queryKey: queryKeys.agentRuns.stats(days),
+    queryFn: () => api.get(`/api/agents/stats?days=${days}`, { schema: agentStatsResponseSchema }),
+  })
+}
+
+/** The inspector's timeline (`GET /runs/:id/timeline`) — admins only, read when its tab opens. */
+export function useAgentRunTimeline(id: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.agentRuns.timeline(id ?? ''),
+    queryFn: () =>
+      api.get(`/api/agents/runs/${encodeURIComponent(id ?? '')}/timeline`, {
+        schema: agentRunTimelineSchema,
+      }),
+    enabled: Boolean(id),
+    refetchInterval: q => runPollInterval(q.state.data?.run.status),
+  })
+}
+
 /** The bare row — for anything that wants the status without re-reading the whole log. */
 export function useAgentRunRow(id: string | undefined) {
   return useQuery({
@@ -188,7 +210,7 @@ export function useCancelAgentRun() {
 }
 
 /**
- * Answer one of a run's asks (issue #17). **No optimistic write**: this is a decision with a side
+ * Answer one of a run's asks. **No optimistic write**: this is a decision with a side
  * effect at the other end, and a button that flips before the server agrees is a button that lies
  * when two people press it at once.
  *
@@ -242,7 +264,7 @@ export function useSendSteering(runId: string) {
 export const interruptInboxResponseSchema = paginatedResponse(interruptInboxItemSchema)
 
 /**
- * How many asks are waiting on this person — the SideNav badge (issue #17).
+ * How many asks are waiting on this person — the SideNav badge.
  *
  * `pageSize: 1`, because only `pagination.total` is read. **Never polled**: it lives under
  * `['agent-run']`, which both the park (an `interrupt` event row) and the answer nudge, so the

@@ -1,8 +1,8 @@
 /**
- * `search_knowledge` (D7, D18) — every agent's read access to the tenant's knowledge base: the same
+ * `search_knowledge` — every agent's read access to the tenant's knowledge base: the same
  * hybrid `searchChunks` the `/search` page uses, bound to the run's `AccessScope` — the run's
  * tenant AND the requesting person's group visibility, never a model-supplied one. A document the
- * requester may not read is not in the corpus this tool searches (D29).
+ * requester may not read is not in the corpus this tool searches.
  *
  * The shape of the answer is the whole design here — a model can only reason about what the tool
  * hands back, so:
@@ -28,21 +28,26 @@
  * what the runtime puts on `ctx.tools`.
  */
 import { KNOWLEDGE_TOOLS, SEARCH_MAX_LIMIT } from '@rocketflare/shared/ai/embeddings'
+import type { FactHitGroup } from '@rocketflare/shared/ai/knowledge-facts'
+import type { GroupRef } from '@rocketflare/shared/groups'
+import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import type { MembershipRole } from '@rocketflare/shared/tenants'
 import { z } from 'zod'
 import type { AppConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
 import type { AccessScope } from '../../access'
+import type { Tool } from '../../ai/agent-loop'
 import { AiNotConfiguredError } from '../../ai/errors'
-import type { Tool } from '../../ai/kit'
-import { searchChunks } from '../../ai/retrieval'
+import { searchKnowledgeChunks } from '../../ai/retrieval'
 import type { AiEnv } from '../../ai/types'
+import { FACTS_NOTE, factsForQuery } from '../../knowledge/lookup'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
 
 export const SEARCH_KNOWLEDGE_TOOL = KNOWLEDGE_TOOLS.search
 /**
  * Per passage: a whole ~3 200-char chunk fits, but no more. The budgets below are the compromise
  * between "the model can actually read the material" and "the transcript stays inside a small
- * model's context": the kit's zero-key floor is Workers AI Mistral Small, and a tool result of
+ * model's context": the zero-key floor is Workers AI Mistral Small, and a tool result of
  * ~4 000 tokens per turn compounds over a loop until the next call stalls. Raise them for a
  * long-context provider; do not raise them and keep the Workers AI floor.
  */
@@ -86,6 +91,10 @@ export interface SearchKnowledgePassage {
   passage: number
   /** Character offset of this passage in the document — pass it to get_document to read around it. */
   charOffset: number | null
+  /** The headings the passage sits under (`Pricing › Annual plans`) — absent when none. */
+  section?: string
+  /** Page of the source document — absent when unknown. */
+  page?: number
   score: number
   text: string
   /** Set when the passage was longer than the per-passage budget — read the rest with get_document. */
@@ -98,6 +107,12 @@ export interface SearchKnowledgeDocument {
   title: string
   /** Passages this document is split into, so `passage 3` reads as "3 of 12". */
   totalPassages: number
+  /**
+   * Set for a PLATFORM document (the app's own guide, shared by every workspace): it is not in
+   * this workspace's knowledge base, so `get_document` cannot open it — the passages are all of it
+   * the model can read.
+   */
+  platform?: true
   matchingPassages: number
   passages: SearchKnowledgePassage[]
 }
@@ -116,42 +131,97 @@ export interface SearchKnowledgeResult {
   hint?: string
   /** Only when nothing matched: what the knowledge base actually holds. */
   knowledgeBase?: KnowledgeBaseEntry[]
+  /**
+   * Knowledge facts (D43) about the entities the query names — present only for a tenant with
+   * the `knowledge-facts` flag and when the query mentions a known entity.
+   */
+  facts?: FactHitGroup[]
+  /** How to state `facts` — present with them. */
+  factsNote?: string
 }
 
 /** The slice of `AgentContext` the tools need — structural so tests pass `{ db, cfg, env, scope }`. */
+/**
+ * Who is behind a tool call, as the caller already knows it: the person's role in the tenant, the
+ * admin-level flag (owner, admin, support or a global admin — the same test the request context
+ * uses) and their groups with the name of each group's type. Their OWN facts, read-only; a tool
+ * uses them to scope (a semantic layer's security context), never to grant.
+ */
+export interface ToolRequester {
+  userId: string
+  role: MembershipRole | null
+  isAdmin: boolean
+  groups: readonly GroupRef[]
+}
+
 export interface AgentToolContext {
   db: Database
   cfg: AppConfig
   env: AiEnv
   /**
-   * What this run may READ (D29) — the tenant AND the requesting person's groups. Built at EXECUTE
+   * What this run may READ — the tenant AND the requesting person's groups. Built at EXECUTE
    * time from `agent_runs.requestedByUserId`, not snapshotted at enqueue, so a run started before
    * someone left a group does not read on their old access. A run with no requesting user
    * ("system") gets tenant-visible documents only.
    */
   scope: AccessScope
   /**
+   * The requester's CASL grant, from their current membership. A plugin gates a tool on it
+   * (`ctx.can('manage', SUBJECT)`); `scope.bypass` is row visibility and answers a different
+   * question. Absent, or a run with no requester: every check is `false`.
+   */
+  can?: (action: Actions, subject: Subjects) => boolean
+  /**
    * Ceiling on one `get_document` window, in characters — the CALLER's budget, not the tool's.
    * Absent means the agent-run ceiling (`GET_DOCUMENT_MAX_CHARS`); the chat path passes far less,
    * because there a tool result shares one context window with the whole thread.
    */
   maxDocumentChars?: number
+  /**
+   * URLs the requester wrote (`./requester-urls.ts`): the chat person's own messages, or a run's
+   * input when a person submitted it. Absent = none — a tool that fetches the web then reads only
+   * URLs its own search returned.
+   */
+  requesterUrls?: ReadonlySet<string>
+  /**
+   * The reader's effective feature flags, when the caller already has them (chat: the request's
+   * `auth.features`). Absent: `buildAgentTools` reads the tenant's.
+   */
+  features?: readonly string[]
+  /** The person behind the call (`ToolRequester`); absent for a run nobody started. */
+  requester?: ToolRequester
 }
 
-export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledgeInput> {
+export interface SearchKnowledgeToolOptions {
+  /**
+   * PLATFORM sources this reader's search also covers — the union of the installed plugins'
+   * `knowledgeSources(scope)`, computed by `buildAgentTools`. Absent or empty = the workspace's
+   * own documents only, exactly as before.
+   */
+  platformSources?: readonly string[]
+  /** Add the `facts` block (the tenant has the `knowledge-facts` flag). */
+  facts?: boolean
+}
+
+export function searchKnowledgeTool(
+  ctx: AgentToolContext,
+  options: SearchKnowledgeToolOptions = {}
+): Tool<SearchKnowledgeInput> {
+  const platformSources = options.platformSources?.length ? options.platformSources : undefined
   return {
     name: SEARCH_KNOWLEDGE_TOOL,
-    description:
-      "Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (`passage` n of `totalPassages`, and a `charOffset` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with `documentId`, read a whole document with `get_document`, or see what exists with `list_documents`. When nothing matches, the answer lists the documents that do exist so you can re-aim.",
+    mcp: { title: 'Search the knowledge base' },
+    description: `Search this workspace's knowledge base — everything people uploaded or pasted — and get back the matching PASSAGES in full, grouped by the document they came from and located within it (\`passage\` n of \`totalPassages\`, and a \`charOffset\` you can hand to get_document to read around the match). Results are the CLOSEST passages, not a relevance filter: read them and discard any that do not answer the question, then search again with different wording. Use it before answering any question about the organisation's own material. Narrow to one document with \`documentId\`, read a whole document with \`get_document\`, or see what exists with \`list_documents\`. When nothing matches, the answer lists the documents that do exist so you can re-aim.${options.facts ? ' When the query names a known entity, the answer also carries `facts` about it, each with a `state`: when two facts are `conflicting`, or passages give different values, the sources disagree — say so and give each value with its document, never pick one silently.' : ''}`,
     schema: searchKnowledgeInputSchema,
     async handler(input) {
-      let hits: Awaited<ReturnType<typeof searchChunks>>
+      let hits: Awaited<ReturnType<typeof searchKnowledgeChunks>>['hits']
       try {
-        hits = await searchChunks(ctx.db, ctx.cfg, ctx.env, ctx.scope, {
+        ;({ hits } = await searchKnowledgeChunks(ctx.db, ctx.cfg, ctx.env, ctx.scope, {
           query: input.query,
           limit: input.limit ?? SEARCH_KNOWLEDGE_DEFAULT_LIMIT,
           documentId: input.documentId,
-        })
+          ...(platformSources ? { platformSources } : {}),
+        }))
       } catch (err) {
         if (err instanceof AiNotConfiguredError) {
           return JSON.stringify({
@@ -181,6 +251,7 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
           documentId: hit.documentId,
           title: hit.title,
           totalPassages: hit.documentPassages,
+          ...(hit.platform ? { platform: true as const } : {}),
           matchingPassages: 0,
           passages: [],
         }
@@ -189,6 +260,8 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
           rank: hit.rank,
           passage: hit.seq + 1,
           charOffset: hit.charOffset,
+          ...(hit.headingPath ? { section: hit.headingPath } : {}),
+          ...(hit.page !== null ? { page: hit.page } : {}),
           score: Number(hit.score.toFixed(4)),
           text,
           ...(truncated ? { truncated: true as const } : {}),
@@ -209,12 +282,23 @@ export function searchKnowledgeTool(ctx: AgentToolContext): Tool<SearchKnowledge
         result.omitted = omitted
         result.hint = `${omitted} further passage(s) matched but did not fit this answer — ask a narrower question, or read a document from its passage's charOffset with get_document.`
       }
+      if (!result.hint && [...byDocument.values()].some(d => d.platform)) {
+        result.hint =
+          'Documents marked platform are the app’s own guide, shared by every workspace — get_document cannot open them; quote the passages shown.'
+      }
       const cut = [...byDocument.values()].flatMap(d => d.passages).some(p => p.truncated)
       if (cut && !result.hint) {
         result.hint =
           'A passage was longer than the budget and was cut — read the rest with get_document at its charOffset.'
       }
-      if (passagesReturned === 0) {
+      if (options.facts) {
+        const facts = await factsForQuery(ctx.db, ctx.scope, input.query)
+        if (facts.length > 0) {
+          result.facts = facts
+          result.factsNote = FACTS_NOTE
+        }
+      }
+      if (passagesReturned === 0 && !result.facts) {
         const knowledgeBase = await listKnowledgeDocuments(ctx, { limit: EMPTY_RESULT_DOCUMENTS })
         result.knowledgeBase = knowledgeBase.documents
         result.hint =

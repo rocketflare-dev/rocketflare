@@ -1,5 +1,5 @@
 /**
- * The agent target (D33): one case → one real agent run, IN-PROCESS, through the real runtime —
+ * The agent target: one case → one real agent run, IN-PROCESS, through the real runtime —
  * `enqueueRun` (the row, validated input), then the three Workflow step bodies inline (`claimStep` →
  * `executeRun` → `finishStep`) exactly as `AgentRunWorkflow` calls them, with no Workflow binding.
  * `executeRun` throws only to ask for a step retry, so it is retried here up to the same limit the
@@ -79,7 +79,7 @@ export function agentHarness(agentKey: AgentKey): Harness<EvalCase, JsonValue | 
       const transcript = transcriptFromRunEvents(events, row.input, output, row.error)
       // The TEMPLATE (override or default), not the interpolated text: every case has its own
       // tenant name, and "which prompt ran" must hash the same across cases.
-      // D37: every `ctx.decide` answer, keyed for `DecisionJudge` — read from the table, not a model.
+      // Every `ctx.decide` answer, keyed for `DecisionJudge` — read from the table, not a model.
       const decisions: RecordedDecisions = {}
       for (const d of await listDecisions(world.db, world.tenantId, runId)) {
         decisions[d.key] = Object.fromEntries(

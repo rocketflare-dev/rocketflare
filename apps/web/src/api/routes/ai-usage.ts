@@ -1,5 +1,5 @@
 /**
- * `/api/ai/usage` (D18): `GET /summary?from&to` — token totals per (provider, model, feature) for
+ * `/api/ai/usage`: `GET /summary?from&to` — token totals per (provider, model, feature) for
  * the tenant, default last 30 days. Admin+ (`manage AiConfig`: usage is a cost/configuration
  * concern, not a member one).
  */

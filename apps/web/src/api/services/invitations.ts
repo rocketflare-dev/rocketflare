@@ -1,5 +1,5 @@
 /**
- * Invitations (D9, D10, D12): create/bulk/resend/revoke inside a tenant, public details by token,
+ * Invitations: create/bulk/resend/revoke inside a tenant, public details by token,
  * and the transactional accept. The URL token is 32 random bytes; only its SHA-256 is stored, so
  * "resend" mints a new token (the old link dies). Accept never demotes an existing higher role.
  */
@@ -9,12 +9,16 @@ import type {
   Invitation,
   InvitationDetails,
   InvitationStatus,
+  MembershipRole,
   TenantRole,
 } from '@rocketflare/shared/tenants'
-import { and, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNull, lte, sql } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import type { Database } from '../../db/client'
 import {
+  INVITATION_ROLES,
+  type InvitationRole,
+  invitationSendCounters,
   type TeamInvitation,
   teamInvitations,
   tenants,
@@ -23,10 +27,18 @@ import {
   userSessions,
   users,
 } from '../../db/schema'
-import { ApiError, ConflictError, ForbiddenError, NotFoundError } from '../utils/core/errors'
+import { isOwnerLevel, type RoleView } from '../middleware/permissions'
+import {
+  ApiError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  RateLimitedError,
+} from '../utils/core/errors'
 import { hashToken } from '../utils/core/hash'
 import { randomToken } from '../utils/core/ids'
 import type { Logger } from '../utils/core/logger'
+import { assertMayOwnAnother } from '../utils/db/tenant-helpers'
 import { asCount, pageWindow } from '../utils/routes/pagination'
 import { recordActivity } from './activity'
 import { invitationEmail } from './email'
@@ -35,6 +47,9 @@ import { notify, notifyMany } from './notifications'
 import { nudge, type Realtime, realtimeEvent } from './realtime'
 
 export const INVITATION_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+/** How long after an invitation email another can be sent for the same invitation. */
+export const INVITATION_RESEND_COOLDOWN_SECONDS = 300
 
 const ROLE_RANK: Record<string, number> = { member: 1, support: 2, admin: 2, owner: 3 }
 
@@ -104,13 +119,86 @@ export interface InviteInput {
   email: string
   role: TenantRole
   inviter: User
+  /** Whose authority the invitation is issued under; only owner-level may issue `owner`. */
+  actor: RoleView
   realtime?: Realtime
+}
+
+/** `owner` is assigned only by an owner-level actor, the same rule as a role change. */
+function assertMayIssueRole(actor: RoleView, role: string): void {
+  if (role === 'owner' && !isOwnerLevel(actor)) {
+    throw new ForbiddenError('Only an owner can invite an owner')
+  }
+}
+
+/**
+ * Whether a member holding `issuerRole` could issue an invitation for `role` — the rule
+ * `assertMayIssueRole` and the invite routes apply: `owner` needs an owner, `admin` and `member`
+ * an owner or an admin. A global admin may issue any; that is checked separately.
+ */
+export function roleMayIssue(issuerRole: string | null | undefined, role: InvitationRole): boolean {
+  if (role === 'owner') return issuerRole === 'owner'
+  return issuerRole === 'owner' || issuerRole === 'admin'
+}
+
+/** The invitation roles a member holding `role` could no longer issue — what a demotion ends. */
+export function rolesNotIssuableBy(role: string): InvitationRole[] {
+  return INVITATION_ROLES.filter(r => !roleMayIssue(role, r))
+}
+
+/** Seconds until the next UTC day, when the send counters start again. */
+function secondsToNextUtcDay(): number {
+  const now = Date.now()
+  return Math.max(1, Math.ceil((86_400_000 - (now % 86_400_000)) / 1000))
+}
+
+/**
+ * Count one invitation email against the sender and the tenant, or refuse it with a 429. An upsert
+ * per scope is the atomic claim: the conditional update takes the row lock, so simultaneous sends
+ * cannot pass the limit. Runs inside the caller's transaction, so a refused or failed send leaves
+ * both counters where they were.
+ */
+async function chargeInvitationEmail(
+  tx: Database,
+  cfg: AppConfig,
+  input: { tenantId: string; userId: string }
+): Promise<void> {
+  const scopes = [
+    { scope: `user:${input.userId}`, limit: cfg.INVITATION_EMAILS_PER_USER_PER_DAY },
+    { scope: `tenant:${input.tenantId}`, limit: cfg.INVITATION_EMAILS_PER_TENANT_PER_DAY },
+  ]
+  for (const { scope, limit } of scopes) {
+    const [counted] = await tx
+      .insert(invitationSendCounters)
+      .values({ scope, sent: 1 })
+      .onConflictDoUpdate({
+        target: [invitationSendCounters.scope, invitationSendCounters.day],
+        set: { sent: sql`${invitationSendCounters.sent} + 1` },
+        setWhere: sql`${invitationSendCounters.sent} < ${limit}`,
+      })
+      .returning({ sent: invitationSendCounters.sent })
+    if (!counted) {
+      throw new RateLimitedError(
+        'The daily limit on invitation emails has been reached',
+        secondsToNextUtcDay()
+      )
+    }
+  }
+}
+
+/** Nightly prune: counters from before yesterday can no longer limit anything. */
+export async function pruneInvitationSendCounters(db: Database): Promise<number> {
+  const rows = await db
+    .delete(invitationSendCounters)
+    .where(sql`${invitationSendCounters.day} < (now() at time zone 'utc')::date - 1`)
+    .returning({ scope: invitationSendCounters.scope })
+  return rows.length
 }
 
 type InviteLogger = Pick<Logger, 'info' | 'warn' | 'error'>
 
 /**
- * Invitation emails go through `JOBS_QUEUE` (D7): the route answers as soon as the row exists and
+ * Invitation emails go through `JOBS_QUEUE`: the route answers as soon as the row exists and
  * the consumer retries delivery. The magic-link email deliberately stays INLINE
  * (routes/auth/magic-link.ts) — a person is waiting on that one, so its latency matters more than
  * offloading it. A missing binding throws `JobsQueueNotConfiguredError`, never silently drops mail.
@@ -159,10 +247,11 @@ async function tenantName(db: Database, tenantId: string): Promise<string> {
 export async function createInvitation(
   db: Database,
   cfg: AppConfig,
-  logger: InviteLogger,
+  _logger: InviteLogger,
   jobs: JobsQueue,
   input: InviteInput
 ): Promise<{ invitation: Invitation; token: string }> {
+  assertMayIssueRole(input.actor, input.role)
   const email = input.email.toLowerCase()
   const member = await db
     .select({ userId: tenantUsers.userId })
@@ -179,32 +268,39 @@ export async function createInvitation(
   if (pending)
     throw new ConflictError('An invitation is already pending for this address', 'already_invited')
 
-  // A stale (expired) pending row would violate the partial unique index; revoke it first.
-  await db
-    .update(teamInvitations)
-    .set({ revokedAt: new Date() })
-    .where(
-      and(
-        eq(teamInvitations.tenantId, input.tenantId),
-        sql`lower(${teamInvitations.email}) = ${email}`,
-        isNull(teamInvitations.acceptedAt),
-        isNull(teamInvitations.revokedAt)
-      )
-    )
-
   const token = randomToken(32)
-  const [row] = await db
-    .insert(teamInvitations)
-    .values({
+  const tokenHash = await hashToken(token)
+  const row = await db.transaction(async tx => {
+    await chargeInvitationEmail(tx as unknown as Database, cfg, {
       tenantId: input.tenantId,
-      email,
-      role: input.role,
-      tokenHash: await hashToken(token),
-      invitedByUserId: input.inviter.id,
-      expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+      userId: input.inviter.id,
     })
-    .returning()
-  if (!row) throw new Error('createInvitation: insert returned no row')
+    // A stale (expired) pending row would violate the partial unique index; revoke it first.
+    await tx
+      .update(teamInvitations)
+      .set({ revokedAt: new Date() })
+      .where(
+        and(
+          eq(teamInvitations.tenantId, input.tenantId),
+          sql`lower(${teamInvitations.email}) = ${email}`,
+          isNull(teamInvitations.acceptedAt),
+          isNull(teamInvitations.revokedAt)
+        )
+      )
+    const [row] = await tx
+      .insert(teamInvitations)
+      .values({
+        tenantId: input.tenantId,
+        email,
+        role: input.role,
+        tokenHash,
+        invitedByUserId: input.inviter.id,
+        expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+      })
+      .returning()
+    if (!row) throw new Error('createInvitation: insert returned no row')
+    return row
+  })
 
   await queueInvitationEmail(jobs, cfg, {
     to: email,
@@ -230,12 +326,18 @@ export async function bulkInvite(
   cfg: AppConfig,
   logger: InviteLogger,
   jobs: JobsQueue,
-  input: { tenantId: string; emails: string[]; role: TenantRole; inviter: User }
+  input: { tenantId: string; emails: string[]; role: TenantRole; inviter: User; actor: RoleView }
 ): Promise<BulkInviteOutcome[]> {
+  assertMayIssueRole(input.actor, input.role)
   const results: BulkInviteOutcome[] = []
   const seen = new Set<string>()
+  let stopped = false
   for (const raw of input.emails) {
     const email = raw.toLowerCase()
+    if (stopped) {
+      results.push({ email, status: 'failed', reason: 'send_limit' })
+      continue
+    }
     if (seen.has(email)) {
       results.push({ email, status: 'skipped', reason: 'duplicate' })
       continue
@@ -247,6 +349,11 @@ export async function bulkInvite(
     } catch (err) {
       if (err instanceof ConflictError) {
         results.push({ email, status: 'skipped', reason: err.code ?? 'conflict' })
+      } else if (err instanceof RateLimitedError) {
+        // Nothing queued at all is the refusal; otherwise report what went out and what did not.
+        if (!results.some(r => r.status === 'invited')) throw err
+        results.push({ email, status: 'failed', reason: 'send_limit' })
+        stopped = true
       } else {
         logger.error({ err, email }, 'bulk invite failed for one address')
         results.push({ email, status: 'failed', reason: 'error' })
@@ -260,9 +367,9 @@ export async function bulkInvite(
 export async function resendInvitation(
   db: Database,
   cfg: AppConfig,
-  logger: InviteLogger,
+  _logger: InviteLogger,
   jobs: JobsQueue,
-  input: { tenantId: string; id: string; inviter: User }
+  input: { tenantId: string; id: string; inviter: User; actor: RoleView }
 ): Promise<Invitation> {
   const existing = await db.query.teamInvitations.findFirst({
     where: and(eq(teamInvitations.id, input.id), eq(teamInvitations.tenantId, input.tenantId)),
@@ -271,13 +378,41 @@ export async function resendInvitation(
   if (existing.acceptedAt || existing.revokedAt) {
     throw new ConflictError('Only pending invitations can be resent', 'invitation_not_pending')
   }
+  assertMayIssueRole(input.actor, existing.role)
   const token = randomToken(32)
-  const [row] = await db
-    .update(teamInvitations)
-    .set({ tokenHash: await hashToken(token), expiresAt: new Date(Date.now() + INVITATION_TTL_MS) })
-    .where(eq(teamInvitations.id, existing.id))
-    .returning()
-  if (!row) throw new NotFoundError('Invitation not found')
+  const tokenHash = await hashToken(token)
+  const row = await db.transaction(async tx => {
+    // The conditional update is the claim: of simultaneous resends exactly one matches.
+    const [row] = await tx
+      .update(teamInvitations)
+      .set({
+        tokenHash,
+        expiresAt: new Date(Date.now() + INVITATION_TTL_MS),
+        lastSentAt: new Date(),
+      })
+      .where(
+        and(
+          eq(teamInvitations.id, existing.id),
+          lte(
+            teamInvitations.lastSentAt,
+            new Date(Date.now() - INVITATION_RESEND_COOLDOWN_SECONDS * 1000)
+          )
+        )
+      )
+      .returning()
+    if (!row) {
+      const elapsedSeconds = Math.floor((Date.now() - existing.lastSentAt.getTime()) / 1000)
+      throw new RateLimitedError(
+        'This invitation was sent a moment ago. Try again shortly.',
+        Math.max(1, INVITATION_RESEND_COOLDOWN_SECONDS - elapsedSeconds)
+      )
+    }
+    await chargeInvitationEmail(tx as unknown as Database, cfg, {
+      tenantId: input.tenantId,
+      userId: input.inviter.id,
+    })
+    return row
+  })
   await queueInvitationEmail(jobs, cfg, {
     to: row.email,
     tenantId: input.tenantId,
@@ -298,6 +433,57 @@ export async function revokeInvitation(
   const row = await revokeRow(db, tenantId, id)
   nudge(realtime, realtimeEvent('invitation.changed', tenantId, { id }))
   return row
+}
+
+/**
+ * A person whose membership has ended takes their pending invitations in this tenant with them, in
+ * the caller's transaction; `roles` narrows it to the invitations of those roles (a demotion ends
+ * only what the new role could not issue). A global admin's stay: their authority is the platform
+ * flag, which the membership never held. Returns the ids revoked, for the caller's nudge after
+ * commit.
+ */
+export async function revokeInvitationsIssuedBy(
+  tx: Database,
+  input: { tenantId: string; userId: string; roles?: readonly InvitationRole[] }
+): Promise<string[]> {
+  if (input.roles?.length === 0) return []
+  const revoked = await tx
+    .update(teamInvitations)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(teamInvitations.tenantId, input.tenantId),
+        eq(teamInvitations.invitedByUserId, input.userId),
+        input.roles ? inArray(teamInvitations.role, [...input.roles]) : undefined,
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt),
+        sql`NOT EXISTS (SELECT 1 FROM ${users} WHERE ${users.id} = ${input.userId} AND ${users.isGlobalAdmin})`
+      )
+    )
+    .returning({ id: teamInvitations.id })
+  return revoked.map(row => row.id)
+}
+
+/**
+ * A blocked person's authority is gone everywhere, so every pending invitation they issued goes,
+ * in every tenant and whatever their platform flag, in the block's transaction. Unblocking
+ * restores none. Returns the revoked rows, for the caller's nudges after commit.
+ */
+export async function revokeEveryInvitationIssuedBy(
+  tx: Database,
+  userId: string
+): Promise<{ id: string; tenantId: string }[]> {
+  return tx
+    .update(teamInvitations)
+    .set({ revokedAt: new Date() })
+    .where(
+      and(
+        eq(teamInvitations.invitedByUserId, userId),
+        isNull(teamInvitations.acceptedAt),
+        isNull(teamInvitations.revokedAt)
+      )
+    )
+    .returning({ id: teamInvitations.id, tenantId: teamInvitations.tenantId })
 }
 
 async function revokeRow(db: Database, tenantId: string, id: string): Promise<Invitation> {
@@ -352,16 +538,67 @@ export async function getInvitationDetails(
 }
 
 /**
+ * What decides whether an invitation's issuer still holds its authority: their user row and their
+ * membership, if any, in the invitation's tenant.
+ */
+export interface IssuerStanding {
+  blockedAt: Date | null
+  isGlobalAdmin: boolean
+  /** Their role in the invitation's tenant; null without a membership there. */
+  role: string | null
+}
+
+/**
+ * THE rule an invitation is honoured by, wherever it is honoured — accept, and admission at
+ * sign-up (`hasPendingInvitation`): the issuer exists, is not blocked, and is a global admin or a
+ * member of the invitation's tenant whose role could issue its role (`roleMayIssue`).
+ */
+export function issuerMayIssue(issuer: IssuerStanding | undefined, role: InvitationRole): boolean {
+  if (!issuer || issuer.blockedAt !== null) return false
+  return issuer.isGlobalAdmin || roleMayIssue(issuer.role, role)
+}
+
+/** `issuerMayIssue` over the issuer's rows as they are now. */
+async function issuerMayStillIssue(tx: Database, inv: TeamInvitation): Promise<boolean> {
+  const [issuer] = await tx
+    .select({
+      blockedAt: users.blockedAt,
+      isGlobalAdmin: users.isGlobalAdmin,
+      role: tenantUsers.role,
+    })
+    .from(users)
+    .leftJoin(
+      tenantUsers,
+      and(eq(tenantUsers.userId, users.id), eq(tenantUsers.tenantId, inv.tenantId))
+    )
+    .where(eq(users.id, inv.invitedByUserId))
+  return issuerMayIssue(issuer, inv.role)
+}
+
+/**
  * Accept: ONE transaction — membership upsert (never demoting), `acceptedAt`, session points at
- * the tenant. The signed-in user's email must match the invitation (403 `invitation_email_mismatch`).
+ * the tenant. The signed-in user's email must match the invitation (403 `invitation_email_mismatch`),
+ * and its issuer must still hold the authority to issue it (`issuerMayStillIssue`) — otherwise the
+ * invitation is marked revoked, committed, and the answer is 410 `invitation_revoked`.
  */
 export async function acceptInvitation(
   db: Database,
-  input: { token: string; user: User; sessionId: string | null; realtime?: Realtime }
+  input: {
+    token: string
+    user: User
+    sessionId: string | null
+    realtime?: Realtime
+    /**
+     * `MAX_OWNED_TENANTS_PER_USER`: an owner invitation that would make the person an owner is
+     * refused (403 `tenant_limit_reached`, the invitation left pending) when they already own
+     * that many. Omitted, no ceiling.
+     */
+    maxOwnedTenants?: number
+  }
 ): Promise<{
   tenantId: string
   tenantName: string
-  role: TenantRole
+  role: MembershipRole
   invitation: TeamInvitation
   joined: boolean
 }> {
@@ -380,10 +617,25 @@ export async function acceptInvitation(
   }
 
   const result = await db.transaction(async tx => {
+    // The invitation is only as good as its issuer's authority NOW: a role change, a block or a
+    // lost global-admin flag since it was sent ends it here, and the row says so once committed.
+    if (!(await issuerMayStillIssue(tx as unknown as Database, inv))) {
+      await tx
+        .update(teamInvitations)
+        .set({ revokedAt: new Date() })
+        .where(and(eq(teamInvitations.id, inv.id), isNull(teamInvitations.revokedAt)))
+      return null
+    }
     const existing = await tx.query.tenantUsers.findFirst({
       where: and(eq(tenantUsers.tenantId, inv.tenantId), eq(tenantUsers.userId, input.user.id)),
     })
     let joined = false
+    // An `idp` row follows the issuer; the invitation is accepted and the row stays as it is.
+    const role = existing?.source === 'idp' ? existing.role : inv.role
+    const becomesOwner = role === 'owner' && existing?.role !== 'owner'
+    if (becomesOwner && input.maxOwnedTenants !== undefined) {
+      await assertMayOwnAnother(tx as unknown as Database, input.user.id, input.maxOwnedTenants)
+    }
     if (!existing) {
       await tx.insert(tenantUsers).values({
         tenantId: inv.tenantId,
@@ -392,7 +644,10 @@ export async function acceptInvitation(
         invitedByUserId: inv.invitedByUserId,
       })
       joined = true
-    } else if ((ROLE_RANK[inv.role] ?? 0) > (ROLE_RANK[existing.role] ?? 0)) {
+    } else if (
+      existing.source !== 'idp' &&
+      (ROLE_RANK[inv.role] ?? 0) > (ROLE_RANK[existing.role] ?? 0)
+    ) {
       await tx
         .update(tenantUsers)
         .set({ role: inv.role })
@@ -415,7 +670,7 @@ export async function acceptInvitation(
       type: 'member.joined',
       subjectType: 'TenantMember',
       subjectId: input.user.id,
-      metadata: { via: 'invitation', invitationId: inv.id, role: inv.role },
+      metadata: { via: 'invitation', invitationId: inv.id, role },
     })
     if (joined) {
       await notify(
@@ -457,7 +712,7 @@ export async function acceptInvitation(
     return {
       tenantId: inv.tenantId,
       tenantName: row.tenant.name,
-      role: inv.role,
+      role,
       invitation: inv,
       joined,
     }
@@ -465,6 +720,7 @@ export async function acceptInvitation(
   // Two nudges, deliberately: the People page lists members AND pending invitations, and accept
   // changes both. Deferred, so they fire after the transaction has committed.
   nudge(input.realtime, realtimeEvent('invitation.changed', inv.tenantId, { id: inv.id }))
+  if (!result) throw new ApiError(410, 'This invitation is revoked', 'invitation_revoked')
   if (result.joined) {
     nudge(input.realtime, realtimeEvent('member.changed', inv.tenantId, { id: input.user.id }))
   }

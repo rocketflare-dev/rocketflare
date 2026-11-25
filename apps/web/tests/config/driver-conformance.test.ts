@@ -1,5 +1,5 @@
 /**
- * The conformance suite stays a conformance suite (D35, tests/driver/CLAUDE.md).
+ * The conformance suite stays a conformance suite (tests/driver/CLAUDE.md).
  *
  * `tests/driver/` proves the driver seam: each test states one equivalence and passes UNCHANGED
  * under `postgres` and `neon`. The easy wrong fix for a test that fails under one driver is to
@@ -16,7 +16,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
-import ts from 'typescript'
+import ts from 'typescript6'
 import { describe, expect, it } from 'vitest'
 
 const DRIVER_DIR = path.resolve(__dirname, '../driver')

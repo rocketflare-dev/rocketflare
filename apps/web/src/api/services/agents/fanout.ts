@@ -1,10 +1,10 @@
 /**
- * Fan-out inside one run (D39): `ctx.scope(prefix)` and `ctx.map(key, items, fn, options)`.
+ * Fan-out inside one run: `ctx.scope(prefix)` and `ctx.map(key, items, fn, options)`.
  *
  * **A scope is a key namespace, nothing more.** Every keyed primitive — `once`, `decide` (and its
  * `sift`/`pick`), `interrupt`, `artifact`, `step` — gets `<prefix>/` in front of its key, so two
  * items can each call `ctx.decide('relevant', …)` without colliding on `(run_id, key)`. The record
- * is the run's own tables, keyed by the full path; a replay (D38) serves it by the same path.
+ * is the run's own tables, keyed by the full path; a replay serves it by the same path.
  *
  * A scope has NO checkpoint: `agent_runs.checkpoint` is one column, and two tool loops sharing it
  * would overwrite each other's transcript. A tool loop inside a scope restarts on a retry; the
@@ -23,7 +23,7 @@
  * also the ceiling. The step's client serialises its queries, and each concurrent model call is a
  * subrequest, so six is the cap rather than sixty.
  */
-import { InterruptRequested } from '../ai/kit'
+import { InterruptRequested } from '../ai/agent-loop'
 import { decideWithShapes } from './decisions'
 import type { AgentContext } from './registry'
 
@@ -61,11 +61,15 @@ function scoped<Input>(base: BaseAgentContext<Input>, prefix: string): BaseAgent
   return {
     ...base,
     once: (key, fn, options) => base.once(k(key), fn, options),
+    spawn: (key, agentKey, input) => base.spawn(k(key), agentKey, input),
     interrupt: ask => base.interrupt({ ...ask, key: k(ask.key) }),
     artifact: input => base.artifact({ ...input, key: k(input.key) }),
     decide: decideWithShapes((key, request) => base.decide(k(key), request)),
     step: (key, label, status, detail) => base.step(k(key), label, status, detail),
+    // No checkpoint in a scope — but a journal, so a tool loop inside one is served its recorded
+    // turns and results on a retry instead of starting again from the seed at full price.
     checkpoint: { load: async () => null, save: async () => {} },
+    journal: { open: key => base.journal.open(k(key)) },
   }
 }
 
@@ -100,7 +104,7 @@ async function mapItems<Input, T, R>(
         results[index] = await ctx.once(
           itemKey,
           () => fn(items[index] as T, ctx.scope(itemKey)),
-          // Replay (D38) runs the item again and serves what is recorded INSIDE it — the item's
+          // Replay runs the item again and serves what is recorded INSIDE it — the item's
           // own result is a cache, and serving it would hide every change to `fn`.
           { replay: 'inner' }
         )

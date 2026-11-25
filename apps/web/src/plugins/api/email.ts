@@ -1,5 +1,5 @@
 /**
- * Inbound email: `EmailCtx` for a `ServerPlugin.emailHandlers` entry (D31).
+ * Inbound email: `EmailCtx` for a `ServerPlugin.emailHandlers` entry.
  *
  * It is `CronCtx` under another name, because the host builds it the same way — config validated,
  * one DB client for the message, a `waitUntil` that genuinely exists — and it keeps the cron's rule
@@ -24,7 +24,7 @@ export interface EmailCtx extends PluginContext, BackgroundMethods {
   waitUntil(promise: Promise<unknown>): void
 }
 
-/** Adapt the kit's `EmailContext`. The only place a plugin's email half names a kit internal. */
+/** Adapt the core `EmailContext`. The only place a plugin's email half names a core internal. */
 export function emailCtx(ctx: EmailContext): EmailCtx {
   return {
     db: ctx.db,

@@ -1,5 +1,5 @@
 /**
- * Settings → AI (D17): readiness `none` shows the set-up CTA; adding a config validates with the
+ * Settings → AI: readiness `none` shows the set-up CTA; adding a config validates with the
  * shared schema and posts the exact upsert body; preset chips fill base URL + model; a member sees
  * readiness and the list but no write controls; delete confirms then calls DELETE.
  */
@@ -86,7 +86,7 @@ const prodConfig = {
 function mount(routes: RouteTable = {}, session = makeSession()) {
   const fetchMock = stubFetch({
     '/api/ai/config/providers': { items: PROVIDERS, defaultMaxOutputTokens: 16_384 },
-    '/api/ai/config/readiness': { chat: NONE, embeddings: NONE, decisions: NONE },
+    '/api/ai/config/readiness': { chat: NONE, embeddings: NONE, decisions: NONE, rerank: NONE },
     '/api/ai/config': { items: [] },
     ...routes,
   })
@@ -253,7 +253,12 @@ describe('Settings → AI', () => {
 
   it('lists configs with default/credential badges and lets an admin test one', async () => {
     const fetchMock = mount({
-      '/api/ai/config/readiness': { chat: READY_CHAT, embeddings: NONE, decisions: NONE },
+      '/api/ai/config/readiness': {
+        chat: READY_CHAT,
+        embeddings: NONE,
+        decisions: NONE,
+        rerank: NONE,
+      },
       '/api/ai/config': { items: [prodConfig] },
       'POST /api/ai/config/test': {
         ok: true,
@@ -301,8 +306,9 @@ describe('Settings → AI', () => {
         '/api/ai/config/readiness': {
           chat: READY_CHAT,
           embeddings: NONE,
-          // D37: with chat ready and no TypeSafe key, decisions are answered by the chat model.
+          // With chat ready and no TypeSafe key, decisions are answered by the chat model.
           decisions: { ...READY_CHAT, source: 'fallback' },
+          rerank: NONE,
         },
         '/api/ai/config': { items: [prodConfig] },
       },

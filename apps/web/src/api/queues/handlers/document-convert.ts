@@ -1,5 +1,5 @@
 /**
- * `document.convert` (D7, D18): an uploaded original in R2 → text (Workers AI `toMarkdown`, or a
+ * `document.convert`: an uploaded original in R2 → text (Workers AI `toMarkdown`, or a
  * UTF-8 decode for text types) → the same `indexDocument` every other path uses. The message
  * carries only ids; the row and the `files` row say where the bytes are. A permanent conversion
  * refusal (`ConversionFailedError`) marks the row `failed` and is ACKED — retrying a corrupt PDF
@@ -13,7 +13,7 @@ import { documents } from '../../../db/schema'
 import { noopTracer } from '../../observability/tracer'
 import { withAgentTrace } from '../../observability/tracing'
 import { ConversionFailedError } from '../../services/ai/convert'
-import { convertAndIndexDocument } from '../../services/ai/ingest'
+import { afterTextIndexed, convertAndIndexDocument } from '../../services/ai/ingest'
 import { createR2Storage } from '../../services/storage'
 import type { JobContext } from '../jobs'
 
@@ -37,14 +37,14 @@ export async function handleDocumentConvert(
   }
   const storage = createR2Storage(ctx.env.FILES)
   try {
-    // D32: a `job document.convert` span, so each embeddings batch nests under something.
+    // A `invoke_workflow document.convert` span, so each embeddings batch nests under something.
     const indexed = await withAgentTrace(
       'document.convert',
       {
         tracer: ctx.tracer ?? noopTracer,
         tenantId,
         kind: 'job',
-        spanName: 'job document.convert',
+        spanName: 'invoke_workflow document.convert',
         metadata: { documentId },
       },
       () => convertAndIndexDocument(ctx.db, ctx.config, ctx.env, storage, tenantId, documentId)
@@ -53,6 +53,8 @@ export async function handleDocumentConvert(
       { tenantId, documentId, chunkCount: indexed.chunkCount, model: indexed.embeddingModel },
       'document.convert: indexed'
     )
+    // Knowledge facts (D43): a converted upload is always new text. Never throws.
+    await afterTextIndexed(ctx.db, ctx.config, ctx.env.JOBS_QUEUE, indexed)
   } catch (err) {
     if (err instanceof ConversionFailedError) {
       ctx.logger.warn({ tenantId, documentId, reason: err.message }, 'document.convert: failed')

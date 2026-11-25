@@ -30,24 +30,40 @@ export const ERROR_CODES = {
   noTenant: 'no_tenant',
   tenantSuspended: 'tenant_suspended',
   blocked: 'blocked',
+  /**
+   * 403 (dev login) / `/login?error=` (every redirecting sign-in): a plugin's connection claims the
+   * email's domain and requires single sign-on (`ServerPlugin.ssoPolicy`). `details.method`, when
+   * known, is the `GET /auth/methods` `pluginMethods` id to send the person to.
+   */
+  ssoRequired: 'sso_required',
   tenancyModeSingle: 'tenancy_mode_single',
   csrf: 'csrf_failed',
-  /** 503: no chat/embeddings provider resolves for the tenant (D17). */
+  /** 403: the API key is valid but its scopes do not allow this method. */
+  insufficientScope: 'insufficient_scope',
+  /** 503: no chat/embeddings provider resolves for the tenant. */
   aiNotConfigured: 'ai_not_configured',
-  /** 503: the `AGENT_RUN_WORKFLOW` binding is missing, so a run cannot be started (D7). */
+  /** 503: the `AGENT_RUN_WORKFLOW` binding is missing, so a run cannot be started. */
   agentRunsNotConfigured: 'agent_runs_not_configured',
-  /** 409: `?strict=1` and an active run already exists for an exclusive agent (D7). */
+  /** 409: `?strict=1` and an active run already exists for an exclusive agent. */
   agentRunActive: 'agent_run_active',
-  /** 429: the tenant already has `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` runs queued, running or parked (D39). */
+  /** 429: the tenant already has `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` runs queued, running or parked. */
   agentRunsLimit: 'agent_runs_limit',
-  /** 400: `POST /api/agents/runs/batch` named an exclusive agent — one run at a time cannot batch (D39). */
+  /** 400: `POST /api/agents/runs/batch` named an exclusive agent — one run at a time cannot batch. */
   agentExclusive: 'agent_exclusive',
-  /** 429: the tenant's agent spend today has reached `AGENT_TENANT_DAILY_COST_USD` (D39). */
+  /** 400: an event name no installed plugin declares (D42). */
+  eventUnknown: 'event_unknown',
+  /** 403: the agent does not opt in (`bindable`) to being started by this event (D42). */
+  agentNotBindable: 'agent_not_bindable',
+  /** 429: the tenant's agent spend today has reached `AGENT_TENANT_DAILY_COST_USD`. */
   aiBudgetExceeded: 'ai_budget_exceeded',
-  /** Event code, not a status: a run stopped because it reached its token or cost budget (D39). */
+  /** Event code, not a status: a run stopped because it reached its token or cost budget. */
   agentBudgetExceeded: 'agent_budget_exceeded',
-  /** Event code, not a status: a run's tool loop ran out under its `policy` with no answer (D39). */
+  /** Event code, not a status: a run's tool loop ran out under its `policy` with no answer. */
   agentPolicyExhausted: 'agent_policy_exhausted',
+  /** Two keyed calls of one agent run shared a key in one attempt (`ctx.once`, a tool loop). */
+  agentEffectKeyConflict: 'agent_effect_key_conflict',
+  agentVersionChanged: 'agent_version_changed',
+  agentChildFailed: 'agent_child_failed',
   /** 404: `POST /api/agui/run` was given a `threadId` that exists but is not this user's. */
   aguiThreadNotFound: 'agui_thread_not_found',
   /** 400: the last message of a `RunAgentInput` was not a user turn. */
@@ -56,24 +72,66 @@ export const ERROR_CODES = {
   aguiClientToolsUnsupported: 'agui_client_tools_unsupported',
   /** 400: the user turn's content was not a usable string. */
   aguiUnsupportedContent: 'agui_unsupported_content',
-  /** 409: the document's text is not available yet — its conversion job has not landed (D18). */
+  /** 409: the document's text is not available yet — its conversion job has not landed. */
   documentNotConverted: 'document_not_converted',
   /** 409: the document's conversion failed, so it has no text and never will without a re-upload. */
   documentConversionFailed: 'document_conversion_failed',
   /**
-   * 404: the surface exists in the code but not in this deployment — a feature flag is off (D30).
+   * 404: the surface exists in the code but not in this deployment — a feature flag is off.
    * 404 rather than 403 on purpose: a 403 confirms the feature EXISTS, which is exactly what a
    * surface shipping dark must not reveal. Same class as `tenancy_mode_single`.
    */
   featureDisabled: 'feature_disabled',
   /**
-   * 409: the interrupt was already answered, declined or expired (issue #17). Two people opening
+   * 409: the interrupt was already answered, declined or expired. Two people opening
    * the same approval is normal, so one gets a 200 and the other this — and the UI renders it as
    * "somebody else answered", not as an error.
    */
   interruptNotPending: 'interrupt_not_pending',
   /** 409: the run is not parked, so there is nothing to resume. */
   runNotAwaitingInput: 'run_not_awaiting_input',
+  /**
+   * 409: the membership is managed by the OIDC issuer (`tenant_users.source = 'idp'`,
+   * `OIDC_MANAGED_TENANCY`) — its role and its existence follow the issuer's claims and events, so
+   * the app may neither edit nor remove it. Change it at the issuer.
+   */
+  idpManaged: 'idp_managed',
+  /** 403: the caller already owns `MAX_OWNED_TENANTS_PER_USER` organisations. */
+  tenantLimitReached: 'tenant_limit_reached',
+  /** 409: another tenant is already linked to that OIDC issuer org (`tenants.external_org_id`). */
+  externalOrgTaken: 'external_org_taken',
+  /**
+   * 409: a plugin's identity provider asserted the email of an existing account it has not proved
+   * it may claim (no `linkByEmail`) — linking it would let one tenant's IdP take over that account.
+   */
+  accountExists: 'account_exists',
+  /** 409: `confirm` on a fact in conflict — settle it with `prefer` (use this one) or `reject`. */
+  factConflicting: 'fact_conflicting',
+  /**
+   * 403: `prefer` would reject a fact the reader may not settle themselves — another person
+   * reviews it, it has no reviewer, or another person confirmed it. An admin decides the conflict.
+   */
+  factConflictNeedsAdmin: 'fact_conflict_needs_admin',
+  /** 409: the fact is `rejected` or `superseded` — history, nothing left to review. */
+  factNotReviewable: 'fact_not_reviewable',
+  /** 409: the staging entity was already merged or promoted, so it cannot be merged or promoted again. */
+  entitySettled: 'entity_settled',
+  /** 400: a merge or promote target that does not exist in this tenant (or is not of the same type). */
+  entityTargetNotFound: 'entity_target_not_found',
+  /** 400: promote on an entity type with no domain table or resolver — there is no row to promote to. */
+  entityTypeNotPromotable: 'entity_type_not_promotable',
+  /**
+   * 401 on `/mcp`: no access token, or one that is unknown, expired, revoked, issued for another
+   * URL, or whose connection has lapsed. The `WWW-Authenticate` challenge says where to sign in.
+   */
+  invalidToken: 'invalid_token',
+  /** 403 on `/mcp`: the organisation has MCP turned off (its connections are suspended, not revoked). */
+  mcpDisabled: 'mcp_disabled',
+  /**
+   * 403 on `/mcp`: the person may not use a client here — no longer a member, a support role, or
+   * outside the organisation's "who can connect" policy. Never 401: signing in again changes nothing.
+   */
+  mcpNotAllowed: 'mcp_not_allowed',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

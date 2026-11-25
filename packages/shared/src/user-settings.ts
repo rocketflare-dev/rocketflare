@@ -1,5 +1,5 @@
 /**
- * The user's own profile and per-tenant preferences (D13). Profile fields belong to the PERSON
+ * The user's own profile and per-tenant preferences. Profile fields belong to the PERSON
  * (`users`), preferences to the person-in-this-tenant (`tenant_user_settings.preferences`).
  */
 import { z } from 'zod'
@@ -16,7 +16,7 @@ export const updateProfileRequestSchema = z
   })
 export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>
 
-/** Extend per app; the kit ships an open record. */
+/** Extend per app; the app ships an open record. */
 export const userPreferencesSchema = z.record(z.string(), z.unknown())
 export type UserPreferences = z.infer<typeof userPreferencesSchema>
 

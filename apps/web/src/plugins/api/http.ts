@@ -1,13 +1,13 @@
 /**
- * `RequestCtx` (D13, D31) — everything a plugin's route handler needs, as one injected object.
+ * `RequestCtx` — everything a plugin's route handler needs, as one injected object.
  *
- * A plugin route is a kit route in every respect: `createRouter()`, `validate()` with a contract
+ * A plugin route is a core route in every respect: `createRouter()`, `validate()` with a contract
  * from the plugin's own shared entry, an authorisation check, a tenant predicate on every query,
  * typed errors. What differs is only where it is REGISTERED (`ServerPlugin.mounts`) and how it
- * reaches the kit — through this context rather than through nine imports.
+ * reaches the host — through this context rather than through nine imports.
  *
- * **The adapter is the seam.** `requestCtx(c)` reads the kit's `RouteContext` and nothing else
- * reads it, which is why `cfg` can stay `cfg` inside the kit while every plugin says `config`.
+ * **The adapter is the seam.** `requestCtx(c)` reads the core `RouteContext` and nothing else
+ * reads it, which is why `cfg` can stay `cfg` inside core while every plugin says `config`.
  *
  * The error helpers return `never` and THROW rather than returning an error to throw, so that
  * `if (!row) ctx.notFound('Note not found')` leaves `row` non-null on the next line —
@@ -26,14 +26,17 @@
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
+import { isEmbeddableMimeType } from '@rocketflare/shared/files'
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { PaginationMeta, PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
+import { apiKeyIdOf } from '../../api/auth/api-key-session'
 import { can as canDo, guardPermission } from '../../api/middleware/permissions'
 import type { SetResourceGroupsInput } from '../../api/services/access'
 import type { AccessScope } from '../../api/services/access-sql'
 import { accessScopeOf } from '../../api/services/access-sql'
+import type { TenantEmit } from '../../api/services/events/types'
 import { enqueueJob, enqueueJobs } from '../../api/services/jobs'
 import type { Realtime } from '../../api/services/realtime'
 import type { StorageService } from '../../api/services/storage'
@@ -51,12 +54,20 @@ import { uuidParam, withAuthAndDb } from '../../api/utils/routes/route-helpers'
 import { createRouter } from '../../api/utils/routes/router'
 import { validate } from '../../api/utils/routes/validate'
 import { isAdminLevel, isGlobalAdmin, isOwnerLevel, type PluginAuth } from './auth'
+import { tenantEmitter } from './emit'
 import { durableObject, nudgeEntity } from './events'
 import { filesStorage } from './storage'
 import type { PluginContext } from './types'
 
 export type { AppRouter } from '../../api/utils/routes/router'
-export type { PluginMount, PluginPublicMount } from '../types'
+export type {
+  PluginMount,
+  PluginPublicMount,
+  PluginPublicMountOptions,
+  PublicSiteCsp,
+  PublicSiteFormPath,
+  PublicSitesDeclaration,
+} from '../types'
 /**
  * The three things a plugin builds a router out of. They are functions rather than context methods
  * because they run at MODULE scope, when the router is defined and no request exists yet.
@@ -65,11 +76,11 @@ export type { PluginMount, PluginPublicMount } from '../types'
 export { createRouter, pageWindow, validate }
 
 /**
- * Reading and writing who may see one of a plugin's own rows (D29, D31).
+ * Reading and writing who may see one of a plugin's own rows.
  *
  * A plugin DECLARES a restrictable resource through `ServerPlugin.visibilityResources`, and the
- * kit reads that declaration for the predicate and for the 409 `group_in_use` count. These three
- * are the other half — what the kit's own routes do around that declaration, and what a plugin
+ * host reads that declaration for the predicate and for the 409 `group_in_use` count. These three
+ * are the other half — what the core routes do around that declaration, and what a plugin
  * had to reimplement without them. They dispatch through the registry, so they work for the
  * plugin's own `key` exactly as they do for `document`.
  *
@@ -79,7 +90,7 @@ export { createRouter, pageWindow, validate }
  * plugins/api`, which with a SECOND plugin installed throws `createRouter is not a function` at
  * import (`services/access-sql.ts` carries the measurement). `accessScopeOf` escaped by moving to
  * a leaf; these cannot, because composition is their entire purpose. So they are injected, which
- * is the kit's own rule for exactly this case.
+ * is the core rule for exactly this case.
  *
  * Two behaviours they carry that are easy to lose in a reimplementation, and both are security
  * properties rather than conveniences:
@@ -119,7 +130,7 @@ export interface RequestVisibility {
  * `tenantId` parameter arriving from a client is therefore always a bug rather than sometimes one.
  */
 export interface RequestCtx extends PluginContext, PluginAuth {
-  /** Tenant-wide visibility scope (D29) — hand it to a predicate, never to a query as a tenant id. */
+  /** Tenant-wide visibility scope — hand it to a predicate, never to a query as a tenant id. */
   readonly scope: AccessScope
   /**
    * The reader's groups in this organisation, each with the name of the TYPE it belongs to.
@@ -130,7 +141,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * where re-resolving them is a query per request for rows the caller has already been handed.
    */
   readonly groups: readonly GroupRef[]
-  /** Read and write who may see one of this plugin's own rows (D29) — see `RequestVisibility`. */
+  /** Read and write who may see one of this plugin's own rows — see `RequestVisibility`. */
   readonly visibility: RequestVisibility
 
   // ---- authorisation --------------------------------------------------------------------------
@@ -139,7 +150,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   guard(action: Actions, subject: Subjects): void
   /** The same question without throwing — for branching, e.g. "may they also see the archived ones". */
   can(action: Actions, subject: Subjects): boolean
-  /** `true` when this deployment ships the feature AND this organisation has it (D30). */
+  /** `true` when this deployment ships the feature AND this organisation has it. */
   hasFeature(name: string): boolean
 
   // ---- reading the request ---------------------------------------------------------------------
@@ -160,6 +171,16 @@ export interface RequestCtx extends PluginContext, PluginAuth {
     total: number,
     query: PaginationQuery
   ): { items: T[]; pagination: PaginationMeta }
+  /**
+   * Let a same-origin page FRAME this one response (`X-Frame-Options: SAMEORIGIN` + CSP
+   * `frame-ancestors 'self'` instead of `DENY` + `'none'`) — the opt-in `/api/files/:id` uses for
+   * the document viewer's PDF embed. Pass the content type of the body you are about to return,
+   * read from YOUR row, never from the request: only an `EMBEDDABLE_MIME_TYPES` type
+   * (`@rocketflare/shared/files`, today `application/pdf`) is let through, and the answer says
+   * whether it was. Call it before any early return (an `If-None-Match` 304 included), or a
+   * revalidation from inside the frame loses the header and the embed goes blank.
+   */
+  embeddable(contentType: string): boolean
 
   // ---- side effects ---------------------------------------------------------------------------
 
@@ -178,11 +199,17 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   enqueueMany(inputs: readonly JobInput[], options?: { delaySeconds?: number }): Promise<void>
   /**
    * Tell this organisation's open tabs that a family of rows moved. `entity` IS the query-key
-   * family root, so declaring it once covers the socket wiring (D8).
+   * family root, so declaring it once covers the socket wiring.
    */
   nudge(entity: string, id?: string): void
   /** R2, or a 503 `storage_not_configured` — loud, because a silently absent bucket loses bytes. */
   storage(): StorageService
+  /**
+   * Emit a declared plugin event (D42) in THIS organisation: validated (400), recorded, one
+   * delivery queued per subscriber — awaited, because the row is the durable half and a 400 must
+   * reach the caller. The handlers run in jobs, never in the request.
+   */
+  emit: TenantEmit
   /** A per-tenant Durable Object stub. The plugin never spells the name; the prefix is structural. */
   durableObject<T extends Rpc.DurableObjectBranded | undefined = undefined>(
     namespace: DurableObjectNamespace<T>,
@@ -201,7 +228,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
   // ---- escaping ------------------------------------------------------------------------------
 
   /**
-   * A snapshot of this context that outlives the handler (D31).
+   * A snapshot of this context that outlives the handler.
    *
    * There is exactly one situation this is for: a plugin hands a CALLBACK to a library, and the
    * library calls it somewhere no Hono context exists. The analytics plugin's cube security
@@ -213,7 +240,7 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * context that silently half-works is worse than one that is a different type.
    */
   detached(): DetachedCtx
-  /** The realtime handle, for a plugin service that takes `realtime?` the way the kit's do. */
+  /** The realtime handle, for a plugin service that takes `realtime?` the way core services do. */
   readonly realtime: Realtime
 }
 
@@ -236,7 +263,7 @@ export interface DetachedCtx extends PluginContext {
 }
 
 /**
- * Build a plugin's request context from the kit's.
+ * Build a plugin's request context from the core one.
  *
  * This is the ONLY function in the plugin surface that names `withAuthAndDb`, `c.get(...)` or
  * `cfg` — which is what makes "a plugin receives everything as injected context" a rule a source
@@ -255,6 +282,7 @@ export function requestCtx(c: AppContext): RequestCtx {
 
     user: route.user,
     userId: route.user.id,
+    apiKeyId: apiKeyIdOf(auth),
     tenantId: route.tenantId,
     role: auth.tenantUser?.role ?? null,
     isAdmin: isAdminLevel(auth),
@@ -273,7 +301,7 @@ export function requestCtx(c: AppContext): RequestCtx {
      * Every method here reaches `services/access` through a FUNCTION-SCOPE `await import(...)`, and
      * that is the whole reason these can be published at all.
      *
-     * That module composes `VISIBILITY_RESOURCES` by reading the plugin barrel, so naming it in an
+     * That module composes `visibilityResources()` by reading the plugin barrel, so naming it in an
      * import statement at the top of this file closes the cycle `plugins/api → http → access →
      * plugins/server → <plugin>/index → plugins/api`. With a SECOND plugin installed the plugin's
      * routes then evaluate while this module is still executing, and `createRouter` is `undefined`
@@ -315,6 +343,12 @@ export function requestCtx(c: AppContext): RequestCtx {
       (c.req as unknown as { valid(t: string): T }).valid(target),
 
     page: (items, total, query) => paginated(items, total, query),
+    embeddable: contentType => {
+      const type = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
+      if (!isEmbeddableMimeType(type)) return false
+      c.set('embeddable', true)
+      return true
+    },
 
     defer: route.defer,
     enqueue: (input, options) => enqueueJob(c.env.JOBS_QUEUE, input, options),
@@ -323,6 +357,10 @@ export function requestCtx(c: AppContext): RequestCtx {
     },
     nudge: (entity, id) => nudgeEntity(route.realtime, route.tenantId, entity, id),
     storage: () => filesStorage(c.env),
+    emit: tenantEmitter(
+      { db: route.db, config: route.cfg, logger: route.logger, env: c.env },
+      route.tenantId
+    ),
     durableObject: (namespace, key) => durableObject(namespace, route.tenantId, key),
 
     notFound: (message = 'Not found', code = ERROR_CODES.notFound) => {

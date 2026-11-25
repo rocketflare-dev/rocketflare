@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
-  "description": "Private shared contracts for the Rocketflare kit: zod schemas, error envelope, pagination, permission types. Consumed as TypeScript source by apps/web (API + UI) and apps/cli via the workspace link — no build step.",
+  "description": "Private shared contracts: zod schemas, error envelope, pagination, permission types. Consumed as TypeScript source by apps/web (API + UI) and apps/cli via the workspace link — no build step.",
   "type": "module",
   "exports": {
     ".": {
@@ -34,11 +34,11 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ag-ui/core": "0.0.59",
-    "@casl/ability": "^6.8.1",
-    "zod": "^3.25.76"
+    "@ag-ui/core": "1.0.4",
+    "@casl/ability": "^7.1.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^7.0.2"
   }
 }

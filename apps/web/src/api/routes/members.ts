@@ -1,7 +1,7 @@
 /**
- * `/api/members` (D10): list (every member may read; `support` rows included), role change and
+ * `/api/members`: list (every member may read; `support` rows included), role change and
  * removal (`manage TenantMember`, with the ownership invariants enforced in services/members.ts).
- * `PUT /:userId/groups` replaces one member's groups wholesale (D29, `manage Group`) — the People
+ * `PUT /:userId/groups` replaces one member's groups wholesale (`manage Group`) — the People
  * page's "Edit groups", and the one place membership is edited from the person rather than from
  * the group.
  */
@@ -35,7 +35,7 @@ membersRouter.get('/', validate('query', paginationQuerySchema), async c => {
 })
 
 membersRouter.patch('/:userId', validate('json', updateMemberRoleRequestSchema), async c => {
-  const { db, tenantId, auth, realtime } = withAuthAndDb(c)
+  const { db, cfg, tenantId, auth, realtime } = withAuthAndDb(c)
   guardPermission(c, 'manage', 'TenantMember')
   const membership = await changeMemberRole(db, {
     tenantId,
@@ -43,6 +43,7 @@ membersRouter.patch('/:userId', validate('json', updateMemberRoleRequestSchema),
     role: c.req.valid('json').role,
     actor: auth,
     realtime,
+    maxOwnedTenants: cfg.MAX_OWNED_TENANTS_PER_USER,
   })
   return c.json({ userId: membership.userId, role: membership.role })
 })

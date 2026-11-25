@@ -1,6 +1,6 @@
 /**
- * `tenant_settings` — one row per tenant, keyed by `tenant_id` itself (D1). The two generic
- * columns both reference apps shared (`timezone`, `notificationsEnabled`) are real columns; anything
+ * `tenant_settings` — one row per tenant, keyed by `tenant_id` itself. The two generic
+ * columns (`timezone`, `notificationsEnabled`) are real columns; anything
  * app-specific goes in `settings` jsonb, typed by `tenantSettingsJsonSchema` in src/shared.
  */
 import type { TenantSettingsJson } from '@rocketflare/shared/tenant-settings'

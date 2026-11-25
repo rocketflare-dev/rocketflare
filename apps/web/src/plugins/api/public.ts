@@ -1,5 +1,5 @@
 /**
- * `PublicCtx` (D31, D34) — what a plugin's PUBLIC route handler is handed: an admin-consent
+ * `PublicCtx` — what a plugin's PUBLIC route handler is handed: an admin-consent
  * callback, a webhook, a push endpoint. Anything a third party calls, which carries no session and
  * no API key.
  *
@@ -19,7 +19,7 @@
  *
  * Answer fast. A provider that sends webhooks usually wants a 2xx inside a few seconds and treats
  * a slow endpoint as a failing one (Microsoft Graph: 3 s), so the shape is verify → `enqueue` →
- * 202, with the real work in a job. That is the kit's own rule — routes enqueue, never run.
+ * 202, with the real work in a job. That is the core rule — routes enqueue, never run.
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
@@ -31,11 +31,15 @@ import {
   UnauthorizedError,
 } from '../../api/utils/core/errors'
 import { makeDefer } from '../../api/utils/routes/route-helpers'
+import type { Actions, Subjects } from './auth'
 import { type BackgroundMethods, backgroundMethods } from './jobs'
 import type { PluginContext } from './types'
 
 /** The prefix every public mount lives under; the plugin's id is the next segment. */
 export const PUBLIC_MOUNT_ROOT = '/api/hooks'
+
+/** See `api/middleware/public-sites.ts`: a page's own additions to the public CSP. */
+export { PUBLIC_SITE_PAGE_CSP_HEADER } from '../../api/middleware/public-sites'
 
 export interface PublicCtx extends PluginContext, BackgroundMethods {
   /** `APP_URL` — the origin a third party is told to call back, and to redirect a browser to. */
@@ -46,6 +50,26 @@ export interface PublicCtx extends PluginContext, BackgroundMethods {
   badRequest(message?: string, code?: string, details?: unknown): never
   forbidden(message?: string, code?: string): never
   unauthorized(message?: string): never
+}
+
+/**
+ * Does this person hold this grant in this tenant RIGHT NOW? For a public callback completing
+ * something a signed state started — an OAuth connection, a consent — where the state only proves
+ * who minted it, and when: the admin may have left or been demoted since. Call it right after
+ * `verifyState`, with the action and subject the start route guarded, and on `false` change nothing.
+ *
+ * `false` too for an unknown person, a blocked account or a suspended tenant.
+ */
+export async function memberCan(
+  ctx: PluginContext,
+  who: { tenantId: string; userId: string },
+  action: Actions,
+  subject: Subjects
+): Promise<boolean> {
+  // Function-scope import: `member-ability` builds abilities from the plugin barrel (see `http.ts`).
+  const { memberAbility } = await import('../../api/services/member-ability')
+  const ability = await memberAbility(ctx.db, ctx.config, who.tenantId, who.userId)
+  return ability?.can(action, subject) ?? false
 }
 
 /** Build a public handler's context. The only function here that reads the Hono context. */

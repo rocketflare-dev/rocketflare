@@ -1,9 +1,9 @@
 /**
- * AI trace contracts (D32): the local span store (`ai_spans`) read back as traces, for
+ * AI trace contracts: the local span store (`ai_spans`) read back as traces, for
  * `GET /api/traces` (list) and `GET /api/traces/:id` (one trace's spans, parent-linked) and the
  * CLI's `rocketflare traces list|show`. A span is one unit of AI work — the agent/chat root, each
  * model call, each tool execution, retrieval and embeddings — with the GenAI attributes it was
- * exported with. `content` is null when the deployment sets `OBSERVABILITY_CAPTURE_CONTENT=false`.
+ * exported with. `content` is null unless the deployment sets `OBSERVABILITY_CAPTURE_CONTENT=true`.
  * Trace ids are OTLP hex (32 chars) so the same id opens the trace in the configured backend.
  */
 import { z } from 'zod'
@@ -43,7 +43,7 @@ export const traceSpanSchema = z.object({
   inputTokens: z.number().int().nullable(),
   outputTokens: z.number().int().nullable(),
   toolName: z.string().nullable(),
-  attributes: z.record(z.unknown()),
+  attributes: z.record(z.string(), z.unknown()),
   content: z.object({ input: z.unknown().optional(), output: z.unknown().optional() }).nullable(),
 })
 export type TraceSpan = z.infer<typeof traceSpanSchema>

@@ -1,18 +1,36 @@
 /**
- * `chunks` — the retrievable pieces of a document with their embedding (D17, D18): pgvector on
+ * `chunks` — the retrievable pieces of a document with their embedding: pgvector on
  * Postgres, NOT Vectorize, so vectors stay inside the tenant's rows and under RLS. The column is
  * `vector(EMBEDDING_DIM)` (1024, matching `@cf/baai/bge-m3`); changing the dimension is a NEW
- * table, not an `ALTER`. Dense retrieval is cosine (`<=>`) over the HNSW index; the lexical half
- * is `to_tsvector('english', text)` computed at query time (a generated tsvector + GIN index is the
- * documented scaling path). Every query carries the tenant predicate first.
+ * table, not an `ALTER`. Dense retrieval is cosine (`<=>`) over the HNSW index, limited to the
+ * chunks `embedding_model` says were embedded by the query vector's model. The lexical half reads
+ * `search_vector`, a GENERATED tsvector over context + heading path + table header + text with a
+ * GIN index;
+ * its `'english'` is `SEARCH_TEXT_CONFIG` (`services/ai/retrieval.ts`), pinned by
+ * `tests/config/search-text-config.test.ts`. `text` is an exact slice of `documents.content` at
+ * `[char_start, char_end)` (null only on rows written before 0.37.0). Every query carries the
+ * tenant predicate first — `tenant_id = $t`, or `tenant_id is null` for a PLATFORM document's
+ * chunks (read by every tenant, `platformReadable`).
  */
 import { EMBEDDING_DIM } from '@rocketflare/shared/ai/config'
-import { relations } from 'drizzle-orm'
-import { index, integer, pgTable, text, uniqueIndex, uuid, vector } from 'drizzle-orm/pg-core'
-import { tenantRef, timestamps } from './_helpers'
+import { relations, sql } from 'drizzle-orm'
+import {
+  customType,
+  index,
+  integer,
+  pgTable,
+  text,
+  uniqueIndex,
+  uuid,
+  vector,
+} from 'drizzle-orm/pg-core'
+import { platformTenantRef, timestamps } from './_helpers'
 import { documents } from './documents'
-import { tenantIsolation } from './rls'
+import { platformReadable, tenantIsolation } from './rls'
 import { tenants } from './tenants'
+
+/** Postgres `tsvector` — written only by the generated column, never by the app. */
+const tsvector = customType<{ data: string }>({ dataType: () => 'tsvector' })
 
 export const chunks = pgTable(
   'chunks',
@@ -21,13 +39,38 @@ export const chunks = pgTable(
     documentId: uuid('document_id')
       .notNull()
       .references(() => documents.id, { onDelete: 'cascade' }),
-    tenantId: tenantRef(tenants),
+    /** The document's tenant, copied; NULL exactly when the document is a platform one. */
+    tenantId: platformTenantRef(tenants),
     /** Position within the document, from 0. */
     seq: integer('seq').notNull(),
     text: text('text').notNull(),
     /** Character-based estimate (`estimateTokens`), not a tokenizer count. */
     tokenCount: integer('token_count').notNull().default(0),
     embedding: vector('embedding', { dimensions: EMBEDDING_DIM }).notNull(),
+    /** The embeddings model that produced `embedding` — the dense leg's filter. */
+    embeddingModel: text('embedding_model'),
+    /** Enclosing markdown headings joined with ` › ` (`HEADING_PATH_SEPARATOR`); null when none. */
+    headingPath: text('heading_path'),
+    /** A table's header + delimiter rows, when this chunk holds its rows but not its header. */
+    tableHeader: text('table_header'),
+    /** Page of the source document; null — `toMarkdown` emits no page markers. */
+    page: integer('page'),
+    /** `text` is `documents.content.slice(charStart, charEnd)` (JS UTF-16 offsets). */
+    charStart: integer('char_start'),
+    charEnd: integer('char_end'),
+    /**
+     * A model-written line placing the passage in its document (`knowledge-context` flag,
+     * `services/ai/contextualize.ts`); null until the `document.contextualize` job writes it, and
+     * for a tenant without the flag. Embedded and keyword-indexed WITH the passage, never shown as
+     * the passage's text and never quoted.
+     */
+    context: text('context'),
+    /** The model that wrote `context` (null with it). */
+    contextModel: text('context_model'),
+    /** The lexical index: context + heading path + table header + text, in `SEARCH_TEXT_CONFIG`. */
+    searchVector: tsvector('search_vector').generatedAlwaysAs(
+      sql`to_tsvector('english', coalesce(context, '') || ' ' || coalesce(heading_path, '') || ' ' || coalesce(table_header, '') || ' ' || text)`
+    ),
     ...timestamps(),
   },
   table => [
@@ -35,7 +78,9 @@ export const chunks = pgTable(
     index('chunks_tenant_document_idx').on(table.tenantId, table.documentId),
     // Cosine ANN index for dense retrieval (pgvector HNSW).
     index('chunks_embedding_idx').using('hnsw', table.embedding.op('vector_cosine_ops')),
+    index('chunks_search_vector_idx').using('gin', table.searchVector),
     tenantIsolation('chunks'),
+    platformReadable('chunks'),
   ]
 )
 

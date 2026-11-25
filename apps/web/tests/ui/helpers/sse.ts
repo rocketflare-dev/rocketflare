@@ -6,6 +6,7 @@
 
 import { AguiEventType, KIT_CUSTOM_EVENTS, type KitAguiEvent } from '@rocketflare/shared/ai/agui'
 import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
+import { entityCardsFromToolResult } from '@rocketflare/shared/ai/knowledge-facts'
 
 export function encodeSseFrame(event: KitAguiEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`
@@ -68,13 +69,16 @@ export function aguiRun(options: AguiRunOptions): KitAguiEvent[] {
       }
     )
     // Mirror the server: `CUSTOM kit.document` follows the result it was derived from, through the
-    // same pure mapper, so a UI test asserting cards is asserting the real framing (D18).
+    // same pure mapper, so a UI test asserting cards is asserting the real framing.
     for (const card of documentCardsFromToolResult(tool.name, tool.result ?? '{}')) {
       events.push({
         type: AguiEventType.CUSTOM,
         name: KIT_CUSTOM_EVENTS.document,
         value: { card },
       })
+    }
+    for (const card of entityCardsFromToolResult(tool.name, tool.result ?? '{}')) {
+      events.push({ type: AguiEventType.CUSTOM, name: KIT_CUSTOM_EVENTS.entity, value: { card } })
     }
   }
   const deltas = options.text ?? []

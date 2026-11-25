@@ -1,5 +1,5 @@
 /**
- * Eval and feedback contracts (D33). Three things share this file because they are one loop:
+ * Eval and feedback contracts. Three things share this file because they are one loop:
  *
  * - **`EvalCase`** — one line of a dataset (`apps/evals/datasets/<name>.jsonl`): the input a target
  *   is driven with, the context it may retrieve, and what "good" means (an expected output, a
@@ -44,7 +44,7 @@ export const feedbackSchema = z.object({
   rating: feedbackRatingSchema,
   comment: z.string().nullable(),
   userId: z.string().uuid().nullable(),
-  /** The trace the rated answer recorded (D32), so `rocketflare traces show` can open it. */
+  /** The trace the rated answer recorded, so `rocketflare traces show` can open it. */
   traceId: z.string().nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
@@ -90,7 +90,7 @@ export type FeedbackMineResponse = z.infer<typeof feedbackMineResponseSchema>
 /** A tool the target is expected to call; `arguments` is matched per the scorer's strategy. */
 export const evalExpectedToolSchema = z.union([
   z.string().min(1),
-  z.object({ name: z.string().min(1), arguments: z.record(z.unknown()).optional() }),
+  z.object({ name: z.string().min(1), arguments: z.record(z.string(), z.unknown()).optional() }),
 ])
 export type EvalExpectedTool = z.infer<typeof evalExpectedToolSchema>
 
@@ -122,7 +122,7 @@ export const evalCaseSchema = z.object({
   /** Stable within its dataset — baselines and comparisons key on it. */
   id: z.string().regex(/^[a-z0-9][a-z0-9._-]*$/, 'lowercase letters, digits, . _ -'),
   /** The chat turn (a string) or the agent's input object. */
-  input: z.union([z.string().min(1), z.record(z.unknown())]),
+  input: z.union([z.string().min(1), z.record(z.string(), z.unknown())]),
   /** Earlier turns of the conversation, oldest first (chat only). */
   messages: z.array(evalMessageSchema).default([]),
   context: z.array(evalContextDocSchema).default([]),
@@ -138,7 +138,7 @@ export const evalCaseSchema = z.object({
       /** Substrings the output must contain (case-insensitive) — the cheapest deterministic check. */
       contains: z.array(z.string()).optional(),
       /**
-       * D37: the answers the run's `ctx.decide` calls should give — decision key → question id →
+       * The answers the run's `ctx.decide` calls should give — decision key → question id →
        * label (`yes`/`no` for a noul, the option id for a choice, the level for a score). Scored
        * per question, without a model call, from `agent_run_decisions`.
        */

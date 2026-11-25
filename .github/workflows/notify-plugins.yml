@@ -1,7 +1,7 @@
 name: Notify plugins
 
 # **A kit release used to notify nothing.** There was no `schedule` and no `repository_dispatch`
-# anywhere in this repository, so a plugin outside `defaultPlugins` got no signal that the kit it
+# anywhere in this repository, so a plugin outside the kit's CI plugins got no signal that the kit it
 # declares a `minKit` floor against had moved — its CI would first discover a break whenever
 # someone next happened to push to it, which for a stable plugin can be months.
 #
@@ -16,11 +16,21 @@ on:
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
+concurrency:
+  group: notify-plugins
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
 jobs:
   dispatch:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Without the token this job is a no-op that SAYS so. It is deliberately not a failure: a
       # fork, or a checkout by someone who has no plugin repositories, must not show a red run for
       # a notification nobody is waiting on.
@@ -35,7 +45,8 @@ jobs:
             echo "::notice::Contents: read + Metadata: read on the plugin repositories to enable this."
             exit 0
           fi
-          for repo in rocketflare-dev/rocketflare-plugins; do
+          # The commercial repository is private: the token needs access to it too, or this warns.
+          for repo in rocketflare-dev/rocketflare-plugins rocketflare-dev/rocketflare-commercial-plugins; do
             echo "::group::dispatch → $repo"
             gh api "repos/$repo/dispatches" \
               -f event_type=kit-released \

@@ -1,11 +1,11 @@
 /**
- * Per-tenant settings contract (D13, D25 — rendered as "Workspace settings" in single mode).
+ * Per-tenant settings contract (rendered as "Workspace settings" in single mode).
  * `timezone` and `notificationsEnabled` are columns; `settings` is the app-extensible jsonb bag,
  * typed here so the column and the API agree.
  */
 import { z } from 'zod'
 
-/** Extend per app (`z.object({...}).passthrough()`); the kit ships an open record. */
+/** Extend per app (`z.object({...}).passthrough()`); the app ships an open record. */
 export const tenantSettingsJsonSchema = z.record(z.string(), z.unknown())
 export type TenantSettingsJson = z.infer<typeof tenantSettingsJsonSchema>
 

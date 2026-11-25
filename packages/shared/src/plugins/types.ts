@@ -1,8 +1,8 @@
 /**
- * The shared half of a plugin (D31).
+ * The shared half of a plugin.
  *
  * A plugin is a separate git repository COPIED into an app — never installed from npm, exactly
- * like the kit itself — that contributes contracts, routes, schema, UI and CLI commands through
+ * like the app itself — that contributes contracts, routes, schema, UI and CLI commands through
  * five barrels. `SharedPlugin` is the part all three consumers see: the zod contracts, the keys it
  * owns, and the `[vars]` it needs.
  *
@@ -20,20 +20,19 @@
  * `apps/web/tests/config/shared-imports.test.ts` checks all three spellings.
  *
  * `JobVariant` is spelled locally, and not because of that rule: zod's own
- * `ZodDiscriminatedUnionOption<'type'>` IS the constraint `jobInputSchema` puts on a variant, so
+ * `ZodObject<{ type: ZodTypeAny } & ZodRawShape>` IS the constraint `jobInputSchema` puts on a variant, so
  * naming it here rejects a malformed one where the plugin author is looking.
  *
  * Everything a plugin keys is namespaced with its `id` (tables `<id>_*`, job types `<id>.x`,
  * subjects, prompt/agent/feature keys, query-key roots `<id>:…`, the API prefix `/api/<id>`), so
  * two plugins installed in one app cannot collide and the host can always say which one owns a row.
  */
-import type { TypeOf, ZodDiscriminatedUnionOption, ZodRawShape } from 'zod'
+import type { TypeOf, ZodObject, ZodRawShape, ZodTypeAny } from 'zod'
 import type { FeatureDefinition } from '../features'
 
 /**
- * `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: a plugin is written in the kit's
- * vocabulary so `scripts/rename.mjs` can translate it into a renamed app on the way in, and an id
- * carrying the kit's name would be rewritten with everything else.
+ * `^[a-z][a-z0-9-]*$` and never containing `rocketflare`: an id carrying the app's
+ * original name would be rewritten with everything else when the app is renamed.
  */
 export const PLUGIN_ID_RE = /^[a-z][a-z0-9-]*$/
 
@@ -51,7 +50,7 @@ export function pluginNamespace(id: string): string {
  * discriminated-union option type, so a variant that would not compose into `jobInputSchema` is
  * rejected here, where the plugin author is looking.
  */
-export type JobVariant = ZodDiscriminatedUnionOption<'type'>
+export type JobVariant = ZodObject<{ type: ZodTypeAny } & ZodRawShape>
 
 export interface SharedPlugin {
   /** Matches `PLUGIN_ID_RE`; the namespace for everything below. */
@@ -72,7 +71,7 @@ export interface SharedPlugin {
   /**
    * Job envelope variants as DATA: `jobInputSchema` is a discriminated union over
    * `[...CORE_JOB_VARIANTS, ...plugin variants]`. Namespace every `type` with the plugin's id
-   * (`orders.sync`), and remember the kit's own rule — the `type` string is the version seam, so a
+   * (`orders.sync`), and remember the core rule — the `type` string is the version seam, so a
    * breaking payload change is a new variant, never an edited one.
    */
   readonly jobs?: readonly JobVariant[]
@@ -82,20 +81,50 @@ export interface SharedPlugin {
    */
   readonly subjects?: readonly string[]
   /**
-   * Feature-flag definitions keyed by flag key (D30), merged into `FEATURE_FLAGS`. A flag is
+   * Feature-flag definitions keyed by flag key, merged into `FEATURE_FLAGS`. A flag is
    * configuration, not a permission: gate with `hasFeature(auth.features, …)`, never with CASL.
    */
   readonly features?: Readonly<Record<string, FeatureDefinition>>
   /**
    * Extra `[vars]` / secrets, merged into the Worker's config schema (`apps/web/src/config.ts`).
-   * A zod raw shape rather than a whole object so the kit's schema stays one schema.
+   * A zod raw shape rather than a whole object so the core schema stays one schema.
    */
   readonly config?: ZodRawShape
   /**
-   * Query-key roots that `access.changed` should invalidate (D29): a plugin whose rows carry
+   * Query-key roots that `access.changed` should invalidate: a plugin whose rows carry
    * `visibility` has to be re-fetched when somebody's group membership moves under them.
    */
   readonly realtimeRoots?: readonly string[]
+  /**
+   * Events this plugin EMITS (D42), name → payload schema. Every name is `<id>.<name>` — this
+   * plugin's id, a dot, then lower-case segments (`sites.form.submitted`) — and never `kit.`.
+   * `ctx.emit(name, …)` validates the payload against the schema and records the event;
+   * `ServerPlugin.eventHandlers`, the app's own `APP_EVENT_HANDLERS` and an agent's `triggers` /
+   * `bindable` subscribe to it by name. A payload may hold personal data (a form's fields): it is
+   * kept for `EVENTS_RETENTION_DAYS` and never logged. Write it `as const` so the names stay
+   * literals. The name is the version seam, as a job type is: a breaking payload change is a new
+   * name, never an edited schema.
+   */
+  readonly events?: Readonly<Record<string, ZodTypeAny>>
+}
+
+// ---- Event names (D42) -------------------------------------------------------------------------
+
+/** One segment after the plugin id: lower-case, digits, `-` and `_`, dot-separated. */
+export const EVENT_NAME_RE = /^[a-z][a-z0-9-]*(\.[a-z0-9][a-z0-9_-]*)+$/
+
+/**
+ * `null` when `name` is an event `pluginId` may declare, else the sentence saying why not: it must
+ * be `<pluginId>.<something>`, well formed, and never in the core `kit.` namespace. The same rule
+ * `pnpm plugin check` applies to a manifest's `events` (`scripts/lib/plugin-lib.mjs`).
+ */
+export function eventNameProblem(pluginId: string, name: string): string | null {
+  if (name.startsWith('kit.')) return `'${name}' is in the core kit. namespace`
+  if (!name.startsWith(`${pluginId}.`)) return `'${name}' must start with '${pluginId}.'`
+  if (!EVENT_NAME_RE.test(name)) {
+    return `'${name}' must be lower-case dot-separated segments after '${pluginId}.'`
+  }
+  return null
 }
 
 // ---- Derivations the host's closed sets read ------------------------------------------------
@@ -140,7 +169,33 @@ export type FeatureKeyOf<S extends SharedPlugin> = Extract<
   string
 >
 
+/**
+ * The events one plugin declares — its `events` record. Distributive, so over a UNION of plugins it
+ * is a union of records; `EventNameOf` / `EventPayloadOf` read names and payloads out of it.
+ */
+export type EventsOf<S extends SharedPlugin> = NonNullable<DeclaredBy<S, 'events'>>
+
+/** The event names one plugin (or a union of plugins) declares. */
+export type EventNameOf<S extends SharedPlugin> = Extract<
+  EventsOf<S> extends infer R ? (R extends unknown ? keyof R : never) : never,
+  string
+>
+
+/**
+ * The parsed payload of event `E`, from whichever plugin in `S` declares it. A union of names gives
+ * the union of their payloads, so a handler list typed over every event still type-checks.
+ */
+export type EventPayloadOf<S extends SharedPlugin, E extends string> = E extends unknown
+  ? EventsOf<S> extends infer R
+    ? R extends Record<E, infer Schema>
+      ? Schema extends ZodTypeAny
+        ? TypeOf<Schema>
+        : never
+      : never
+    : never
+  : never
+
 /** The job types one plugin declares — what its `ServerPlugin.jobHandlers` must cover. */
 export type JobTypeOf<S extends SharedPlugin> = TypeOf<
-  NonNullable<DeclaredBy<S, 'jobs'>>[number]
->['type']
+  NonNullable<DeclaredBy<S, 'jobs'>>[number]['shape']['type']
+>

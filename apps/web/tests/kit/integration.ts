@@ -1,5 +1,5 @@
 /**
- * `@testkit/integration` — the host's test harness, as a DECLARED entry (D31).
+ * `@testkit/integration` — the host's test harness, as a DECLARED entry.
  *
  * Before this existed, both installed plugins reached the harness through six-level relative climbs
  * (`../../../../../tests/helpers/auth`): five modules and twenty-one symbols, none of them declared,
@@ -53,6 +53,25 @@ export {
   waitOnExecutionContext,
 } from '../mocks/bindings'
 
+// ---- a deterministic model --------------------------------------------------------------------
+
+/**
+ * `scriptPlatformChat(env, turns)` scripts the platform chat model (the `AI` binding's stub), so a
+ * plugin route that calls `streamChat` — or anything else that resolves chat — runs the REAL resolve
+ * seam, streaming loop and AG-UI encoder against a model that answers what the test says, with no
+ * `vi.mock` of a core module. `createTestEnv({ AI: undefined })` is the "no provider" case (503
+ * `ai_not_configured`). `aguiFrames(res)` parses the AG-UI body back into typed events;
+ * `aguiTypes` / `customEvents` are the sequence and the CUSTOM events of a run.
+ */
+export {
+  aguiFrames,
+  aguiTypes,
+  customEvents,
+  type PlatformChatCall,
+  type PlatformChatTurn,
+  scriptPlatformChat,
+} from '../helpers/ai'
+
 // ---- the cron dispatcher -----------------------------------------------------------------------
 
 /**
@@ -80,6 +99,40 @@ export {
   type ScheduledTask,
   type TaskReport,
 } from '@/api/scheduled'
+
+/**
+ * D42: run the `event.deliver` jobs an emit queued through the real consumer — each subscriber's
+ * own delivery — and report `{ subscriber, eventId, outcome }` for each. Other jobs stay queued.
+ */
+export { deliverEvents, type EventDelivery } from '../helpers/events'
+
+// ---- the MCP server ----------------------------------------------------------------------------
+
+/**
+ * A plugin's tool over the REAL `/mcp`, as a connected client would call it.
+ *
+ * `callMcpTool(db, tool, { as, tenant, args?, scopes?, exposure? })` turns the organisation's MCP
+ * switch on, writes a connection for `as` exactly as the consent screen would, lists the tools and —
+ * only when this one is listed — calls it. `listed: false` is the answer for a tool the client is
+ * never offered (unexposed, approval-gated, chat-only, its flag off); a listed one carries its
+ * `listing` (title, annotations) and answers
+ * `{ isError, text, json, structured }`. **A plugin proves its tool's scoping here**: call it as a
+ * member of a second organisation, or as somebody outside a group, and assert the rows are absent —
+ * the same proof the tenant-isolation case gives the mount.
+ *
+ * `connectMcp` / `enableMcp` / `mcpClient` / `mcpTestEnv` are the pieces, for a case that needs a
+ * connection it then breaks (revoke the member, turn MCP off) or a raw JSON-RPC exchange.
+ */
+export {
+  callMcpTool,
+  connectMcp,
+  enableMcp,
+  type McpToolCallResult,
+  mcpClient,
+  mcpTestEnv,
+  type TestMcpConnection,
+  toolJson,
+} from '../helpers/mcp'
 
 // ---- fixtures ----------------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 /**
- * The label/value rows the AI inspectors are built from — the chat inspector (D17) and the run
- * workspace's Usage tab (issue #17) show the same kind of thing in the same shape, and one of them
+ * The label/value rows the AI inspectors are built from — the chat inspector and the run
+ * workspace's Usage tab show the same kind of thing in the same shape, and one of them
  * having its own copy is how two panels start disagreeing about what a cost looks like.
  *
  * **It lives in `components/ai/`, not `components/shared/`.** Both consumers are lazy chunks, so

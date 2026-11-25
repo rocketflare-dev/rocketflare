@@ -1,5 +1,5 @@
 /**
- * `activity.record` (D7, D19): append an `activity_events` row a hot path chose to offload rather
+ * `activity.record`: append an `activity_events` row a hot path chose to offload rather
  * than insert inline. Same writer the routes use (`recordActivity`), so the row shape cannot drift.
  */
 import type { JobOf } from '@rocketflare/shared/jobs'

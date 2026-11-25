@@ -1,5 +1,5 @@
 /**
- * `agent_run_decisions` — every typed question an agent run asked through `ctx.decide` (D37): the
+ * `agent_run_decisions` — every typed question an agent run asked through `ctx.decide`: the
  * state and questions it sent, the answers and probabilities it got back, and the engine that gave
  * them. It is three things at once, which is why it is a table and not an event row:
  *

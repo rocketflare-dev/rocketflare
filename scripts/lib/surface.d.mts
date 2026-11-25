@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `surface.mjs` (the workspace has no `allowJs`). Keep in step with the
- * exports there; `apps/web/tests/config/surface.test.ts` is what typechecks against this.
+ * exports there; `apps/web/tests/kit-only/surface.test.ts` is what typechecks against this.
  */
 
 /** One entry of the ledger: the specifier a plugin writes, and the module it resolves to. */

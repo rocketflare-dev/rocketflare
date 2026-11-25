@@ -1,16 +1,16 @@
 /**
- * One artifact, dispatched on its kind — the closed set from `@rocketflare/shared/ai/artifacts`
- * (decision 7), so a sixth kind is a type error here until it has a branch.
+ * One artifact, dispatched on its kind — the closed set from `@rocketflare/shared/ai/artifacts`,
+ * so a sixth kind is a type error here until it has a branch.
  *
  * `document` and `file` carry IDS, never content: the bytes live behind routes that enforce tenancy
- * and, for a document, group visibility (D29). Rendering them as links is not a shortcut, it is the
+ * and, for a document, group visibility. Rendering them as links is not a shortcut, it is the
  * only correct thing to do with them.
  */
 import { ArrowDownTrayIcon, DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
 import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import { filePath } from '@rocketflare/shared/files'
-import { Link } from 'react-router-dom'
+import { Link } from 'react-router'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import { formatBytes } from '@/ui/lib/format'
 import { JsonDisclosure, pretty, truncate } from '../timeline/toolResults'

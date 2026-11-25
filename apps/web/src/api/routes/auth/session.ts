@@ -1,5 +1,5 @@
 /**
- * `/auth/methods`, `/auth/session`, `/auth/select-tenant`, `/auth/logout` (D9, D11, D25). NOT behind
+ * `/auth/methods`, `/auth/session`, `/auth/select-tenant`, `/auth/logout`. NOT behind
  * `authMiddleware`: `/auth/session` must answer 200 for a valid cookie with NO tenant so the UI can
  * route to /select-tenant or /pending. Cookie only — Bearer keys are an `/api/*` credential.
  */
@@ -8,14 +8,17 @@ import { selectTenantRequestSchema } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import { hasOidc, isOidcOnly } from '../../../config'
 import { tenantUsers } from '../../../db/schema'
+import { serverPlugins } from '../../../plugins/server'
 import { clearSessionCookie } from '../../auth/cookies'
+import { pluginLoginMethods } from '../../auth/plugin-login-methods'
 import { configuredProviders, oidcEndSessionUrl } from '../../auth/providers'
-import { deleteSession, updateSelectedTenant } from '../../auth/sessions'
+import { deleteSession, updateSelectedTenant, userTenantIds } from '../../auth/sessions'
 import { resolveCookieAuth } from '../../middleware/auth'
 import { buildSessionResponse } from '../../services/auth'
+import { closeSessionSockets } from '../../services/realtime'
 import type { AppContext } from '../../types'
 import { ForbiddenError, UnauthorizedError } from '../../utils/core/errors'
-import { requireMultiTenant } from '../../utils/routes/route-helpers'
+import { makeDefer, requireMultiTenant } from '../../utils/routes/route-helpers'
 import { createRouter } from '../../utils/routes/router'
 import { validate } from '../../utils/routes/validate'
 
@@ -24,7 +27,7 @@ export const sessionRouter = createRouter()
 sessionRouter.get('/methods', c => {
   const cfg = c.get('config')
   const methods: AuthMethods = {
-    magicLink: true,
+    magicLink: !isOidcOnly(cfg),
     providers: configuredProviders(cfg),
     devLogin: cfg.APP_ENV === 'development',
   }
@@ -33,6 +36,9 @@ sessionRouter.get('/methods', c => {
     methods.oidc = { label: cfg.OIDC_LABEL }
     methods.oidcOnly = isOidcOnly(cfg)
   }
+  // Only when a plugin contributes one; shown under `oidcOnly` too — they are SSO as well.
+  const pluginMethods = pluginLoginMethods(serverPlugins, cfg, c.get('logger'))
+  if (pluginMethods.length > 0) methods.pluginMethods = pluginMethods
   return c.json(methods)
 })
 
@@ -71,7 +77,15 @@ sessionRouter.post('/select-tenant', validate('json', selectTenantRequestSchema)
 sessionRouter.post('/logout', async c => {
   const cfg = c.get('config')
   const auth = await resolveCookieAuth(c).catch(() => null)
-  if (auth) await deleteSession(c.get('db'), auth.session.id)
+  if (auth) {
+    const db = c.get('db')
+    await deleteSession(db, auth.session.id)
+    closeSessionSockets(
+      { defer: makeDefer(c), env: c.env },
+      await userTenantIds(db, auth.user.id),
+      auth.session.id
+    )
+  }
   clearSessionCookie(c)
   if (hasOidc(cfg)) {
     const endSessionUrl = await oidcEndSessionUrl(cfg).catch(err => {

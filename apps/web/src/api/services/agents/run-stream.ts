@@ -1,5 +1,5 @@
 /**
- * `GET /api/agents/runs/:id/agui/stream` — a run's timeline, live (issue #7).
+ * `GET /api/agents/runs/:id/agui/stream` — a run's timeline, live.
  *
  * A **polling** stream: the body tails `agent_run_events` on one open connection, projects each
  * new row through {@link createRunProjector} and frames it as spec AG-UI with `seq` as the cursor.
@@ -17,7 +17,7 @@
  *    starts after it and the client holds a text message that never closes, forever, with no
  *    error. Replaying a whole group is free: every id in it is derived from the row id, so a
  *    replayed group is byte-identical.
- * 2. **No `RUN_ERROR` for the stream's own failure** (decision 6). `chat-turn.ts` emits one
+ * 2. **No `RUN_ERROR` for the stream's own failure**. `chat-turn.ts` emits one
  *    because there the stream *is* the run; here the run is a durable Workflow in another isolate
  *    and is almost certainly fine. Closing with no terminal event means "reconnect", uniformly —
  *    for a redeploy, an idle cap, a duration cap, a transport error and a client abort.
@@ -184,7 +184,7 @@ export async function runStreamBody(
     if (sink.aborted) return 'aborted'
 
     // Two statements, concurrently (postgres.js pipelines them on one connection; neon-http sends
-    // two requests — D35). The run
+    // two requests). The run
     // row is how a settle or a park is noticed: a finished run stops writing events, so waiting
     // for a row that will never come is waiting forever.
     const [rows, latest] = await Promise.all([

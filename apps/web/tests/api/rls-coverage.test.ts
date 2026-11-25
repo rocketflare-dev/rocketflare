@@ -1,5 +1,5 @@
 /**
- * RLS coverage, catalog-driven (D1): every table with a `tenant_id` column carries a policy, the
+ * RLS coverage, catalog-driven: every table with a `tenant_id` column carries a policy, the
  * set of policies in Postgres equals the set the schema declares, the unpolicied tables are exactly
  * `RLS_EXCLUDED_TABLES`, and the revoked tables grant NOTHING to the app role. Runs in `off` mode:
  * the policies exist and are inert (owner connection bypasses them); the role cannot bypass RLS.
@@ -84,7 +84,8 @@ describe('row-level security coverage', () => {
   it('policies use one shared predicate on the tenant GUC', async () => {
     const live = await rows<{ policyname: string; qual: string; with_check: string }>(sql`
       SELECT policyname::text, qual::text, with_check::text FROM pg_policies
-      WHERE schemaname = 'public'`)
+      WHERE schemaname = 'public' AND policyname NOT LIKE '%\\_platform\\_read'`)
+    expect(live.length).toBeGreaterThan(0)
     for (const p of live) {
       expect(p.qual, p.policyname).toContain("current_setting('app.tenant_id'")
       expect(p.with_check, p.policyname).toContain("current_setting('app.tenant_id'")
@@ -92,8 +93,35 @@ describe('row-level security coverage', () => {
     }
   })
 
+  it('platform read policies are SELECT-only on a null tenant, paired with tenant isolation, on exactly documents and chunks', async () => {
+    const platform = await rows<{
+      tablename: string
+      policyname: string
+      cmd: string
+      qual: string
+      with_check: string | null
+    }>(sql`
+      SELECT tablename::text, policyname::text, cmd::text, qual::text, with_check::text
+      FROM pg_policies WHERE schemaname = 'public' AND policyname LIKE '%\\_platform\\_read'`)
+    // A new platform-readable table is a design decision (readable by EVERY tenant), not a refactor.
+    expect(platform.map(p => p.tablename).sort()).toEqual(['chunks', 'documents'])
+    const isolation = await rows<{ tablename: string; cmd: string }>(sql`
+      SELECT tablename::text, cmd::text FROM pg_policies
+      WHERE schemaname = 'public' AND policyname LIKE '%\\_tenant\\_isolation'`)
+    for (const p of platform) {
+      expect(p.policyname).toBe(`${p.tablename}_platform_read`)
+      expect(p.cmd, p.policyname).toBe('SELECT')
+      expect(p.qual, p.policyname).toBe('(tenant_id IS NULL)')
+      expect(p.with_check, p.policyname).toBeNull()
+      expect(
+        isolation.find(i => i.tablename === p.tablename)?.cmd,
+        `${p.tablename} keeps its FOR ALL tenant isolation`
+      ).toBe('ALL')
+    }
+  })
+
   /**
-   * The kit's exclusions plus every installed plugin's (D31). The union lives here rather than in
+   * The core exclusions plus every installed plugin's. The union lives here rather than in
    * `rls.ts`, which every schema file imports and which must not read the server barrel — see the
    * note beside `RLS_EXCLUDED_TABLES`.
    */

@@ -1,7 +1,5 @@
-// @vitest-isolate
-// Mocks `@/api/services/ai/resolve` (the provider seam), so this file needs its own module registry.
 /**
- * `/api/chat` (D17) against a scripted `FakeChatClient`: create conversation (frozen provider/
+ * `/api/chat` against a scripted `FakeChatClient`: create conversation (frozen provider/
  * model), POST message streams the **AG-UI** sequence (`RUN_STARTED → CUSTOM kit.chat.ids →
  * STATE_SNAPSHOT → TEXT_MESSAGE_* → CUSTOM kit.usage → RUN_FINISHED`), persists both messages + an
  * `ai_usage` row + auto-title; history is sent on the next turn; not configured → 503
@@ -17,8 +15,9 @@ import { decode as decodeProto } from '@ag-ui/proto'
 import { chatRunResultSchema, KIT_CUSTOM_EVENTS } from '@rocketflare/shared/ai/agui'
 import { conversationSchema, conversationWithMessagesSchema } from '@rocketflare/shared/ai/chat'
 import { and, eq } from 'drizzle-orm'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { AiError, AiNotConfiguredError } from '@/api/services/ai/errors'
+import { overrideResolveChatForTests } from '@/api/services/ai/resolve'
 import type { ChatParams } from '@/api/services/ai/types'
 import { aiUsage, conversations, messages } from '@/db/schema'
 import {
@@ -42,21 +41,16 @@ import { json, request } from '../helpers/request'
 /** What the mocked `resolveChat` hands out; tests reassign per case. */
 const state: { client: FakeChatClient | null; error: Error | null } = { client: null, error: null }
 
-vi.mock('@/api/services/ai/resolve', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/api/services/ai/resolve')>()
+overrideResolveChatForTests(async () => {
+  if (state.error) throw state.error
+  if (!state.client) throw new AiNotConfiguredError('chat')
   return {
-    ...actual,
-    resolveChat: vi.fn(async () => {
-      if (state.error) throw state.error
-      if (!state.client) throw new AiNotConfiguredError('chat')
-      return {
-        client: state.client,
-        provider: 'anthropic_compatible',
-        model: 'fake-model',
-        source: 'tenant',
-        maxOutputTokens: 2048,
-      }
-    }),
+    client: state.client,
+    provider: 'anthropic_compatible',
+    model: 'fake-model',
+    source: 'tenant',
+    billedToPlatform: false,
+    maxOutputTokens: 2048,
   }
 })
 
@@ -189,7 +183,7 @@ describe('POST /api/chat/conversations/:id/messages (AG-UI stream)', () => {
     const params: ChatParams | undefined = client.calls[0]
     expect(String(params?.system)).toContain(`helping ${a.user.name} at ${a.tenant.name}`)
     // Tools are on by default now (`CHAT_KNOWLEDGE_TOOLS`); `chat-tools.test.ts` covers them.
-    // The kit's three lead; an installed plugin's tools (D31) follow, hence the prefix.
+    // The three built-in tools lead; an installed plugin's tools follow, hence the prefix.
     expect(params?.tools?.map(t => t.name).slice(0, 3)).toEqual([
       'search_knowledge',
       'get_document',

@@ -1,5 +1,5 @@
 /**
- * `conversations` — one persisted chat thread per user (D17). Ownership is `userId`: the routes
+ * `conversations` — one persisted chat thread per user. Ownership is `userId`: the routes
  * filter by BOTH `tenantId` (auth context) and `userId`, so another member's thread — admin or
  * not — is a 404. `provider`/`model` record what LAST answered, refreshed every turn: the turn
  * re-resolves its client, so a value frozen at creation stops being true the moment a tenant

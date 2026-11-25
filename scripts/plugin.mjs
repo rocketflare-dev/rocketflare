@@ -5,7 +5,7 @@
  *   node scripts/plugin.mjs add <repo|path>[@ref] [--subdir <dir>] [--apply] [--local]
  *   node scripts/plugin.mjs upgrade <id> [--to <ref>] [--from <ref>] [--apply]
  *   node scripts/plugin.mjs remove <id> [--apply] [--archive]
- *   node scripts/plugin.mjs list | check | export <id> <dir>
+ *   node scripts/plugin.mjs list [--available] [--json] | check | export <id> <dir>
  *
  * A plugin is a separate git repository COPIED into an app — never installed from npm, exactly
  * like the kit itself — so this script is the kit-upgrade machine pointed at a second kind of
@@ -19,8 +19,11 @@
  *   - **never copy a migration.** A snapshot describes a whole cumulative schema, so importing a
  *     foreign one teaches drizzle a current state that has never heard of the host's own tables.
  *     The host generates its own with `pnpm db:generate` once the schema barrel line exists.
- *   - **never write a resource id or edit a wrangler toml.** A binding a plugin declares is
- *     REPORTED; `pnpm provision cloudflare <env>` is what creates it.
+ *   - **never write a resource id.** A binding a plugin declares gets its toml block with a
+ *     `<PLACEHOLDER>` id (`pnpm provision declarations`, run after an apply), so `pnpm dev` has it
+ *     at once; `pnpm provision cloudflare <env>` creates the resource and patches the id in. The
+ *     other toml edit is `run_worker_first` for a plugin declaring `publicSites`, which the parity
+ *     test demands before anything has been provisioned.
  *   - **never apply without being asked.** Every command prints its plan and stops; `--apply` is a
  *     second, deliberate run, which is the whole of decision 1's "installing a plugin is as
  *     trusting as merging a pull request".
@@ -32,9 +35,11 @@
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -57,57 +62,95 @@ import {
   addedByPlugins,
   addPlanJson,
   applyCoreEdits,
+  applyWorkerFirstAll,
   archiveSql,
+  awaitsReprovision,
   BARREL_KINDS,
   BARRELS,
   barrelLines,
   buildPluginSurface,
+  CLAUDE_SETTINGS_FILE,
+  catalogueEntries,
+  catalogueJson,
+  catalogueReads,
   checkRequirements,
   classifyPluginFile,
+  claudeHookProblems,
   coreEditsByFile,
+  declaredTools,
   declaresProperty,
+  declaresPublicSites,
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
+  deprecatedServerMembers,
   describeClash,
+  describeClaudeHook,
+  eventClashes,
   floorOf,
   hasBarrelLine,
+  hostFileProblems,
+  imagesBindingProblems,
+  isAppOwnedPath,
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  licenceTerms,
+  manifestPathProblems,
   missingDependencies,
+  missingWorkerFirstPatterns,
   newlyAddedDependencies,
   nextAddedDependencies,
   nextPluginMigrationTag,
+  ownedClaudeHooks,
+  PLUGIN_CATALOGUES,
   PLUGIN_MANIFEST_FILE,
+  parseClaudeHookCommand,
   parsePluginRequirement,
+  partialCoreEdits,
   pinDeclaredRanges,
+  pluginAnchor,
+  pluginAppOwned,
+  pluginClaudeHooks,
+  pluginHostFiles,
   pluginIdProblem,
   pluginManifestProblems,
   pluginPlatformProblems,
   pluginRoots,
   pluginSkillDirs,
+  pruneWorkerFirst,
   removeBarrelLine,
   removeSteps,
   renderAddPlan,
+  renderCatalogue,
   renderDependencyDelta,
   renderDiagnostic,
   renderList,
   renderSteps,
+  repoDisplayName,
+  reprovisionStep,
+  reservedMountPaths,
   resolveSubdir,
+  restoreWorkerFirst,
   revertCoreEdits,
   SKILLS_ROOT,
+  setClaudeHooks,
+  settleReprovision,
   skillDirProblem,
   skillFileProblems,
   skillTarget,
+  stringConstants,
   surfaceDirectories,
   tableClashes,
+  toolProblems,
+  undeclaredManifestEvents,
   undeclaredSkillDirs,
   unresolvedPluginImports,
   withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
-import { applyReplacements, deriveNames, isBinary } from './lib/rename-lib.mjs'
+import { applyReplacements, deriveNames, isBinary, isLicenceFile } from './lib/rename-lib.mjs'
+import { containedPath, writePathProblem } from './lib/repo-paths.mjs'
 import { missingFrom, readLedger, usesOf } from './lib/surface.mjs'
 import {
   compareVersions,
@@ -145,6 +188,24 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 // repositories to read their manifests — one clone, not two that take turns being stale.
 const WORK_DIR = PLUGIN_MIRROR_ROOT
 
+/**
+ * The host's own Biome, run directly rather than through `pnpm exec`, which is a second Node start
+ * per call and fails anyway, after that start, where Biome is not installed. Null when the host
+ * has none; every caller then skips formatting with the warning a failed run gives.
+ */
+const BIOME_BIN = path.join(
+  REPO_ROOT,
+  'node_modules',
+  '.bin',
+  process.platform === 'win32' ? 'biome.cmd' : 'biome'
+)
+
+/** Biome with these arguments in the host, or a failed result when the host has none. */
+function runBiome(args, options) {
+  if (!existsSync(BIOME_BIN)) return { status: 1, error: new Error('no biome'), stdout: null }
+  return spawnSync(BIOME_BIN, args, { cwd: REPO_ROOT, ...options })
+}
+
 /** Set while a nested audit runs under `--json`, so stdout stays ONE document. */
 let muted = false
 const out = (...lines) => {
@@ -172,18 +233,26 @@ export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
   upgrade <id>            port the plugin's own later releases in, exactly as \`pnpm kit:upgrade\`,
                           and move the host's dependencies to what the new release declares
     --to <ref> / --from <ref> / --apply / --no-fetch / --allow-dirty
+    --continue            after an --apply that left rejects: once every *.rej is resolved and
+                          deleted, finish it — re-apply the idempotent parts and stamp the surface
 
   remove <id>             uninstall: delete its directories, its barrel lines and its surface
     --apply / --allow-dirty
     --archive             first write a --custom migration copying its tables into schema 'archive'
+    --force-app-owned     with --apply, also delete files under the plugin's appOwned paths that
+                          you changed or added; without it such a removal stops
 
   list                    the installed plugins, one line each
+    --available           instead, every plugin the published repositories hold at their newest
+                          tag (id, version, installed here or not, description) — read live,
+                          never cached; exit 3 when they cannot be reached. A commercial
+                          repository is listed only when your git credentials can read it
   check                   audit every installed plugin; one line per failure, exit 1 on any.
                           add --apply and upgrade --apply run it last, over the tree they wrote
 
   export <id> <dir>       copy a plugin back out into a plugin repository checkout (authoring)
 
-  --json                  on add, upgrade, remove and check: the same facts as DATA rather than prose.
+  --json                  on add, upgrade, remove, check and list --available: the same facts as DATA rather than prose.
                           Every step carries its kind — agent (a command plus the assertion that
                           proves it) or human (a decision the tooling stops for) — so a human step
                           is a field rather than a sentence somebody has to notice.
@@ -204,9 +273,12 @@ export function parseArgs(argv) {
     apply: false,
     local: false,
     archive: false,
+    forceAppOwned: false,
     fetch: true,
     allowDirty: false,
     json: false,
+    continue: false,
+    available: false,
   }
   const takesValue = { '--subdir': 'subdir', '--to': 'to', '--from': 'from' }
   for (let i = 0; i < argv.length; i++) {
@@ -221,9 +293,12 @@ export function parseArgs(argv) {
     if (a === '--apply') args.apply = true
     else if (a === '--local') args.local = true
     else if (a === '--archive') args.archive = true
+    else if (a === '--force-app-owned') args.forceAppOwned = true
     else if (a === '--no-fetch') args.fetch = false
     else if (a === '--allow-dirty') args.allowDirty = true
+    else if (a === '--continue') args.continue = true
     else if (a === '--json') args.json = true
+    else if (a === '--available') args.available = true
     else if (a.startsWith('-')) return { error: `unknown option '${a}'` }
     else if (!args.command) args.command = a
     else args.positional.push(a)
@@ -288,6 +363,110 @@ function loadHost() {
   }
 }
 
+/** The parsed manifest of every installed plugin but `exceptId`; an unreadable one is skipped. */
+function installedManifests(host, exceptId) {
+  return host.plugins.flatMap(p => {
+    if (p.id === exceptId || !existsSync(abs(p.anchor))) return []
+    try {
+      return [JSON.parse(readFileSync(abs(p.anchor), 'utf8'))]
+    } catch {
+      return []
+    }
+  })
+}
+
+const wranglerTomls = () =>
+  ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml'].filter(f => existsSync(abs(f)))
+
+/** Both tomls through `transform`, in memory: a throw leaves every toml as it was. */
+const transformWranglerTomls = transform =>
+  wranglerTomls().map(f => [f, transform(readFileSync(abs(f), 'utf8'))])
+
+/** `transformWranglerTomls`, or stop with nothing written. */
+function transformWranglerTomlsOrStop(transform) {
+  try {
+    return transformWranglerTomls(transform)
+  } catch (error) {
+    stop(1, `error: ${error.message} Nothing has been written.`)
+  }
+}
+
+/** Both tomls with public-site routing restored, and the patterns `prefixes` need that they lost. */
+function restoreWranglerTomls(prefixes) {
+  const lost = new Set()
+  const routed = transformWranglerTomls(text => {
+    const restored = restoreWorkerFirst(text, prefixes)
+    for (const pattern of restored.lost) lost.add(pattern)
+    return restored.text
+  })
+  return { routed, lost: [...lost] }
+}
+
+function writeWranglerTomls(routed) {
+  for (const [file, text] of routed) writeFileSync(abs(file), text)
+}
+
+/** The host's `.claude/settings.json` as text, or null when it is absent. */
+const readClaudeSettings = () =>
+  existsSync(abs(CLAUDE_SETTINGS_FILE)) ? readFileSync(abs(CLAUDE_SETTINGS_FILE), 'utf8') : null
+
+/**
+ * `.claude/settings.json` with plugin `id`'s hooks set to `hooks`, computed in memory — or a stop
+ * with nothing written, when the file is not JSON. `changed` is false when the bytes are the same.
+ */
+function plannedClaudeSettings(host, id, hooks) {
+  const before = readClaudeSettings()
+  if (before === null && hooks.length === 0)
+    return { before, after: null, changed: false, added: [], removed: [] }
+  try {
+    const r = setClaudeHooks(before, id, hooks, { installedIds: host.plugins.map(p => p.id) })
+    return { before, after: r.text, changed: r.text !== before, added: r.added, removed: r.removed }
+  } catch (error) {
+    stop(
+      1,
+      `error: ${CLAUDE_SETTINGS_FILE} cannot be read as JSON (${error instanceof Error ? error.message : String(error)}).`,
+      'Fix its syntax first — the plugin merges its Claude Code hooks into it. Nothing has been written.'
+    )
+  }
+}
+
+/** Write (or, for `after === null`, delete) the settings file a plan computed. */
+function writeClaudeSettings(plan) {
+  if (!plan.changed) return
+  if (plan.after === null) rmSync(abs(CLAUDE_SETTINGS_FILE), { force: true })
+  else writeInto(CLAUDE_SETTINGS_FILE, plan.after)
+}
+
+/** The settings change, as plan lines. */
+const renderClaudeSettingsChange = (plan, heading) =>
+  plan.changed
+    ? [
+        '',
+        `${heading} (${CLAUDE_SETTINGS_FILE}${plan.before === null ? ', created' : plan.after === null ? ', deleted — nothing else was in it' : ''})`,
+        ...plan.removed.map(h => `  - ${describeClaudeHook(h)}`),
+        ...plan.added.map(h => `  + ${describeClaudeHook(h)}`),
+      ]
+    : []
+
+/**
+ * The hook problems `add` and `upgrade` refuse: the manifest's own, plus a command naming a script
+ * the release does not ship at `skills/<dir>/<script>`.
+ */
+function claudeHookScriptProblems(manifest, has) {
+  return pluginClaudeHooks(manifest).flatMap(h => {
+    const parsed = parseClaudeHookCommand(h.command)
+    if (!parsed) return []
+    const file = `skills/${parsed.dir}/${parsed.script}`
+    return has(file) ? [] : [`claudeHooks.${h.event} runs ${file}, which the plugin does not ship`]
+  })
+}
+
+/** Each host file a manifest seeds, with whether it is there already — what the plan prints. */
+function hostSeeds(files) {
+  const targets = [...new Set(files.filter(f => f.role === 'seed').map(f => f.target))]
+  return targets.map(target => ({ target, state: existsSync(abs(target)) ? 'keep' : 'seed' }))
+}
+
 /** A host workspace package's `package.json`, or null. Never throws: a caller is reporting. */
 function readHostPackageJson(pkg) {
   const file = abs(path.join(pkg, 'package.json'))
@@ -325,7 +504,7 @@ function installedDependencyDeclarations(host) {
     })
 }
 
-function requireClean(host, args) {
+function requireClean(args) {
   if (args.allowDirty) return
   const dirty = dirtyTree(REPO_ROOT)
   if (dirty !== '') {
@@ -349,14 +528,9 @@ function requireClean(host, args) {
 function writeManifestFile(file, data, { format }) {
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`)
   if (!format) return
-  const r = spawnSync(
-    'pnpm',
-    ['exec', 'biome', 'format', '--write', path.relative(REPO_ROOT, file)],
-    {
-      cwd: REPO_ROOT,
-      stdio: ['ignore', 'ignore', 'pipe'],
-    }
-  )
+  const r = runBiome(['format', '--write', path.relative(REPO_ROOT, file)], {
+    stdio: ['ignore', 'ignore', 'pipe'],
+  })
   if (r.status !== 0) {
     warn(
       `note: could not run Biome on ${path.basename(file)} — run \`pnpm lint:fix\` before committing`
@@ -484,18 +658,55 @@ function openSource(spec, args) {
   }
 }
 
-/** Bytes → the text that lands in the host, translated when the host has been renamed. */
-function materialise(buffer, names) {
+/**
+ * Bytes → the text that lands in the host, translated when the host has been renamed. A licence
+ * file (`rel`, the path inside the plugin) is never translated: it is legal text naming its
+ * licensor, and the rename would put the app's name on it.
+ */
+function materialise(buffer, names, rel) {
   if (isBinary(buffer)) return buffer
+  if (rel && isLicenceFile(rel)) return buffer
   const text = buffer.toString('utf8')
   return names ? applyReplacements(text, names).text : text
 }
 
 function writeInto(rel, content) {
-  const file = abs(rel)
+  const file = containedPath(REPO_ROOT, rel)
   mkdirSync(path.dirname(file), { recursive: true })
   writeFileSync(file, content)
 }
+
+/**
+ * Stop, before a single byte moves, if any path a manifest or a release steers is one this command
+ * may not touch: a manifest path outside the plugin or the repository, or a target that passes
+ * through a symlink. Each `targets` entry is a repo-relative path about to be written or removed.
+ */
+function refuseUnsafePaths(id, manifests, targets) {
+  const lines = manifests
+    .flatMap(m => manifestPathProblems(m, id))
+    .map(p => `  ${p.field}: ${p.path} ${p.problem}`)
+  if (lines.length === 0) {
+    for (const rel of new Set(targets)) {
+      const problem = writePathProblem(REPO_ROOT, rel)
+      if (problem) lines.push(`  ${rel} ${problem}`)
+    }
+  }
+  if (lines.length === 0) return
+  stop(
+    1,
+    `error: ${id} names paths this command may not touch:`,
+    ...lines,
+    '',
+    `A plugin writes only inside its own roots (${pluginRoots(id).join(', ')}), its declared`,
+    'skills and the core edits it declares, never through a symlink. Nothing has been written.'
+  )
+}
+
+/** Every repo-relative path `add` or `upgrade` writes for one manifest, the release's files aside. */
+const manifestWriteTargets = m => [
+  ...coreEditsByFile(m).keys(),
+  ...Object.keys(m.dependencies ?? {}).map(pkg => `${pkg}/package.json`),
+]
 
 // ---------------------------------------------------------------- add
 
@@ -518,7 +729,7 @@ function verifyText(source, version) {
 function cmdAdd(args, host) {
   const spec = args.positional[0]
   if (!spec) stop(2, 'error: add needs a repository or a path', '', USAGE)
-  if (args.apply) requireClean(host, args)
+  if (args.apply) requireClean(args)
 
   const source = openSource(spec, args)
   if (!source.has(PLUGIN_MANIFEST_FILE)) {
@@ -552,7 +763,31 @@ function cmdAdd(args, host) {
 
   // Every path, and the refusal that is the whole point of classifying them.
   const skills = pluginSkillDirs(m)
-  const files = source.files().map(p => ({ path: p, ...classifyPluginFile(p, m.id, { skills }) }))
+  const hostFiles = pluginHostFiles(m)
+  const files = source
+    .files()
+    .map(p => ({ path: p, ...classifyPluginFile(p, m.id, { skills, hostFiles }) }))
+  // Claude Code hooks run on the developer's machine, inside their coding agent, so the command is
+  // held to one shape — a script this plugin ships in a declared skill — and refused otherwise.
+  // Host files must land in the plugin's own namespaced host roots.
+  const seamProblems = [
+    ...claudeHookProblems(m),
+    ...claudeHookScriptProblems(m, rel => source.has(rel)),
+    ...hostFileProblems(m),
+    ...hostFiles
+      .filter(e => !files.some(f => f.role === 'seed' && f.hostFile === e.path))
+      .map(e => `hostFiles from ${JSON.stringify(e.from)} matches no file in the plugin`),
+  ]
+  if (seamProblems.length > 0) {
+    stop(
+      1,
+      `error: ${m.id} declares hooks or host files this kit cannot install:`,
+      ...seamProblems.map(p => `  ${p}`),
+      '',
+      'That is a bug in the plugin. Nothing has been written.'
+    )
+  }
+
   const refused = files.filter(f => f.role === 'refused')
   if (refused.length > 0) {
     stop(
@@ -562,7 +797,8 @@ function cmdAdd(args, host) {
       '',
       `A plugin owns ${pluginRoots(m.id).join(', ')} and nothing else — that is what makes an`,
       'install reversible by deleting a directory — plus the skills its manifest declares',
-      '(skills/<dir>/ → .claude/skills/<dir>/). This is a bug in the plugin, not in your tree.'
+      '(skills/<dir>/ → .claude/skills/<dir>/) and the host files it seeds ("hostFiles").',
+      'This is a bug in the plugin, not in your tree.'
     )
   }
 
@@ -598,6 +834,20 @@ function cmdAdd(args, host) {
       'That is a bug in the plugin. Nothing has been written.'
     )
   }
+
+  const anchorPath = pluginAnchor(m)
+  refuseUnsafePaths(
+    m.id,
+    [m],
+    [
+      ...files
+        .filter(f => f.role === 'copy' || f.role === 'note' || f.role === 'seed')
+        .map(f => f.target),
+      anchorPath,
+      ...manifestWriteTargets(m),
+      ...(pluginClaudeHooks(m).length > 0 ? [CLAUDE_SETTINGS_FILE] : []),
+    ]
+  )
 
   // Target collisions. Both halves matter: a directory that is already there, and an id already
   // recorded — the second is how a re-run of `--apply` would otherwise silently reinstall.
@@ -636,6 +886,7 @@ function cmdAdd(args, host) {
   // in `.rocketflare.json`, so no kit upgrade ever reconciles it. It WARNS rather than refusing (a
   // clash is often the intended change) and is surfaced as a HUMAN step, which is where the
   // taxonomy makes a decision unmissable.
+  problems.push(...imagesBindingProblems(m, installedManifests(host)))
   const clashes = dependencyClashes(m, {
     packageJsons: packageJsonsFor(m),
     installed: installedDependencyDeclarations(host),
@@ -647,6 +898,8 @@ function cmdAdd(args, host) {
   }
   const local = args.local || host.isKit
   const barrels = BARREL_KINDS.filter(k => files.some(f => f.path === BARRELS[k].half(m.id)))
+  const seeds = hostSeeds(files)
+  const settings = plannedClaudeSettings(host, m.id, pluginClaudeHooks(m))
   const plan = {
     manifest: m,
     source: { repo, subdir, ref: source.ref, commit: source.commit },
@@ -662,6 +915,8 @@ function cmdAdd(args, host) {
     files,
     byRoot,
     barrels,
+    hostSeeds: seeds,
+    settingsExists: settings.before !== null,
     verify: verifyText(source, m.version),
   }
   if (args.json) out(JSON.stringify(addPlanJson(plan), null, 2))
@@ -677,20 +932,30 @@ function cmdAdd(args, host) {
   }
 
   // --- apply
+  // Computed before the first copy: a toml with no array to rewrite must stop an install whole.
+  const routed = declaresPublicSites(m) ? transformWranglerTomlsOrStop(applyWorkerFirstAll) : []
   let written = 0
   const targets = []
   for (const f of files) {
     if (f.role !== 'copy' && f.role !== 'note') continue
-    writeInto(f.target, materialise(source.read(f.path), host.names))
+    writeInto(f.target, materialise(source.read(f.path), host.names, f.path))
     targets.push(f.target)
     written += 1
   }
+  // Host files: only where nothing is there. A file the developer already has — from an earlier
+  // install, or their own — is theirs, and is never overwritten.
+  const seededTargets = []
+  for (const f of files) {
+    if (f.role !== 'seed' || existsSync(abs(f.target))) continue
+    writeInto(f.target, materialise(source.read(f.path), host.names, f.path))
+    seededTargets.push(f.target)
+  }
+  writeClaudeSettings(settings)
   // **The anchor is a COPY, not a second thing an author keeps in step.** It used to be a file the
   // plugin shipped alongside its release manifest, and the two drifted the moment a release stamped
   // one and not the other: every install of `analytics` 2.0.1 then failed the audit with "plugin.json
   // says X and the surface says Y", over code that was perfectly correct. Writing it from the source
   // manifest here makes that state unrepresentable.
-  const anchorPath = m.anchor ?? `apps/web/src/plugins/${m.id}/plugin.json`
   writeInto(anchorPath, materialise(source.read(PLUGIN_MANIFEST_FILE), host.names))
   if (!targets.includes(anchorPath)) targets.push(anchorPath)
   for (const kind of barrels) {
@@ -702,8 +967,11 @@ function cmdAdd(args, host) {
   // `pnpm build` broken for anyone who did not read the plan, `plugin-ci.yml` included.
   const coreEdits = coreEditsByFile(m)
   for (const [file, edits] of coreEdits) {
-    writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+    const before = readFileSync(abs(file), 'utf8')
+    for (const p of partialCoreEdits(before, edits)) warn(`warning: ${p}`)
+    writeFileSync(abs(file), applyCoreEdits(before, edits))
   }
+  writeWranglerTomls(routed)
   // Said again at the moment it happens, not only in the plan: `pnpm add` is about to overwrite
   // the range, and stderr is what a log keeps.
   for (const c of clashes) warn(`warning: ${describeClash(c)}`)
@@ -711,6 +979,7 @@ function cmdAdd(args, host) {
   const formatted = formatWritten([
     // Skills are markdown for an agent, not code Biome formats.
     ...targets.filter(t => !t.startsWith(SKILLS_ROOT)),
+    ...seededTargets,
     ...barrels.map(k => BARRELS[k].file),
     ...coreEdits.keys(),
   ])
@@ -732,13 +1001,54 @@ function cmdAdd(args, host) {
     ...(coreEdits.size > 0
       ? [`✔ core edit(s) applied to ${[...coreEdits.keys()].join(', ')}`]
       : []),
+    ...(seeds.length > 0
+      ? [
+          `✔ host files: ${seededTargets.length} seeded, ${seeds.filter(s => s.state === 'keep').length} kept (already there) — yours from now on`,
+        ]
+      : []),
+    ...(settings.changed
+      ? [`✔ ${settings.added.length} Claude Code hook(s) merged into ${CLAUDE_SETTINGS_FILE}`]
+      : []),
+    ...(routed.length > 0
+      ? ['✔ run_worker_first and not_found_handling set in both tomls for public sites']
+      : []),
     ...(formatted ? [`✔ ${formatted}`] : []),
     `✔ surface '${m.id}' recorded in ${path.relative(REPO_ROOT, recordedIn)}`,
+    ...writeDeclarations(m),
     '',
     'Now work the steps above — the schema migration first; nothing else can run until the tables',
     'exist. Each AGENT step names the assertion that proves it; each HUMAN step is a decision.'
   )
   return auditAfterApply(args)
+}
+
+/**
+ * The plugin's toml declarations — binding blocks with placeholder ids, crons, vars — through the
+ * one writer provisioning uses (`pnpm provision declarations`), so a plugin's KV and R2 work under
+ * `pnpm dev` the moment it lands instead of 503ing until someone hand-writes a block. Best-effort:
+ * a host without the provisioning scripts (or a failure) is a note with the command to run.
+ */
+function writeDeclarations(m) {
+  const declares = ['bindings', 'crons', 'vars'].some(k => (m[k] ?? []).length > 0)
+  if (!declares) return []
+  if (!existsSync(abs('apps/web/scripts/provision.ts'))) return []
+  const r = spawnSync(
+    'pnpm',
+    ['--dir', 'apps/web', 'exec', 'tsx', 'scripts/provision.ts', 'declarations'],
+    {
+      cwd: REPO_ROOT,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }
+  )
+  if (r.error || r.status !== 0) {
+    warn(
+      `note: the plugin's bindings, crons and vars are not in the tomls yet — run \`pnpm provision declarations\`.`
+    )
+    return []
+  }
+  return [
+    '✔ bindings (placeholder ids), crons and vars written to both tomls — `/rf-provision` fills the ids',
+  ]
 }
 
 /**
@@ -784,10 +1094,9 @@ function auditAfterApply(args) {
  * somebody's unrelated work in progress.
  */
 function formatWritten(paths) {
-  const r = spawnSync('pnpm', ['exec', 'biome', 'check', '--write', ...paths], {
-    cwd: REPO_ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
+  // No paths would be the whole repository — never what an install or upgrade means.
+  if (paths.length === 0) return null
+  const r = runBiome(['check', '--write', ...paths], { stdio: ['ignore', 'pipe', 'pipe'] })
   if (r.error || r.status === null) {
     warn('note: biome did not run — check the formatting of the copied files with `pnpm lint`.')
     return null
@@ -898,7 +1207,11 @@ function cmdUpgrade(args, host) {
     )
     return 0
   }
-  if (args.apply) requireClean(host, args)
+  // `--continue` finishes an apply that left rejects, so the tree is dirty by definition. The plan
+  // is recomputed from the same recorded `from` (an unfinished apply never stamps), which is what
+  // makes it the same plan.
+  if (args.continue) args.apply = true
+  else if (args.apply) requireClean(args)
 
   const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
     fetch: args.fetch,
@@ -947,6 +1260,22 @@ function cmdUpgrade(args, host) {
       stop(1, `error: ${pluginManifestPath} at ${to} is not valid JSON — a bug in the plugin.`)
     }
   }
+  const others = installedManifests(host, id)
+  // Checked as `plugin check` checks the installed one, before a byte of the release is written.
+  const targetProblems = targetManifest
+    ? [
+        ...pluginManifestProblems(targetManifest).map(p => `${p.field}: ${p.problem}`),
+        ...imagesBindingProblems(targetManifest, others),
+      ]
+    : []
+  if (targetProblems.length > 0) {
+    stop(
+      1,
+      `error: ${pluginManifestPath} at ${to} cannot be installed — a bug in the plugin:`,
+      ...targetProblems.map(p => `  ${p}`),
+      'Nothing has been written.'
+    )
+  }
   const installedManifest = existsSync(abs(surface.anchor))
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
     : {}
@@ -956,10 +1285,26 @@ function cmdUpgrade(args, host) {
   // below rather than refused as a stranger or left to rot.
   const targetSkills = pluginSkillDirs(targetManifest ?? installedManifest)
   const droppedSkills = pluginSkillDirs(installedManifest).filter(d => !targetSkills.includes(d))
+  // Both sides: a release that adds the field is already protected, and one that drops it has not
+  // made the developer's files the plugin's again.
+  const appOwned = [
+    ...new Set([...pluginAppOwned(installedManifest), ...pluginAppOwned(targetManifest)]),
+  ]
+  // Host files of BOTH sides are the developer's: a release changing one upstream is reported and
+  // never applied, and one a release stops declaring is not made the plugin's again.
+  const installedHostFiles = pluginHostFiles(installedManifest)
+  const targetHostFiles = pluginHostFiles(targetManifest ?? installedManifest)
+  const allHostFiles = [
+    ...targetHostFiles,
+    ...installedHostFiles.filter(e => !targetHostFiles.some(t => t.from === e.from)),
+  ]
   const changes = collectChanges(m, from, to, { relative })
   const files = changes.map(c => ({
     ...c,
-    ...classifyPluginFile(c.path, id, { skills: [...targetSkills, ...droppedSkills] }),
+    ...classifyPluginFile(c.path, id, {
+      skills: [...targetSkills, ...droppedSkills],
+      hostFiles: allHostFiles,
+    }),
   }))
   const refused = files.filter(f => f.role === 'refused')
   if (refused.length > 0) {
@@ -969,6 +1314,54 @@ function cmdUpgrade(args, host) {
       ...refused.map(f => `  ${f.path}`)
     )
   }
+  // A host-file entry this release ADDS is seeded where nothing is there — the same rule `add`
+  // follows. One the installed release already declared is never written again, even if the
+  // developer deleted it: that deletion was theirs to make.
+  const newHostFiles = targetHostFiles.filter(e => !installedHostFiles.some(i => i.path === e.path))
+  const toFiles =
+    newHostFiles.length > 0
+      ? m.listFiles(to, subdir).map(p => (subdir === '' ? p : p.slice(subdir.length + 1)))
+      : []
+  const newSeeds = [
+    ...new Map(
+      toFiles.flatMap(p => {
+        const c = classifyPluginFile(p, id, { hostFiles: newHostFiles })
+        return c.role === 'seed' ? [[c.target, { path: p, target: c.target }]] : []
+      })
+    ).values(),
+  ].filter(s => !existsSync(abs(s.target)))
+  // The release's hooks replace the installed ones: computed now, so the plan can show the change
+  // and a settings file that is not JSON stops the upgrade before anything is written.
+  const settings = targetManifest
+    ? plannedClaudeSettings(host, id, pluginClaudeHooks(targetManifest))
+    : { changed: false, added: [], removed: [] }
+  const targetHookProblems = targetManifest
+    ? claudeHookScriptProblems(
+        targetManifest,
+        rel => m.tryShow(to, subdir === '' ? rel : `${subdir}/${rel}`).ok
+      )
+    : []
+  if (targetHookProblems.length > 0) {
+    stop(
+      1,
+      `error: ${pluginManifestPath} at ${to} cannot be installed — a bug in the plugin:`,
+      ...targetHookProblems.map(p => `  ${p}`),
+      'Nothing has been written.'
+    )
+  }
+  refuseUnsafePaths(
+    id,
+    [targetManifest ?? {}, installedManifest, { anchor: surface.anchor, paths: surface.paths }],
+    [
+      ...files
+        .filter(f => (f.role === 'copy' || f.role === 'note') && f.change !== 'deleted')
+        .map(f => f.target),
+      ...newSeeds.map(s => s.target),
+      ...manifestWriteTargets(targetManifest ?? {}),
+      ...manifestWriteTargets(installedManifest),
+      ...(settings.changed ? [CLAUDE_SETTINGS_FILE] : []),
+    ]
+  )
 
   // Every note's `requires_kit` is checked against THIS kit, because a plugin release may raise
   // its floor and the whole point of the range is that nobody finds out at the gate.
@@ -981,7 +1374,17 @@ function cmdUpgrade(args, host) {
   const added = []
   const warnings = []
   const skillDeletes = []
+  const appOwnedLeft = []
+  const hostFilesLeft = []
   for (const f of files) {
+    if (f.role === 'seed') {
+      hostFilesLeft.push(f.target)
+      continue
+    }
+    if (f.target && isAppOwnedPath(f.target, appOwned)) {
+      appOwnedLeft.push(f.target)
+      continue
+    }
     // **A skill is REPLACED, never patched.** It is instructions for an agent that the plugin
     // owns outright — nobody is meant to edit it in place — so the release's bytes are the answer,
     // and a file the release deleted is deleted rather than "left in place" like code.
@@ -990,7 +1393,11 @@ function cmdUpgrade(args, host) {
       else {
         artifacts.write(
           path.join('added', f.target),
-          materialise(m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`), host.names)
+          materialise(
+            m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`),
+            host.names,
+            f.path
+          )
         )
         added.push(f.target)
       }
@@ -1017,7 +1424,8 @@ function cmdUpgrade(args, host) {
     if (f.change === 'added' || !local.has(f.target)) {
       const body = materialise(
         m.showRaw(to, subdir === '' ? f.path : `${subdir}/${f.path}`),
-        host.names
+        host.names,
+        f.path
       )
       artifacts.write(path.join('added', f.target), body)
       added.push(f.target)
@@ -1092,6 +1500,9 @@ function cmdUpgrade(args, host) {
     to: { ref: to, commit: m.commitOf(to), version: toVersion },
     files,
     notes: noteFacts,
+    appOwnedLeft,
+    hostFiles: { left: hostFilesLeft, seeded: newSeeds.map(s => s.target) },
+    claudeHooks: { file: CLAUDE_SETTINGS_FILE, added: settings.added, removed: settings.removed },
     warnings,
     dependencies: deps.changes,
     dependencyClashes: deps.clashes,
@@ -1119,6 +1530,28 @@ function cmdUpgrade(args, host) {
       }
     }
   }
+  if (appOwnedLeft.length > 0) {
+    say(
+      '',
+      'Left alone (appOwned paths are yours; the release changed these upstream):',
+      ...appOwnedLeft.map(f => `  ${f}`)
+    )
+  }
+  if (hostFilesLeft.length > 0) {
+    say(
+      '',
+      'Left alone (host files are yours; the release changed these upstream — compare by hand):',
+      ...hostFilesLeft.map(f => `  ${f}`)
+    )
+  }
+  if (newSeeds.length > 0) {
+    say(
+      '',
+      'Host files this release adds (seeded, then yours):',
+      ...newSeeds.map(s => `  ${s.target}`)
+    )
+  }
+  say(...renderClaudeSettingsChange(settings, 'Claude Code hooks replaced'))
   say('', ...renderDependencyDelta(deps))
   // Two sources for one question: a release may raise its floor in a NOTE, or simply by changing
   // the manifest — and the manifest's is the one that ends up recorded on the surface, so checking
@@ -1166,13 +1599,49 @@ function cmdUpgrade(args, host) {
     return 0
   }
 
-  for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
+  // A release can start or stop serving public sites, and the tomls have to follow it. Computed
+  // before the first write: a toml with no array to rewrite must stop an upgrade whole.
+  let routed = []
+  let lostPatterns = []
+  if (targetManifest && declaresPublicSites(targetManifest)) {
+    routed = transformWranglerTomlsOrStop(applyWorkerFirstAll)
+  } else if (
+    targetManifest &&
+    declaresPublicSites(installedManifest) &&
+    !others.some(declaresPublicSites)
+  ) {
+    const prefixes = [...others, targetManifest].flatMap(o => o.apiPrefixes ?? [])
+    ;({ routed, lost: lostPatterns } = restoreWranglerTomls(prefixes))
+  }
+
+  // On `--continue` the files are already there, resolved by hand: patching them again would only
+  // reject again, and rewriting an added file would undo whatever was done to it since.
+  const pendingRejects = args.continue
+    ? patches.map(p => `${p.path}.rej`).filter(r => existsSync(abs(r)))
+    : []
+  if (pendingRejects.length > 0) {
+    stop(
+      4,
+      `error: ${pendingRejects.length} reject(s) remain — resolve each by hand and delete it:`,
+      ...pendingRejects.map(r => `  ${r}`)
+    )
+  }
+  if (!args.continue)
+    for (const rel of added) writeInto(rel, readFileSync(path.join(workRoot, 'added', rel)))
+  for (const s of args.continue ? [] : newSeeds) {
+    writeInto(
+      s.target,
+      materialise(m.showRaw(to, subdir === '' ? s.path : `${subdir}/${s.path}`), host.names, s.path)
+    )
+  }
+  writeClaudeSettings(settings)
   for (const rel of skillDeletes) rmSync(abs(rel), { force: true })
   // A skill the new release no longer declares goes as a WHOLE directory — the surface stops
   // naming it below, so anything left would be a file no surface claims.
   for (const dir of droppedSkills) rmSync(abs(skillTarget(dir)), { recursive: true, force: true })
   let rejected = 0
-  if (patches.length > 0) {
+  const rejectedPaths = []
+  if (patches.length > 0 && !args.continue) {
     const combined = path.join(workRoot, 'apply.patch')
     const check = gitQuiet([
       '-c',
@@ -1197,7 +1666,10 @@ function cmdUpgrade(args, host) {
           '-p1',
           one,
         ])
-        if (!r.ok) rejected += 1
+        if (!r.ok) {
+          rejected += 1
+          rejectedPaths.push(p.path)
+        }
       }
     }
   }
@@ -1228,7 +1700,9 @@ function cmdUpgrade(args, host) {
         continue
       }
       try {
-        writeFileSync(abs(file), applyCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+        const before = readFileSync(abs(file), 'utf8')
+        for (const p of partialCoreEdits(before, edits)) coreEditWarnings.push(p)
+        writeFileSync(abs(file), applyCoreEdits(before, edits))
         if (!coreEditFiles.includes(file)) coreEditFiles.push(file)
       } catch (err) {
         // A moved anchor must not abort an upgrade whose files are already on disk: report it and
@@ -1237,6 +1711,43 @@ function cmdUpgrade(args, host) {
       }
     }
   }
+
+  writeWranglerTomls(routed)
+
+  // API prefixes the installed release declared and the target does not — and no other installed
+  // plugin still needs — come out of `run_worker_first`, or they stay there for ever beside the
+  // kit's own entries (analytics 3.4.x's `/mcp`, #178). Provisioning only ever adds patterns.
+  const droppedPrefixes = targetManifest
+    ? (installedManifest.apiPrefixes ?? []).filter(
+        p =>
+          !(targetManifest.apiPrefixes ?? []).includes(p) &&
+          !others.some(o => (o.apiPrefixes ?? []).includes(p))
+      )
+    : []
+  const prunedPatterns = new Set()
+  if (droppedPrefixes.length > 0) {
+    writeWranglerTomls(
+      transformWranglerTomls(text => {
+        const pruned = pruneWorkerFirst(text, droppedPrefixes)
+        for (const p of pruned.removed) prunedPatterns.add(p)
+        return pruned.text
+      })
+    )
+  }
+
+  // What this upgrade wrote, in the host's layout: translation lengthens names (an app slug longer
+  // than the kit's pushes a line past the column limit, or reorders imports), so an upgrade that
+  // skipped this failed the copy's `pnpm lint` on files nobody had touched. A file with a reject
+  // beside it is left as it is, so its hunks still line up with the `.rej`.
+  formatWritten(
+    [
+      ...new Set([
+        ...added,
+        ...patches.map(p => p.path).filter(p => !rejectedPaths.includes(p)),
+        ...coreEditFiles,
+      ]),
+    ].filter(p => !p.startsWith(SKILLS_ROOT) && existsSync(abs(p)))
+  )
 
   // After the files, so a failed `pnpm add` stops with the plugin's code in place and the surface
   // unstamped — and a re-run diffs from the same `from`, finding done what is done.
@@ -1248,13 +1759,26 @@ function cmdUpgrade(args, host) {
   out(
     '',
     `✔ ${added.length} added, ${patches.length - rejected} patched` +
-      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : ''),
+      (rejected > 0 ? `, ${rejected} with rejects (*.rej beside the file)` : '') +
+      (appOwnedLeft.length > 0 ? `, ${appOwnedLeft.length} appOwned left alone` : '') +
+      (hostFilesLeft.length > 0 ? `, ${hostFilesLeft.length} host file(s) left alone` : '') +
+      (newSeeds.length > 0 ? `, ${newSeeds.length} host file(s) seeded` : ''),
+    ...(settings.changed ? [`✔ Claude Code hooks replaced in ${CLAUDE_SETTINGS_FILE}`] : []),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
     ...coreEditWarnings.map(w => `  warning: ${w}`),
+    ...(prunedPatterns.size > 0
+      ? [
+          `✔ run_worker_first: removed ${[...prunedPatterns].join(', ')} from both tomls — ` +
+            'API prefixes this release no longer declares',
+        ]
+      : []),
     ...(installs + removals > 0
       ? [`✔ dependencies: ${installs} installed or re-ranged, ${removals} removed`]
       : []),
-    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`)
+    ...kept.map(c => `  kept ${c.pkg} ${c.name} — ${c.reason}`),
+    ...(lostPatterns.length > 0
+      ? renderSteps([reprovisionStep(lostPatterns)], 'Steps that remain')
+      : [])
   )
   const recordFile = host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath
   const raw = JSON.parse(readFileSync(recordFile, 'utf8'))
@@ -1286,6 +1810,10 @@ function cmdUpgrade(args, host) {
     // `kit:upgrade` and `kit:release` all read the surface, so all three would keep agreeing with
     // a statement that is no longer true. Nothing ELSE on the entry is rewritten here.
     if (targetManifest) {
+      // The same copy `add` writes. `remove` and the next upgrade read this file, so a stale one
+      // would have them act on the manifest of the release before this.
+      writeInto(surface.anchor, materialise(m.showRaw(to, pluginManifestPath), host.names))
+      formatWritten([surface.anchor])
       entry.minKit = floorOf(targetManifest)
       entry.requires = {
         surfaces: targetManifest.requires?.surfaces ?? [],
@@ -1299,12 +1827,21 @@ function cmdUpgrade(args, host) {
           ...targetSkills.map(d => `${skillTarget(d)}**`),
         ]),
       ]
+      // Every host file either release declared stays recorded: an entry a release drops is still
+      // the developer's file on disk, and nothing else would say whose it is.
+      const hostGlobs = allHostFiles.flatMap(e => [e.path, `${e.path}/**`])
+      if (hostGlobs.length > 0)
+        entry.hostFiles = [...new Set([...(entry.hostFiles ?? []), ...hostGlobs])]
     }
     writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
     out(`✔ surface '${id}' stamped at ${toVersion ?? m.commitOf(to).slice(0, 12)}`)
+    out(...writeDeclarations(targetManifest ?? {}))
   } else {
     if (recordChanged) writeManifestFile(recordFile, raw, { format: !host.sidecarIds.includes(id) })
-    out('The surface is NOT stamped while rejects remain — resolve them and re-run.')
+    out(
+      'The surface is NOT stamped while rejects remain. Resolve each *.rej by hand, delete it, then',
+      `run \`pnpm plugin upgrade ${id}${args.to ? ` --to ${args.to}` : ''} --continue\`.`
+    )
   }
   const migrations = noteFacts.flatMap(n => n.migrations ?? [])
   if (migrations.length > 0) {
@@ -1326,11 +1863,72 @@ function cmdUpgrade(args, host) {
 
 // ---------------------------------------------------------------- remove
 
+/** Every file on disk under a host-relative path. */
+function filesUnder(rel) {
+  if (!existsSync(abs(rel))) return []
+  if (!lstatSync(abs(rel)).isDirectory()) return [rel]
+  return readdirSync(abs(rel), { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? filesUnder(`${rel}/${e.name}`) : [`${rel}/${e.name}`]
+  )
+}
+
+/** What `add` would have left on disk for these bytes: it runs biome over what it copies. */
+function formattedLikeAdd(rel, bytes) {
+  const r = runBiome(['check', '--write', `--stdin-file-path=${rel}`], {
+    input: bytes,
+    stdio: ['pipe', 'pipe', 'ignore'],
+  })
+  return r.status === 0 && r.stdout?.length > 0 ? r.stdout : bytes
+}
+
+/**
+ * Files under a plugin's appOwned paths that a developer changed or added since the pinned commit.
+ * When the pinned commit cannot be read every file is reported `unverified`: a removal must not
+ * assume a file it could not compare is safe to delete.
+ */
+function changedAppOwnedFiles(manifest, surface, host, args) {
+  const owned = pluginAppOwned(manifest)
+  if (owned.length === 0) return []
+  const onDisk = owned.flatMap(filesUnder)
+  const source = surface.source ?? {}
+  const subdir = (source.subdir ?? '').replace(/^\/|\/$/g, '')
+  const inRepo = rel => (subdir === '' ? rel : `${subdir}/${rel}`)
+  let m = null
+  try {
+    m = source.commit
+      ? ensureMirror(source.repo, pluginMirrorDir(source.repo), {
+          fetch: args.fetch,
+          cwd: REPO_ROOT,
+          warn,
+        })
+      : null
+  } catch {
+    m = null
+  }
+  if (!m?.resolves(source.commit)) {
+    return onDisk.map(file => ({ path: file, reason: 'unverified' }))
+  }
+  const pinned = new Set(owned.flatMap(p => m.listFiles(source.commit, inRepo(p))))
+  return onDisk.flatMap(rel => {
+    if (!pinned.has(inRepo(rel))) return [{ path: rel, reason: 'added' }]
+    // A symlink is its target, as git stores it; reading through one to a directory throws.
+    const disk = lstatSync(abs(rel)).isSymbolicLink()
+      ? Buffer.from(readlinkSync(abs(rel)))
+      : readFileSync(abs(rel))
+    const pristine = Buffer.from(
+      materialise(m.showRaw(source.commit, inRepo(rel)), host.names, rel)
+    )
+    return disk.equals(pristine) || disk.equals(Buffer.from(formattedLikeAdd(rel, pristine)))
+      ? []
+      : [{ path: rel, reason: 'changed' }]
+  })
+}
+
 function cmdRemove(args, host) {
   const id = args.positional[0]
   if (!id) stop(2, 'error: remove needs a plugin id', '', USAGE)
   const surface = findSurface(host, id)
-  if (args.apply) requireClean(host, args)
+  if (args.apply) requireClean(args)
 
   // A plugin another plugin depends on is not removable, and the check is not advisory: the
   // dependent's code imports the four published entries of this one, so removing it is a build
@@ -1353,7 +1951,32 @@ function cmdRemove(args, host) {
   const anchorManifest = existsSync(abs(surface.anchor))
     ? JSON.parse(readFileSync(abs(surface.anchor), 'utf8'))
     : {}
+  // Exactly this plugin's hooks come out of the settings file, found by the skill directory their
+  // command names, so a hook the developer or another plugin added is never touched.
+  const settings = plannedClaudeSettings(host, id, [])
+  // Host files stay: they were seeded for the developer and are theirs. Listed, never deleted.
+  const hostFilesLeft = pluginHostFiles(anchorManifest)
+    .map(e => e.path)
+    .filter(p => existsSync(abs(p)))
+  refuseUnsafePaths(
+    id,
+    [{ anchor: surface.anchor, paths: surface.paths, coreEdits: anchorManifest.coreEdits }],
+    [
+      ...directories,
+      ...coreEditsByFile(anchorManifest).keys(),
+      ...(settings.changed ? [CLAUDE_SETTINGS_FILE] : []),
+    ]
+  )
   const tables = anchorManifest.schema?.tables ?? []
+  const appOwnedEdits = changedAppOwnedFiles(anchorManifest, surface, host, args)
+  // Another installed plugin still serving public sites still needs every request.
+  const remaining = installedManifests(host, id)
+  const restoreRouting = declaresPublicSites(anchorManifest) && !remaining.some(declaresPublicSites)
+  const remainingPrefixes = remaining.flatMap(m => m.apiPrefixes ?? [])
+  // Restoring marks a list that lost prefixes; a mark nothing is missing for any more goes.
+  const { routed, lost: lostPatterns } = restoreRouting
+    ? restoreWranglerTomls(remainingPrefixes)
+    : { routed: transformWranglerTomls(t => settleReprovision(t, remainingPrefixes)), lost: [] }
 
   const say = (...lines) => {
     if (!args.json) out(...lines)
@@ -1364,10 +1987,26 @@ function cmdRemove(args, host) {
     'Deletes',
     ...directories.map(d => `  ${d}`),
     ...(directories.length === 0 ? ['  (no directories — already gone)'] : []),
+    ...(appOwnedEdits.length > 0
+      ? [
+          '',
+          'Your files under appOwned paths (deleted only with --force-app-owned)',
+          ...appOwnedEdits.map(e => `  ${e.reason.padEnd(11)}${e.path}`),
+        ]
+      : []),
     '',
     'Barrel lines removed',
     ...barrels.map(k => `  ${BARRELS[k].file}  —  ${barrelLines(k, id).join('  +  ')}`),
     ...(barrels.length === 0 ? ['  (none)'] : []),
+    ...renderClaudeSettingsChange(settings, 'Claude Code hooks removed'),
+    ...(hostFilesLeft.length > 0
+      ? [
+          '',
+          'Left in place — host files the plugin seeded are yours; delete them by hand if you',
+          'no longer want them:',
+          ...hostFilesLeft.map(p => `  ${p}`),
+        ]
+      : []),
     '',
     `Surface '${id}' dropped from ${path.basename(host.sidecarIds.includes(id) ? host.sidecarPath : host.manifestPath)}`
   )
@@ -1381,6 +2020,7 @@ function cmdRemove(args, host) {
     // Read from the toml rather than assumed: the tag is append-only, so the next one is the next
     // free number after every `plugin-<id>-v<n>` this Worker has already told Cloudflare about.
     migrationTag: nextPluginMigrationTag(tomlMigrationTags(), id),
+    lostPatterns,
   })
   if (args.json) {
     out(
@@ -1388,6 +2028,9 @@ function cmdRemove(args, host) {
         {
           plugin: { id, version: surface.source?.version ?? null },
           deletes: { directories, barrels: barrels.map(k => BARRELS[k].file), tables },
+          claudeHooks: { file: CLAUDE_SETTINGS_FILE, removed: settings.removed },
+          hostFilesLeft,
+          appOwned: appOwnedEdits,
           steps,
         },
         null,
@@ -1400,7 +2043,17 @@ function cmdRemove(args, host) {
 
   if (!args.apply) {
     say('', 'Nothing written. Re-run with --apply to remove it.')
+    if (appOwnedEdits.length > 0) say('That also needs --force-app-owned; see the list above.')
     return 0
+  }
+
+  if (appOwnedEdits.length > 0 && !args.forceAppOwned) {
+    warn(
+      '',
+      `error: ${appOwnedEdits.length} file(s) under ${id}'s appOwned paths are yours, and removing the plugin would delete them.`,
+      'Nothing written. Copy out what you want to keep, then re-run with --apply --force-app-owned.'
+    )
+    return 6
   }
 
   if (args.archive && tables.length > 0) writeArchiveMigration(id, tables)
@@ -1416,6 +2069,8 @@ function cmdRemove(args, host) {
     if (!existsSync(abs(file))) continue
     writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
   }
+  writeWranglerTomls(routed)
+  writeClaudeSettings(settings)
   const dropped = dropSurface(host, id)
   say(
     '',
@@ -1423,6 +2078,13 @@ function cmdRemove(args, host) {
     `✔ ${barrels.length} barrel line(s) removed`,
     ...(removedEdits.size > 0
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
+      : []),
+    ...(restoreRouting ? ['✔ run_worker_first and not_found_handling restored in both tomls'] : []),
+    ...(settings.changed
+      ? [`✔ ${settings.removed.length} Claude Code hook(s) removed from ${CLAUDE_SETTINGS_FILE}`]
+      : []),
+    ...(hostFilesLeft.length > 0
+      ? [`  left in place (yours): ${hostFilesLeft.join(', ')} — \`rm -r\` them if unwanted`]
       : []),
     `✔ surface dropped from ${dropped.map(f => path.basename(f)).join(', ') || '(nowhere — it was not recorded)'}`,
     ...renderSteps(steps, 'Steps that remain')
@@ -1473,8 +2135,81 @@ function tomlMigrationTags() {
 
 // ---------------------------------------------------------------- list / check
 
-function cmdList(_args, host) {
+function cmdList(args, host) {
+  if (args.available) return cmdListAvailable(args, host)
   out(...renderList(host.plugins, { sidecarIds: host.sidecarIds }))
+  return 0
+}
+
+/**
+ * The repositories to read. `PLUGIN_CATALOGUES` (a JSON array of `{ repo, commercial }`) replaces
+ * the published ones — the test seam, and a way to point at a private mirror; unset, it is the
+ * published list.
+ */
+function catalogueSources() {
+  const override = process.env.PLUGIN_CATALOGUES
+  if (!override) return PLUGIN_CATALOGUES
+  try {
+    const parsed = JSON.parse(override)
+    if (Array.isArray(parsed) && parsed.every(s => typeof s?.repo === 'string')) return parsed
+  } catch {}
+  stop(2, 'error: PLUGIN_CATALOGUES must be a JSON array of { "repo", "commercial" }')
+}
+
+/**
+ * One repository read at its newest release tag through the same mirror `add` uses, or null when
+ * it cannot be read. Always fetched (`fresh`): a cached mirror would be a stale list.
+ */
+function readCatalogue(source) {
+  let m
+  try {
+    m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
+      fresh: true,
+      quiet: true,
+      cwd: REPO_ROOT,
+    })
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) }
+  }
+  const tag = m.latestTag()
+  if (!tag) return { error: `${source.repo} has no release tag` }
+  const files = m.listFiles(tag)
+  m.prefetch(tag, catalogueReads(files))
+  const read = rel => {
+    const r = m.tryShow(tag, rel)
+    return r.ok ? r.out : null
+  }
+  return {
+    repo: source.repo,
+    tag,
+    commercial: Boolean(source.commercial),
+    licence: source.commercial ? licenceTerms(files, read, { repo: source.repo, ref: tag }) : null,
+    plugins: catalogueEntries(files, read),
+  }
+}
+
+/**
+ * `list --available`: every plugin the published repositories hold at their newest tag. The
+ * open repository failing is an error (exit 3, one line); a commercial one failing is silence —
+ * the person is simply not licensed to read it.
+ */
+function cmdListAvailable(args, host) {
+  if (!args.fetch) stop(2, 'error: list --available always reads the repositories; drop --no-fetch')
+  process.env.GIT_TERMINAL_PROMPT = '0'
+  const catalogues = []
+  for (const source of catalogueSources()) {
+    const c = readCatalogue(source)
+    if (c.error) {
+      if (source.commercial) continue
+      stop(
+        3,
+        `error: cannot read the plugin catalogue (${c.error}) — check the network and your git access to ${repoDisplayName(source.repo)}`
+      )
+    }
+    catalogues.push(c)
+  }
+  if (args.json) out(JSON.stringify(catalogueJson(catalogues, host.plugins), null, 2))
+  else out(...renderCatalogue(catalogues, host.plugins))
   return 0
 }
 
@@ -1530,6 +2265,18 @@ function cmdCheck(args, host) {
   // Every plugin's parsed manifest, kept for the checks that are about the COMBINATION rather than
   // about one plugin: two plugins cannot share a table name, and neither of them is wrong alone.
   const anchors = []
+  // The host's Claude Code settings, read once: every plugin's hooks are checked against it.
+  const settingsText = readClaudeSettings()
+  let claudeSettings = null
+  try {
+    claudeSettings = settingsText === null ? {} : JSON.parse(settingsText)
+  } catch (err) {
+    add('fail', 'claude-settings', {
+      file: CLAUDE_SETTINGS_FILE,
+      problem: `is not valid JSON (${err instanceof Error ? err.message : String(err)})`,
+      fix: 'fix the syntax — Claude Code ignores a settings file it cannot parse, hooks included',
+    })
+  }
   for (const s of host.plugins) {
     const id = s.id
     const vendored = isVendored(s.source, host.kitRepo)
@@ -1692,6 +2439,45 @@ function cmdCheck(args, host) {
       })
     }
 
+    // **Claude Code hooks, both ways**, like skills. A declared hook missing from the settings file
+    // never runs; one the settings file attributes to this plugin that it does not declare is
+    // invisible to the next upgrade's replacement; one whose script is gone fails on every event.
+    if (claudeSettings) {
+      const declaredHooks = pluginClaudeHooks(anchor)
+      const key = h => JSON.stringify([h.event, h.matcher ?? null, h.command, h.timeout ?? null])
+      const present = ownedClaudeHooks(
+        claudeSettings,
+        id,
+        host.plugins.map(p => p.id)
+      )
+      for (const h of declaredHooks.filter(d => !present.some(p => key(p) === key(d)))) {
+        add('fail', `${id}:claude-hook:${h.event}`, {
+          file: CLAUDE_SETTINGS_FILE,
+          problem: `lacks the ${h.event} hook '${id}' declares (${h.command})`,
+          fix: `reinstall it with \`pnpm plugin upgrade ${id}\` (or \`plugin remove\` + \`add\`), or drop it from "claudeHooks" in ${s.anchor}`,
+        })
+      }
+      for (const h of present.filter(p => !declaredHooks.some(d => key(d) === key(p)))) {
+        add('fail', `${id}:claude-hook-undeclared:${h.event}`, {
+          file: CLAUDE_SETTINGS_FILE,
+          problem: `carries a ${h.event} hook running '${id}'s skill (${h.command}) that '${id}' does not declare`,
+          fix: `delete that hook from ${CLAUDE_SETTINGS_FILE}, or declare it in "claudeHooks" in ${s.anchor}`,
+        })
+      }
+      for (const h of declaredHooks) {
+        const parsed = parseClaudeHookCommand(h.command)
+        if (!parsed) continue
+        const script = `${skillTarget(parsed.dir)}${parsed.script}`
+        if (!existsSync(abs(script))) {
+          add('fail', `${id}:claude-hook-script:${h.event}`, {
+            file: script,
+            problem: `is missing, and '${id}'s ${h.event} hook runs it`,
+            fix: `reinstall it with \`pnpm plugin upgrade ${id}\`, or drop the hook from "claudeHooks"`,
+          })
+        }
+      }
+    }
+
     // A DO or Workflow class reaches the Worker through the sixth barrel and nowhere else, so
     // `workerExports` is checkable rather than advisory — and it is checked BOTH ways. A name in
     // the manifest that the file does not export is a binding pointed at nothing, and
@@ -1776,6 +2562,42 @@ function cmdCheck(args, host) {
             'instance name from the tenant id and loop the names you DECLARE — nothing enumerates ' +
             'the instances of a namespace, so only derived keys are reachable',
         })
+      }
+    }
+
+    // A member the kit renamed still works — the host reads the old name when the new one is
+    // absent — so this is a warning, never a failure: a released plugin keeps passing until the
+    // kit release that removes the old name, whose porting note says so.
+    const serverTree = `apps/web/src/plugins/${id}`
+    if (existsSync(abs(serverTree))) {
+      const seen = new Map()
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const m of deprecatedServerMembers(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          if (!seen.has(m.name)) seen.set(m.name, { ...m, file: `${serverTree}/${f}` })
+      }
+      for (const m of seen.values())
+        add('warn', `${id}:deprecated:${m.name}`, {
+          file: m.file,
+          problem: `declares \`${m.name}\`, which the kit renamed \`${m.replacement}\``,
+          fix: m.fix,
+        })
+    }
+
+    // **The MCP server's paths are core's.** The host refuses a plugin mounted there at load, but
+    // that is a crash on boot; this says the same thing before anything runs. A plugin's tools
+    // reach MCP clients through `ServerPlugin.tools` — it never needs a mount or auth of its own.
+    if (existsSync(abs(serverTree))) {
+      for (const f of walk(abs(serverTree))) {
+        if (!/\.tsx?$/.test(f) || /(^|\/)tests?\//.test(f)) continue
+        for (const path of reservedMountPaths(readFileSync(abs(`${serverTree}/${f}`), 'utf8')))
+          add('fail', `${id}:reserved-path:${path}`, {
+            file: `${serverTree}/${f}`,
+            problem: `mounts ${path}, which core reserves for the MCP server and its authorization server`,
+            fix:
+              'move the mount under /api/<plugin id>, and give an MCP client this data as a tool ' +
+              "in ServerPlugin.tools (surfaces: ['mcp', …]) — the host's /mcp lists it for you",
+          })
       }
     }
 
@@ -1867,6 +2689,37 @@ function cmdCheck(args, host) {
       }
     }
   }
+  // **Tool names (MCP).** One list goes to chat, agents and every MCP client, so a name is unique
+  // across core and every plugin and is one every surface accepts. The tool builder keeps the first
+  // and drops the rest at runtime; this names them before that silently happens. Best effort: a
+  // name a static read cannot resolve is left to the runtime check.
+  const toolDeclarations = []
+  for (const { manifest } of anchors) {
+    const tree = `apps/web/src/plugins/${manifest.id}`
+    if (!existsSync(abs(tree))) continue
+    const sources = walk(abs(tree))
+      .filter(f => /\.tsx?$/.test(f) && !/(^|\/)tests?\//.test(f))
+      .map(f => ({ file: `${tree}/${f}`, text: readFileSync(abs(`${tree}/${f}`), 'utf8') }))
+    const sharedDir = `packages/shared/src/plugins/${manifest.id}`
+    const sharedText = existsSync(abs(sharedDir))
+      ? walk(abs(sharedDir))
+          .filter(f => /\.ts$/.test(f))
+          .map(f => readFileSync(abs(`${sharedDir}/${f}`), 'utf8'))
+          .join('\n')
+      : ''
+    const constants = stringConstants([sharedText, ...sources.map(x => x.text)].join('\n'))
+    for (const { file, text } of sources) {
+      const tools = declaredTools(text, constants)
+      if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+    }
+  }
+  for (const p of toolProblems(toolDeclarations)) {
+    add(p.severity, `${p.pluginId}:tool-${p.kind}:${p.tool}`, {
+      file: p.file,
+      problem: p.problem,
+      fix: p.fix,
+    })
+  }
   // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
   // nothing enforces it, because nothing derives a table name from an id — so the collision is the
   // checkable half, and it is checked here, where every manifest is in hand. Nothing else sees it:
@@ -1886,6 +2739,53 @@ function cmdCheck(args, host) {
         `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
         "between them: a single DROP TABLE takes the other plugin's data",
     })
+  }
+  // **Events (D42).** The name rule itself is a manifest problem (above); what needs every manifest
+  // in hand is a name two plugins declare, and what needs the source is a name the manifest lists
+  // and the shared entry never declares — the manifest is the only part `check` can read without
+  // evaluating TypeScript, so it must not drift from the code.
+  for (const clash of eventClashes(anchors.map(a => a.manifest))) {
+    const entry = anchors.find(a => a.manifest.id === clash.id)
+    if (!entry) continue
+    add('fail', `${clash.id}:event:${clash.event}`, {
+      file: entry.surface.anchor,
+      line: jsonKeyLine(entry.source, 'events'),
+      problem: `declares the event ${clash.event}, which ${clash.others.map(o => `'${o}'`).join(', ')} also declares`,
+      fix: `every event is '<plugin id>.<name>': rename it '${clash.id}.<name>' in "events" and in the shared entry`,
+    })
+  }
+  for (const { surface, source, manifest } of anchors) {
+    const events = Array.isArray(manifest.events) ? manifest.events : []
+    if (events.length === 0) continue
+    const sharedDir = `packages/shared/src/plugins/${manifest.id}`
+    const sharedSource = existsSync(abs(sharedDir))
+      ? walk(abs(sharedDir))
+          .filter(f => /\.ts$/.test(f))
+          .map(f => readFileSync(abs(`${sharedDir}/${f}`), 'utf8'))
+          .join('\n')
+      : ''
+    for (const name of undeclaredManifestEvents(events, sharedSource)) {
+      add('fail', `${manifest.id}:event-undeclared:${name}`, {
+        file: surface.anchor,
+        line: jsonKeyLine(source, 'events'),
+        problem: `lists the event ${name}, which ${sharedDir}/ never declares`,
+        fix: `add '${name}': <zod payload schema> to the shared entry's \`events\`, or drop it from "events"`,
+      })
+    }
+  }
+  // A prefix `add` has not provisioned yet is the plan's next step; one a removal dropped is not.
+  for (const file of wranglerTomls()) {
+    const text = readFileSync(abs(file), 'utf8')
+    if (!awaitsReprovision(text)) continue
+    for (const { surface, manifest } of anchors) {
+      const missing = missingWorkerFirstPatterns(text, manifest.apiPrefixes ?? [])
+      if (missing.length === 0) continue
+      add('fail', `${manifest.id}:worker-first:${file}`, {
+        file,
+        problem: `run_worker_first lacks ${missing.join(', ')}, the API prefixes of ${surface.id}`,
+        fix: 'pnpm provision cloudflare <env> for the environment this toml deploys',
+      })
+    }
   }
   const failures = findings.filter(f => f.severity === 'fail')
   const warnings = findings.filter(f => f.severity === 'warn')
@@ -1976,6 +2876,10 @@ function cmdExport(args, host) {
     // plugin repository is that repository's own tooling and is never copied into a host.
     const out = d.startsWith(SKILLS_ROOT) ? `skills/${d.slice(SKILLS_ROOT.length)}` : d
     for (const rel of walk(abs(d))) {
+      // `docs/plugins/<id>/upgrades/` is the HOST's copy of the plugin's release notes, written by
+      // `add` from the plugin's own `docs/upgrades/` — exporting it would plant a stale second
+      // copy in the plugin repository. Anything else under `docs/plugins/<id>/` is the plugin's.
+      if (d === `docs/plugins/${id}` && rel.split(path.sep)[0] === 'upgrades') continue
       const file = path.join(target, out, rel)
       mkdirSync(path.dirname(file), { recursive: true })
       writeFileSync(file, readFileSync(abs(`${d}/${rel}`)))
@@ -1995,7 +2899,13 @@ function cmdExport(args, host) {
     minKit: floorOf(anchor),
     // The skill directories are the HOST's half of a declared skill, derived from "skills" at
     // every install — carrying them in "paths" would be a second statement of the same thing.
-    paths: (surface.paths ?? []).filter(p => !p.startsWith(SKILLS_ROOT)),
+    // The plugin's OWN `paths` when it declared them; the host's additions (`docs/plugins/<id>/**`
+    // for the notes it copies, each skill's host directory) are re-derived at every install.
+    paths:
+      anchor.paths ??
+      (surface.paths ?? []).filter(
+        p => !p.startsWith(SKILLS_ROOT) && p !== `docs/plugins/${id}/**`
+      ),
     registries: surface.registries,
   }
   writeFileSync(path.join(target, PLUGIN_MANIFEST_FILE), `${JSON.stringify(manifest, null, 2)}\n`)

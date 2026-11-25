@@ -55,7 +55,7 @@ hint are authoritative; the table below adds what each fix *does*.
 
 | Failure line says | What is wrong | The fix (say what it does, then let the user choose) |
 |---|---|---|
-| node missing / not v24 | wrong Node | `nvm install` (reads `.nvmrc`) or `fnm use` — installs/activates Node 24 for this shell |
+| node missing / not v26 | wrong Node | `nvm install` (reads `.nvmrc`) or `fnm use` — installs/activates Node 26 for this shell |
 | pnpm missing / not 10.x | corepack is off | `corepack enable` — makes the `pnpm` version in root `package.json` `packageManager` available |
 | docker daemon not reachable | Docker is not running | start Docker Desktop, or `colima start` (macOS), or `sudo systemctl start docker` (Linux) — starts the daemon; nothing in the repo changes |
 | `apps/web/.dev.vars` missing | first run never completed | `cp apps/web/.dev.vars.example apps/web/.dev.vars`, then fill `OAUTH_ENCRYPTION_KEY` with `openssl rand -hex 32` (SETUP.md 1.3); or `/rf-setup` which does this for you |

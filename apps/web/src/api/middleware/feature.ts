@@ -1,5 +1,5 @@
 /**
- * Mount-level gate for a feature that ships dark (D30). Applied in `api/index.ts` beside
+ * Mount-level gate for a feature that ships dark. Applied in `api/index.ts` beside
  * `authMiddleware` on every prefix the feature owns, so the gate is declared ONCE per surface
  * rather than remembered in each handler — the same reason auth is per-mount.
  *

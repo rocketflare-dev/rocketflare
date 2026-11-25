@@ -1,5 +1,5 @@
 /**
- * The UI plugin barrel (D31) — ONE line per installed plugin, written by
+ * The UI plugin barrel — ONE line per installed plugin, written by
  * `pnpm plugin add|remove`, never by hand:
  *
  *     import { approvalsUi } from './approvals/ui'

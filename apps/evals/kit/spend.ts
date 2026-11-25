@@ -1,6 +1,6 @@
 /**
- * What a case cost (D33), read from the ledger rather than from the stream: every model call the
- * kit makes is an `ai_usage` row (`recordUsage`), priced at write time from the shared price table.
+ * What a case cost, read from the ledger rather than from the stream: every model call the
+ * app makes is an `ai_usage` row (`recordUsage`), priced at write time from the shared price table.
  * A case runs in its own tenant, so "every row in the tenant except the judge's" is exactly the
  * target's spend — chat turn, agent tool loop and anything they triggered.
  */
@@ -38,4 +38,19 @@ export async function tenantSpend(
 /** A short, stable hash of the prompt text a case ran with — what `--compare` groups runs by. */
 export function promptHash(text: string): string {
   return createHash('sha256').update(text).digest('hex').slice(0, 12)
+}
+
+type Spent = Awaited<ReturnType<typeof tenantSpend>>
+
+/** `after` minus `before` — a case's spend in a tenant other cases share. `before` null = `after`. */
+export function spendSince(before: Spent | null, after: Spent): Spent {
+  if (!before) return after
+  const inputTokens = (after.inputTokens ?? 0) - (before.inputTokens ?? 0)
+  const outputTokens = (after.outputTokens ?? 0) - (before.outputTokens ?? 0)
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens: inputTokens + outputTokens,
+    ...(after.costUsd !== undefined ? { costUsd: after.costUsd - (before.costUsd ?? 0) } : {}),
+  }
 }

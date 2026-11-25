@@ -1,8 +1,7 @@
 /**
- * Provider adapters (D17) behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
+ * Provider adapters behind the `ChatClient` / `EmbeddingsClient` seam in `types.ts`.
  *   - `anthropic` / `anthropic_compatible` → `@anthropic-ai/sdk` (fetch-based, runs in Workers).
- *     Compatible vendors authenticate with `Authorization: Bearer` (the SDK's `authToken`), NOT
- *     `x-api-key` — passing the key as `apiKey` sends the wrong header and reads as a bad key.
+ *     The SDK sends the key as `Authorization: Bearer` and API version `2026-10-21` to both.
  *   - `openai` → a small fetch client for the Responses API (`/v1/responses`, SSE, `store: false`);
  *     `openai_compatible` → the same for `/v1/chat/completions`. Both use `/v1/embeddings`. Base
  *     URLs include `/v1`.
@@ -35,8 +34,8 @@ import {
   openAiLowestEffort,
   openAiModelTraits,
 } from '@rocketflare/shared/ai/models'
+import { cachedSystem, withRollingCacheBreakpoints } from './agent-loop'
 import { AiError, normalizeAiError } from './errors'
-import { cachedSystem, withRollingCacheBreakpoints } from './kit'
 import { DEFAULT_BASE_URLS, WORKERS_AI_TOOL_CHOICE_MODELS } from './providers'
 import type {
   AiEnv,
@@ -47,6 +46,7 @@ import type {
   ChatResult,
   ContentBlock,
   EmbeddingsClient,
+  EmbedResult,
   RequestDefaults,
   StopReason,
   WorkersAiBinding,
@@ -301,10 +301,15 @@ function anthropicBody(
       : toAnthropicToolChoice(params.toolChoice)
     if (choice) body.tool_choice = choice
   }
-  // Claude 4.7+ refuse ANY non-default sampling value, and older models refuse it while thinking.
+  // The Claude API takes no sampling field from 2026-10-21; a compatible vendor's model may.
   const thinking = (body.thinking as { type?: string } | undefined)?.type
   const thinks = traits.thinksAnyway || thinking === 'enabled' || thinking === 'adaptive'
-  if (params.temperature !== undefined && traits.sampling && !thinks) {
+  if (
+    provider === 'anthropic_compatible' &&
+    params.temperature !== undefined &&
+    traits.sampling &&
+    !thinks
+  ) {
     body.temperature = params.temperature
   }
   // Adaptive thinking spends `max_tokens` too; a cap sized for the answer alone truncates it.
@@ -355,26 +360,16 @@ function createAnthropicChatClient(opts: ChatClientOptions): ChatClient {
       'A base URL is required for an Anthropic-compatible provider'
     )
   }
-  // `apiKey: null` stops the SDK reading a platform env var and sending both headers.
-  const sdk =
-    provider === 'anthropic'
-      ? new Anthropic({
-          apiKey: opts.apiKey,
-          baseURL: opts.baseUrl || undefined,
-          fetch: opts.fetch,
-          maxRetries: 2,
-        })
-      : new Anthropic({
-          apiKey: null,
-          authToken: opts.apiKey,
-          baseURL: opts.baseUrl as string,
-          fetch: opts.fetch,
-          maxRetries: 2,
-        })
+  const sdk = new Anthropic({
+    apiKey: opts.apiKey,
+    baseURL: opts.baseUrl || undefined,
+    fetch: opts.fetch,
+    maxRetries: 2,
+  })
 
   // Each refusal the traits could misjudge is recovered ONCE and remembered for the rest of this
   // client (one resolve, i.e. one turn or run step), so only its first call pays for finding out:
-  // - `omitThinking`: the model refuses the `thinking` we sent. The kit sends `disabled` by default
+  // - `omitThinking`: the model refuses the `thinking` we sent. The adapter sends `disabled` by default
   //   because some vendors' models (Fireworks' GLM/Kimi) reason — and bill for it — unless told
   //   not to, but Fireworks maps it to reasoning effort `none`, which gpt-oss answers with a 400; and
   //   a Claude id `anthropicModelTraits` misreads can refuse `disabled` / `between_tools` / a budget.
@@ -819,7 +814,7 @@ function createOpenAiChatClient(opts: ChatClientOptions): ChatClient {
 /**
  * OpenAI's own endpoint speaks the Responses API, not Chat Completions: Chat Completions cannot call
  * tools on `gpt-6-astra` / `gpt-6.1-sol` at all, and on Luna/Sol only with reasoning switched off,
- * which is every tool loop the kit runs. `store: false` keeps nothing on OpenAI's side; the
+ * which is every tool loop the app runs. `store: false` keeps nothing on OpenAI's side; the
  * reasoning items come back with `encrypted_content` and ride the transcript as opaque
  * `reasoning` blocks, sent back in their original order with the tool results that follow — "all
  * items between the last user message and your function call output … untouched".
@@ -1338,6 +1333,49 @@ export class ToolCallAssembler {
 
 type ToolUseBlock = Extract<ContentBlock, { type: 'tool_use' }>
 
+/**
+ * GLM's own tool-call markup, which Workers AI sometimes passes through as the arguments STRING
+ * instead of parsing it: `<tool_call>name<arg_key>k</arg_key><arg_value>v</arg_value>…</tool_call>`.
+ * Measured on `@cf/zai-org/glm-4.7-flash` with `tool_choice` forced: about one call in eight with
+ * an array argument came back this way, and read as JSON it was `{ _raw }`, which no tool schema
+ * accepts. The chat template writes a string value as itself and anything else as JSON, so only a
+ * value that opens with `[` or `{` is parsed; everything else stays the string it was.
+ */
+export function parseToolCallMarkup(
+  text: string
+): { name: string | undefined; input: Record<string, unknown> } | undefined {
+  if (!text.includes('<arg_key>')) return undefined
+  const input: Record<string, unknown> = {}
+  const pairs = /<arg_key>([\s\S]*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
+  for (const [, key, value] of text.matchAll(pairs)) {
+    const name = key?.trim()
+    if (!name || value === undefined) continue
+    input[name] = markupValue(value)
+  }
+  if (Object.keys(input).length === 0) return undefined
+  const name = text.match(/<tool_call>\s*([^<\s]+)/)?.[1]
+  return { name, input }
+}
+
+function markupValue(value: string): unknown {
+  const trimmed = value.trim()
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      // Not JSON after all: the string is the value.
+    }
+  }
+  return value
+}
+
+/** A Workers AI arguments string: JSON, or GLM's markup, or `{ _raw }` for neither. */
+function parseWorkersAiArguments(args: string): unknown {
+  const parsed = parseArguments(args)
+  if (!isRecord(parsed) || typeof parsed._raw !== 'string') return parsed
+  return parseToolCallMarkup(parsed._raw)?.input ?? parsed
+}
+
 function fromWorkersAiToolCalls(calls: WorkersAiToolCall[] | undefined): ToolUseBlock[] {
   const out: ToolUseBlock[] = []
   for (const call of calls ?? []) {
@@ -1348,7 +1386,7 @@ function fromWorkersAiToolCalls(calls: WorkersAiToolCall[] | undefined): ToolUse
       type: 'tool_use',
       id: call.id || crypto.randomUUID(),
       name,
-      input: typeof args === 'string' ? parseArguments(args) : (args ?? {}),
+      input: typeof args === 'string' ? parseWorkersAiArguments(args) : (args ?? {}),
     })
   }
   return out
@@ -1448,6 +1486,15 @@ export function recoverForcedToolCall(params: ChatParams, result: ChatResult): C
   const name = forcedToolName(params)
   if (!name || result.content.some(b => b.type === 'tool_use')) return result
   const text = textOf(result.content)
+  // GLM writing its own call markup as the reply's text, with no call parsed out of it.
+  const markup = parseToolCallMarkup(text)
+  if (markup && (markup.name === undefined || markup.name === name)) {
+    return {
+      ...result,
+      content: [{ type: 'tool_use', id: crypto.randomUUID(), name, input: markup.input }],
+      stopReason: 'tool_use',
+    }
+  }
   const object = extractJsonObject(text)
   if (!object) return result
   return {
@@ -1625,23 +1672,34 @@ function createOpenAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient
     )
   const apiKey = opts.apiKey
   const fetchImpl = opts.fetch ?? fetch
+  const embedWithUsage = async (texts: string[]): Promise<EmbedResult> => {
+    if (texts.length === 0) return { vectors: [], inputTokens: 0 }
+    try {
+      const res = await postJson(fetchImpl, `${base}/embeddings`, apiKey, {
+        model: opts.model,
+        input: texts,
+        dimensions: EMBEDDING_DIM,
+      })
+      const json = (await res.json()) as {
+        data: Array<{ index: number; embedding: number[] }>
+        usage?: { prompt_tokens?: unknown; total_tokens?: unknown }
+      }
+      const tokens = json.usage?.prompt_tokens ?? json.usage?.total_tokens
+      return {
+        vectors: json.data.sort((a, b) => a.index - b.index).map(d => d.embedding),
+        inputTokens: typeof tokens === 'number' && Number.isFinite(tokens) ? tokens : null,
+      }
+    } catch (err) {
+      throw normalizeAiError(err, provider)
+    }
+  }
   return {
     provider,
     model: opts.model,
     dimension: EMBEDDING_DIM,
+    embedWithUsage,
     async embed(texts) {
-      if (texts.length === 0) return []
-      try {
-        const res = await postJson(fetchImpl, `${base}/embeddings`, apiKey, {
-          model: opts.model,
-          input: texts,
-          dimensions: EMBEDDING_DIM,
-        })
-        const json = (await res.json()) as { data: Array<{ index: number; embedding: number[] }> }
-        return json.data.sort((a, b) => a.index - b.index).map(d => d.embedding)
-      } catch (err) {
-        throw normalizeAiError(err, provider)
-      }
+      return (await embedWithUsage(texts)).vectors
     },
   }
 }
@@ -1649,22 +1707,25 @@ function createOpenAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient
 function createWorkersAiEmbeddings(opts: EmbeddingsClientOptions): EmbeddingsClient {
   const ai = opts.ai as WorkersAiBinding | undefined
   if (!ai) throw new AiError('unavailable', 'workers_ai', 'The AI binding is not configured')
+  const embed = async (texts: string[]): Promise<number[][]> => {
+    if (texts.length === 0) return []
+    try {
+      const out = (await ai.run(opts.model, { text: texts })) as { data?: number[][] }
+      const data = out?.data
+      if (!Array.isArray(data))
+        throw new AiError('unknown', 'workers_ai', 'Unexpected Workers AI response shape')
+      return data
+    } catch (err) {
+      throw normalizeAiError(err, 'workers_ai')
+    }
+  }
   return {
     provider: 'workers_ai',
     model: opts.model,
     dimension: EMBEDDING_DIM,
-    async embed(texts) {
-      if (texts.length === 0) return []
-      try {
-        const out = (await ai.run(opts.model, { text: texts })) as { data?: number[][] }
-        const data = out?.data
-        if (!Array.isArray(data))
-          throw new AiError('unknown', 'workers_ai', 'Unexpected Workers AI response shape')
-        return data
-      } catch (err) {
-        throw normalizeAiError(err, 'workers_ai')
-      }
-    },
+    embed,
+    // Workers AI reports no token count for embeddings: null, so the meter estimates.
+    embedWithUsage: async texts => ({ vectors: await embed(texts), inputTokens: null }),
   }
 }
 

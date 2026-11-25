@@ -1,8 +1,7 @@
 /**
- * Stub for the `cloudflare:workers` module (D15). Tests run under Node, not workerd;
+ * Stub for the `cloudflare:workers` module. Tests run under Node, not workerd;
  * vitest.config.ts aliases the module here so files that `extends DurableObject` or
- * `extends WorkflowEntrypoint` (Phase 2/3) still import. Ported from the Workers reference app
- * `tests/mocks/cloudflare-workers.ts`.
+ * `extends WorkflowEntrypoint` still import.
  */
 
 export class DurableObject<Env = unknown> {
@@ -64,7 +63,7 @@ export interface FakeWorkflowStepOptions {
   events?: unknown[]
   /**
    * Called before each wait resolves — the test's stand-in for the resolve route, whose job in the
-   * real system is to flip `awaiting_input → running` BEFORE it wakes the instance (decision 2).
+   * real system is to flip `awaiting_input → running` BEFORE it wakes the instance.
    * Return a value to use it as the event payload; return nothing to fall through to the queue.
    */
   onWait?: (wait: RecordedWait) => unknown | Promise<unknown>
@@ -83,11 +82,37 @@ export class FakeWorkflowTimeoutError extends Error {
  * no timeouts, no checkpoints — for unit-testing a `WorkflowEntrypoint` subclass under Node.
  * A callback that throws propagates to the caller exactly as the platform would after its retries.
  *
- * `waitForEvent` is a RECORDER rather than a throw, because the suspend/resume loop (issue #17) is
+ * `waitForEvent` is a RECORDER rather than a throw, because the suspend/resume loop is
  * the interesting thing about this class. The one property no fake can check is the step NAME —
  * the platform treats it as the step's identity and replays a repeated name's earlier result — so
  * `names` is exposed in call order for the test that asserts they are distinct per round.
  */
+/**
+ * The real `WorkflowStep` is an RPC stub: each member is a remote-method proxy that can be CALLED
+ * on the stub but has no `bind` / `call` / `apply` ("The RPC receiver does not implement the
+ * method \"bind\""). The fake behaves the same, so an adapter that detaches a method fails here
+ * rather than on the first run under `wrangler dev`.
+ */
+function rpcStub<T extends object>(target: T): T {
+  const detached = new Set<PropertyKey>(['bind', 'call', 'apply'])
+  return new Proxy(target, {
+    get(obj, key, receiver) {
+      const value = Reflect.get(obj, key, receiver)
+      if (typeof value !== 'function') return value
+      return new Proxy(value, {
+        get(fn, member) {
+          if (detached.has(member)) {
+            throw new TypeError(
+              `The RPC receiver does not implement the method "${String(member)}".`
+            )
+          }
+          return Reflect.get(fn, member)
+        },
+      })
+    },
+  })
+}
+
 export function createFakeWorkflowStep(options: FakeWorkflowStepOptions = {}) {
   const calls: RecordedStep[] = []
   const waits: RecordedWait[] = []
@@ -121,7 +146,7 @@ export function createFakeWorkflowStep(options: FakeWorkflowStepOptions = {}) {
     },
   }
   return {
-    step,
+    step: rpcStub(step),
     calls,
     waits,
     names,

@@ -1,5 +1,5 @@
 /**
- * Per-organisation overrides for one flag (D30). Multi-tenant only — the parent hides this in
+ * Per-organisation overrides for one flag. Multi-tenant only — the parent hides this in
  * single mode, matching the routes, which answer 404 `tenancy_mode_single`.
  *
  * Three states, never a checkbox: On and Off are both real decisions (the design-partner

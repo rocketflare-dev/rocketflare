@@ -1,5 +1,5 @@
 /**
- * Page-based pagination glue (D13): `paginationQuerySchema` → `{ limit, offset }`, and
+ * Page-based pagination glue: `paginationQuerySchema` → `{ limit, offset }`, and
  * `paginated(items, total, query)` → `{ items, pagination }` per `src/shared/pagination.ts`.
  */
 import { type PaginationQuery, paginationMeta } from '@rocketflare/shared/pagination'

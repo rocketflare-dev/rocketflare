@@ -1,6 +1,6 @@
 /**
  * Hand-written types for the exports of `kit-check.mjs` (the workspace has no `allowJs`). Keep in
- * step with the script; `apps/web/tests/config/kit-check.test.ts` is what typechecks against this.
+ * step with the script; `apps/web/tests/kit-only/kit-check.test.ts` is what typechecks against this.
  */
 
 export type CommandTarget = { kind: 'file'; file: string } | { kind: 'script'; script: string }

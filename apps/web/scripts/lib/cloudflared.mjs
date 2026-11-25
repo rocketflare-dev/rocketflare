@@ -19,7 +19,7 @@ import path from 'node:path'
 /**
  * The cloudflared release the first tunnel run installs. Pinned so two machines get the same
  * binary; `CLOUDFLARED_VERSION=<tag>` (the package's own variable, `latest` allowed) overrides it.
- * Cloudflare supports a release for a year — bump it with the kit.
+ * Cloudflare supports a release for a year — bump it deliberately.
  */
 export const CLOUDFLARED_PINNED_VERSION = '2026.9.3'
 

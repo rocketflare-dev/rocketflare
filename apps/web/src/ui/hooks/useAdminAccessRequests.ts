@@ -1,4 +1,4 @@
-/** Global-admin review queue (D9, D25): list + the one `decide` endpoint (approve/reject). */
+/** Global-admin review queue: list + the one `decide` endpoint (approve/reject). */
 import {
   type AccessRequestStatus,
   accessRequestSchema,

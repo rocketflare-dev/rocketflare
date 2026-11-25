@@ -1,5 +1,5 @@
 /**
- * Reading the local trace store (D32): `ai_spans` grouped into traces for `GET /api/traces` and one
+ * Reading the local trace store: `ai_spans` grouped into traces for `GET /api/traces` and one
  * trace's spans for `GET /api/traces/:id`. Every query carries the tenant predicate first — the
  * store is written by background flushes with no request context, so the READ is where tenancy is
  * proven. A trace's status is its ROOT's when the root has been recorded (a tool that answered an
@@ -93,7 +93,7 @@ function aggregateQuery(
         coalesce(sum(s.input_tokens) FILTER (WHERE s.kind = 'llm'), 0) AS input_tokens,
         coalesce(sum(s.output_tokens) FILTER (WHERE s.kind = 'llm'), 0) AS output_tokens,
         -- json, not text[]: \`db.execute\` returns raw values; both drivers parse json, only Neon
-        -- parses a raw array (postgres.js with fetch_types off returns "{a,b}") — D35.
+        -- parses a raw array (postgres.js with fetch_types off returns "{a,b}").
         json_agg(DISTINCT s.model) FILTER (WHERE s.model IS NOT NULL AND s.kind = 'llm') AS models,
         max(s.run_id::text) AS run_id,
         max(s.conversation_id::text) AS conversation_id,

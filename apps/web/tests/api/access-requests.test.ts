@@ -1,5 +1,5 @@
 /**
- * Access requests (D9): a tenant-less user lodges one; `/auth/session` surfaces it; tenant routes
+ * Access requests: a tenant-less user lodges one; `/auth/session` surfaces it; tenant routes
  * answer 403 pending_approval; the admin decides (join / new_org / reject) — see admin.test.ts for
  * the decision matrix, this file covers the requester side.
  */

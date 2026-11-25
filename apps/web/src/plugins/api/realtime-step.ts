@@ -7,7 +7,7 @@
  * anything handed to one that drops it is lost.
  *
  * So this builds a `Realtime` whose `defer` collects, and awaits the collection. That keeps
- * `services/realtime.ts` the only module that touches `NOTIFICATIONS_HUB` — the kit's own runtime
+ * `services/realtime.ts` the only module that touches `NOTIFICATIONS_HUB` — the core runtime
  * does the same thing for Workflow steps (`createStepRealtime`), and this is the plugin-facing
  * spelling of it, kept here rather than imported because the runtime's version lives inside the
  * deletable `feature-agents` surface.
@@ -18,7 +18,7 @@ import type { HubEnv, Realtime } from '../../api/services/realtime'
 import { nudge, nudgeUser, nudgeUsers, realtimeEvent } from '../../api/services/realtime'
 
 export interface StepRealtime {
-  /** The `Realtime` a kit-shaped service takes as its trailing optional argument. */
+  /** The `Realtime` a core-shaped service takes as its trailing optional argument. */
   realtime: Realtime
   /** Await every send collected so far. Failures are swallowed — a nudge is never load-bearing. */
   settle(): Promise<void>

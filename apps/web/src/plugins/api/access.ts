@@ -1,9 +1,9 @@
 /**
- * Row visibility for a plugin's own rows (D29, D31).
+ * Row visibility for a plugin's own rows.
  *
- * The kit's rule is unchanged and is the whole of this file: **an ability answers "may this ROLE do
+ * The core rule applies and is the whole of this file: **an ability answers "may this ROLE do
  * this KIND of thing", and "may this reader see this ROW" is always a SQL predicate ANDed with the
- * tenant predicate.** CASL conditions are used nowhere in this kit, and a plugin inventing them
+ * tenant predicate.** CASL conditions are used nowhere in this app, and a plugin inventing them
  * would be the only place they appear.
  *
  * Three things a plugin adding a restrictable resource must keep, each of which has a failure mode:
@@ -22,7 +22,7 @@
  * split exists for this import: a plugin's visibility resource needs the SQL at module scope, and
  * taking it from the composing module resolves the cycle with `serverPlugins` still `undefined` —
  * `undefined.flatMap` at IMPORT time, which takes the Worker down rather than failing one request
- * (measured in Phase C; `docs/CONCEPTS.md` §16).
+ * (measured; `docs/CONCEPTS.md` §16).
  */
 
 import { sharedWithMyGroups } from '../../api/services/access-sql'

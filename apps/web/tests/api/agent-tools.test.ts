@@ -1,5 +1,5 @@
 /**
- * Built-in agent tools (D7, D18). `search_knowledge` runs the same hybrid search as `/search`,
+ * Built-in agent tools. `search_knowledge` runs the same hybrid search as `/search`,
  * scoped to the run's tenant: whole passages grouped by document, a per-answer budget that REPORTS
  * what it dropped, and — when nothing matches or no embeddings provider exists — a structured
  * answer carrying the documents that do exist so the model can re-aim instead of inventing.
@@ -89,7 +89,7 @@ describe('search_knowledge tool', () => {
   it('is on ctx.tools and finds the indexed document for the run tenant only', async () => {
     const { tenant, env, cfg, volcano } = await seeded()
     const tools = await buildAgentTools({ db, cfg, env, scope: fullAccessScope(tenant.id) })
-    // The kit's three LEAD, in this order; an installed plugin's tools (D31) are appended after
+    // The three built-in tools LEAD, in this order; an installed plugin's tools are appended after
     // them — which is why this is a prefix assertion rather than an equality one.
     expect(tools.map(t => t.name).slice(0, 3)).toEqual([
       SEARCH_KNOWLEDGE_TOOL,
@@ -446,6 +446,18 @@ describe('summariseToolResult (the tool.end audit trail)', () => {
     expect(deadEnd).toEqual({ error: 'document_not_found', hint: 'pick one' })
 
     expect(summariseToolResult('whatever', 'not json at all')).toBe('not json at all')
+  })
+
+  it('keeps every lookup_facts entity and fact, however long — the run timeline cards read them', () => {
+    const entity = { kind: 'staging', type: 'customer', id: 'e-1', name: 'Acme' }
+    const facts = Array.from({ length: 20 }, (_, i) => ({ key: `k${i}`, quote: 'q'.repeat(2000) }))
+    const summary = summariseToolResult(
+      'lookup_facts',
+      JSON.stringify({ entities: [{ entity, facts }], note: 'n' })
+    ) as { entities: Array<{ entity: unknown; facts: Array<{ key: string; quote: string }> }> }
+    expect(summary.entities[0]?.entity).toEqual(entity)
+    expect(summary.entities[0]?.facts).toHaveLength(20)
+    expect(summary.entities[0]?.facts[0]?.quote).toHaveLength(EVENT_PREVIEW_CHARS + 1)
   })
 })
 

@@ -1,8 +1,8 @@
 /**
- * `/api/agents` (D7): the registry and its runs. `POST /runs` is the handoff — validate → insert
+ * `/api/agents`: the registry and its runs. `POST /runs` is the handoff — validate → insert
  * `queued` → create the Workflow instance → 202 with the row (the route never runs the agent). An
  * exclusive agent with an active run answers THAT run with `deduplicated: true` (409
- * `agent_run_active` only with `?strict=1`). `POST /runs/batch` (D39) is the same handoff for up to
+ * `agent_run_active` only with `?strict=1`). `POST /runs/batch` is the same handoff for up to
  * 100 inputs of one NON-exclusive agent (400 `agent_exclusive` otherwise), with per-input errors;
  * both answer 429 `agent_runs_limit` over `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` and 429
  * `ai_budget_exceeded` once the tenant's agent spend today reaches its cap.
@@ -15,17 +15,22 @@
  * run, which is a screen nobody can act on.
  *
  * Beyond the run itself: `GET /runs/:id/agui` projects it to AG-UI, `GET /runs/:id/agui/stream` is
- * the live read-stream (issue #7), `POST /runs/:id/interrupts/:interruptId` is the answer (issue
- * #17 — `update AgentRun` plus the agent's `approvers` policy; a compare-and-set on `pending` is
+ * the live read-stream, `POST /runs/:id/interrupts/:interruptId` is the answer
+ * (`update AgentRun` plus the agent's `approvers` policy; a compare-and-set on `pending` is
  * what makes one 200 and one 409 `interrupt_not_pending` true when two people answer at once),
  * `POST /runs/:id/steering` adds a note to a live run, and `GET /api/agents/interrupts` is the
  * tenant-wide inbox. Members see, cancel and steer their OWN runs; admin+ (`isAdminLevel`) every
  * run in the tenant. Every query carries the tenant predicate from the auth context.
  */
+import type { AgentRunTimeline } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
   type AgentRunWithEvents,
+  type AgentStatsResponse,
   agentRunListQuerySchema,
+  agentStatsQuerySchema,
+  type BindableAgentListResponse,
+  bindableAgentListQuerySchema,
   type CreateAgentRunBatchResponse,
   createAgentRunBatchRequestSchema,
   createAgentRunRequestSchema,
@@ -41,13 +46,14 @@ import {
   resolveInterruptRequestSchema,
 } from '@rocketflare/shared/ai/interrupts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, count, desc, eq, inArray } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm'
 import { type AgentRunRow, agentRunInterrupts, agentRuns } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import { projectRunToAgui } from '../services/agents/agui-projection'
 import { listArtifacts, toAgentArtifact } from '../services/agents/artifacts'
 import { listDecisions } from '../services/agents/decisions'
+import { assignedToSql, canAnswerAsk, runAssignedTo } from '../services/agents/hitl'
 import {
   checkEditedToolInput,
   getInterrupt,
@@ -73,9 +79,19 @@ import {
   toAgentRun,
   toAgentRunEvent,
 } from '../services/agents/runs'
+import { agentStats } from '../services/agents/stats'
+import { runTimeline } from '../services/agents/timeline'
+import { bindableAgents } from '../services/agents/triggers'
 import { runSpend } from '../services/ai/usage'
+import { isEventName } from '../services/events/registry'
 import type { AppContext, AuthContext } from '../types'
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../utils/core/errors'
+import {
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from '../utils/core/errors'
 import { pageWindow, paginated } from '../utils/routes/pagination'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
@@ -94,7 +110,7 @@ function approversFor(agentKey: string): AgentApprovers {
 }
 
 /**
- * Who may ANSWER this run's asks. **No new CASL action and no new subject** (issue #17): it is the
+ * Who may ANSWER this run's asks. **No new CASL action and no new subject**: it is the
  * `update AgentRun` the route already guards, plus the agent's own `approvers` policy.
  *
  * `'requester'` is deliberately the same predicate as {@link visible} — "whoever may cancel this
@@ -117,11 +133,18 @@ async function loadRun(c: AppContext, runId: string): Promise<AgentRunRow> {
   return settleOnRead(c, await requireRun(c, runId))
 }
 
-/** Tenant-scoped lookup plus the ownership check: another member's run is the same 404 as none. */
+/**
+ * Tenant-scoped lookup plus the ownership check: another member's run is the same 404 as none.
+ * READ access also reaches an assignee of one of the run's asks — they were asked to decide, and
+ * the run's timeline is what explains the question. Cancel and steer stay with {@link visible}.
+ */
 async function requireRun(c: AppContext, runId: string): Promise<AgentRunRow> {
-  const { db, tenantId, auth } = withAuthAndDb(c)
+  const { db, tenantId, auth, user } = withAuthAndDb(c)
   const row = await getRun(db, tenantId, runId)
-  if (!row || !visible(auth, row)) throw new NotFoundError('Agent run not found')
+  if (!row) throw new NotFoundError('Agent run not found')
+  if (!visible(auth, row) && !(await runAssignedTo(db, tenantId, row.id, user.id))) {
+    throw new NotFoundError('Agent run not found')
+  }
   return row
 }
 
@@ -129,7 +152,7 @@ async function requireRun(c: AppContext, runId: string): Promise<AgentRunRow> {
  * The second half of the read path: settle a stale active row against the runtime.
  * `expireParkedRun` sits beside `reconcileRun` because they answer the same question for the two
  * halves of "active" — `reconcileRun` settles a `queued`/`running` row whose instance is gone, and
- * `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their deadline (T6).
+ * `expireParkedRun` settles an `awaiting_input` row whose asks have all passed their deadline.
  * Without it a park whose instance died holds the exclusive slot forever.
  *
  * `lastEventAt` is passed by every caller that has the run's events in hand, and it is why this is
@@ -145,7 +168,13 @@ async function settleOnRead(
   options?: { lastEventAt?: Date | null }
 ): Promise<AgentRunRow> {
   const { db, realtime } = withAuthAndDb(c)
-  return expireParkedRun(db, await reconcileRun(db, c.env, row, options), realtime)
+  return expireParkedRun(
+    db,
+    await reconcileRun(db, c.env, row, options),
+    realtime,
+    new Date(),
+    c.env
+  )
 }
 
 // ---- GET /api/agents ------------------------------------------------------------------------------
@@ -156,7 +185,44 @@ agentsRouter.get('/', async c => {
   return c.json({ items: listAgentInfo() })
 })
 
+// ---- GET /api/agents/bindable?event= ------------------------------------------------------------
+
+/**
+ * D42: the agents that opt in (`bindable`) to being started by one plugin event — the list behind
+ * an editor's "On submit, start" picker. Guarded like `GET /` (the registry is code, the same for
+ * every tenant). An undeclared event is a 400 `event_unknown`, so a typo in a plugin's UI is loud
+ * rather than an empty picker. Listing an agent here grants nothing: the start re-checks it.
+ */
+agentsRouter.get('/bindable', validate('query', bindableAgentListQuerySchema), async c => {
+  withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const { event } = c.req.valid('query')
+  if (!isEventName(event)) {
+    throw new BadRequestError(`Unknown event: ${event}`, ERROR_CODES.eventUnknown, { event })
+  }
+  return c.json({ items: bindableAgents(event) } satisfies BindableAgentListResponse)
+})
+
 // ---- GET /api/agents/runs -------------------------------------------------------------------------
+
+// ---- GET /api/agents/stats -----------------------------------------------------------------------
+
+/**
+ * Per-agent runs, outcomes, tokens, cost and mean duration over `?days=` (default 30), plus each
+ * agent's newest run — the agents page's one request. Scoped like the runs list: a member's own
+ * runs, admin+ every run (`services/agents/stats.ts`).
+ */
+agentsRouter.get('/stats', validate('query', agentStatsQuerySchema), async c => {
+  const { db, tenantId, user, auth } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const { days } = c.req.valid('query')
+  const body: AgentStatsResponse = await agentStats(
+    db,
+    { tenantId, ...(isAdminLevel(auth) ? {} : { requestedByUserId: user.id }) },
+    days
+  )
+  return c.json(body)
+})
 
 agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c => {
   const { db, tenantId, user, auth } = withAuthAndDb(c)
@@ -168,7 +234,14 @@ agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c =>
     isAdminLevel(auth) ? undefined : eq(agentRuns.requestedByUserId, user.id),
     query.agentKey ? eq(agentRuns.agentKey, query.agentKey) : undefined,
     query.status ? eq(agentRuns.status, query.status) : undefined,
-    query.batchId ? eq(agentRuns.batchId, query.batchId) : undefined
+    query.batchId ? eq(agentRuns.batchId, query.batchId) : undefined,
+    // A child is reached through its parent: the list holds top-level runs unless asked for one
+    // run's children.
+    query.parentRunId
+      ? eq(agentRuns.parentRunId, query.parentRunId)
+      : isNull(agentRuns.parentRunId),
+    query.since ? gte(agentRuns.createdAt, query.since) : undefined,
+    query.agentVersion ? eq(agentRuns.agentVersion, query.agentVersion) : undefined
   )
   const [rows, [total]] = await Promise.all([
     db
@@ -186,7 +259,7 @@ agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c =>
 // ---- POST /api/agents/runs ------------------------------------------------------------------------
 
 agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async c => {
-  const { db, cfg, tenantId, user, defer, realtime } = withAuthAndDb(c)
+  const { db, cfg, tenantId, user, auth, defer, realtime } = withAuthAndDb(c)
   guardPermission(c, 'create', 'AgentRun')
   const { agentKey, input } = c.req.valid('json')
   const strict = c.req.query('strict') === '1'
@@ -195,8 +268,16 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
     agentKey,
     input,
     userId: user.id,
+    inputFromRequester: true,
     realtime,
   })
+  if (deduplicated && !visible(auth, run)) {
+    // Another member holds the exclusive slot: it is busy, and which run that is stays theirs.
+    throw new ConflictError(
+      `A ${agentKey} run is already queued or running for this organisation`,
+      ERROR_CODES.agentRunActive
+    )
+  }
   if (deduplicated && strict) {
     throw new ConflictError(
       `A ${agentKey} run is already queued or running for this organisation`,
@@ -222,7 +303,7 @@ agentsRouter.post('/runs', validate('json', createAgentRunRequestSchema), async 
 // ---- POST /api/agents/runs/batch ------------------------------------------------------------------
 
 /**
- * D39: up to `AGENT_RUN_BATCH_MAX` runs of one non-exclusive agent. 202 even when some inputs
+ * Up to `AGENT_RUN_BATCH_MAX` runs of one non-exclusive agent. 202 even when some inputs
  * failed — the items say which, by index — because the rest are already running and a 4xx would
  * read as "nothing happened". A whole-batch refusal (exclusive agent, cap, budget) is still a 4xx
  * and writes nothing. One activity row for the batch, not one per run.
@@ -236,6 +317,7 @@ agentsRouter.post('/runs/batch', validate('json', createAgentRunBatchRequestSche
     agentKey,
     inputs,
     userId: user.id,
+    inputFromRequester: true,
     realtime,
   })
   const created = items.filter(item => item.error === null).length
@@ -300,10 +382,24 @@ agentsRouter.get('/runs/:id', async c => {
   return c.json(body)
 })
 
+// ---- GET /api/agents/runs/:id/timeline ------------------------------------------------------------
+
+/**
+ * The inspector: every record of the run merged by time, its versions, and its spend against its
+ * budget (`runTimeline`). Read-only — it does not settle a lost run, so it shows the row as it is.
+ */
+agentsRouter.get('/runs/:id/timeline', async c => {
+  const { db } = withAuthAndDb(c)
+  guardPermission(c, 'read', 'AgentRun')
+  const row = await requireRun(c, uuidParam(c, 'id'))
+  const body: AgentRunTimeline = await runTimeline(db, c.get('config'), row)
+  return c.json(body)
+})
+
 // ---- GET /api/agents/runs/:id/agui ----------------------------------------------------------------
 
 /**
- * The same run as `GET /runs/:id`, projected into AG-UI (D7). Plain JSON, not a stream: a run
+ * The same run as `GET /runs/:id`, projected into AG-UI. Plain JSON, not a stream: a run
  * executes in a Workflow, in a different isolate from any request, so live streaming is a feature
  * rather than a mapping — the WS nudge plus the poll already gives sub-second updates.
  */
@@ -333,15 +429,15 @@ agentsRouter.get('/runs/:id/agui', async c => {
 // ---- GET /api/agents/runs/:id/agui/stream ---------------------------------------------------------
 
 /**
- * The same projection, live (issue #7). GET rather than POST on purpose: `csrf.ts` passes GET, and
+ * The same projection, live. GET rather than POST on purpose: `csrf.ts` passes GET, and
  * a third-party AG-UI client can then open it with a bare `EventSource` — which is the only reason
- * `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the kit's own
+ * `Last-Event-ID` is honoured at all. **`?afterSeq=` wins when both are present**: the app's own
  * client is explicit, and a stale browser value must never override it.
  *
  * Everything that can fail is JSON and happens HERE, above `streamRunAgui` — the ability, the uuid,
  * the 404 for a run this caller cannot see, `reconcileRun` (via `loadRun`, **exactly once, never in
  * the loop**: it is a Workflow subrequest per call) and a garbage cursor. After the first frame the
- * only thing left to say is nothing at all (decision 6).
+ * only thing left to say is nothing at all.
  */
 agentsRouter.get('/runs/:id/agui/stream', async c => {
   withAuthAndDb(c)
@@ -397,7 +493,7 @@ agentsRouter.post('/runs/:id/cancel', async c => {
 // ---- POST /api/agents/runs/:id/interrupts/:interruptId ---------------------------------------------
 
 /**
- * Answer one of a run's asks (issue #17). **Eight steps, and each is a precondition for the next**
+ * Answer one of a run's asks. **Eight steps, and each is a precondition for the next**
  * — the order is the design, not an accident of writing:
  *
  *  1. the run must exist and be visible → 404 (another tenant's, or another member's, never exists)
@@ -413,7 +509,7 @@ agentsRouter.post('/runs/:id/cancel', async c => {
  *     with unanswered asks
  *  8. activity + nudge + 200
  *
- * Step 7 is also where **the answer IS the transition** (decision 2, T4) lives: `resumeRun` flips
+ * Step 7 is also where **the answer IS the transition** lives: `resumeRun` flips
  * `awaiting_input → running` BEFORE `nudgeOrRestartInstance`, which is the only reason a restarted
  * instance's `claim` step — whose predicate is the narrow `queued|running` — finds anything at all.
  *
@@ -429,12 +525,24 @@ agentsRouter.post(
     const interruptId = uuidParam(c, 'interruptId')
 
     const run = await getRun(db, tenantId, runId)
-    if (!run || !visible(auth, run)) throw new NotFoundError('Agent run not found')
-    if (!canAnswer(auth, run)) {
-      throw new ForbiddenError('Only an administrator may answer this agent')
-    }
-    const interrupt = await getInterrupt(db, tenantId, runId, interruptId)
+    const interrupt = run ? await getInterrupt(db, tenantId, runId, interruptId) : null
+    // An assignee of THIS ask may see the run though it is not theirs; anyone else needs the run.
+    const assigned = interrupt !== null && (await runAssignedTo(db, tenantId, runId, user.id))
+    if (!run || (!visible(auth, run) && !assigned)) throw new NotFoundError('Agent run not found')
     if (!interrupt) throw new NotFoundError('Interrupt not found')
+    const may = await canAnswerAsk(
+      db,
+      { id: user.id, isAdminLevel: isAdminLevel(auth) },
+      interrupt,
+      () => canAnswer(auth, run)
+    )
+    if (!may) {
+      throw new ForbiddenError(
+        interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+          ? 'This question is assigned to somebody else'
+          : 'Only an administrator may answer this agent'
+      )
+    }
 
     const body = c.req.valid('json')
     const payload = validateAnswer(interrupt.spec, body.status, body.payload)
@@ -474,7 +582,7 @@ agentsRouter.post(
       const resumedRow = await resumeRun(db, tenantId, runId)
       // Null means the row was not parked — the answer beat the park, or the run was cancelled
       // underneath it. Either way there is no instance of ours to wake: the execute step that is
-      // still running will read this answer as a row, which is the whole point of decision 3.
+      // still running will read this answer as a row, which is the whole point.
       if (resumedRow) await nudgeOrRestartInstance(db, c.env, resumedRow, { interruptId })
     }
 
@@ -525,7 +633,7 @@ function validateAnswer(
 // ---- POST /api/agents/runs/:id/steering ------------------------------------------------------------
 
 /**
- * Send a note to a run in flight (issue #17, decision 4). It is an `agent_run_events` row rather
+ * Send a note to a run in flight. It is an `agent_run_events` row rather
  * than a table because a note is immutable, positional and per-run — exactly what an append-only
  * log is for — and the runtime's once-only delivery cursor is the existing `agent_run_effects`
  * ledger, so there is nothing else to store.
@@ -587,9 +695,13 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
   const where = and(
     eq(agentRunInterrupts.tenantId, tenantId),
     eq(agentRunInterrupts.status, query.status),
-    inArray(
-      agentRunInterrupts.runId,
-      db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
+    // The asks of runs the caller may see, and — for a member — every ask assigned to them.
+    or(
+      inArray(
+        agentRunInterrupts.runId,
+        db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
+      ),
+      isAdminLevel(auth) ? undefined : assignedToSql(tenantId, user.id)
     )
   )
   const [rows, [total]] = await Promise.all([
@@ -603,6 +715,29 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
       .offset(offset),
     db.select({ n: count() }).from(agentRunInterrupts).where(where),
   ])
+  // Which of these assigned asks are the caller's: one query, not one per row.
+  const assignedRows = rows.filter(
+    ({ interrupt }) => interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+  )
+  const assignedIds = new Set(
+    assignedRows.length
+      ? (
+          await db
+            .select({ id: agentRunInterrupts.id })
+            .from(agentRunInterrupts)
+            .where(
+              and(
+                eq(agentRunInterrupts.tenantId, tenantId),
+                inArray(
+                  agentRunInterrupts.id,
+                  assignedRows.map(r => r.interrupt.id)
+                ),
+                assignedToSql(tenantId, user.id)
+              )
+            )
+        ).map(r => r.id)
+      : []
+  )
   const items: InterruptInboxItem[] = rows.map(({ interrupt, run }) => ({
     ...toAgentRunInterrupt(interrupt),
     run: {
@@ -612,7 +747,10 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
       requestedByUserId: run.requestedByUserId,
       createdAt: run.createdAt,
     },
-    canAnswer: canAnswer(auth, run),
+    canAnswer:
+      interrupt.assigneeUserIds.length || interrupt.assigneeGroupIds.length
+        ? isAdminLevel(auth) || assignedIds.has(interrupt.id)
+        : canAnswer(auth, run),
   }))
   return c.json(paginated(items, total?.n ?? 0, query))
 })

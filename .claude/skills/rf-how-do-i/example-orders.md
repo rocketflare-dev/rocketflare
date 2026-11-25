@@ -1,5 +1,7 @@
 # A worked slice: orders with an approval step, as a plugin
 
+<!-- agent-docs-check: hypothetical — every orders path below is what you would create -->
+
 One complete answer, end to end, for a feature that touches almost every layer the kit has. Use it
 for its **shape**, not its nouns — the questions asked, the order taken, the traps named. Someone
 adding tickets, expenses, bookings or reviews gets the same walk with different words.

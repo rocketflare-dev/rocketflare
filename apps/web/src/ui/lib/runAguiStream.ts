@@ -1,12 +1,12 @@
 /**
  * The AG-UI client for a LIVE agent run: GET `/api/agents/runs/:id/agui/stream` and read the run's
- * timeline as it fills (issue #7).
+ * timeline as it fills.
  *
  * A sibling of `aguiStream.ts`, and the differences are the whole design. That one POSTs a user
  * turn and OWNS the run it is streaming — so a body failure there is a `RUN_ERROR` and the run is
  * over. This one GETs a read-only tail of a Workflow executing in another isolate, so it owns
- * nothing: **the stream closing with no terminal event is not an error, it is "reconnect"**
- * (decision 6), uniformly for a redeploy, the server's idle cap, its 10-minute duration cap, a
+ * nothing: **the stream closing with no terminal event is not an error, it is "reconnect"**,
+ * uniformly for a redeploy, the server's idle cap, its 10-minute duration cap, a
  * transport error and the caller's own abort. Reconnecting is the HOOK's job — this module is
  * transport, resolves with what it saw, and never retries.
  *

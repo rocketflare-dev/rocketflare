@@ -1,5 +1,5 @@
 /**
- * The run timeline, as two pure stages and a handful of selectors (issue #17).
+ * The run timeline, as two pure stages and a handful of selectors.
  *
  * `buildTimeline(events)` folds the durable `agent_run_events` rows into ROWS a person reads — a
  * `tool.start`/`tool.end` pair is ONE row, a `step` row is updated in place by its `done` — and
@@ -65,11 +65,22 @@ export interface ToolRow {
   name: string
   /** The model's own call id where the runtime recorded one — how a parallel pair is matched. */
   toolCallId?: string
+  /**
+   * A MODEL call the runtime recorded (`kind: 'model'` on the event), not a tool the model called:
+   * `name` is the model. Counted apart from tools in a stage's header.
+   */
+  model?: true
   input?: unknown
   result?: unknown
   isError: boolean
   /** False while the call has not returned yet (the row spins). */
   done: boolean
+  /**
+   * Not returned, and it will not return where it is: the run settled, or the attempt that started
+   * it ended (a retry began). Shown still, not spinning. A later answer under the same call id — a
+   * journaled tool call the retry finishes — still closes it.
+   */
+  stopped?: boolean
   /** The START of the call. Never rewritten by the answer — that is what `endedAt` is for. */
   at: Date
   endedAt?: Date
@@ -175,7 +186,8 @@ export interface TimelineGroup {
   key: string
   /** `null` for the synthetic groups. */
   step: AgentStepEventData | null
-  status: 'running' | 'done' | 'error'
+  /** `stopped`: still open when the run settled — it will never close (see `stopOpenWork`). */
+  status: 'running' | 'done' | 'error' | 'stopped'
   rows: TimelineRow[]
   /** The step row itself, when there is one — so the group header can carry its id. */
   headerId: string
@@ -183,10 +195,12 @@ export interface TimelineGroup {
   endedAt?: Date
   durationMs?: number
   toolCount: number
+  /** Model calls the runtime recorded inside the stage, counted apart from `toolCount`. */
+  modelCount: number
 }
 
 /**
- * The payload an agent emits beside the tool name. The kit's agents send `{ input }` on the call
+ * The payload an agent emits beside the tool name. The built-in agents send `{ input }` on the call
  * and `{ result }` on the answer; anything else is shown as-is. Unwrapping the known key keeps the
  * details panel from reading `{"input": {"input": {…}}}`.
  */
@@ -220,6 +234,19 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
   const stepIndex = new Map<string, number>()
   /** Call key (the model's id, else the tool name) → indices of calls still awaiting an answer. */
   const openTools = new Map<string, number[]>()
+  /**
+   * The attempt that started these calls is over (it is retrying, or a new claim began): they will
+   * not answer where they are. Stopped rather than left spinning — but still open, so a journaled
+   * call the retry finishes under the same id closes its row after all.
+   */
+  const stopOpenCalls = () => {
+    for (const pending of openTools.values()) {
+      for (const index of pending) {
+        const row = rows[index]
+        if (row.kind === 'tool' && !row.done) rows[index] = { ...row, stopped: true }
+      }
+    }
+  }
 
   for (const event of ordered) {
     switch (event.type) {
@@ -260,8 +287,9 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
         const {
           name: rawName,
           toolCallId,
+          kind: callKind,
           ...rest
-        } = parsed.success ? parsed.data : { name: 'tool', toolCallId: undefined }
+        } = parsed.success ? parsed.data : { name: 'tool', toolCallId: undefined, kind: undefined }
         const name = rawName || 'tool'
         // Pair on the MODEL's call id where the runtime recorded one (two calls to the same tool in
         // one turn are otherwise indistinguishable), on the name for rows written before it did.
@@ -275,6 +303,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           seq: event.seq,
           name,
           ...(toolCallId ? { toolCallId } : {}),
+          ...(callKind === 'model' ? { model: true as const } : {}),
           input: toolPayload(rest, 'input'),
           isError: false,
           done: false,
@@ -288,17 +317,19 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           name: rawName,
           isError,
           toolCallId,
+          kind: callKind,
           ...rest
         } = parsed.success
           ? parsed.data
-          : { name: 'tool', isError: undefined, toolCallId: undefined }
+          : { name: 'tool', isError: undefined, toolCallId: undefined, kind: undefined }
         const name = rawName || 'tool'
         const result = toolPayload(rest, 'result')
         const index = openTools.get(toolCallId ?? name)?.shift()
         const call = index !== undefined ? rows[index] : undefined
         if (call?.kind === 'tool' && index !== undefined) {
+          const { stopped: _stopped, ...open } = call
           rows[index] = {
-            ...call,
+            ...open,
             result,
             isError: Boolean(isError),
             done: true,
@@ -315,6 +346,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           id: event.id,
           seq: event.seq,
           name,
+          ...(callKind === 'model' ? { model: true as const } : {}),
           result,
           isError: Boolean(isError),
           done: true,
@@ -335,6 +367,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
       case 'status': {
         const parsed = agentStatusEventDataSchema.safeParse(event.data)
         if (parsed.success) {
+          if (parsed.data.status === 'running' && (parsed.data.attempt ?? 1) > 1) stopOpenCalls()
           rows.push({
             kind: 'status',
             id: event.id,
@@ -349,6 +382,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
       }
       case 'error': {
         const parsed = agentErrorEventDataSchema.safeParse(event.data)
+        if (parsed.success && parsed.data.willRetry) stopOpenCalls()
         rows.push({
           kind: 'error',
           id: event.id,
@@ -465,6 +499,12 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
  * as progress, spinning). Rows before the first step go to {@link PREAMBLE_KEY}, rows after the
  * last closed step to {@link TAIL_KEY}.
  */
+const count = (group: TimelineGroup, row: TimelineRow) => {
+  if (row.kind !== 'tool') return
+  if (row.model) group.modelCount += 1
+  else group.toolCount += 1
+}
+
 export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
   const groups: TimelineGroup[] = []
   /** The stage rows currently attach to, or null before the first one. */
@@ -481,7 +521,7 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
     // after the stage closed and belongs to the tail, not inside it.
     if (open && row.seq <= openUntil) {
       open.rows.push(row)
-      if (row.kind === 'tool') open.toolCount += 1
+      count(open, row)
       return
     }
     if (open) {
@@ -490,7 +530,7 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
     }
     if (loose) {
       loose.rows.push(row)
-      if (row.kind === 'tool') loose.toolCount += 1
+      count(loose, row)
       return
     }
     // `headerId` is the React key, so two `__tail__` stretches never collide.
@@ -501,8 +541,10 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
       rows: [row],
       headerId: row.id,
       at: row.at,
-      toolCount: row.kind === 'tool' ? 1 : 0,
+      toolCount: 0,
+      modelCount: 0,
     }
+    count(loose, row)
     groups.push(loose)
   }
 
@@ -521,6 +563,7 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
       headerId: row.id,
       at: row.at,
       toolCount: 0,
+      modelCount: 0,
       ...(row.endedAt
         ? {
             endedAt: row.endedAt,
@@ -543,7 +586,7 @@ export function groupTimeline(rows: readonly TimelineRow[]): TimelineGroup[] {
 // never a second fetch.
 
 /**
- * Artifacts in the order the run produced them. The TABLE is the store (decision 4), so the event
+ * Artifacts in the order the run produced them. The TABLE is the store, so the event
  * rows only supply the ORDER; an artifact with no event row still appears, at the end.
  */
 export function selectArtifacts(
@@ -589,11 +632,30 @@ export interface RunWorkStats {
   asks: number
   steeringNotes: number
   artifacts: number
-  /** `ctx.decide` calls (D37) and the questions they asked. */
+  /** `ctx.decide` calls and the questions they asked. */
   decisions: number
   questions: number
-  /** Per-tool totals, busiest first. */
+  /** Per-tool totals, busiest first. Model calls are not tools: they are counted below. */
   tools: { name: string; calls: number; totalMs: number | null }[]
+  /** Model calls the runtime recorded, the failed ones, and the tokens the answered ones used. */
+  modelCalls: number
+  failedModelCalls: number
+  inputTokens: number
+  outputTokens: number
+}
+
+/** The usage a recorded model call's `tool.end` carries; zeros for one that has none. */
+export function modelUsage(result: unknown): { inputTokens: number; outputTokens: number } {
+  const usage =
+    result && typeof result === 'object' ? (result as { usage?: unknown }).usage : undefined
+  const { inputTokens, outputTokens } = (usage && typeof usage === 'object' ? usage : {}) as {
+    inputTokens?: unknown
+    outputTokens?: unknown
+  }
+  return {
+    inputTokens: typeof inputTokens === 'number' ? inputTokens : 0,
+    outputTokens: typeof outputTokens === 'number' ? outputTokens : 0,
+  }
 }
 
 export function selectWorkStats(rows: readonly TimelineRow[]): RunWorkStats {
@@ -611,6 +673,10 @@ export function selectWorkStats(rows: readonly TimelineRow[]): RunWorkStats {
     decisions: 0,
     questions: 0,
     tools: [],
+    modelCalls: 0,
+    failedModelCalls: 0,
+    inputTokens: 0,
+    outputTokens: 0,
   }
   for (const row of rows) {
     switch (row.kind) {
@@ -618,6 +684,14 @@ export function selectWorkStats(rows: readonly TimelineRow[]): RunWorkStats {
         stats.steps += 1
         break
       case 'tool': {
+        if (row.model) {
+          stats.modelCalls += 1
+          if (row.isError) stats.failedModelCalls += 1
+          const usage = modelUsage(row.result)
+          stats.inputTokens += usage.inputTokens
+          stats.outputTokens += usage.outputTokens
+          break
+        }
         stats.toolCalls += 1
         if (row.isError) stats.failedToolCalls += 1
         const entry = tools.get(row.name) ?? { calls: 0, totalMs: 0 }
@@ -657,6 +731,24 @@ export function selectWorkStats(rows: readonly TimelineRow[]): RunWorkStats {
     .map(([name, entry]) => ({ name, calls: entry.calls, totalMs: entry.totalMs }))
     .sort((a, b) => b.calls - a.calls || a.name.localeCompare(b.name))
   return stats
+}
+
+/**
+ * A SETTLED run's open work is over: a stage with no `done`, a tool call with no answer. That
+ * happens whenever a run is settled from outside its attempt — a force cancel, the sweeper, an
+ * attempt lost with its isolate — because only a live attempt closes what it opened. Left alone,
+ * those rows would spin forever on a cancelled run; this marks them `stopped`. Pure, and only
+ * ever applied when the RUN says it is over (`isRunActive` false), never inferred from the log.
+ */
+export function stopOpenWork(groups: readonly TimelineGroup[]): TimelineGroup[] {
+  return groups.map(group => {
+    const rows = group.rows.map(row =>
+      row.kind === 'tool' && !row.done ? { ...row, stopped: true } : row
+    )
+    const changed = rows.some((row, i) => row !== group.rows[i])
+    if (group.status !== 'running' && !changed) return group
+    return { ...group, status: group.status === 'running' ? 'stopped' : group.status, rows }
+  })
 }
 
 /**

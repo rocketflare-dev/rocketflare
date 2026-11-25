@@ -1,13 +1,13 @@
 /**
- * The `ai_spans` sink (D32): recorded spans batch-inserted into Postgres in the same flush as the
+ * The `ai_spans` sink: recorded spans batch-inserted into Postgres in the same flush as the
  * OTLP export, so `rocketflare traces show` works with zero credentials. A span with no tenant is
- * skipped — the table is tenant-scoped and RLS'd, and every AI path the kit traces has one.
+ * skipped — the table is tenant-scoped and RLS'd, and every AI path the app traces has one.
  *
  * Two ways to get a database, because the flush runs in two kinds of place:
  * - `databaseSpanStore(db)` — a Workflow step or a job, whose client is open until after the flush.
  * - `ownConnectionSpanStore(cfg, env)` — a request, whose client is closed in `waitUntil` possibly
  *   BEFORE the tracer's flush runs there (and a chat stream closes its own first). It opens one
- *   short-lived client per non-empty flush; Hyperdrive or Neon is the pool (D35), so that is cheap.
+ *   short-lived client per non-empty flush; Hyperdrive or Neon is the pool, so that is cheap.
  * `onConflictDoNothing` on `(tenant_id, trace_id, span_id)`: a run's root is recorded by
  * `finishStep`, which runs twice on the expiry path.
  *

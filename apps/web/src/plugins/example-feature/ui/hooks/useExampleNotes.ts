@@ -1,11 +1,11 @@
 /**
- * The plugin's data layer (D31) — the kit's hook conventions, inside a plugin's directory: one
+ * The plugin's data layer — the core hook conventions, inside a plugin's directory: one
  * hook file per resource, `api.*` for every request with the shared schema it was validated
  * against, and mutations that invalidate a family rather than writing into the cache.
  *
  * Realtime costs nothing here. The server nudges `entity.changed { entity:
  * 'example-feature:notes' }`, `invalidationsFor()` turns that into `[['example-feature:notes']]`,
- * and `WebSocketProvider` invalidates it — so these hooks never see a socket, which is the kit's
+ * and `WebSocketProvider` invalidates it — so these hooks never see a socket, which is the core
  * rule and not a plugin exception.
  */
 import {

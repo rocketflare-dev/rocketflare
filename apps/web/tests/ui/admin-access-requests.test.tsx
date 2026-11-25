@@ -31,6 +31,7 @@ const org = (id: string, name: string, slug: string) => ({
   status: 'active',
   memberCount: 3,
   seedDataCreated: false,
+  externalOrgId: null,
   lastAccessedAt: null,
   createdAt: '2025-01-01T00:00:00Z',
 })
@@ -90,7 +91,7 @@ describe('Admin → Access requests', () => {
     )
   })
 
-  it('single mode: the new_org branch is hidden (D25)', async () => {
+  it('single mode: the new_org branch is hidden', async () => {
     renderAs('single')
     fireEvent.click(await screen.findByRole('button', { name: 'Approve' }))
     expect(screen.queryByRole('tab', { name: 'New organisation' })).not.toBeInTheDocument()

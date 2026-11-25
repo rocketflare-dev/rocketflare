@@ -1,5 +1,5 @@
 /**
- * Activity log (D19): writes append events via waitUntil; `GET /api/activity` is admin+, filterable,
+ * Activity log: writes append events via waitUntil; `GET /api/activity` is admin+, filterable,
  * resolves the actor and is tenant-scoped.
  */
 import { describe, expect, it } from 'vitest'

@@ -1,7 +1,7 @@
 /**
- * Settings → Usage (D18): AI token totals for the last 7 / 30 / 90 days from
+ * Settings → Usage: AI token totals for the last 7 / 30 / 90 days from
  * `GET /api/ai/usage/summary` — grand totals as cards, then one row per (provider, model,
- * feature). Cost comes from the kit's price table (`@rocketflare/shared/ai/pricing`) and is
+ * feature). Cost comes from the shared price table (`@rocketflare/shared/ai/pricing`) and is
  * labelled an ESTIMATE, with the count of calls whose model has no price — a total that quietly
  * omits half the calls is worse than one that says so.
  * Admin+ (`manage AiConfig`); the tab is hidden otherwise.

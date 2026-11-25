@@ -1,5 +1,5 @@
 /**
- * Prompt registry contracts (D17): a prompt is a code-level definition (`PROMPT_REGISTRY` in
+ * Prompt registry contracts: a prompt is a code-level definition (`PROMPT_REGISTRY` in
  * `apps/web/src/api/services/prompts.ts`) that a tenant may override; absence of an override row
  * means "use the default". Variables are `{{name}}` placeholders the server interpolates from
  * context (`appName`, `tenantName`, `userName`, ...) — no templating engine.

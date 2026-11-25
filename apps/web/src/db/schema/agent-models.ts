@@ -1,5 +1,5 @@
 /**
- * `agent_models` — per-agent model assignment (D17): pins one registry prompt key to a tenant
+ * `agent_models` — per-agent model assignment: pins one registry prompt key to a tenant
  * `ai_configs` row and/or a model. PK (tenant, promptKey); a row exists ONLY when something is
  * overridden, so reverting is a delete and the default needs no row. `aiConfigId` cascades: deleting
  * a provider config reverts every agent pointed at it to the tenant default rather than leaving a

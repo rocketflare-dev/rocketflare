@@ -1,5 +1,5 @@
 /**
- * The D10 ability matrix (02 §10b), cell by cell — no database. If `src/permissions/CLAUDE.md`'s
+ * The ability matrix, cell by cell — no database. If `src/permissions/CLAUDE.md`'s
  * table changes, this file changes with it.
  */
 
@@ -27,9 +27,11 @@ const CRUD: Actions[] = ['create', 'read', 'update', 'delete']
 
 /**
  * `create` = create + read, nothing else (member on `File`). `createOnly` = create and NOT read
- * (member on `Feedback`: they rate answers, and only admin+ read the ratings back).
+ * (member on `Feedback`: they rate answers, and only admin+ read the ratings back). `review` =
+ * read + update, never create or delete (member on `KnowledgeFact`: they settle their OWN review
+ * items — the route's `reviewerUserId` predicate — and admin+ `manage` settles anyone's).
  */
-type Level = 'manage' | 'read' | 'create' | 'createOnly' | 'none'
+type Level = 'manage' | 'read' | 'create' | 'createOnly' | 'review' | 'none'
 
 /** Subject → per-role level, transcribed from the matrix. */
 const MATRIX: Record<string, Record<Role, Level>> = {
@@ -45,23 +47,27 @@ const MATRIX: Record<string, Record<Role, Level>> = {
   Conversation: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   AgentRun: { owner: 'manage', admin: 'manage', support: 'manage', member: 'manage' },
   Document: { owner: 'manage', admin: 'manage', support: 'manage', member: 'create' },
-  // D29 — administering groups is admin+; a member's own groups are a route-scoped read.
+  // Administering groups is admin+; a member's own groups are a route-scoped read.
   Group: { owner: 'manage', admin: 'manage', support: 'manage', member: 'read' },
   AccessRequest: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
   User: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
-  // D30 — administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
+  // Administering flags is a PLATFORM act (`manage all`), never a tenant role. Using a
   // feature is not this subject at all: it is `AuthContext.features`, which no role can override.
   FeatureFlag: { owner: 'none', admin: 'none', support: 'none', member: 'none' },
-  // D32 — traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
+  // Traces hold other people's prompts: admin+ read, members nothing, nobody writes one.
   Trace: { owner: 'read', admin: 'read', support: 'read', member: 'none' },
-  // D33 — anyone rates an answer; reading the ratings (the promotion queue) is admin+.
+  // Anyone rates an answer; reading the ratings (the promotion queue) is admin+.
   Feedback: { owner: 'create', admin: 'create', support: 'create', member: 'createOnly' },
+  // Knowledge facts: anyone reads and reviews their own items; admin+ settles anyone's.
+  KnowledgeFact: { owner: 'manage', admin: 'manage', support: 'manage', member: 'review' },
+  // MCP settings: owners and admins only — never support, which acts for the platform.
+  McpSettings: { owner: 'manage', admin: 'manage', support: 'none', member: 'none' },
 }
 
 const build = (role: Role | null, features: string[] = [], isGlobalAdmin = false) =>
   buildAbility({ role, isGlobalAdmin, features })
 
-describe('ability matrix (D10)', () => {
+describe('ability matrix', () => {
   it('covers every core subject except `all`', () => {
     expect(Object.keys(MATRIX).sort()).toEqual(CORE_SUBJECTS.filter(s => s !== 'all').sort())
   })
@@ -87,6 +93,12 @@ describe('ability matrix (D10)', () => {
             expect(ability.can('read', s)).toBe(true)
             expect(ability.can('manage', s)).toBe(false)
             for (const a of ['update', 'delete'] as Actions[]) expect(ability.can(a, s)).toBe(false)
+          } else if (level === 'review') {
+            expect(ability.can('read', s)).toBe(true)
+            expect(ability.can('update', s)).toBe(true)
+            for (const a of ['manage', 'create', 'delete'] as Actions[]) {
+              expect(ability.can(a, s)).toBe(false)
+            }
           } else if (level === 'createOnly') {
             expect(ability.can('create', s)).toBe(true)
             for (const a of ['manage', 'read', 'update', 'delete'] as Actions[]) {
@@ -169,7 +181,7 @@ describe('getEffectiveRole', () => {
   })
 })
 
-describe('pack / unpack round-trip (D13)', () => {
+describe('pack / unpack round-trip', () => {
   for (const role of ROLES) {
     it(`${role} survives the wire`, () => {
       const original = build(role, ['analytics'])

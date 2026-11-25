@@ -1,5 +1,5 @@
 /**
- * Form registry keyed by `agentKey` (D7, issue #17). **Adding an agent to the kit is one shared
+ * Form registry keyed by `agentKey`. **Adding an agent is one shared
  * input schema + one entry here + one `outputs/` entry** — two registries keyed the same way, which
  * is the right amount of ceremony: one combined map would make the run MODAL's chunk and the run
  * PAGE's chunk pull each other's components.
@@ -41,7 +41,7 @@ const CORE_AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
 }
 
 /**
- * Core forms plus every installed plugin's (D31). A plugin's agent needs no entry — `formFor`
+ * Core forms plus every installed plugin's. A plugin's agent needs no entry — `formFor`
  * falls through to a form generated from its own JSON Schema — so this merge is the first rung
  * only, and a plugin that registers one keeps it in its own lazy chunk.
  */

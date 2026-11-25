@@ -8,12 +8,25 @@ reference it points at.
 `wrangler.staging.toml`, `worker-configuration.d.ts`, `scripts/cf-provision.sh`, the parity test.
 `wrangler` is a devDependency of that package, so every wrangler command runs **in `apps/web`** —
 either `pnpm --filter @rocketflare/web exec wrangler …` from the root (shorthand `pnpm web exec wrangler …`)
-or the root scripts that delegate there (`pnpm deploy`, `pnpm deploy:staging`, `pnpm provision`,
+or the root scripts that delegate there (`pnpm run deploy`, `pnpm run deploy:staging` — `run`, because a bare `pnpm deploy` is pnpm's own
+command and deploys nothing — `pnpm provision`,
 `pnpm types`). `pnpm exec wrangler` at the workspace root does not resolve. Only `apps/web` is
 deployed. **The CLI (`apps/cli`) is not deployed**: CI builds it (`pnpm build` → `apps/cli/dist`) as
 a compile check, and it is distributed through the repo (`pnpm cli …`, or `pnpm --filter @rocketflare/cli
 build` and run `dist/cli.js`) or an internal registry — publishing the CLI is an app decision; the
 package is private by default (`"private": true`, like `packages/shared`, which must stay private).
+
+## Running somewhere other than Cloudflare
+
+Rocketflare is designed for Cloudflare, and there is no supported way to run it anywhere else.
+Realtime, queues, workflows, files, rate limits, cron and the default AI are Cloudflare services
+the code calls directly.
+
+If you need to run it elsewhere (your own servers, another cloud, an IT policy that rules out
+Cloudflare), use **[Rocketpod](https://github.com/rocketflare-dev/rocketpod)**, in the same GitHub
+organisation. It's the container fork: Node, Postgres for everything, S3, Docker Compose and Helm.
+It often lags behind Rocketflare in features, so check its changelog for what you need before
+choosing it.
 
 ## Topology
 
@@ -27,7 +40,7 @@ package is private by default (`"private": true`, like `packages/shared`, which 
               │ .toml            │  │                  │   + NotificationsHub DO
               └───────┬──────────┘  └────────┬─────────┘   + AgentRunWorkflow
    bindings:  RATE_LIMIT_KV  [JOBS_QUEUE  FILES  AGENT_RUN_WORKFLOW  AI]  ASSETS  (+ HYPERDRIVE under postgres)
-   crons:     0 4 * * * (prune)  + every installed plugin's       routes: /api /auth /ws + plugins'
+   crons:     0 4 * * * (prune) · */10 (sweep runs) + plugins'    routes: /api /auth /ws + plugins'
                       │                      │
    neon:      DATABASE_URL secret        DATABASE_URL secret              (pooled Neon host, HTTPS + WS)
    postgres:  Hyperdrive <app>-staging   Hyperdrive <app>-production      (direct host, any Postgres)
@@ -125,21 +138,23 @@ in both files (one local database).
 | Hyperdrive (`postgres` only) | `HYPERDRIVE` | `<app>-production` / `<app>-staging` | `pnpm --filter @rocketflare/web exec wrangler hyperdrive create <name> --connection-string="<direct neon url>"` → `id` |
 | KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @rocketflare/web exec wrangler kv namespace create <name>` → `id` |
 | Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` (name-referenced) |
+| Jobs dead-letter queue | — (no binding; `[[queues.consumers]] dead_letter_queue`) | `<app>-jobs-dlq` / `<app>-jobs-dlq-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` — must exist before the deploy that names it. Receives a message whose handler threw on every one of `max_retries`; **no consumer is bound** (its name shares the `<app>-jobs` prefix `queue.ts` dispatches on, so one would reprocess it). Inspect it in the dashboard (Queues → the DLQ → Messages) or `… wrangler queues info <name>` |
 | R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>` |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
-| Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name** |
+| Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name**. Optional `concurrency = { limit = N }` (Wrangler ≥ 4.127) caps RUNNING instances across every tenant — above it instances queue, and `waiting` (parked) ones do not count; it is a cost backstop, not the per-tenant `AGENT_MAX_ACTIVE_RUNS_PER_TENANT`. Not set by the kit; if you set it, set it in BOTH tomls — a deploy without it removes the limit |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; the zero-key floor for chat (`@cf/zai-org/glm-4.7-flash`) and embeddings (`@cf/baai/bge-m3`); **billed per call to this account** (10k free neurons/day), `wrangler dev` proxies to the logged-in account; remove from BOTH tomls for zero-spend |
-| Analytics (a PLUGIN, D31) | — | — | **no resource and no binding**: its cubes read through the request's database handle (either driver), its fact tables rebuild on the `15 * * * *` cron it declares, and `/cubejs-api` + `/mcp` are routes of this Worker. Installing it means adding that cron and those two prefixes to BOTH tomls — `pnpm provision cloudflare <env>` reads them off the installed surface and writes them (decision 12) |
+| Analytics (a PLUGIN, D31) | — | — | **no resource and no binding**: its cubes read through the request's database handle (either driver), its fact tables rebuild on the `15 * * * *` cron it declares, and `/cubejs-api` is a route of this Worker (its cube tools reach MCP through the app's own `/mcp`). Installing it means adding that cron and that prefix to BOTH tomls — `pnpm provision cloudflare <env>` reads them off the installed surface and writes them (decision 12) |
 | Analytics Engine (optional) | `ANALYTICS_ENGINE` | `<app>_analytics[_staging]` | declared in toml — deliberately NOT wired by the kit (only a comment in both tomls) |
 | Static Assets | `ASSETS` | — | `[assets] directory = "./dist/ui"` uploaded atomically with each deploy; `run_worker_first` keeps `/api`, `/auth`, `/ws` — and every prefix an installed plugin declares — off the asset router |
 | RLS app role (optional, docs/RLS.md, not wired yet) | `postgres`: `HYPERDRIVE_APP`; `neon`: an `APP_DATABASE_URL` Worker secret | `<app>-<env>-app` | `postgres`: `… hyperdrive create … --caching-disabled`; `neon`: `wrangler secret put APP_DATABASE_URL` |
 | Plugin resources (D31) | whatever the plugin's `plugin.json` declares (`APPROVALS_CACHE`…) | `<app>-<id>-<name>[-staging]`, and `<APP>_<ID>_<NAME>[_STAGING]` for KV | `pnpm provision cloudflare <env>` — it reads each installed plugin's `bindings[]`, creates the `kv`/`queue`/`r2` ones through `cf-provision.sh` and patches every block into BOTH tomls |
+| Version metadata (D44) | `CF_VERSION_METADATA` | — (no resource) | `[version_metadata] binding = "CF_VERSION_METADATA"` in BOTH tomls: the deployment id each agent run records as `worker_version_id`, so `rocketflare agents inspect` says which deploy a run last ran on. No create step |
 | Plugin Workflow / Durable Object (D31) | whatever the plugin declares (`ORDERS_SYNC`, `ORDERS_HUB`…) | workflow `<app>-<id>-<name>[-staging]`; a DO binding has no account-scoped name | **no create step** — `pnpm provision cloudflare <env>` writes `[[workflows]]` / `[[durable_objects.bindings]]` (+ a `plugin-<id>-v1` `[[migrations]]` tag) into both tomls and `wrangler deploy` registers them. The `class_name` resolves through the sixth barrel, `apps/web/src/plugins/worker-exports.ts` |
 
 `pnpm web provision:cloudflare <staging|production> [app] [--apply] [--force]` (the `apps/web`
 script → `scripts/cf-provision.sh`, which `cd`s to `apps/web` itself so it also works as
 `bash apps/web/scripts/cf-provision.sh …`) creates a RESOURCE LIST idempotently — the kit's own
-ones, KV, Queue and R2 (plus Hyperdrive when `DATABASE_DRIVER` — from the environment, else the
+ones, KV, the jobs Queue and its dead-letter queue, and R2 (plus Hyperdrive when `DATABASE_DRIVER` — from the environment, else the
 toml — is `postgres`), are the default list, each found by name and reused when it exists, and `PLUGIN_RESOURCES` (a JSON array of `{ type, name, binding }`, set by
 `pnpm provision cloudflare <env>` from the installed plugins' manifests) appends to it — and either
 prints the Hyperdrive/KV ids
@@ -153,10 +168,11 @@ always — so its `plugin.json` DECLARES what the account has to provide and `pn
 cloudflare <env>` applies it. `scripts/provision/plugin-resources.ts` owns the naming rule
 (`<app>-<id>-<name>[-staging]` for a queue, bucket or Workflow, `<APP>_<ID>_<NAME>[_STAGING]` for a
 KV namespace, mirroring the kit's own `<APP>_RATE_LIMIT[_STAGING]`) and the refusal: a `type`
-outside `kv | queue | r2 | workflow | durable_object` names itself in the error rather than being
+outside `kv | queue | r2 | workflow | durable_object | images` names itself in the error rather than being
 skipped, because a binding quietly not created is a Worker that deploys and then 503s.
 
-**Two of those five are declared rather than created.** `workflow` and `durable_object` need no
+**Three binding types are declared rather than created.** `images` is a single `[images]` table that
+at most one installed plugin may declare. `workflow` and `durable_object` need no
 `wrangler … create`: the block in the toml is the whole registration, and `wrangler deploy` does
 the rest. They are writable at all only because of the sixth barrel (D31) — a `class_name` resolves
 against the named exports of `src/worker.ts`, so until `apps/web/src/plugins/worker-exports.ts`
@@ -188,6 +204,72 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 `deploy <env>` · `secrets <env>` · `all` — each idempotent, each ending in one `Verify:` line;
 `SETUP.md` Part 3 has the table.
 
+## Zone, DNS and multiple hosts
+
+`pnpm provision urls` writes one `routes` entry per host into each toml: the app host first, then
+every host in that toml's value of the variable a plugin's `publicSites.hostsVar` names (for the
+`sites` plugin, `SITES_HOSTS = "www.example.com=www,docs.example.com=docs"`). Each toml is read for
+its own environment, so staging's hosts need not be production's. Re-running it is a no-op, it never
+drops an entry, and a hand-written route stays as you wrote it. Editing the variable changes nothing
+on Cloudflare until you run `pnpm provision urls` and deploy.
+
+The gate holds this together: `wrangler-parity.test.ts` fails when a host in a toml's variable has
+no route in that same toml, so a host added by hand and never routed stops at `pnpm gate`.
+
+What each host needs on Cloudflare:
+
+- **A zone in the same account as the Worker.** The phase checks every host before it writes
+  anything and stops on one whose zone it cannot find. **A site host on a different zone from the
+  app's is fine, as long as that zone is also in this account**: `app.example.com` and
+  `www.another.example` can share a Worker when both `example.com` and `another.example` are zones
+  here. A host on a zone held in another Cloudflare account cannot be routed to this Worker. The
+  check finds zones through the API token, so it only proves the account if the token is scoped to
+  that one account.
+- **The app alone is a custom domain; with site hosts, every host is a zone route.** An app with
+  no site hosts gets `{ pattern = "app.example.com", custom_domain = true }`, and `wrangler deploy`
+  creates its DNS record and certificate (delete an existing CNAME there first; a deploy over one
+  fails). Once a toml has site hosts, `provision urls` writes the app and every site host as
+  `{ pattern = "<host>/*", zone_name = "<zone>" }` instead, converts the custom-domain entries it
+  wrote earlier, and creates a proxied `AAAA 100::` record at each host that has no A, AAAA or
+  CNAME yet (an existing proxied one is kept; a DNS-only one is an error, since a route never sees
+  that traffic).
+  **Why not several custom domains:** one Worker on two custom domains of one zone shares one
+  certificate and address, so a browser reuses the connection it opened for one host to fetch the
+  other — and Cloudflare answers that request with a bare 403 before the Worker runs. No WAF event,
+  no Worker log, and an incognito window (a fresh connection) works, which makes it look like a
+  cookie or extension problem. `curl --connect-to` reproduces it. Zone routes over proxied records
+  have no such coupling.
+- **An exact hostname.** List each host. An apex host is allowed; redirecting `example.com` to
+  `www` is a Cloudflare redirect rule, not a route here.
+
+The API token needs Zone → DNS — Edit on every one of those zones (§ Cloudflare API token scopes),
+including a zone only a site host uses.
+
+A site host needs the app on a custom host of its own: an active `routes` line turns off wrangler's
+`workers.dev` default, so `provision urls` refuses site hosts while the app is on `workers.dev`.
+
+`pnpm provision urls` takes the hosts variable's value per environment from
+`--production-site-hosts` / `--staging-site-hosts` (the variable's own syntax, for the `sites`
+plugin `www.example.com=www`), else the toml, else a question on a terminal; an environment left
+empty is named in a warning, since its sites then answer nothing deployed.
+
+Removing a host from the variable does not remove its route. Until you delete the entry from
+`routes` and deploy, the host still reaches this Worker and is answered as the app.
+
+While an installed plugin declares `publicSites`, `[assets] run_worker_first` in both tomls is
+`["/*", "!/assets/*", "!/site-assets/*"]`, and `not_found_handling` is `"none"`: the asset router
+ignores the host, so anything narrower would answer `/about` on a site host with the app's
+`index.html`. `pnpm plugin add` writes both, keeping the previous lines in marked comments, and
+`pnpm plugin remove` puts those bytes back. Every app navigation then goes through the Worker and
+the SPA catch-all rather than straight from the asset router, only `/assets/*` (the admin bundle)
+and `/site-assets/*` (the bundle shipped to public sites) skip the Worker, and a missing file under
+either is a plain 404.
+
+Those restored bytes predate every plugin prefix provisioned while `/*` was in force. When one is
+missing, `pnpm plugin remove` (or an `upgrade` whose release drops `publicSites`) marks the list
+`# rocketflare:reprovision` and prints a re-provision step, and `pnpm plugin check` fails until
+`pnpm provision cloudflare <env>` has put the prefixes back and cleared the mark.
+
 ## Crons
 
 `[triggers] crons` must be identical in both tomls (parity test); `apps/web/src/api/scheduled.ts`
@@ -195,7 +277,8 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 
 | Expression | Task | What it does | Local trigger (`wrangler dev` never fires crons itself) |
 |---|---|---|---|
-| `0 4 * * *` | `pruneExpired`, `pruneAiSpans` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE across every tenant (D32) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `0 4 * * *` | `pruneExpired`, `pruneAiSpans`, `pruneEvents`, `pruneAgentTurns` | deletes expired sessions, consumed/expired magic links, invitations older than 30 days; then `ai_spans` older than `OBSERVABILITY_SPAN_RETENTION_DAYS` (14), one DELETE across every tenant (D32); then `plugin_events` older than `EVENTS_RETENTION_DAYS` (7, optional var — the payloads may hold personal data, D42); then the tool-loop journal (`agent_run_turns`) of agent runs settled more than `AGENT_TRANSCRIPT_RETENTION_DAYS` ago (30, optional var — an active run's is never touched; runs, events and decisions are kept, D44) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"` |
+| `*/10 * * * *` | `sweepLostRuns`, `sendReminders` | `sendReminders`: one reminder per pending ask past its `remind_at` (`meta.hitl.remindAfter`), up to 100 per sweep, across tenants. `sweepLostRuns` settles agent runs whose Workflow instance ended without settling them — up to 100 active runs untouched for 10 minutes, oldest first: a `queued` row with no instance gets one, an `errored` instance → `failed`, `terminated` → `cancelled`, `complete` → `succeeded`, a park whose asks all expired → `cancelled`; a `running` or `waiting` instance is left alone (D44) | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=*/10+*+*+*+*"` |
 | `15 * * * *` | `analytics.refreshFactTables` (the analytics PLUGIN, D31) | every registered fact table, per tenant, DELETE+INSERT in one transaction; per-tenant failures collected, logged as a warning, never abort the run. The expression is the plugin's `crons` declaration and the task is `ServerPlugin.scheduledTasks` — **a task under an expression no toml declares simply never runs** | `curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"` — or, for one organisation, `rocketflare analytics refresh-facts` |
 
 Health of the fact tables: `GET /api/analytics/facts/status` (admin+; `stale` = newest source row
@@ -253,14 +336,16 @@ in **both** files, and split a heavy phase into its own step to draw a fresh bud
 
 | Kind | Where | Examples |
 |---|---|---|
-| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50), the optional budgets `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` / `AGENT_TENANT_DAILY_COST_USD` (unset = no cap, D39), `AGENT_INTERRUPT_TIMEOUT`
+| Non-secret config | `[vars]` in each toml (committed) | `APP_ENV`, `APP_URL`, `APP_NAME`, `RELEASE_VERSION`, `LOG_LEVEL`, `EMAIL_FROM`, `TENANCY_MODE`, `SIGNUP_MODE`, `TENANT_SCOPE_MODE`, `AGENT_MAX_OUTPUT_TOKENS` (16384), `AGENT_MAX_TURNS` (30), `CHAT_KNOWLEDGE_TOOLS` (`true`), `CHAT_HISTORY_MAX_CHARS` (24000), `AGENT_MAX_ACTIVE_RUNS_PER_TENANT` (50), the optional budgets `AGENT_RUN_MAX_TOKENS` / `AGENT_RUN_MAX_COST_USD` / `AGENT_TENANT_DAILY_COST_USD` (unset = no cap, D39), the optional knowledge vars `RERANK_MIN_SCORE` (unset = off) / `RERANK_CANDIDATES` (unset = 20) / `KNOWLEDGE_TENANT_DAILY_COST_USD` (unset = no cap), `AGENT_INTERRUPT_TIMEOUT`
 (`168 hours` — how long an agent run parked on a human question waits before it expires; it is
 passed verbatim to `step.waitForEvent`, so it must be a duration the platform accepts, between
 1 second and 365 days. **Instance retention is the real bound, not this**: 30 days on Paid, 3 on
 Free, after which the instance is gone and the park is recovered by `expireParkedRun` plus the
 `sendEvent → not_found` restart), `FEATURES_ENABLED` (D30 —
 feature keys this environment ships at all; blank is fail-closed, and this is the knob that keeps an
-unreleased surface dark in production while staging has it). `OBSERVABILITY_CAPTURE_CONTENT` (`true`), `OBSERVABILITY_SPAN_RETENTION_DAYS` (`14`) (D32). Defaulted in `config.ts` and **not** declared in the tomls until used: the OIDC sign-in vars `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_LABEL` (`Single sign-on`), `OIDC_SCOPES` (`openid email profile`), `AUTH_OIDC_ONLY` (`false`; `true` without an issuer is a config error), `OIDC_TRUST_EMAIL` (`false` — a missing `email_verified` is refused; `true` only for an issuer that controls the email claim, e.g. single-tenant Entra) — add them to BOTH tomls to turn SSO on (`SETUP.md` 2.3b); `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`) — to set one, add the key to BOTH files (the parity test compares `[vars]` keys); § Tracing |
+unreleased surface dark in production while staging has it; `mcp` there ships the MCP server and its OAuth authorization server — `/oauth/*` and the
+`.well-known` discovery documents, in both tomls' `run_worker_first`,
+`docs/CONCEPTS.md` §19). `OBSERVABILITY_CAPTURE_CONTENT` (`false`), `OBSERVABILITY_SPAN_RETENTION_DAYS` (`14`) (D32). Defaulted in `config.ts` and **not** declared in the tomls until used: the OIDC sign-in vars `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_LABEL` (`Single sign-on`), `OIDC_SCOPES` (`openid email profile`), `AUTH_OIDC_ONLY` (`false`; `true` without an issuer is a config error), `OIDC_TRUST_EMAIL` (`false` — a missing `email_verified` is refused; `true` only for an issuer that controls the email claim, e.g. single-tenant Entra) — add them to BOTH tomls to turn SSO on (`SETUP.md` 2.3b); `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`); the MCP server's `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90), `MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60), `MCP_CALLS_PER_USER_PER_MINUTE` (120), `MCP_CALLS_PER_TENANT_PER_MINUTE` (600) — to set one, add the key to BOTH files (the parity test compares `[vars]` keys); § Tracing |
 | Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `OIDC_CLIENT_SECRET` (optional even with OIDC on — a public client has none); AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `TYPESAFE_API_KEY` (D37: platform TypeSafe/Jev for `ctx.decide`; without it decisions fall back to the chat model), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `DATABASE_URL` — under `neon` THE connection (the pooled Neon URI, put by `pnpm provision secrets|deploy`), under `postgres` only a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
@@ -326,12 +411,13 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                   │
                                   └─► kit.yml (the kit only — `kitOnly`, so a copy has no such file)
                                         ├─ kit-checks → porting note → plugin-api.md diff → plugin check
-                                        │               → defaultPlugins (no database)
+                                        │               → CI plugin list (no database)
                                         ├─ renamed    → rename to `my-app`, commit → pnpm gate
-                                        └─ plugins    → plugin add each `defaultPlugins` entry at its ref
+                                        └─ plugins    → plugin add each `defaultPlugins` +
+                                                          `.github/ci-plugins.json` entry at its ref
                                                         → db:generate → db:migrate:ci
                                                         → GATE_SUITE_DRIVER=neon pnpm gate (the whole
-                                                          suite under neon; skipped with no defaults)
+                                                          suite under neon; skipped with none)
 
  push tag X.Y.Z ──► deploy.yml ─► guard: anything to deploy? (release-check.mjs --deployable)
                                   ├─ no  → gated, ci and both deploys skipped; the step summary says why
@@ -394,8 +480,9 @@ if: |
 
 **A copy's CI is one job, and it is the gate.** `ci.yml` adds nothing to `pnpm gate` but the
 secrets scan, so a green PR means exactly what a green `pnpm gate` on a laptop means, and what
-Launch's ship gate runs in a sandbox (`tests/config/ci-workflows.test.ts` holds the file to that:
-no second test job, no `services:` database beside the compose file, no `--skip`). A copy's
+Launch's ship gate runs in a sandbox. Keep it that way: no second test job, no `services:`
+database beside the compose file, no `--skip`. The kit pins its own `ci.yml` to that shape, and
+`scripts/kit-check.mjs` checks a copy's against the Launch contract. A copy's
 plugins are installed and committed, so the one gate covers them. What proves the KIT — what a
 rename does to it, what a fresh clone installs, whether its published plugin API moved — is
 `kit.yml`, which is `kitOnly`: the rename deletes it and `kit:upgrade` never ports it. It is a
@@ -461,19 +548,24 @@ draft — builds from the tag as before; an asset that fails verification fails 
  publish the draft ─► production: fetch + verify → (no build) → start/upload/migrate/activate
 ```
 
-### Default plugins in CI, and the template a plugin repository calls (D31, decision 5)
+### Plugins in CI, and the template a plugin repository calls (D31, decision 5)
 
 The gate's steps live in ONE place, `pnpm gate` (`scripts/lib/gate-lib.mjs`), and every workflow
 runs that command rather than restating it: a copy's `ci.yml` once, and in the kit `kit.yml` twice
-more — renamed to a hyphenated slug, and with every default plugin installed and the whole suite
-under `neon` (`GATE_SUITE_DRIVER=neon`). A second copy of the steps would prove nothing about the
+more — renamed to a hyphenated slug, and with every CI plugin installed and the whole suite
+under `neon` (`GATE_SUITE_DRIVER=neon`). The CI plugins are `defaultPlugins` (what a fresh clone
+installs — empty in the kit, where analytics is opt-in) plus the kit-only `.github/ci-plugins.json`
+(analytics, as a canary: the plugin with the most tables, cubes, crons and UI, so a kit change that
+breaks an installed plugin fails on the kit's pull request). A second copy of the steps would prove nothing about the
 copy nobody ran.
 
-`defaultPlugins` in `.rocketflare.json` is a list of OBJECTS, and CI is its only strict reader:
+`defaultPlugins` in `.rocketflare.json` and `plugins` in `.github/ci-plugins.json` are lists of
+OBJECTS, and CI is their only strict reader (`scripts/default-plugins.mjs`; `--ci` adds the second):
 
 ```json
-"defaultPlugins": [
-  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugin-analytics.git", "ref": "1.0.2" }
+"plugins": [
+  { "id": "analytics", "repo": "https://github.com/rocketflare-dev/rocketflare-plugins.git",
+    "ref": "3.8.2", "subdir": "plugins/analytics" }
 ]
 ```
 
@@ -481,11 +573,11 @@ copy nobody ran.
 repository required of every plugin manifest); `ref` because CI installs a PINNED version rather
 than whatever the default branch says this morning; `subdir` when the plugin is not the root of its
 repository. A bare string parses as an id with no repo and is reported as such rather than having a
-URL guessed for it. With the list empty `kit-checks` still reads it and says so — that is the
-answer worth seeing on a bare kit — and the `plugins` gate is skipped, since with nothing installed
-it would only re-run the renamed one's suite.
+URL guessed for it. With both lists empty `kit-checks` still reads them and says so, and the
+`plugins` gate is skipped, since with nothing installed it would only re-run the renamed one's
+suite.
 
-**`pnpm kit:release X.Y.Z` refuses a version its default plugins are not ready for**: every entry
+**Kit repository only — `pnpm kit:release X.Y.Z` refuses a version its CI plugins are not ready for**: every entry
 must still resolve at the ref the kit pins (`git ls-remote`), and the `minKit` floor it declares
 there must be at or below the version being cut. A plugin still carrying the retired `requires.kit`
 is named as such, with the edit, rather than approximated — there is no range machinery left to fall
@@ -572,14 +664,15 @@ was never provisioned. `isDeployable` (`scripts/lib/upgrade-lib.mjs`, unit-teste
 ambiguous case, because a false skip is a release quietly not happening.
 
 **Version rule.** The git tag must equal `version` in the **root** `package.json`; the job fails
-otherwise. It also fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a
-matching `.rocketflare.json` `kit.version` (`scripts/release-check.mjs --tag`): a release with no
-porting note is a permanent gap in the chain `/rf-upgrade` walks, and every copy of the kit has to
-step over it. `pnpm kit:release <version>` writes all of that, so the gate passes by construction — and in the
-kit it also refuses a version whose `defaultPlugins` no longer resolve at their pinned ref
-(D31, above).
+otherwise. In an app that is the whole rule: bump the root version, commit, tag.
+*Kit repository only:* the same step (`scripts/release-check.mjs --tag`, a no-op in an app) also
+fails without `docs/upgrades/<tag>.md`, its `CHANGELOG.md` section and a matching
+`.rocketflare.json` `kit.version` — a kit release with no porting note is a permanent gap in the
+chain `/rf-upgrade` walks, and every copy has to step over it. `pnpm kit:release <version>` writes
+all of that, so the gate passes by construction, and refuses a version whose `defaultPlugins` or
+`.github/ci-plugins.json` entries no longer resolve at their pinned ref (D31, above).
 **Released history is never rewritten** — a copy pins a kit commit and a force-push orphans it. One tag ships `apps/web` and `apps/cli` together — the `apps/*` and `packages/*` versions
-are informational and are not checked. Bump the root version, commit, tag. The kit itself has one
+are informational and are not checked. The kit itself has one
 more step after the tag, which nothing automates: updating rocketflare.dev's changelog
 (`CONTRIBUTING.md`, "Cutting a release"). A Claude Code `PreToolUse` hook
 (`scripts/release-site-nudge.mjs`) reminds the agent of it on any commit that changes the root
@@ -589,7 +682,7 @@ Publishing the Release is the promotion gate (required reviewers are unavailable
 on the free plan; add them to the `production` environment if the plan allows). Production does not
 re-run the CI gate: it ships the tag staging validated. `RELEASE_VERSION` is a `[vars]` override at
 deploy time, surfaced by `/auth/session`, the nav footer and `rocketflare status`. Local
-`pnpm deploy[:staging]` (root → `apps/web`: `build:ui` + `wrangler deploy`) exist as escape hatches;
+`pnpm run deploy[:staging]` (root → `apps/web`: `build:ui` + `wrangler deploy`) exist as escape hatches;
 CI is the path. `wrangler deploy` always runs with `apps/web` as cwd so `[assets] directory =
 "./dist/ui"` resolves — never call it from the root.
 
@@ -602,13 +695,19 @@ holding the custom domains. One token may serve both environments.
 
 ## Observability
 
-- `[observability.logs] enabled = true, head_sampling_rate = 1, invocation_logs = false` in both
-  files: structured `console`/pino output is retained in the Workers Logs dashboard; invocation
-  logs are off to keep the volume to what the app emits.
+- `[observability.logs] enabled = true, head_sampling_rate = 1, invocation_logs = true` in both
+  files: structured `console`/pino output is retained in the Workers Logs dashboard, alongside one
+  platform invocation line per request (method, URL, status, Ray ID, duration) — what tells "the
+  Worker answered 403" from "Cloudflare did, before the Worker". Each counts toward the plan's log
+  events; on a high-traffic app lower `head_sampling_rate` rather than turn invocation logs off.
+  Invocation logs record each request's full URL, query string included, so treat access to
+  Workers Logs (and any Logpush destination) as sensitive.
 - `pnpm --filter @rocketflare/web exec wrangler tail [-c wrangler.staging.toml] [--format pretty]` streams live logs;
   `--status error` filters.
 - `pnpm --filter @rocketflare/web exec wrangler deployments list`, `… wrangler workflows instances list <name>`,
-  `… wrangler queues info <name>` for the async parts.
+  `… wrangler queues info <name>` for the async parts — `<app>-jobs-dlq[-staging]` holds every job
+  that exhausted its retries (a failed `document.reembed` resumes when re-requested:
+  `POST /api/ai/documents/reembed`; a failed document is retried from the Documents page).
 - AI traces (D32): spans for every chat turn, agent run, tool call, retrieval, embeddings batch and
   AI job land in the tenant's `ai_spans` rows (read with `rocketflare traces list|show`) and, when a
   backend is configured, are exported as OTLP from `waitUntil`, never on the response path —
@@ -640,9 +739,9 @@ turn or agent run should appear in the backend within a minute.
 
 Headers go in with `pnpm --filter @rocketflare/web exec wrangler secret put OTEL_EXPORTER_OTLP_HEADERS
 [-c wrangler.staging.toml]`, or from `.provision.env` through `pnpm provision secrets <env>`. Values
-are URL-encoded per the OTel spec. `OBSERVABILITY_CAPTURE_CONTENT = "false"` strips prompts,
-completions and tool I/O from BOTH the export and `ai_spans` (names, models, tokens and latency
-stay). `OBSERVABILITY_SPAN_RETENTION_DAYS` bounds the local store only — the backend keeps its own
+are URL-encoded per the OTel spec. Prompts, completions and tool I/O are not captured unless
+`OBSERVABILITY_CAPTURE_CONTENT = "true"`, which records them in BOTH the export and `ai_spans`
+(names, models, tokens and latency are always kept). `OBSERVABILITY_SPAN_RETENTION_DAYS` bounds the local store only — the backend keeps its own
 retention. Export failures are logged (`tracing: OTLP export returned a non-OK status`) and never
 fail a request; `wrangler tail` is where to look.
 
@@ -650,7 +749,7 @@ fail a request; `wrangler tail` is where to look.
 
 | Situation | Action |
 |---|---|
-| Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list` |
+| Bad Worker version, schema unchanged | `pnpm --filter @rocketflare/web exec wrangler rollback [-c wrangler.staging.toml]` — previous version, seconds. Or `wrangler rollback <version-id>` from `deployments list`. Agent runs in flight resume on the rolled-back code: a rollback that also rolls back an agent's `meta.version` applies its `onVersionChange` like any other version change |
 | Need a specific earlier tag | Actions → Deploy → `production` from that tag, or publish a Release on the earlier tag. On the deployer path a tag whose release carries `launch-bundle-<tag>.tgz` redeploys those exact bytes (build once); an older one builds from the tag |
 | Schema migration must be undone | migrations are forward-only: write a compensating migration, tag, and run the dance. `wrangler rollback` does not touch the database |
 | Bad deploy right after switching a deployment to `neon` | `wrangler rollback` to the last `postgres` version — it restores that version's `HYPERDRIVE` binding, which is why the Hyperdrive configs are kept about a week (§ Database driver). Then switch the toml back with `pnpm provision cloudflare <env> --driver postgres` before the next deploy |

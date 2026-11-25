@@ -39,6 +39,12 @@ To turn it on, a global admin opens <http://localhost:3000/admin/feature-flags> 
 A new organisation gets one welcome note from the `onTenantCreated` hook. Members may read and
 create; editing and deleting other people's notes is admin-level (`ExampleNote` grants).
 
+Creating a note also EMITS `example-feature.note.created` (D42). Two subscribers get their own
+queued delivery: the handler writes an `example_note.created` row to the activity feed, and the
+`example-feature.note-stats` agent is triggered (not for a title starting "draft") — it shows on
+<http://localhost:3000/agents> with the event as who started it. `GET /api/agents/bindable?event=
+example-feature.note.created` lists it as bindable too.
+
 ## 3. The smoke job — producer → queue → consumer
 
 `pnpm cli example-feature ping` calls `POST /api/example-feature/ping`, which ENQUEUES
@@ -54,7 +60,19 @@ handler verifies the signed state, re-checks the flag for the tenant the state n
 the same ping. It is the shape every consent callback and webhook in a plugin follows. A tampered or
 expired link answers 401; with the flag off, 404.
 
-## 5. Deleting it
+## 5. The example SSO — signing someone in through the identity seam (development only)
+
+Sign out, open `/login`: "Example SSO (development only)" sits under the other methods with an
+email field (`ServerPlugin.loginMethods`). Submitting goes to
+`/api/hooks/example-feature/sso/start?email=…`, which plays an identity provider — it vouches for any
+address, which is why both routes 404 outside `APP_ENV=development` — and redirects to `/sso/callback`,
+which verifies the signed assertion and returns `identityFor(c, 'example-feature').signIn(...)`.
+Without a tenant the usual `SIGNUP_MODE` applies (`invite_only` → "There's no invitation…"). Add
+`&tenantId=<id>&role=member` to the start URL (flag on for that tenant) and the person lands in that
+organisation with a membership marked "Managed" on Settings → People. The plugin wrote no session,
+user or membership itself — that is the point.
+
+## 6. Deleting it
 
 `pnpm plugin remove example-feature` shows the plan; `--apply` deletes its directories (this skill
 included), its barrel lines and its surface. Then `pnpm db:generate` emits `DROP TABLE

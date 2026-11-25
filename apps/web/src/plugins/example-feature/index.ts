@@ -1,5 +1,5 @@
 /**
- * `example-feature` — the reference plugin's SERVER entry (D31, decision 3).
+ * `example-feature` — the reference plugin's SERVER entry.
  *
  * One of the four published files a plugin has (this, `./ui`, the shared entry and the CLI one);
  * everything else under this directory is private, which is what lets the plugin's own semver cover
@@ -9,9 +9,9 @@
  * Read this file top to bottom and you have the whole server half: which prefix it mounts and
  * behind which gate, which job types it handles, which tools it gives every agent run, what a new
  * organisation and the demo seed get, and which CASL rules it adds. The host merges each of those
- * into a kit registry it cannot otherwise be edited into.
+ * into a core registry it cannot otherwise be edited into.
  *
- * **It is also the boundary.** The registration slots below are the kit's shapes, and the plugin's
+ * **It is also the boundary.** The registration slots below are the core shapes, and the plugin's
  * own code is written against the plugin surface — so the adapters (`toolCtx`, and the two hook
  * spreads) are called here, once each, and nowhere else. That is the sentence the whole contract
  * makes true: *a plugin imports only from declared entries, and receives everything else as
@@ -20,22 +20,29 @@
 
 import {
   EXAMPLE_FEATURE_FLAG,
+  EXAMPLE_NOTE_STATS_AGENT,
+  EXAMPLE_NOTE_STATS_PROMPT,
   EXAMPLE_NOTE_SUBJECT,
   EXAMPLE_PING_JOB,
   exampleFeatureShared,
 } from '@rocketflare/shared/plugins/example-feature/index'
-import type { ServerPlugin, Tool } from '@/plugins/api'
+import type { ServerPlugin } from '@/plugins/api'
 import { requireFeature, toolCtx } from '@/plugins/api'
+import { exampleNoteStatsAgent, exampleNoteStatsPrompt } from './agents/note-stats'
 import { onTenantCreated, seedDemo } from './api/hooks'
 import { exampleFeaturePublicRouter } from './api/public'
 import { exampleFeatureRouter } from './api/routes'
+import { EXAMPLE_SSO_START_PATH } from './api/sso'
+import { EXAMPLE_SSO_METHOD_ID, exampleSsoPolicy } from './api/sso-policy'
+import { exampleNoteCreatedHandler } from './events/note-created'
 import { handleExamplePing } from './jobs/ping'
-import { listExampleNotesTool } from './tools/list-example-notes'
+import { exampleNoteEntityType } from './knowledge/entity-types'
+import { exampleAgentTools } from './tools/list-example-notes'
 
 export const exampleFeatureServer = {
   shared: exampleFeatureShared,
   /**
-   * **The flag gates the MOUNT, not each route** (D30). One middleware beneath the whole prefix
+   * **The flag gates the MOUNT, not each route**. One middleware beneath the whole prefix
    * means a surface that ships dark is dark as a whole, declared once like auth — and it answers
    * 404 `feature_disabled` rather than 403, because a 403 confirms the feature exists. It reads
    * `auth.features`, never the ability: a global admin's `manage all` covers `access` on every
@@ -43,23 +50,63 @@ export const exampleFeatureServer = {
    */
   mounts: [['/api/example-feature', exampleFeatureRouter, requireFeature(EXAMPLE_FEATURE_FLAG)]],
   /**
-   * **A public mount is the one door with no session behind it** (D34): `/api/hooks/<id>` only,
+   * **A public mount is the one door with no session behind it**: `/api/hooks/<id>` only,
    * no `authMiddleware`, no gate. Its handler proves who is calling (here a `verifyState` token)
    * and re-checks the flag itself, because `requireFeature` reads an `auth.features` that does not
    * exist without a session.
    */
   publicMounts: [['/api/hooks/example-feature', exampleFeaturePublicRouter]],
+  /**
+   * **A sign-in method on the kit's login page**, read per request so `cfg` decides — here,
+   * development only, because the example SSO behind it vouches for any email (`api/sso.ts`).
+   * The button navigates to `startPath`, which must be under this plugin's `/api/hooks/<id>/`;
+   * `askEmail` puts an email field in front of it (home-realm discovery, for a real plugin).
+   */
+  loginMethods: cfg =>
+    cfg.APP_ENV === 'development'
+      ? [
+          {
+            id: EXAMPLE_SSO_METHOD_ID,
+            label: 'Example SSO (development only)',
+            startPath: EXAMPLE_SSO_START_PATH,
+            askEmail: true,
+          },
+        ]
+      : [],
+  /**
+   * **"SSO required" for the domains a connection owns.** Asked once per sign-in attempt; the kit
+   * then refuses every other method for that address and routes the person to `methodId` — one of
+   * this plugin's own `loginMethods` ids. Here: `@sso-required.example.test`, development only.
+   */
+  ssoPolicy: (_db, email, { config }) => exampleSsoPolicy(email, config),
   jobHandlers: { [EXAMPLE_PING_JOB]: handleExamplePing },
+  /**
+   * **A subscriber to a declared event** (D42) — here the plugin's own `example-feature.note.created`,
+   * which `POST /notes` emits. Each handler gets its own queued delivery per event, so one that
+   * fails retries alone; `eventCtx` (inside the handler file) binds it to the event's tenant.
+   */
+  eventHandlers: [exampleNoteCreatedHandler],
+  /**
+   * **An agent the same event starts** — `triggers` on the definition, no handler needed — and
+   * that an editor could bind instead (`bindable`). Checked against `shared.agentKeys`.
+   */
+  agents: { [EXAMPLE_NOTE_STATS_AGENT]: exampleNoteStatsAgent },
+  prompts: { [EXAMPLE_NOTE_STATS_PROMPT]: exampleNoteStatsPrompt },
   /**
    * The tool is written against `ToolCtx`; `toolCtx` adapts the runtime's context at this one
    * boundary. The scope inside it carries the tenant AND what the run's REQUESTER may read, which
-   * is why a tool never takes a tenant id of its own.
+   * is why a tool never takes a tenant id of its own. Only while the organisation has the flag.
    */
-  agentTools: ctx => [listExampleNotesTool(toolCtx(ctx)) as Tool],
+  tools: ctx => exampleAgentTools(toolCtx(ctx)),
+  /**
+   * **A knowledge entity type** (D43): facts extraction reads from documents may attach to a note,
+   * matched by title within the reader's tenant. Namespaced `<id>.` like everything else here.
+   */
+  knowledgeEntityTypes: [exampleNoteEntityType],
   /**
    * Additive only, and over this plugin's OWN subject. CASL can take a rule back only with
-   * `cannot`, so a plugin that revoked a kit grant would change what every role may do merely by
-   * being installed. The shape follows the kit's matrix: admin-level roles `manage`, a member may
+   * `cannot`, so a plugin that revoked a core grant would change what every role may do merely by
+   * being installed. The shape follows the core matrix: admin-level roles `manage`, a member may
    * read and create, and "is this row yours" stays the route's own `ownerUserId` check.
    */
   grants: {

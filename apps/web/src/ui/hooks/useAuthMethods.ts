@@ -1,4 +1,4 @@
-/** `GET /auth/methods` (D11): which sign-in methods the server has configured — drives Login. */
+/** `GET /auth/methods`: which sign-in methods the server has configured — drives Login. */
 import { authMethodsSchema } from '@rocketflare/shared/auth'
 import { queryOptions, useQuery } from '@tanstack/react-query'
 import { api } from '@/ui/lib/api-client'

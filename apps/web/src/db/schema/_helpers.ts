@@ -1,5 +1,5 @@
 /**
- * Column helpers shared by every table (D1, 03 §2): `timestamptz` everywhere, and one
+ * Column helpers shared by every table: `timestamptz` everywhere, and one
  * definition of the tenant foreign key so `tenant_id` never drifts between tables.
  */
 import type { ResourceVisibility } from '@rocketflare/shared/groups'
@@ -21,8 +21,7 @@ export function timestamps() {
  * `tenant_id uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE`.
  *
  * Takes the tenants table as an argument (rather than importing it) so this helper has no
- * dependency on a table that arrives in Phase 1 and so `tenants.ts` itself cannot import it
- * circularly. Usage: `tenantId: tenantRef(tenants)`.
+ * dependency on a table and `tenants.ts` itself cannot import it circularly. Usage: `tenantId: tenantRef(tenants)`.
  */
 export function tenantRef(tenants: { id: AnyPgColumn }) {
   return uuid('tenant_id')
@@ -31,7 +30,18 @@ export function tenantRef(tenants: { id: AnyPgColumn }) {
 }
 
 /**
- * The values of a resource's `visibility` column (D29): `tenant` = every member of the
+ * `tenant_id uuid REFERENCES tenants(id) ON DELETE CASCADE` — NULLABLE. Only for the two tables
+ * that hold PLATFORM rows beside tenant rows (`documents`, `chunks`): a null tenant is a document
+ * that describes the app itself, readable by every tenant through `platformReadable()` and written
+ * only by the owner connection. Everything else uses `tenantRef()`; a nullable tenant on an
+ * ordinary domain table is a hole, not a feature.
+ */
+export function platformTenantRef(tenants: { id: AnyPgColumn }) {
+  return uuid('tenant_id').references(() => tenants.id, { onDelete: 'cascade' })
+}
+
+/**
+ * The values of a resource's `visibility` column: `tenant` = every member of the
  * organisation, `groups` = only the groups granted in that resource's junction table (plus the
  * owner and admins). Here rather than beside one table because `documents` and `analytics_pages`
  * both carry it and a third resource will spell it the same way.

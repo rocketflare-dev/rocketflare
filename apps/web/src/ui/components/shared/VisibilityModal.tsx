@@ -1,5 +1,5 @@
 /**
- * "Who can see this" as a dialog (D29) — the `AccessPicker` plus a save, shared by the Knowledge
+ * "Who can see this" as a dialog — the `AccessPicker` plus a save, shared by the Knowledge
  * list and the dashboard header so the two cannot drift in wording or in what they offer.
  *
  * The caller decides whether to render it at all (`manage Document` / owner, or `manage

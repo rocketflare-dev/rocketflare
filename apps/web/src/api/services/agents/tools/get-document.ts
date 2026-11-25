@@ -1,5 +1,5 @@
 /**
- * `get_document` (D7, D18): read one knowledge document's text, whole or a window of it. The
+ * `get_document`: read one knowledge document's text, whole or a window of it. The
  * companion of `search_knowledge` — search finds the passage, this reads around it or the full
  * text. Windows are character offsets over the stored `content` (pasted text, or the converted
  * markdown of an upload), capped per call so a 500 000-char document is paged, never dumped into
@@ -8,13 +8,13 @@
  * characters because reading the document is the job, while a chat turn gets
  * `CHAT_GET_DOCUMENT_MAX_CHARS` because it shares one context window with the whole thread.
  * Scoped by the run's `AccessScope`; another tenant's id, an unknown id, a document the requester
- * may not see (D29 — the SAME answer as unknown, and the hint never says the document exists) or a
+ * may not see (the SAME answer as unknown, and the hint never says the document exists) or a
  * not-yet-converted upload each get a plain answer rather than an error.
  */
 import { type DocumentContent, KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { z } from 'zod'
+import type { Tool } from '../../ai/agent-loop'
 import { readDocumentWindow } from '../../ai/document-content'
-import type { Tool } from '../../ai/kit'
 import { type KnowledgeBaseEntry, listKnowledgeDocuments } from './list-documents'
 import type { AgentToolContext } from './search-knowledge'
 
@@ -91,6 +91,7 @@ export function getDocumentTool(ctx: AgentToolContext): Tool<GetDocumentInput> {
   const fallback = Math.min(GET_DOCUMENT_DEFAULT_CHARS, cap)
   return {
     name: GET_DOCUMENT_TOOL,
+    mcp: { title: 'Read a document' },
     description: `Read one knowledge-base document's text, whole or in windows: \`offset\` and \`maxChars\` select a character range (default and maximum ${cap} characters, from the start; the answer reports \`totalChars\`, \`hasMore\` and \`nextOffset\`, so a long document is read by calling again with \`nextOffset\` until \`hasMore\` is false). Use it after search_knowledge when a passage is cut off or you need the surrounding context, or on any id from list_documents. An unknown id answers with the documents that do exist.`,
     schema: getDocumentSchema(cap),
     async handler(input) {

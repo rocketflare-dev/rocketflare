@@ -1,6 +1,6 @@
 /**
  * Hand-written types for `update-check-lib.mjs` (the workspace has no `allowJs`). Keep in step with
- * the exports there; `apps/web/tests/config/update-check-lib.test.ts` typechecks against this.
+ * the exports there; `apps/web/tests/kit-only/update-check-lib.test.ts` typechecks against this.
  */
 import type { Manifest } from './upgrade-lib.d.mts'
 

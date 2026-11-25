@@ -1,5 +1,5 @@
 /**
- * Feature flags (D30) — the registry, the contracts, and the ONE implementation of "is this
+ * Feature flags — the registry, the contracts, and the ONE implementation of "is this
  * feature on for this request".
  *
  * Two layers, in this order, because they answer two different questions:
@@ -28,7 +28,7 @@
  * ability check hands platform staff a surface the deployment does not ship. See `permissions.ts`.
  */
 import { z } from 'zod'
-import { FEATURES, type FeatureName } from './permissions'
+import { type CORE_FEATURES, FEATURES, type FeatureName } from './permissions'
 import { sharedPlugins } from './plugins'
 
 /** Platform state of a flag. `off` and `rollout` at 0% are the same OUTCOME, not the same intent. */
@@ -42,13 +42,13 @@ export const featureRolloutUnitSchema = z.enum(FEATURE_ROLLOUT_UNITS)
 export type FeatureRolloutUnit = z.infer<typeof featureRolloutUnitSchema>
 
 /**
- * A key the running deployment actually has (D30, D31).
+ * A key the running deployment actually has.
  *
  * **Not `z.enum(FEATURES)`**, and not for style: `FEATURES` is `[...CORE_FEATURES, ...plugins]`,
- * `CORE_FEATURES` is now empty (the kit's own demonstration flag ships as the `example-feature`
- * PLUGIN), and a `z.enum` needs a non-empty TUPLE — an array of strings is a type error there.
- * A refined `z.string()` is the same runtime check and the same output type, and it keeps
- * validating against whatever is installed rather than against what was compiled in.
+ * `CORE_FEATURES` may be empty in a copy that deletes its flags, and a `z.enum` needs a
+ * non-empty TUPLE — an array of strings is a type error there. A refined `z.string()` is the
+ * same runtime check and the same output type, and it keeps validating against whatever is
+ * installed rather than against what was compiled in.
  */
 export const featureNameSchema = z
   .string()
@@ -73,19 +73,65 @@ export interface FeatureDefinition {
 }
 
 /**
- * Every flag the KIT itself ships — none, deliberately. Keys come from `CORE_FEATURES` in
- * `permissions.ts`, so a typo anywhere that gates on one is a type error rather than a route that
- * 404s for ever.
+ * Every built-in flag. Keys come from `CORE_FEATURES` in `permissions.ts`, so a typo anywhere
+ * that gates on one is a type error rather than a route that 404s for ever.
  *
- * The kit's demonstration flag moved into the `example-feature` PLUGIN (D31), which is where both
- * halves of a flag now arrive together: the key, its metadata, the nav item it gates, the mount it
+ * The demonstration flag lives in the `example-feature` PLUGIN, which is where both
+ * halves of a flag arrive together: the key, its metadata, the nav item it gates, the mount it
  * gates and the page behind it. An app that wants a flag of its own adds it here and to
  * `CORE_FEATURES` — or, better, ships the whole feature as a plugin.
  */
-export const CORE_FEATURE_FLAGS = {} satisfies Record<string, FeatureDefinition>
+export const CORE_FEATURE_FLAGS = {
+  /**
+   * Knowledge facts (D43): extracting typed facts from documents into the registered entity
+   * types. Opt-in — it spends a model call per document section — so OFF until an admin rolls it
+   * out or overrides it for a tenant. Nothing happens with it on until an entity type is
+   * registered.
+   */
+  'knowledge-facts': {
+    label: 'Knowledge facts',
+    description:
+      'Extract typed facts about the registered entity types (customers, suppliers, …) from ' +
+      'every new or changed document, with conflicts and doubtful facts flagged for review. ' +
+      'Costs one model call per document section, metered as knowledge.extraction.',
+    defaultState: 'off',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: false,
+  },
+  /**
+   * Contextual chunk prefixes (#148, Anthropic's Contextual Retrieval): after a document's text is
+   * indexed, a model writes a line situating each passage in its document, and the passage is
+   * embedded and keyword-indexed with it. Opt-in — one model call per passage — so OFF until an
+   * admin rolls it out or overrides it for a tenant.
+   */
+  'knowledge-context': {
+    label: 'Contextual search',
+    description:
+      'After a document is indexed, a model writes a short line placing each passage in its ' +
+      'document (whose contract, which section), so search finds passages that never name what ' +
+      'they are about. Costs one model call per passage, metered as knowledge.context.',
+    defaultState: 'off',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: false,
+  },
+  /**
+   * The MCP server and its settings page. Environment-gated: a deployment ships it only when
+   * `FEATURES_ENABLED` names `mcp`; where it ships it is ON for every tenant unless a global admin
+   * narrows the rollout, and each organisation's admins still turn it on for themselves.
+   */
+  mcp: {
+    label: 'MCP server',
+    description:
+      'Lets members connect AI clients (Claude, ChatGPT) to the workspace at /mcp, with the ' +
+      "tools the organisation's admins expose, acting with each member's own permissions.",
+    defaultState: 'on',
+    defaultRolloutUnit: 'tenant',
+    environmentGated: true,
+  },
+} satisfies Record<(typeof CORE_FEATURES)[number], FeatureDefinition>
 
 /**
- * Core flags plus every installed plugin's (D31). `SharedPlugin.features` is typed against the
+ * Core flags plus every installed plugin's. `SharedPlugin.features` is typed against the
  * `FeatureDefinition` above — `plugins/**` may not import this module at RUNTIME, but a
  * whole-declaration `import type` is erased and so is fine — which means there is ONE definition of
  * a flag's shape, and a plugin that gets it wrong fails in its own file rather than here.

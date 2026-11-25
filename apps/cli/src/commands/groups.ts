@@ -1,5 +1,5 @@
 /**
- * `rocketflare groups list` / `groups members <id>` (D29) — `GET /api/groups` and
+ * `rocketflare groups list` / `groups members <id>` — `GET /api/groups` and
  * `GET /api/groups/:id`, both `manage Group` (admin+), parsed with the shared schemas.
  *
  * Read-only on purpose: creating a group is a decision about who sees what, and the confirmation

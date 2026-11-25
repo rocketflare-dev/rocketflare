@@ -1,5 +1,5 @@
 /**
- * `/api/ai/config` (D17): upsert encrypts the key and answers `hasCredential` (never the key);
+ * `/api/ai/config`: upsert encrypts the key and answers `hasCredential` (never the key);
  * re-save without `apiKey` keeps the stored credential; the first row is default, `isDefault` swaps
  * it inside the scope; delete; list never leaks a key; member 403 on writes / 200 on reads; 401
  * unauthenticated; tenant isolation; readiness tenant / platform / none; provider validation 400s.
@@ -171,7 +171,7 @@ describe('POST /api/ai/config', () => {
     expect(emb).toMatchObject({ scope: 'embeddings', isDefault: true, hasCredential: false })
   })
 
-  it('typesafe serves the decisions scope only, and decisions takes nothing else (D37)', async () => {
+  it('typesafe serves the decisions scope only, and decisions takes nothing else', async () => {
     const a = await actor()
     const post = (body: Record<string, unknown>) =>
       request('/api/ai/config', { method: 'POST', headers: a.cookie }, { json: body })
@@ -343,7 +343,14 @@ describe('GET /api/ai/config + DELETE', () => {
       defaultMaxOutputTokens: number
     }>(await request('/api/ai/config/providers', { headers: a.cookie }))
     expect(body.defaultMaxOutputTokens).toBe(16384)
-    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual(['chat', 'embeddings'])
+    expect(body.items.find(p => p.id === 'workers_ai')?.scopes).toEqual([
+      'chat',
+      'embeddings',
+      'rerank',
+    ])
+    // A rerank row is a Cohere-style endpoint behind a bearer key: the OpenAI-compatible provider.
+    expect(body.items.find(p => p.id === 'openai_compatible')?.scopes).toContain('rerank')
+    expect(body.items.find(p => p.id === 'anthropic')?.scopes).not.toContain('rerank')
     expect(body.items.find(p => p.id === 'anthropic_compatible')?.presets.length).toBeGreaterThan(0)
   })
 })
@@ -359,6 +366,8 @@ describe('GET /api/ai/config/readiness', () => {
       chat: { ready: false, source: 'none' },
       embeddings: { ready: false, source: 'none' },
       decisions: { ready: false, source: 'none' },
+      // No binding and no row: no reranking — search keeps its fused order.
+      rerank: { ready: false, source: 'none' },
     })
 
     const platform = createTestEnv({
@@ -378,7 +387,7 @@ describe('GET /api/ai/config/readiness', () => {
       model: DEFAULT_MODELS.anthropic,
     })
     expect(r.embeddings.source).toBe('none')
-    // D37: no TypeSafe key, so decisions fall back to the chat model — ready, and labelled so.
+    // No TypeSafe key, so decisions fall back to the chat model — ready, and labelled so.
     expect(r.decisions).toEqual({
       ready: true,
       source: 'fallback',
@@ -408,6 +417,12 @@ describe('GET /api/ai/config/readiness', () => {
       provider: 'workers_ai',
       model: WORKERS_AI_CHAT_MODEL,
     })
+    expect(r.rerank).toEqual({
+      ready: true,
+      source: 'platform',
+      provider: 'workers_ai',
+      model: '@cf/baai/bge-reranker-base',
+    })
 
     await request(
       '/api/ai/config',
@@ -427,7 +442,7 @@ describe('GET /api/ai/config/readiness', () => {
     })
   })
 
-  it('decisions (D37): fallback → platform TypeSafe key → tenant row', async () => {
+  it('decisions: fallback → platform TypeSafe key → tenant row', async () => {
     const a = await actor()
     const env = createTestEnv({ ANTHROPIC_API_KEY: 'sk-ant-platform-0123456789', AI: undefined })
     const read = async (e = env) =>
@@ -527,7 +542,7 @@ describe('POST /api/ai/config/test', () => {
   })
 })
 
-describe('resolveDecisions (D37)', () => {
+describe('resolveDecisions', () => {
   it('tenant row → platform TypeSafe key → the chat-model fallback → 503', async () => {
     const a = await actor()
     const resolve = (env: ReturnType<typeof createTestEnv>) =>

@@ -1,5 +1,5 @@
 /**
- * Feature flags (D30) — the stored half. The KEYS live in code (`FEATURE_FLAGS` in
+ * Feature flags — the stored half. The KEYS live in code (`FEATURE_FLAGS` in
  * `@rocketflare/shared/features`); these two tables hold only what a global admin changes, so
  * adding or retiring a flag is a code edit and never a migration.
  *
@@ -54,7 +54,7 @@ export const featureFlags = pgTable(
     state: featureFlagStateEnum('state').notNull().default('off'),
     rolloutPercent: integer('rollout_percent').notNull().default(0),
     rolloutUnit: featureRolloutUnitEnum('rollout_unit').notNull().default('tenant'),
-    /** Who last moved it. The whole audit trail, alongside the request log — see CONCEPTS §D30. */
+    /** Who last moved it. The whole audit trail, alongside the request log. */
     updatedByUserId: uuid('updated_by_user_id').references(() => users.id, {
       onDelete: 'set null',
     }),

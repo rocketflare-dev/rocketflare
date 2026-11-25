@@ -1,5 +1,5 @@
 /**
- * `projectRunToAgui` (D7) row by row, and `GET /api/agents/runs/:id/agui` end to end against a real
+ * `projectRunToAgui` row by row, and `GET /api/agents/runs/:id/agui` end to end against a real
  * run. The projection is pure — the event row ids ARE the AG-UI message and tool-call ids — so the
  * mapping is asserted directly and the route only has to prove the ownership rules and the shape.
  */
@@ -24,6 +24,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
+import { FIXTURE_AGENT, FIXTURE_AGENT_B } from '../helpers/fixture-agents'
 import { json, request } from '../helpers/request'
 
 const db = setupTestDatabase()
@@ -34,7 +35,7 @@ const TENANT_ID = '88888888-8888-4888-8888-888888888888'
 const run = (over: Partial<AgentRun> = {}): AgentRun => ({
   id: RUN_ID,
   tenantId: TENANT_ID,
-  agentKey: 'research-topic',
+  agentKey: FIXTURE_AGENT_B,
   status: 'succeeded',
   input: { question: 'why' },
   output: { answer: 'because' },
@@ -48,6 +49,11 @@ const run = (over: Partial<AgentRun> = {}): AgentRun => ({
   createdAt: new Date(),
   exclusive: true,
   batchId: null,
+  triggerEvent: null,
+  triggerEventId: null,
+  agentVersion: 1,
+  workerVersionId: null,
+  parentRunId: null,
   ...over,
 })
 
@@ -113,7 +119,7 @@ describe('projectRunToAgui', () => {
       type: 'STATE_SNAPSHOT',
       snapshot: {
         runId: RUN_ID,
-        agentKey: 'research-topic',
+        agentKey: FIXTURE_AGENT_B,
         status: 'queued',
         capabilities: {
           humanInTheLoop: {
@@ -188,7 +194,9 @@ describe('projectRunToAgui', () => {
     const result = out.find(e => e.type === 'TOOL_CALL_RESULT')
     // The result refers back to the CALL's id, not its own row.
     expect(result?.type === 'TOOL_CALL_RESULT' && result.toolCallId).toBe(start.id)
-    expect(JSON.parse(result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}')).toMatchObject({
+    const content = result?.type === 'TOOL_CALL_RESULT' ? result.content : '{}'
+    expect(typeof content).toBe('string')
+    expect(JSON.parse(content as string)).toMatchObject({
       isError: false,
       result: { hits: 2 },
     })
@@ -223,6 +231,46 @@ describe('projectRunToAgui', () => {
     ])
     expect(customEvent(out, KIT_CUSTOM_EVENTS.document)).toMatchObject({
       card: { id: documentId, title: 'Volcanoes', passages: 3, href: `/documents/${documentId}` },
+    })
+  })
+
+  it('projects a lookup_facts result into the same entity cards a live chat shows', () => {
+    const entity = { kind: 'staging', type: 'customer', id: 'e-1', name: 'Harbour View Dental' }
+    const out = projectRunToAgui(run(), [
+      event('tool.start', { name: 'lookup_facts', input: { entity: 'Harbour View' } }),
+      event('tool.end', {
+        name: 'lookup_facts',
+        isError: false,
+        result: {
+          entities: [
+            {
+              entity,
+              facts: [
+                {
+                  factId: '70000000-0000-4000-8000-000000000001',
+                  entity,
+                  key: 'monthly_fee_gbp',
+                  value: 285,
+                  valueText: '285',
+                  state: 'accepted',
+                  preferred: true,
+                  conflictsWith: [],
+                  sourceKind: 'upload',
+                  documentId: '55555555-5555-4555-8555-555555555555',
+                  documentTitle: 'Contract',
+                  quote: '£285 a month',
+                  validFrom: null,
+                  validTo: null,
+                  observedAt: '2026-01-01T00:00:00Z',
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ])
+    expect(customEvent(out, KIT_CUSTOM_EVENTS.entity)).toMatchObject({
+      card: { entity, facts: [{ key: 'monthly_fee_gbp', valueText: '285' }], moreFacts: 0 },
     })
   })
 
@@ -265,9 +313,13 @@ describe('projectRunToAgui', () => {
 
   it('distinguishes a cancelled run from one that is still going', () => {
     // A finite array cannot say "cancelled" by omitting the terminal event: that is how an ACTIVE
-    // run is represented. A settled cancel is a coded RUN_ERROR.
+    // run is represented. A settled cancel is RUN_FINISHED with AG-UI's own `cancelled` outcome.
     const cancelled = projectRunToAgui(run({ status: 'cancelled', output: null }), [])
-    expect(cancelled.at(-1)).toMatchObject({ type: 'RUN_ERROR', code: 'agent_run_cancelled' })
+    expect(cancelled.at(-1)).toMatchObject({
+      type: 'RUN_FINISHED',
+      outcome: { type: 'cancelled' },
+    })
+    expect(aguiTypes(cancelled)).not.toContain('RUN_ERROR')
     for (const status of ['queued', 'running'] as const) {
       const active = projectRunToAgui(run({ status, output: null }), [])
       expect(aguiTypes(active)).toEqual(['RUN_STARTED', 'STATE_SNAPSHOT'])
@@ -392,7 +444,7 @@ describe('GET /api/agents/runs/:id/agui', () => {
       .insert(agentRuns)
       .values({
         tenantId: tenant.id,
-        agentKey: 'summarize-text',
+        agentKey: FIXTURE_AGENT,
         status,
         input: { text: 'hello' },
         output: status === 'succeeded' ? { summary: 'hi', keyPoints: [] } : null,
@@ -456,7 +508,7 @@ describe('GET /api/agents/runs/:id/agui', () => {
   })
 })
 
-describe('the human-in-the-loop rows (issue #17)', () => {
+describe('the human-in-the-loop rows', () => {
   it('delivers a parked run through the protocol’s OWN interrupt outcome, not a kit event', () => {
     // This is the entire reason a third-party AG-UI client can answer a kit run with no kit code.
     // The discriminator is `'interrupt'`: `'interrupted'` does not throw, it is silently dropped.

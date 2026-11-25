@@ -1,12 +1,12 @@
 /**
- * Session state for the whole UI (D9, D20, D25). ONE query — `GET /auth/session`, zod-parsed with
+ * Session state for the whole UI. ONE query — `GET /auth/session`, zod-parsed with
  * the same `sessionResponseSchema` the server validates with — and everything the shell needs
  * derived from it: who, which org, which modes the server runs. A 401 resolves the query to `null`
  * ("logged out") rather than erroring, so the session query is never removed from the cache and
  * every observer sees identity changes synchronously via `setQueryData`.
  *
- * `AuthProvider` also owns the global 401 handler (D20): a stale session drops the cache and sends
- * the reader to `/login?returnUrl=`. Provider order (06 §b): QueryClientProvider → AuthProvider →
+ * `AuthProvider` also owns the global 401 handler: a stale session drops the cache and sends
+ * the reader to `/login?returnUrl=`. Provider order: QueryClientProvider → AuthProvider →
  * AbilityProvider → BrowserRouter, so this file never calls `useNavigate`; it goes through
  * `lib/navigation.ts`.
  */
@@ -44,6 +44,8 @@ export interface AuthContextValue {
   isGlobalAdmin: boolean
   tenancyMode: TenancyMode
   signupMode: SignupMode
+  /** The server's `canCreateTenant`: whether to offer "Create organisation" at all */
+  canCreateTenant: boolean
   /** A non-401 failure of the session request (network, 5xx) — `ProtectedRoute` offers a retry */
   error: Error | null
   /** `POST /auth/select-tenant`; the returned session replaces the cache */
@@ -67,7 +69,7 @@ export function signedOutUrl(login: string): string {
 }
 
 /**
- * Where a signed-in user with NO active tenant belongs (D9). A pending/rejected access request
+ * Where a signed-in user with NO active tenant belongs. A pending/rejected access request
  * always wins; otherwise pick an org, or wait for approval, or learn that invites are required.
  */
 export function noTenantRoute(
@@ -131,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [queryClient]
   )
 
-  // Global 401 (D20). Only acts when we BELIEVED we were signed in — a 401 while logged out is the
+  // Global 401. Only acts when we BELIEVED we were signed in — a 401 while logged out is the
   // normal state of the login page and must not clear-and-redirect (that would loop).
   useEffect(() => {
     setUnauthorizedHandler(() => {
@@ -191,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isGlobalAdmin: session?.user.isGlobalAdmin ?? false,
       tenancyMode: session?.tenancyMode ?? 'multi',
       signupMode: session?.signupMode ?? 'invite_only',
+      canCreateTenant: session?.canCreateTenant ?? false,
       error: queryError ?? null,
       selectTenant,
       logout,
@@ -208,7 +211,7 @@ export function useAuth(): AuthContextValue {
   return ctx
 }
 
-/** `'single'` hides OrgSwitcher, /select-tenant and org create/delete (D25). */
+/** `'single'` hides OrgSwitcher, /select-tenant and org create/delete. */
 export function useTenancyMode(): TenancyMode {
   return useAuth().tenancyMode
 }

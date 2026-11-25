@@ -1,7 +1,5 @@
-// @vitest-isolate
-// Spies on the global fetch (Resend failure path), so this file needs its own module registry.
 /**
- * `JOBS_QUEUE` consumer (D7) as a plain function over a hand-built `MessageBatch`: valid
+ * `JOBS_QUEUE` consumer as a plain function over a hand-built `MessageBatch`: valid
  * `email.send` → email service ran (dev fallback line) + `ack()`; invalid envelope → `ack()` and no
  * retry (poison never loops); provider failure → `retry({ delaySeconds })` with backoff;
  * `activity.record` → row. Every message gets and closes its own DB handle.
@@ -23,7 +21,6 @@ import { setupTestDatabase } from '../helpers/db'
 import { createTestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
-const TENANT = '11111111-1111-4111-8111-111111111111'
 
 function fakeLogger() {
   const log = {
@@ -84,6 +81,8 @@ describe('processJobsBatch', () => {
   it('email.send without RESEND_API_KEY: dev fallback logged, message acked, DB handle closed', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     const { deps: d, logger, close } = deps({ RESEND_API_KEY: '' })
+    // A job naming a tenant runs only while that tenant is active, so the tenant must exist.
+    const { tenant } = await createTestTenantWithUser(db, 'owner')
     const job = buildJobEnvelope({
       type: 'email.send',
       payload: {
@@ -92,7 +91,7 @@ describe('processJobsBatch', () => {
         html: '<p>hi</p>',
         text: 'hi',
         link: 'http://localhost:3001/invite/tok',
-        tenantId: TENANT,
+        tenantId: tenant.id,
         reason: 'test',
       },
     })

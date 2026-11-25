@@ -1,17 +1,33 @@
 /**
- * ONE generic OAuth router over the provider registry (D11, D12): `GET /auth/:provider` starts,
+ * ONE generic OAuth router over the provider registry: `GET /auth/:provider` starts,
  * `GET /auth/:provider/callback` finishes. State + PKCE verifier + OIDC nonce (+ the return path,
- * link mode) travel in a single `oauth_state` cookie that also names the provider, so a callback
- * for the wrong provider is rejected. The return path is `?returnUrl=` (what the UI sends;
+ * link mode) travel in a single `__Host-oauth_state` cookie that also names the provider, so a
+ * callback for the wrong provider is rejected. The return path is re-checked when the cookie is read. The return path is `?returnUrl=` (what the UI sends;
  * `?redirectTo=` is still accepted). Redirect URI is `oauthRedirectUri(cfg, provider)`.
- * `email_verified === false` is refused; an existing link wins, then email-based linking to an
- * existing user, else `admitUser`. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
+ * An existing link wins (whatever the provider says of the address), then email-based linking to
+ * an existing user, else `admitUser` — both of which refuse `email_verified === false` with
+ * `email_unverified`; link mode attaches the identity to the signed-in account without trusting
+ * its address. Tokens are AES-GCM encrypted at rest — `OAUTH_ENCRYPTION_KEY`
  * is checked before the redirect. Unknown or unconfigured provider → 404 envelope; under
- * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`.
+ * `AUTH_OIDC_ONLY` every provider but `oidc` → `/login?error=oidc_only`. A token exchange the
+ * issuer refuses because its pre-token hook denied the person (Cognito's 400
+ * `UserLambdaValidationException`) → `/login?error=no_access`.
+ *
+ * `OIDC_MANAGED_TENANCY` (`services/idp-tenancy.ts`): after the identity is resolved and BEFORE
+ * `completeLogin`, every `oidc` sign-in reconciles tenants, memberships and global admin from the
+ * verified id_token's claims — here, not in `admitUser`, because a linked user never reaches
+ * `admitUser`. A new person the claims admit is created whatever `SIGNUP_MODE` says, and the
+ * session ends `OIDC_SESSION_MAX_AGE_DAYS` after sign-in.
+ *
+ * SSO required (`ServerPlugin.ssoPolicy`): once the email is known — the verified one the provider
+ * asserted AND, for a linked person, their account's — and before anyone is admitted, linked or
+ * signed in, a plugin claiming either address sends the browser to
+ * `/login?error=sso_required&method=<plugin id>:<method id>`. Link mode (attaching a provider to
+ * the signed-in account) is not a sign-in and is not checked.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { generateCodeVerifier, generateState } from 'arctic'
-import { isOidcOnly, oauthRedirectUri } from '../../../config'
+import { randomNonce, randomPKCECodeVerifier, randomState } from 'openid-client'
+import { isIdpManaged, isOidcOnly, oauthRedirectUri } from '../../../config'
 import {
   clearFlowCookie,
   OAUTH_STATE_COOKIE_NAME,
@@ -21,12 +37,24 @@ import {
 import { requireEncryptionKey } from '../../auth/oauth-encryption'
 import { findProviderLink, upsertProviderLink } from '../../auth/oauth-providers'
 import { getProvider, type ProviderDefinition, scopesOf } from '../../auth/providers'
+import { isAccessDeniedAtTokenExchange } from '../../auth/providers/oidc'
+import { ssoAllows } from '../../auth/sso-policy'
 import { resolveCookieAuth } from '../../middleware/auth'
 import { admitUser, findUserByEmail } from '../../services/auth'
+import { platformFeatures } from '../../services/features'
+import { idpClaimsAdmit, readIdpClaims, reconcileIdpClaims } from '../../services/idp-tenancy'
 import type { AppContext } from '../../types'
 import { ConflictError, NotFoundError, UnauthorizedError } from '../../utils/core/errors'
+import { makeDefer } from '../../utils/routes/route-helpers'
 import { createRouter } from '../../utils/routes/router'
-import { completeLogin, type LoginErrorCode, loginErrorRedirect, safeRedirectPath } from './helpers'
+import {
+  completeLogin,
+  type LoginErrorCode,
+  loginErrorRedirect,
+  safeRedirectPath,
+  ssoRequiredRedirect,
+} from './helpers'
+import { ssoDecisionFor } from './sso'
 
 export const oauthRouter = createRouter()
 
@@ -56,7 +84,7 @@ function decodeFlow(value: string | undefined): OAuthFlowState | null {
       state: parsed.state,
       verifier: parsed.verifier,
       nonce: parsed.nonce,
-      redirectTo: parsed.redirectTo ?? '/',
+      redirectTo: safeRedirectPath(parsed.redirectTo),
       linkUserId: parsed.linkUserId,
     }
   } catch {
@@ -90,22 +118,21 @@ oauthRouter.get('/:provider', async c => {
     linkUserId = auth.user.id
   }
 
-  const state = generateState()
-  const verifier = generateCodeVerifier()
-  const nonce = generateState()
+  const state = randomState()
+  const verifier = randomPKCECodeVerifier()
+  const nonce = randomNonce()
   const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
   let url: URL
   try {
     url = await client.createAuthorizationURL(state, verifier, scopesOf(def, cfg), nonce)
   } catch (err) {
-    // OIDC discovery is the only thing here that can fail (issuer down, issuer mismatch).
+    // Discovery (OIDC, Microsoft) is the only thing here that can fail (issuer down, mismatch).
     c.get('logger').warn({ err, provider: def.id }, 'OAuth authorization URL failed')
     return loginErrorRedirect(c, 'oauth_failed')
   }
   const returnPath = c.req.query('returnUrl') ?? c.req.query('redirectTo')
   setFlowCookie(
     c,
-    cfg,
     OAUTH_STATE_COOKIE_NAME,
     encodeFlow({
       provider: def.id,
@@ -127,7 +154,7 @@ oauthRouter.get('/:provider/callback', async c => {
   if (refusedByOidcOnly(c, def)) return loginErrorRedirect(c, 'oidc_only')
 
   const flow = decodeFlow(readFlowCookie(c, OAUTH_STATE_COOKIE_NAME))
-  clearFlowCookie(c, cfg, OAUTH_STATE_COOKIE_NAME)
+  clearFlowCookie(c, OAUTH_STATE_COOKIE_NAME)
   const code = c.req.query('code')
   const state = c.req.query('state')
   if (c.req.query('error')) {
@@ -147,15 +174,21 @@ oauthRouter.get('/:provider/callback', async c => {
   >
   try {
     const client = def.client(cfg, oauthRedirectUri(cfg, def.id))
-    tokens = await client.validateAuthorizationCode(code, flow.verifier)
+    tokens = await client.validateAuthorizationCode(new URL(c.req.url).searchParams, {
+      state,
+      verifier: flow.verifier,
+      nonce: flow.nonce,
+    })
     profile = await def.fetchProfile(tokens, { cfg, nonce: flow.nonce })
   } catch (err) {
+    if (def.id === 'oidc' && (await isAccessDeniedAtTokenExchange(err))) {
+      logger.info({ provider: def.id }, 'OIDC issuer denied the token exchange: no access')
+      return loginErrorRedirect(c, 'no_access')
+    }
     logger.warn({ err, provider: def.id }, 'OAuth code exchange or profile fetch failed')
     return loginErrorRedirect(c, 'oauth_failed')
   }
-  if (profile.emailVerified === false || !profile.email) {
-    return loginErrorRedirect(c, 'email_unverified')
-  }
+  if (!profile.email) return loginErrorRedirect(c, 'email_unverified')
   const email = profile.email.toLowerCase()
 
   // Link mode: attach to the signed-in user (must still be signed in).
@@ -178,13 +211,32 @@ oauthRouter.get('/:provider/callback', async c => {
     ? await db.query.users.findFirst({ where: (u, { eq }) => eq(u.id, link.userId) })
     : undefined
   if (user?.blockedAt) return loginErrorRedirect(c, 'blocked')
+  // Past here the address matches, links and admits: an unverified one is refused unless the
+  // identity is already linked (link mode, above, attaches one without trusting its address).
+  if (!user && profile.emailVerified === false) return loginErrorRedirect(c, 'email_unverified')
 
-  // 2. Else by verified email (existing user is linked; a new one goes through sign-up gating).
+  // SSO required: before admitUser, so a refused person leaves no row and no access request.
+  const sso = await ssoDecisionFor(db, cfg, [email, user?.email], logger)
+  if (!ssoAllows(sso, 'core')) return ssoRequiredRedirect(c, sso, { returnUrl: flow.redirectTo })
+
+  // IdP-managed tenancy: verified claims, or null (absent/malformed → ignored, logged).
+  const managed = def.id === 'oidc' && isIdpManaged(cfg)
+  const claims = managed ? readIdpClaims(cfg, profile.idTokenClaims, logger) : null
+
+  // 2. Else by verified email (existing user is linked; a new one goes through sign-up gating —
+  //    or, under IdP-managed tenancy, is admitted by the claims).
   if (!user) {
     const admitted = await admitUser(
       db,
       cfg,
-      { email, name: profile.name, verified: true, avatarUrl: profile.avatarUrl },
+      {
+        email,
+        name: profile.name,
+        verified: true,
+        avatarUrl: profile.avatarUrl,
+        admittedBy: claims && idpClaimsAdmit(claims) ? 'idp' : undefined,
+        proof: 'kit',
+      },
       logger
     )
     if (!admitted.ok) return loginErrorRedirect(c, admitted.reason as LoginErrorCode)
@@ -200,6 +252,24 @@ oauthRouter.get('/:provider/callback', async c => {
     throw err
   }
 
-  await completeLogin(c, db, cfg, user)
+  if (claims) {
+    try {
+      const reconciled = await reconcileIdpClaims(
+        db,
+        user,
+        claims,
+        logger,
+        await platformFeatures(db, cfg),
+        { defer: makeDefer(c), env: c.env }
+      )
+      user = reconciled.user
+    } catch (err) {
+      // Never sign someone in on memberships the claims were about to change.
+      logger.error({ err, userId: user.id }, 'IdP-managed tenancy: reconcile failed')
+      return loginErrorRedirect(c, 'oauth_failed')
+    }
+  }
+
+  await completeLogin(c, db, cfg, user, null)
   return c.redirect(flow.redirectTo, 302)
 })

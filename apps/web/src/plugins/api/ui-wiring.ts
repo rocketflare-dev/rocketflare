@@ -1,5 +1,5 @@
 /**
- * The WIRING half of the UI kit (D31) — the only host module a plugin's `ui/index.ts` may import.
+ * The WIRING half of the UI kit — the only host module a plugin's `ui/index.ts` may import.
  *
  * **That file ships in the MAIN bundle, for every reader, including the ones who never open the
  * plugin.** `App.tsx` and `SideNav` import the barrel that imports it, so anything it pulls in at
@@ -23,12 +23,16 @@ export type { TabConfig } from '../../ui/components/shared'
 export type { NavGuard } from '../../ui/hooks/useNavGuard'
 export { isGuardList, useNavGuard } from '../../ui/hooks/useNavGuard'
 export { featureGuard } from '../../ui/lib/feature-guards'
-export type { QuickLink } from '../../ui/pages/Home'
+export type { QuickLink } from '../../ui/pages/home-links'
 
 export type {
   AnyUiPlugin,
+  PluginHeaderItem,
+  PluginHeaderPlacement,
+  PluginHomeCard,
   PluginNavGroup,
   PluginRoute,
   PluginRouteTier,
+  PluginSettingsTab,
   UiPlugin,
 } from '../types'

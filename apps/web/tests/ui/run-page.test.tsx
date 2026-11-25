@@ -1,5 +1,5 @@
 /**
- * The run workspace (issue #17). It is a PAGE — no `role="dialog"`, a breadcrumb back to `/agents`,
+ * The run workspace. It is a PAGE — no `role="dialog"`, a breadcrumb back to `/agents`,
  * its own route — and the things it is arranged to get right are all here:
  *
  * - the action panel is pinned above the timeline and posts the right payload per kind;
@@ -14,7 +14,7 @@
  *   `['agent-run-agui']` — the key the stream owns — untouched.
  */
 import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
@@ -24,6 +24,7 @@ import { queryKeys } from '@/ui/lib/query-keys'
 import { websocketClient } from '@/ui/lib/websocketClient'
 import RunPage from '@/ui/pages/agents/RunPage'
 import { useWebSocketStore } from '@/ui/stores/websocketStore'
+import { FIXTURE_AGENT } from '../helpers/fixture-agents'
 import {
   errorResponse,
   IDS,
@@ -34,6 +35,10 @@ import {
   requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
+
+vi.mock('@rocketflare/shared/plugins', async importOriginal =>
+  (await import('../helpers/fixture-agents')).withFixtureShared(await importOriginal())
+)
 
 const RUN_ID = '99999999-9999-4999-8999-999999999999'
 const ASK_ID = '77777777-7777-4777-8777-777777777777'
@@ -73,7 +78,7 @@ const EVENTS = [
 const run = (overrides: Record<string, unknown> = {}) => ({
   id: RUN_ID,
   tenantId: IDS.tenant,
-  agentKey: 'summarize-text',
+  agentKey: FIXTURE_AGENT,
   status: 'running',
   input: { text: 'hello', style: 'bullets', index: false },
   output: null,
@@ -125,10 +130,10 @@ const INPUT_SCHEMA = {
 const agents = (overrides: Record<string, unknown> = {}) => ({
   items: [
     {
-      key: 'summarize-text',
+      key: FIXTURE_AGENT,
       title: 'Summarize text',
       description: 'Summarises a block of text.',
-      promptKey: 'summarize-text',
+      promptKey: FIXTURE_AGENT,
       exclusive: true,
       approvers: 'requester',
       inputJsonSchema: INPUT_SCHEMA,
@@ -223,15 +228,81 @@ describe('RunPage', () => {
     expect(await screen.findByText('Summarising')).toBeInTheDocument()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(screen.getByRole('link', { name: 'Agents' })).toHaveAttribute('href', '/agents')
-    // Two stages, each a disclosure; the tool call and the text live inside the one that is open.
-    expect(screen.getByRole('button', { name: /Checking the input/ })).toHaveAttribute(
+    // Two stages. One recorded nothing inside it, so it is a plain line, not a disclosure; the
+    // tool call and the text live inside the other, which is open.
+    expect(screen.getByText('Checking the input')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Checking the input/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Summarising/ })).toHaveAttribute(
       'aria-expanded',
-      'false'
+      'true'
     )
     expect(screen.getByText('Bold').tagName).toBe('STRONG')
     expect(screen.getByText('Submit summary')).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Output/ })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: /Usage/ })).toBeInTheDocument()
+  })
+
+  it('shows work a settled run left open as stopped, never spinning', async () => {
+    const cutOff = [
+      event(1, 'status', { status: 'running', attempt: 1 }),
+      event(2, 'step', { key: 'summarize', label: 'Summarising', status: 'running' }),
+      event(3, 'tool.start', { name: 'submit_summary', input: { style: 'bullets' } }),
+    ]
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        status: 'cancelled',
+        finishedAt: t(9),
+        events: cutOff,
+      }),
+    })
+    expect(await screen.findByText('stopped')).toBeInTheDocument()
+    expect(screen.getAllByLabelText('Stopped').length).toBeGreaterThanOrEqual(2)
+    expect(document.querySelector('.loading-spinner')).toBeNull()
+  })
+
+  it('still spins while the run is going', async () => {
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        events: [
+          event(1, 'status', { status: 'running', attempt: 1 }),
+          event(2, 'step', { key: 'summarize', label: 'Summarising', status: 'running' }),
+        ],
+      }),
+    })
+    await screen.findByText('Summarising')
+    expect(screen.queryByLabelText('Stopped')).toBeNull()
+  })
+
+  it('gives an admin an Inspect tab with the timeline, its versions and its spend; a member none', async () => {
+    const at = (s: number) => t(s)
+    mount({
+      [`/api/agents/runs/${RUN_ID}/timeline`]: {
+        run: run(),
+        versions: { agentVersion: 1, currentAgentVersion: 2, workerVersionId: 'w-7' },
+        spend: {
+          own: { calls: 1, tokens: 120, costUsd: 0.002 },
+          tree: { calls: 1, tokens: 120, costUsd: 0.002 },
+          budget: { maxTokens: 5000 },
+        },
+        children: [],
+        entries: [
+          { at: at(1), kind: 'event', label: 'status running', ref: null },
+          { at: at(3), kind: 'turn', label: 'model turn 0', ref: null },
+        ],
+      },
+    })
+    fireEvent.click(await screen.findByRole('tab', { name: /Inspect/ }))
+    expect(await screen.findByText('v1 (deployed: v2)')).toBeInTheDocument()
+    expect(screen.getByText('5000 tokens')).toBeInTheDocument()
+    expect(screen.getByText('model turn 0')).toBeInTheDocument()
+    expect(screen.getByText('+2.0s')).toBeInTheDocument()
+    cleanup()
+    mount(
+      {},
+      { session: { tenant: { id: IDS.tenant, name: 'Acme', slug: 'acme', role: 'member' } } }
+    )
+    await screen.findByRole('tab', { name: /Usage/ })
+    expect(screen.queryByRole('tab', { name: /Inspect/ })).toBeNull()
   })
 
   it('renders the input ABOVE the columns from the agent’s schema, and has no Input tab', async () => {
@@ -313,31 +384,33 @@ describe('RunPage', () => {
     expect(link.closest('[data-document]')).toHaveTextContent('3 passages')
   })
 
-  it('expands a collapsed stage on click and keeps the choice', async () => {
+  it('collapses an open stage on click and keeps the choice', async () => {
     mount()
-    const header = await screen.findByRole('button', { name: /Checking the input/ })
-    fireEvent.click(header)
+    const header = await screen.findByRole('button', { name: /Summarising/ })
     expect(header).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.click(header)
+    expect(header).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Submit summary')).toBeNull()
   })
 
-  it('shows the typed output through the outputs registry once settled', async () => {
+  it('shows the output as JSON once settled when the agent registers no typed view', async () => {
     mount({
       [`/api/agents/runs/${RUN_ID}`]: run({
         status: 'succeeded',
         finishedAt: t(4),
-        output: {
-          summary: 'Short summary',
-          keyPoints: ['One', 'Two'],
-          documentId: '55555555-5555-4555-8555-555555555555',
-        },
+        output: { answer: 'Short answer' },
       }),
     })
-    expect(await screen.findByText('Short summary')).toBeInTheDocument()
-    expect(screen.getByText('One')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /Open the indexed document/ })).toHaveAttribute(
-      'href',
-      '/documents/55555555-5555-4555-8555-555555555555'
+    // A typed view comes from the outputs registry (an example's own test covers one); the
+    // fixture agent has none, so the output is the JSON whole.
+    await waitFor(() =>
+      expect(
+        [...document.querySelectorAll('pre')].some(pre =>
+          pre.textContent?.includes('"answer": "Short answer"')
+        )
+      ).toBe(true)
     )
+    expect(screen.queryByRole('button', { name: 'Raw JSON' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Cancel run' })).not.toBeInTheDocument()
   })
 

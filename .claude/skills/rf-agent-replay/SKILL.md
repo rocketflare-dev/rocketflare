@@ -22,6 +22,7 @@ pnpm web agent:replay <agentKey>                       # lists the tenants that 
 pnpm web agent:replay <agentKey> --tenant <slug> [--since 7d] [--limit 20] [--run <id>] [--json]
 pnpm web agent:replay <agentKey> --tenant <slug> --candidate path/to/variant.ts   # another definition
 pnpm web agent:replay <agentKey> --tenant <slug> --live                          # asks for what's missing
+pnpm web agent:replay <agentKey> --tenant <slug> --run <id> --record apps/web/tests/agent-recordings  # commit a recording
 ```
 
 - Run it **before** the change too. A baseline that already shows misses or diffs is not caused by
@@ -43,6 +44,8 @@ pnpm web agent:replay <agentKey> --tenant <slug> --live                         
 match       bd112d31  succeeded → succeeded  diff 0
 differs     f5905640  succeeded → succeeded  diff 3  decisions answerable:stale
 incomplete  ce0f45b1  succeeded → miss       diff 0  misses chat:chat
+differs     7a1c09e2  succeeded → succeeded  diff 0  turns 1/3 served (tool-loop#2:drift tool-loop#3:drift)
+differs     90b2d3f4  succeeded → succeeded  diff 0  order drift (decide:answerable → once:triage:search)
 ```
 
 | You see | It means | Usually |
@@ -54,7 +57,12 @@ incomplete  ce0f45b1  succeeded → miss       diff 0  misses chat:chat
 | `decisions k:unused` | Recorded, never asked by the new code | A branch the change removed or now skips |
 | `decisions k:asked(n changed)` | `--live` asked again; n answers changed label | The re-judged cases. This is the number to report |
 | `misses decide:k` | A decision key nothing recorded | A new decision. Needs `--live` |
-| `misses chat:chat` | A model call the record cannot answer | A tool-loop agent (`research-topic`), or a path the run never took (e.g. an escalation) |
+| `turns a/b served` | A tool loop's model turns, answered from its journal (`agent_run_turns`) | All served: the loop saw the same transcript and system prompt as the run |
+| `<loop>#<n>:drift` | Strict: turn n's transcript or system prompt changed, and the RECORDED reply was used anyway | Your change reaches the loop (a prompt, a seed, a tool). Rerun with `--live`, which re-asks from the first drifted turn |
+| `<loop>#<n>:asked` | `--live` asked the model for turn n | Count these for the token cost |
+| `order drift (…)` | Today's code asks its top-level `once`/`decide` keys in another order than the run did | A moved step. Fine for a new run; a run PARKED across the deploy re-enters the new order, so say so |
+| `misses chat:<loop> turn <n>` | A loop turn the journal does not have | A run older than `AGENT_TRANSCRIPT_RETENTION_DAYS` (30), or one from before the journal existed, or a loop not given `journal: ctx.journal`. `--live` settles it |
+| `misses chat:chat` | A model call outside a tool loop the record cannot answer | A path the run never took (e.g. an escalation), or a `callStructuredTool` not wrapped in `ctx.once` |
 | `misses once:k` | A `ctx.once` key nothing recorded | A run older than that key, or a new effect. Never re-run automatically: it may have a side effect |
 | `misses tool:<name>` | A tool handler called outside a `once` | Strict cannot search; `--live` can |
 | `refused N write(s)` | The agent tried to write; the replay refused | Harmless unless the status also changed |
@@ -80,9 +88,31 @@ Tell the user, in this order:
   and a prompt change shows. Leave anything with a side effect on the default.
 - Freeze the items a decision is about behind `ctx.once` before deciding. Otherwise a replay
   reports `stale` for every run.
-- A tool loop's turns are not recorded (CONCEPTS §9 Known gaps). Strict replay stops at the first
-  model call. To be replayable, decompose the loop into `once` and `decide` steps. That is what
-  `rf-how-do-i` and the D37 example `triage-research` show.
+- A tool loop is replayable when it is given `journal: ctx.journal` (`research-topic` is), and only
+  for runs inside the journal's retention (30 days by default). A loop without it stops strict
+  replay at its first model call. Decomposing the loop into `once` and `decide` steps (`rf-how-do-i`,
+  the D37 example `triage-research`) still gives the sharper report: a judgment per question rather
+  than per turn.
+- A `ctx.once` called in a loop passes what differs as `{ inputs }`. The same key twice in one
+  attempt fails the run (`agent_effect_key_conflict`), in a replay as in production.
+
+## 4b. Before you change an agent
+
+Replay the agent's recent runs BEFORE the edit, so the baseline's misses and diffs are not
+blamed on you, then again after. Read `order drift` and `drift` lines as questions for the change:
+did you mean to move a step, or to change what a loop sees? A step moved in a run that is parked
+on a person right now is what that run meets when it resumes.
+
+## 4c. Recordings: the version check in the gate
+
+`--record <dir>` writes each selected run as `<dir>/<agent>-<runId>.json` (the run plus its
+decisions, effects, asks, steering and turns). Every file under `apps/web/tests/agent-recordings/`
+is replayed by `tests/api/agent-recordings.test.ts` on every gate: a change that moves, renames or
+drops a top-level `once`/`decide` key at the SAME `meta.version` fails with "bump `meta.version`".
+When it fails, tell the user which agent and key, and ask whether runs in flight should `continue`,
+`fail` or `rerun` across the change — then bump `meta.version` and set `onVersionChange`. Record
+only from a dev or seeded tenant: a recording holds the run's input and model turns. A recording
+whose agent is now at a newer version than it was recorded at is no longer checked; re-record it.
 
 ## 5. A candidate
 
