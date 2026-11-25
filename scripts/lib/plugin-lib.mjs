@@ -2321,7 +2321,7 @@ export function renderCatalogue(catalogues, installed = []) {
   }
   lines.push(
     '',
-    'Install one with `/rf-plugin add <id>` (or `pnpm plugin add <repo> --subdir <dir>`, which',
+    'Install one with `/rf-plugin add <id>` (or `pnpm plugin add <id>`, which',
     `prints the plan; --apply installs). Browse them at ${PLUGIN_CATALOGUE_URL}.`
   )
   return lines

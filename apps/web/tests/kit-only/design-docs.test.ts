@@ -227,6 +227,20 @@ describe('brand.css', () => {
     expect(applyBrand({ ...files, ...r }, brand).tokensCss).toBe(r.tokensCss)
   })
 
+  it('sets a heading face alone through --font-heading, leaving the body face', () => {
+    const files = {
+      tokensCss: readFileSync(path.join(root, COPIED[0]), 'utf8'),
+      indexCss: readFileSync(path.join(root, COPIED[1]), 'utf8'),
+    }
+    expect(files.tokensCss).toContain('--font-heading: var(--font-sans);')
+    expect(files.indexCss).toMatch(/h1, h2, h3 \{\s*font-family: var\(--font-heading\);/)
+    const r = applyBrand(files, '@theme { --font-heading: "Fraunces Variable", Georgia, serif; }')
+    expect(r.unknown).toEqual([])
+    expect(r.applied.map(a => a.prop)).toEqual(['--font-heading'])
+    expect(r.tokensCss).toContain('--font-heading: "Fraunces Variable", Georgia, serif;')
+    expect(r.tokensCss).toContain('--font-sans: "IBM Plex Sans Variable"')
+  })
+
   it('--apply-brand writes the merge into the app files in place', () => {
     write('brand.css', '@plugin "daisyui/theme" { name: "y-dark"; --color-accent: #2dd4bf; }\n')
     const r = run('--apply-brand')

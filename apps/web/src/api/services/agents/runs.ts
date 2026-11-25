@@ -806,7 +806,7 @@ async function requestCancelOne(
       // A question whose run is over must not sit in somebody's inbox, and the sleeping instance
       // has to be woken or it holds its seven-day `waitForEvent` for nothing — it wakes, reads a
       // settled row and exits. Both are best-effort: the ROW is the truth.
-      await expireInterrupts(db, tenantId, runId)
+      await expireInterrupts(db, tenantId, runId, realtime)
       await sendResumeEvent(env, updated ?? row, { interruptId: null })
     }
     if (updated) await recordOutOfBandSettle(db, updated, 'cancel_requested', realtime)
@@ -1008,7 +1008,7 @@ export async function expireParkedRun(
   if (isAgentKey(run.agentKey) && getAgent(run.agentKey).meta.hitl?.onTimeout === 'reject' && env) {
     return rejectExpiredAsks(db, env, run, pending, realtime)
   }
-  await expireInterrupts(db, run.tenantId, run.id)
+  await expireInterrupts(db, run.tenantId, run.id, realtime)
   const settled = (await cancelRun(db, run.tenantId, run.id)) ?? run
   nudgeRun(realtime, run.tenantId, run.id)
   return settled
@@ -1063,6 +1063,7 @@ async function rejectExpiredAsks(
       status: 'cancelled',
       payload: { note: TIMEOUT_REJECTION_NOTE },
       resolvedByUserId: null,
+      realtime,
     })
     if (!rejected) continue
     await appendEventAtomic(db, {

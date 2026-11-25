@@ -70,13 +70,19 @@ export function formatBytes(bytes: number | null | undefined, fallback = '—'):
   return `${value < 10 ? value.toFixed(1) : Math.round(value)} ${units[unit]}`
 }
 
-/** `1m 12s`, `840ms` — how long something took, for run headers, steps and tool calls. */
+/**
+ * `840ms`, `12s`, `1m 12s`, `18h 2m`, `3d 4h` — how long something took, for run headers, steps
+ * and tool calls. Two units at most: past a minute the seconds stop mattering to the reader.
+ */
 export function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
   const s = Math.round(ms / 1000)
   if (s < 60) return `${s}s`
   const m = Math.floor(s / 60)
-  return `${m}m ${s % 60}s`
+  if (m < 60) return `${m}m ${s % 60}s`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ${m % 60}m`
+  return `${Math.floor(h / 24)}d ${h % 24}h`
 }
 
 /**
@@ -100,4 +106,39 @@ export function eventLabel(name: string): string {
   const parts = name.split('.')
   const words = (parts.length > 1 ? parts.slice(1) : parts).join(' ').replace(/[-_]+/g, ' ').trim()
   return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : name
+}
+
+/**
+ * How much of a run's wall clock it spent parked on a person: the union of its asks' open
+ * intervals (raised → answered; a pending ask runs to `now`, an expired one to when it last
+ * changed), clipped to the run's own start and finish. Overlapping asks count once.
+ */
+export function runWaitMs(
+  run: { startedAt: Date | null; finishedAt: Date | null },
+  interrupts: readonly {
+    status: string
+    createdAt: Date
+    resolvedAt: Date | null
+    updatedAt: Date
+  }[],
+  now: Date = new Date()
+): number {
+  if (!run.startedAt) return 0
+  const from = run.startedAt.getTime()
+  const to = (run.finishedAt ?? now).getTime()
+  const spans = interrupts
+    .map(ask => {
+      const end = ask.resolvedAt ?? (ask.status === 'pending' ? now : ask.updatedAt)
+      return [Math.max(from, ask.createdAt.getTime()), Math.min(to, end.getTime())] as const
+    })
+    .filter(([start, end]) => end > start)
+    .sort((a, b) => a[0] - b[0])
+  let total = 0
+  let cursor = Number.NEGATIVE_INFINITY
+  for (const [start, end] of spans) {
+    const begin = Math.max(start, cursor)
+    if (end > begin) total += end - begin
+    cursor = Math.max(cursor, end)
+  }
+  return total
 }

@@ -79,7 +79,9 @@ function LoginPanel({ name }: { name: string }) {
       {art === 'rocket' && <LoginArt className="absolute inset-0 h-full w-full" />}
       {art === 'type' && (
         <div className="relative max-w-md p-10">
-          <p className="mb-3 text-4xl font-semibold tracking-tight text-balance">{name}</p>
+          <p className="font-heading mb-3 text-4xl font-semibold tracking-tight text-balance">
+            {name}
+          </p>
           <p className="text-lg rail-muted text-pretty">{tagline}</p>
         </div>
       )}

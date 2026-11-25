@@ -36,7 +36,9 @@ Give your recommendation and its reason each time, as in `SKILL.md`.
 4. **Palette.** The simplest brand is one hue: `--brand-hue` turns the whole shell, keeping every
    lightness so the floors hold. Their own primary, accent or neutrals go on top of that. The
    state colours (info, success, warning, error) and the flare keep their hue under any brand.
-5. **Type.** The sans face, and optionally a heading serif. Find a free equivalent of their face.
+5. **Type.** The sans face, and optionally a heading serif: `--font-heading` in `@theme` sets the
+   face of h1–h3 alone (page and section titles, the sign-in heading) and defaults to the sans.
+   Find a free equivalent of their face.
 6. **The sign-in image.** The right half of the sign-in page shows a drawing of the kit's rocket
    (`apps/web/src/ui/components/LoginArt.tsx`), coloured from the rail and flare tokens, so it
    follows their hue on its own. Offer three choices:
@@ -73,6 +75,7 @@ where each came from ("the button colour on your booking page").
 @theme {
   --brand-hue: 25;                 /* degrees, or a colour whose hue to take: #b45309 */
   --font-sans: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: "Fraunces Variable", Georgia, serif;   /* optional: headings only */
   --radius-control: 6px;
   --radius-panel: 10px;
 }

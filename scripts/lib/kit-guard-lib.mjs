@@ -8,11 +8,12 @@
  *
  * - **The UI lint** (`lib/ui-lint.mjs`): findings reported after an edit to a UI file, and bans
  *   still present holding the Stop once. On wherever the guard is enabled, the kit included.
- * - **The core guard**: steer, then record. An edit to kit core (`lib/kit-guard-rules.mjs`) is
- *   allowed, with a word first about the seam that usually serves better; an edit that stands is
- *   recorded in `.rocketflare.json` `localEdits`, so `/rf-upgrade` can show WHY a local line
- *   differs from the kit when a later release changes it. On in a copy (`app != null`) or with
- *   `ROCKETFLARE_GUARD=1`; generated files are the one deny.
+ * - **The core guard**: pause once, then record. The first edit to a kit-core file
+ *   (`lib/kit-guard-rules.mjs`) in a session is refused once with the seam that usually serves
+ *   better, and the retry goes through; an edit that stands is recorded in `.rocketflare.json`
+ *   `localEdits`, so `/rf-upgrade` can show WHY a local line differs from the kit when a later
+ *   release changes it. On in a copy (`app != null`) or with `ROCKETFLARE_GUARD=1`; generated
+ *   files are always refused.
  *
  * `guard.enabled: false` in `.rocketflare.json`, or `ROCKETFLARE_GUARD=0`, turns both off.
  *
@@ -145,26 +146,36 @@ const ledgerShape = rel =>
   `{ "path": "${rel}", "kind": "change", "reason": "<what changed and why>", ` +
   `"seamConsidered": "<the seam you looked at, or none exists>", "date": "<YYYY-MM-DD>" }`
 
-/** The PreToolUse guidance for a steer path, said once per path per session. */
+/** The sentence that ends every pause: the retry goes through. */
+export const RETRY_LINE =
+  'If the edit should still stand after this, make it again; it will go through.'
+
+/**
+ * The PreToolUse pause for a steer path, said once per path per session. It is a deny on
+ * purpose: an allowed edit's `additionalContext` reaches the model only with the tool result,
+ * after the edit has landed, so a note "before" an edit has to stop that first attempt.
+ */
 export function steerGuidance(rule, rel, { carrier = null, entry = null, repo = null } = {}) {
   if (carrier) {
     const ledger = entry ? ` Your localEdits entry for it says: "${entry.reason}".` : ''
     return (
-      `${rel} is carried by the capability ${carrier.name}: follow its NOTE.md${carrier.note ? ` (${carrier.note})` : ''} ` +
-      `rather than editing around it.${ledger}`
+      `${rel} is carried by the capability ${carrier.name}: before you make this edit, follow its NOTE.md${carrier.note ? ` (${carrier.note})` : ''} ` +
+      `rather than editing around it.${ledger}\n${RETRY_LINE}`
     )
   }
   const upstream = repo ? ` (${repo.replace(/\.git$/, '')}/issues)` : ''
   return [
     `${rel} is kit core — ${rule.why} Editing it is fine; it is also the line a later kit release`,
-    'is most likely to change under you, so a word before you do:',
+    'is most likely to change under you, so before you make this edit:',
     `  1. The seam that usually fits: ${rule.instead}`,
     '  2. If none does, a NEW file beside it (wired in with one line) keeps the kit file close to upstream.',
     '  3. If it is a capability other code builds on, name it `name@1` and give it a test at',
     '     `apps/web/tests/capabilities/<name>@1/app.test.ts`, then record `capability` in the entry below.',
-    `  4. Otherwise go ahead, and record it in .rocketflare.json \`localEdits\`: ${ledgerShape(rel)}`,
+    `  4. Otherwise go ahead, record it in .rocketflare.json \`localEdits\`: ${ledgerShape(rel)}`,
+    '     and show the entry in your final message.',
     `A bug in the kit itself is \`"kind": "fix"\` — worth reporting upstream${upstream} so the entry can go`,
     'once a release carries the fix.',
+    RETRY_LINE,
   ].join('\n')
 }
 
@@ -185,11 +196,13 @@ export function sessionStartText({ core }) {
   ]
   if (core) {
     lines.push(
-      'Kit core is editable but steered: before an edit to a core file you get one note on the seam',
-      'that usually fits (plugin slots in apps/web/src/plugins/types.ts, `@/plugins/api`, theme tokens,',
-      'docs/design/brand.css). Your own code, the examples, Home and the design docs are free.',
-      'An edit to core that stands gets an entry in .rocketflare.json `localEdits`',
-      '({ path, kind: "fix"|"change", reason, seamConsidered, capability?, date }); /rf-upgrade shows',
+      'Kit core is editable but steered: the first edit to a core file in a session is paused once',
+      'with the seam that usually fits (plugin slots in apps/web/src/plugins/types.ts, `@/plugins/api`,',
+      'theme tokens, docs/design/brand.css); make the edit again and it goes through.',
+      'Your own code, the examples, Home and the design docs are free, and need no record.',
+      'Only a file the guard flags (that pause, or the Stop check) needs an entry in .rocketflare.json',
+      '`localEdits` ({ path, kind: "fix"|"change", reason, seamConsidered, capability?, date }), and',
+      'only if the edit stands; /rf-upgrade shows',
       'that reason when a kit release changes the same lines. Generated files are refused: the guard',
       'names the command that regenerates each one.'
     )
@@ -271,9 +284,11 @@ export const changesTrackedFile = status => !/^(?:\?\?|A.|.A)$/.test(status) && 
 // ------------------------------------------------------------------ the hook's decisions
 
 /**
- * PreToolUse for one edited path: `{ kind: 'deny', reason } | { kind: 'guide', context } | null`,
- * and the next state. `exists` is whether the file is already on disk — a NEW file under a core
- * directory is the app's own, and is left alone.
+ * PreToolUse for one edited path: `{ kind: 'deny', reason } | null`, and the next state. `exists`
+ * is whether the file is already on disk — a NEW file under a core directory is the app's own, and
+ * is left alone. A sealed path is always denied. A steer path is paused once: the first edit in a
+ * session is denied with the seam guidance, and the path is recorded as steered in the returned
+ * state, so the retry goes through (the hook must save that state before it answers).
  */
 export function preToolDecision({ rel, manifest, state, settings, exists, carriers = [] }) {
   const next = normaliseState(state)
@@ -287,8 +302,8 @@ export function preToolDecision({ rel, manifest, state, settings, exists, carrie
   if (!carrier && validLedgerEntry(manifest, rel)) return { decision: null, state: next }
   if (next.steered.includes(rel)) return { decision: null, state: next }
   next.steered.push(rel)
-  const context = steerGuidance(rule, rel, { carrier, entry, repo: manifest?.kit?.repo ?? null })
-  return { decision: { kind: 'guide', context }, state: next }
+  const reason = steerGuidance(rule, rel, { carrier, entry, repo: manifest?.kit?.repo ?? null })
+  return { decision: { kind: 'deny', reason, steer: true }, state: next }
 }
 
 /**
@@ -398,8 +413,8 @@ export const denyOutput = reason =>
   })
 
 /**
- * PreToolUse: let the call go through the normal permission flow, with guidance attached. No
- * `permissionDecision`, on purpose: `allow` would also skip the person's permission prompt.
+ * Context for the model (SessionStart, PostToolUse). No `permissionDecision`, on purpose: on a
+ * PreToolUse `allow` would also skip the person's permission prompt.
  */
 export const guideOutput = (event, context) =>
   JSON.stringify({

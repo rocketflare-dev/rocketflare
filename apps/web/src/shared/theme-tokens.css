@@ -18,6 +18,9 @@
     Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SF Mono", Menlo, Consolas,
     "Liberation Mono", monospace;
+  /* Headings (h1–h3: page and section titles, the sign-in heading). The body face by default;
+     a brand can set a serif here alone and leave the body on `--font-sans`. */
+  --font-heading: var(--font-sans);
 
   /* Shape. Controls (buttons, inputs, nav items) are 8px; cards and panels 14px; popovers sit
      between. Tailwind turns these into `rounded-control`, `rounded-panel`, `rounded-popover`. */

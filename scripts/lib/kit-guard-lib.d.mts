@@ -56,6 +56,7 @@ export function ledgerProblems(entry: unknown): string[]
 export function validLedgerEntry(manifest: GuardManifest | null, rel: string): LocalEdit | null
 export function carriedPaths(diffText: unknown): string[]
 export function carrierFor(carriers: readonly Carrier[] | null | undefined, rel: string): Carrier | null
+export const RETRY_LINE: string
 export function steerGuidance(
   rule: GuardRule,
   rel: string,
@@ -77,7 +78,7 @@ export function preToolDecision(input: {
   exists: boolean
   carriers?: readonly Carrier[]
 }): {
-  decision: { kind: 'deny'; reason: string } | { kind: 'guide'; context: string } | null
+  decision: { kind: 'deny'; reason: string; steer?: true } | null
   state: GuardState
 }
 export function postToolDecision(input: {

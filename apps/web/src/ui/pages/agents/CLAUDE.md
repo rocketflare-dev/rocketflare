@@ -2,7 +2,8 @@
 
 Four pages, each its own lazy chunk, all `read AgentRun`, all full width:
 - `AgentsPage` (`/agents`): ONE row per agent — title (→ its page), one-line description, badges,
-  last run (status + time ago → the run), 30-day runs / tokens / avg time / cost, Run. Every metric
+  last run (status + time ago → the run), 30-day runs / tokens / avg time / cost, Run. Below `sm`
+  it stacks (`lib/stacked-table.ts`): the agent, then last run and Run; the figures drop out. Every metric
   comes from ONE `GET /api/agents/stats` (`useAgentStats`), never a request per agent; no runs
   table here — it must stay readable at fifty agents. "N waiting on you" → `/agents/runs?awaiting=1`.
 - `AgentPage` (`/agents/:agentKey`): description, Run, four metric cards, and `RunsTable` fixed to
@@ -42,6 +43,12 @@ are in `.claude/rules/ui.md`.
   stage groups, then `selectArtifacts`, `selectPendingInterrupts`, `selectWorkStats`,
   `defaultExpanded`, `windowGroups`. **Everything the right pane shows that is not `run.output` is
   a selector over those same rows — never a second fetch.**
+- A stage key that closed and opens AGAIN is a new row (a resumed run re-enters `run()` and
+  repeats its early stages); merging it would stretch the first across the whole park.
+- Durations: `formatDuration` rolls into hours and days; the header reads "Ran X · Waited Y" when
+  the run spent time parked (`runWaitMs(run, run.interrupts)` — the union of its asks' open
+  intervals inside the run), and the Usage tab adds "Waiting for input". The runs table has no
+  asks, so it shows the wall clock.
 - Load-bearing: `at` is the tool call's START (`endedAt`/`durationMs` are separate — never
   overwrite `at` with the answer); the reducer is **idempotent under duplicated events** (dedup by
   `event.id` — a stream and a fetch can deliver the same row); a step row carries `endedSeq`
@@ -143,8 +150,11 @@ are in `.claude/rules/ui.md`.
   first line. Times are `timeAgoShort` with the absolute date as the title.
 - `RunsTable`'s filters live in `useSearchParams` (`/agents/runs?awaiting=1` has a chip), and every
   row is a real `<Link>`. The SideNav badge is `NavItem.badgeKey`/`badgeTone` resolved by
-  `useNavBadges()` inside `SideNav`, fed by `GET /interrupts?status=pending&pageSize=1` under
-  `['agent-run','awaiting']` (`useAwaitingInterruptCount`) — never polled.
+  `useNavBadges()` inside `SideNav`, fed by `GET /interrupts?status=pending&mine=true&pageSize=1`
+  under `['agent-run','awaiting']` (`useAwaitingInterruptCount`) — never polled. `mine` = the asks
+  ADDRESSED to the reader (assignee, else requester or owner/admin per `approvers`), so an admin or a
+  support visitor who may answer someone else's ask is not told it is waiting on them; the same
+  count is AgentsPage's "N waiting on you".
 - `lib/notificationLink.ts` maps a notification's `type` + `data` to a path (unknown → `null`), for
   BOTH `NotificationsBell` and `/notifications`, so a parked run's bell entry opens the run.
 

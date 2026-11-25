@@ -278,7 +278,8 @@ export function useAwaitingInterruptCount(enabled = true) {
   return useQuery({
     queryKey: queryKeys.agentRuns.awaiting,
     queryFn: () =>
-      api.get('/api/agents/interrupts?status=pending&pageSize=1', {
+      // `mine`: the asks put to this reader, not every ask an admin may read.
+      api.get('/api/agents/interrupts?status=pending&mine=true&pageSize=1', {
         schema: interruptInboxResponseSchema,
       }),
     enabled,

@@ -888,7 +888,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function formatDate( value: Date \| null \| undefined, fallback = '—', now = new Date() ): string`
 - `function formatDateTime( value: Date \| null \| undefined, fallback = '—', now = new Date() ): string`
 - `function formatDuration(ms: number): string`
-  `1m 12s`, `840ms` — how long something took, for run headers, steps and tool calls.
+  `840ms`, `12s`, `1m 12s`, `18h 2m`, `3d 4h` — how long something took, for run headers, steps and tool calls. Two units at most: past a minute the seconds stop mattering to the…
 - `function initials(name: string \| null \| undefined, email?: string): string`
   "Olive Owner" → "OO"; falls back to the first letter of the email.
 - `function LoadingIndicator({ size = 'md', centered = false, fullPage = false, className = '', }: LoadingIndicatorProps)`

@@ -2,7 +2,7 @@
 /**
  * Install, upgrade, remove and audit plugins (D31, `docs/CONCEPTS.md` §16).
  *
- *   node scripts/plugin.mjs add <repo|path>[@ref] [--subdir <dir>] [--apply] [--local]
+ *   node scripts/plugin.mjs add <id|repo|path>[@ref] [--subdir <dir>] [--apply] [--local]
  *   node scripts/plugin.mjs upgrade <id> [--to <ref>] [--from <ref>] [--apply]
  *   node scripts/plugin.mjs remove <id> [--apply] [--archive]
  *   node scripts/plugin.mjs list [--available] [--json] | check | export <id> <dir>
@@ -220,8 +220,11 @@ const { git, quiet: gitQuiet } = makeGit(REPO_ROOT)
 
 export const USAGE = `usage: node scripts/plugin.mjs <command> [options]
 
-  add <repo|path>[@ref]   install a plugin. A PATH is read directly (the authoring loop); a repo
-                          is mirrored under ${WORK_DIR}/. Prints the plan and stops.
+  add <id|repo|path>[@ref]
+                          install a plugin. A bare ID is looked up in the published catalogue
+                          (list --available) at its newest release tag; a PATH is read directly
+                          (the authoring loop); a repo is mirrored under ${WORK_DIR}/. Prints the
+                          plan and stops.
     --subdir <dir>        the plugin lives in a subdirectory of that repository
     --apply               actually install it: copy, write the five barrel lines, add dependencies
                           and record the surface
@@ -731,7 +734,12 @@ function cmdAdd(args, host) {
   if (!spec) stop(2, 'error: add needs a repository or a path', '', USAGE)
   if (args.apply) requireClean(args)
 
-  const source = openSource(spec, args)
+  const resolved = isBareId(spec) ? resolveBareId(spec, args) : null
+  if (resolved) {
+    if (!args.json) out(`${spec} → ${resolved.spec} --subdir ${resolved.subdir || '.'}`)
+    args.subdir = resolved.subdir
+  }
+  const source = openSource(resolved?.spec ?? spec, args)
   if (!source.has(PLUGIN_MANIFEST_FILE)) {
     stop(
       5,
@@ -2160,11 +2168,12 @@ function catalogueSources() {
  * One repository read at its newest release tag through the same mirror `add` uses, or null when
  * it cannot be read. Always fetched (`fresh`): a cached mirror would be a stale list.
  */
-function readCatalogue(source) {
+function readCatalogue(source, { fetch = true } = {}) {
   let m
   try {
     m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
-      fresh: true,
+      fresh: fetch,
+      fetch,
       quiet: true,
       cwd: REPO_ROOT,
     })
@@ -2186,6 +2195,44 @@ function readCatalogue(source) {
     licence: source.commercial ? licenceTerms(files, read, { repo: source.repo, ref: tag }) : null,
     plugins: catalogueEntries(files, read),
   }
+}
+
+/** A bare plugin id (`analytics`, `analytics@3.13.0`): no path, no URL, no `owner/repo`. */
+export function isBareId(spec) {
+  const { target } = splitRef(spec)
+  return /^[a-z][a-z0-9-]*$/.test(target) && !existsSync(target)
+}
+
+/**
+ * `add <id>`: the id looked up in the same catalogue `list --available` reads, as the repository,
+ * the ref (the one typed, else the repository's newest release tag) and `--subdir` (the one
+ * typed, else where the catalogue found it). The open repository failing is exit 3; a commercial
+ * one failing is read as "not licensed" and skipped; an id in neither is not published.
+ */
+function resolveBareId(spec, args) {
+  const { target: id, ref } = splitRef(spec)
+  process.env.GIT_TERMINAL_PROMPT = '0'
+  for (const source of catalogueSources()) {
+    const c = readCatalogue(source, { fetch: args.fetch })
+    if (c.error) {
+      if (source.commercial) continue
+      stop(
+        3,
+        `error: cannot read the plugin catalogue to find '${id}' (${c.error}) — check the network and your git access to ${repoDisplayName(source.repo)}, or pass the repository`
+      )
+    }
+    const entry = c.plugins.find(p => p.id === id)
+    if (!entry) continue
+    return {
+      spec: `${c.repo}@${ref ?? c.tag}`,
+      subdir: args.subdir ?? entry.subdir,
+    }
+  }
+  stop(
+    1,
+    `error: '${id}' is not a published plugin (\`pnpm plugin list --available\` lists them) and not a path.`,
+    'Pass its repository: pnpm plugin add <repo>[@ref] [--subdir <dir>]'
+  )
 }
 
 /**

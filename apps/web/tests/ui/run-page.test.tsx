@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
 import { WebSocketProvider } from '@/ui/components/WebSocketProvider'
 import { RUN_POLL_MS, runOwesAnswer, runPollInterval } from '@/ui/hooks/useAgents'
-import { formatDuration } from '@/ui/lib/format'
+import { formatDuration, runWaitMs } from '@/ui/lib/format'
 import { queryKeys } from '@/ui/lib/query-keys'
 import { websocketClient } from '@/ui/lib/websocketClient'
 import RunPage from '@/ui/pages/agents/RunPage'
@@ -206,6 +206,27 @@ describe('runOwesAnswer / runPollInterval / formatDuration', () => {
     expect(formatDuration(840)).toBe('840ms')
     expect(formatDuration(4000)).toBe('4s')
     expect(formatDuration(72_000)).toBe('1m 12s')
+    // Minutes roll into hours, and hours into days — never "1082m 27s".
+    expect(formatDuration(1082 * 60_000 + 27_000)).toBe('18h 2m')
+    expect(formatDuration(3 * 86_400_000 + 4 * 3_600_000 + 59_000)).toBe('3d 4h')
+  })
+  it('counts the time a run was parked on a person once, inside its own start and finish', () => {
+    const t = (s: number) => new Date(Date.UTC(2026, 0, 1, 0, 0, s))
+    const run = { startedAt: t(0), finishedAt: t(100) }
+    const ask = (from: number, to: number | null, status = 'resolved') => ({
+      status,
+      createdAt: t(from),
+      resolvedAt: to === null ? null : t(to),
+      updatedAt: t(to ?? from),
+    })
+    expect(runWaitMs(run, [])).toBe(0)
+    expect(runWaitMs(run, [ask(10, 40)])).toBe(30_000)
+    // Two asks open at once are one wait, not two.
+    expect(runWaitMs(run, [ask(10, 40), ask(20, 50)])).toBe(40_000)
+    // A pending ask on a parked run runs to now; one before the start is clipped.
+    expect(
+      runWaitMs({ startedAt: t(0), finishedAt: null }, [ask(-5, null, 'pending')], t(30))
+    ).toBe(30_000)
   })
 })
 
@@ -337,6 +358,24 @@ describe('RunPage', () => {
     expect(await within(usage).findByText('Requested')).toBeInTheDocument()
     expect(within(usage).getByText('Started')).toBeInTheDocument()
     expect(within(usage).getByText('Finished')).toBeInTheDocument()
+  })
+
+  it('says how long the run worked and how long it waited apart, once it waited for somebody', async () => {
+    const hours = (h: number) => new Date(Date.parse(t(0)) + h * 3_600_000).toISOString()
+    mount({
+      [`/api/agents/runs/${RUN_ID}`]: run({
+        status: 'succeeded',
+        finishedAt: new Date(Date.parse(hours(18)) + 12_000).toISOString(),
+        interrupts: [
+          ask(
+            { kind: 'approval', message: 'Index it?' },
+            { status: 'resolved', createdAt: t(0), resolvedAt: hours(18), updatedAt: hours(18) }
+          ),
+        ],
+      }),
+    })
+    const summary = await screen.findByRole('region', { name: 'Run summary' })
+    await waitFor(() => expect(summary).toHaveTextContent(/Ran\s*12s · Waited 18h 0m/))
   })
 
   it('gives the timeline the major column while working, the output once settled', async () => {

@@ -619,7 +619,9 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
   (`--radius-control` 8px, `--radius-panel` 14px, `--radius-popover` 12px → `rounded-control`
   …); depth is `--shadow-panel` / `--shadow-popover`, light only, a shadow or a border and never
   both, while dark raises a surface by lightness. Fonts are self-hosted `@fontsource-variable`
-  packages imported in `ui/main.tsx` (IBM Plex Sans, JetBrains Mono for code). Density is
+  packages imported in `ui/main.tsx` (IBM Plex Sans, JetBrains Mono for code); `--font-heading`
+  (default `var(--font-sans)`) is the face of h1–h3 alone — page and section titles, the sign-in
+  heading — so a brand can set a heading serif without touching the body. Density is
   comfortable; `data-density="compact"` on the root tightens it. Tailwind scanning is
   `source(none)` + explicit `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line,
   and precompiled dependency CSS gets none. The floors and pairs live in
@@ -639,7 +641,8 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
   its own section — the chat composer (`lead`), recent agent runs, recent documents — as one entry
   pointing at a lazily imported component in its own directory, and the file is listed in each
   feature surface's `registries`, so deleting a feature deletes its area. Core owns Team, AI spend
-  and Activity (`pages/home/`). One request, `GET /api/home/summary` (`@rocketflare/shared/home`),
+  and Activity (`pages/home/`); Team counts the team (owners, admins, members) and names a support
+  membership apart ("· 1 support visitor", `team.support`), because People lists it. One request, `GET /api/home/summary` (`@rocketflare/shared/home`),
   feeds every section; each renders nothing when its part is `null`. A plugin does not edit the
   registry: it contributes `UiPlugin.homeCards`. The hand-rolled SVG primitives the sections use
   are in `components/shared/`: `RunsChart` (bars over days, stacked by status), `TrendLine` (only
@@ -867,7 +870,14 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   rejection by nobody (`cancelled`, note `Nobody answered before the deadline`) and wakes the run,
   where the default `expire` cancels it. An ask may name `assignees: { userIds, groupIds }`
   (visibility groups): they are the ones notified, see it in their inbox, may read the run and
-  answer — the requester then may not; an owner/admin always may. **Child runs**: `ctx.spawn(key,
+  answer — the requester then may not; an owner/admin always may. An ask's notifications (the
+  first and the reminder, every recipient's) are marked read the moment it stops being pending —
+  answered, declined, expired or settled with its run (`resolveInterrupt` / `expireInterrupts`),
+  with a `notification.read` nudge — so the bell never counts a question that is over. "Waiting on
+  you" (the Agents nav badge and button) is `GET /interrupts?mine=true`: only the asks ADDRESSED to
+  the reader, the same people `recipientsFor` notifies — an assignee; else the requester under
+  `approvers: 'requester'`, or the owners and admins by membership role under `'admin'` — never
+  every ask an admin or a support visitor may read and answer. **Child runs**: `ctx.spawn(key,
   agentKey, input)` starts another agent as its own run (`parent_run_id`, id from
   `spawn:<parent>:<key>`, so a retried parent finds the same child), parks the parent with NO ask
   while it runs, and the child's `finish` (or a cancel of it) wakes the parent, which gets the
@@ -984,7 +994,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   retry keeps `run.attempt`; the timeline shows a call an earlier invocation left open as stopped
   once a `willRetry` error lands. Model rows count apart from tools (stage header, Usage tab) and
   are skipped by the AG-UI projection and the evals export. A stage with no rows is a plain line,
-  not a disclosure (#116).
+  not a disclosure (#116). A stage that closed and opens again (a resumed run re-entering `run()`)
+  is a new row, never stretched across the park; a run that waited on a person reads "Ran 12s ·
+  Waited 18h 2m" (`runWaitMs` over its asks), and durations roll into hours and days. The demo
+  seed writes its runs in these same shapes (`apps/web/scripts/lib/seed-run-events.ts`): model
+  rows, tool rows under the model's call ids, and past runs derived from them.
 - **Knowledge (D18)**: `documents` + `chunks` (pgvector HNSW). Text is ingested inline or by job;
   uploads go to R2, then `AI.toMarkdown`, then the same indexer. Every text write strips NUL and
   the other C0 controls except tab / LF / CR (`stripControlChars`, `api/utils/core/text.ts`) —
@@ -1786,7 +1800,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   (`~/.<slug>/security-runs`) and the guard hook with it. `docs/THREAT-MODEL.md` is the copy's
   own: the `threat-model` surface, and `manual` as well, so `kit:upgrade` shows the kit's diff to it
   and never applies one, and never recreates it once deleted.
-- **A copy is steered, then recorded, when it changes kit core** (`scripts/kit-guard.mjs`, one
+- **A copy is paused once, then recorded, when it changes kit core** (`scripts/kit-guard.mjs`, one
   Claude Code hook entry for `SessionStart`, `PreToolUse`, `PostToolUse` and `Stop`; decisions in
   `lib/kit-guard-lib.mjs`, the map in `lib/kit-guard-rules.mjs`, kit-owned and ported like any
   `scripts/lib/` file). The map has three tiers: `sealed` (generated files — the worker types,
@@ -1795,13 +1809,18 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   its registries, the theme tokens, `LogoMark`, `ui/public/`, `docs/design/`, and every path the
   map does not name — the app's own code), and `steer` (the Worker entry, `api/index.ts`,
   middleware, auth, the tenancy/driver seam, permissions, the plugin types and `plugins/api`, the
-  queue dispatcher, observability, `scripts/**`, `tests/config/**`, `ui/index.css`). Before the
-  first edit of an EXISTING steer file in a session the agent gets one note — the existing seam
-  (each rule's `instead` names one that exists, or says there is none), a new file wired in with
-  one line, an app-owned capability `name@1` with its test at
-  `apps/web/tests/capabilities/<name>@1/app.test.ts` (#183), or a ledger entry — and nothing once
-  the path is ledgered. No `permissionDecision` is set for a steer note, so the person's own
-  permission prompt still applies. At `Stop`, a tracked steer file changed in the working tree with
+  queue dispatcher, the route files the kit ships in `api/routes/` — listed by name, so an app's
+  own `api/routes/<feature>.ts` stays open —, observability, `scripts/**`, `tests/config/**`,
+  `ui/index.css`). The first edit of an EXISTING steer file in a session is PAUSED: refused once
+  with the guidance — the existing seam (each rule's `instead` names one that exists, or says
+  there is none), a new file wired in with one line, an app-owned capability `name@1` with its
+  test at `apps/web/tests/capabilities/<name>@1/app.test.ts` (#183), or a ledger entry shown in the
+  final message — and "make it again; it will go through". The path is recorded as steered in the
+  session state before the refusal is returned, so the retry passes silently, and through the
+  person's own permission prompt (no `allow` is ever set). It is a refusal rather than an allowed
+  edit with context because Claude Code hands an allowed edit's `additionalContext` to the model
+  only with the tool result, after the edit has landed. Nothing at all once the path is
+  ledgered; a sealed path is refused every time. At `Stop`, a tracked steer file changed in the working tree with
   no acceptable `.rocketflare.json` `localEdits` entry (`{ path, kind: "fix"|"change", reason,
   seamConsidered, capability?, date }`; a reason under 20 characters or "user asked" is rejected)
   holds the turn once and the agent drafts the entry and shows it to the person. `kit:upgrade`
@@ -1834,8 +1853,10 @@ block reads as renamed (keep the kit's id and name); a copy that predates the co
 `kit.id` only by following that release's porting note; `plugins.add` cannot express an entry
 without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today. The guard is
 Claude Code only (an editor, a terminal or another agent never sees it, and no gate step checks the
-ledger); an edit made through Bash is seen only at `Stop`, through `git status`, so it gets no steer
-note first; `Stop` reads the whole working tree, so in a checkout shared by two sessions one can be
+ledger); an edit made through Bash is seen only at `Stop`, through `git status`, so it is never
+paused; the pause costs one refused tool call per steer path per session, and an agent that retries
+without reading the reason passes it (the `Stop` check still asks for the record); a route file the
+kit adds in a later release is open until `kit:upgrade` ports the rule naming it; `Stop` reads the whole working tree, so in a checkout shared by two sessions one can be
 held for the other's change; core edits committed before a session are not asked about; the UI
 lint is text heuristics (a JSX tag stack it cannot balance reports no nested card), so it misses
 what it cannot see and an earned exception costs a `ui-allow`; `.rocketflare.json` is never ported,
@@ -1954,7 +1975,10 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   read it, and is otherwise not mentioned. `/rf-plugin add` with no id shows it, and
   `/rf-how-do-i` asks "does a plugin already do this?" first: the order is an existing plugin, else
   the app itself, and a plugin only for what another app will install too.
-  https://rocketflare.dev/plugins is the browsing page.
+  https://rocketflare.dev/plugins is the browsing page. `pnpm plugin add <id>[@X.Y.Z]` resolves a
+  bare id through the same catalogue — the first-party repository, else the commercial one, at
+  its newest release tag (or the one typed), with `--subdir` where the catalogue found it — and
+  prints what it resolved to; an id in neither is exit 1, the open repository unreachable exit 3.
 - **Lifecycle** (`scripts/plugin.mjs`): `add` (plan, then `--apply`), `upgrade`, `remove`
   (`--archive`), `list` (`--available`), `check`, `export`. Every plan step is **declarative, agent (with its
   assertion) or human** — a printed instruction is not a mechanism. The host generates the

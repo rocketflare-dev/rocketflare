@@ -360,4 +360,42 @@ describe('Chat page', () => {
     expect(screen.getByText(/Ask an administrator/)).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Configure AI' })).not.toBeInTheDocument()
   })
+
+  it('keeps an open thread readable with no AI configured, the call to action in place of the composer', async () => {
+    mount({
+      '/api/ai/config/readiness': {
+        chat: { ready: false, source: 'none' },
+        embeddings: { ready: false, source: 'none' },
+        decisions: { ready: false, source: 'none' },
+        rerank: { ready: false, source: 'none' },
+      },
+      [`/api/chat/conversations/${CONV}`]: {
+        ...conversation,
+        messages: [
+          {
+            id: USER_MSG_ID,
+            conversationId: CONV,
+            role: 'user',
+            content: 'When is the next service?',
+            createdAt: now,
+          },
+          {
+            id: ASSISTANT_ID,
+            conversationId: CONV,
+            role: 'assistant',
+            content: 'Every quarter.',
+            createdAt: now,
+          },
+        ],
+      },
+    })
+    await waitFor(() => expect(screen.getByText('Every quarter.')).toBeInTheDocument())
+    expect(screen.getByText('When is the next service?')).toBeInTheDocument()
+    expect(screen.getByText('AI is not configured')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Configure AI' })).toHaveAttribute(
+      'href',
+      '/settings?tab=ai'
+    )
+    expect(screen.queryByLabelText('Message')).not.toBeInTheDocument()
+  })
 })

@@ -76,6 +76,7 @@ import {
   runPluginSeedHooks,
   seedFeatureSetter,
 } from './lib/seed-features'
+import { modelCall, pastRunEvents } from './lib/seed-run-events'
 
 const DATABASE_URL = process.env.DATABASE_URL
 const TENANCY_MODE = process.env.TENANCY_MODE === 'single' ? 'single' : 'multi'
@@ -1423,12 +1424,23 @@ async function seedDemo(
         0.3
       ),
       event('step', { key: 'summarize', label: 'Summarising', status: 'running' }, 0.4),
-      event('tool.start', { name: 'submit_summary', style: 'bullets' }, 0.5),
-      event(
-        'tool.end',
-        { name: 'submit_summary', keyPoints: summaryOutput.keyPoints.length },
-        12.8
-      ),
+      // The one forced call, as the runtime records it around `ctx.chat.client`.
+      ...modelCall({
+        model: CLAUDE_MODEL,
+        n: 1,
+        from: 0.5,
+        to: 12.8,
+        messages: 1,
+        tools: 1,
+        forced: 'submit_summary',
+        maxTokens: 4096,
+        usage: { inputTokens: 1745, outputTokens: 342 },
+        toolCalls: ['submit_summary'],
+        answer: {
+          summary: `${summaryOutput.summary.length} chars`,
+          keyPoints: `${summaryOutput.keyPoints.length} items`,
+        },
+      }),
       event('text', { text: summaryOutput.summary }, 12.9),
       event(
         'step',
@@ -1510,8 +1522,34 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         { key: 'research', label: 'Searching the knowledge base', status: 'running' },
         0.3
       ),
-      event('tool.start', { name: 'search_knowledge', input: { query: searchQuery } }, 9.1),
-      event('tool.end', { name: 'search_knowledge', isError: false, result: searchResult }, 10.4),
+      // Three model turns, each recorded by the runtime, and the two tool calls they asked for
+      // under the model's own call ids — what the loop's `onEvent` writes.
+      ...modelCall({
+        model: CLAUDE_MODEL,
+        n: 1,
+        from: 0.6,
+        to: 9,
+        messages: 1,
+        tools: 6,
+        maxTokens: 4096,
+        usage: { inputTokens: 1820, outputTokens: 96 },
+        toolCalls: ['search_knowledge'],
+      }),
+      event(
+        'tool.start',
+        { name: 'search_knowledge', input: { query: searchQuery }, toolCallId: 'toolu_seed_1' },
+        9.1
+      ),
+      event(
+        'tool.end',
+        {
+          name: 'search_knowledge',
+          toolCallId: 'toolu_seed_1',
+          isError: false,
+          result: searchResult,
+        },
+        10.4
+      ),
       event(
         'step',
         {
@@ -1522,12 +1560,36 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         },
         10.5
       ),
+      ...modelCall({
+        model: CLAUDE_MODEL,
+        n: 2,
+        from: 10.6,
+        to: 18.6,
+        messages: 3,
+        tools: 6,
+        maxTokens: 4096,
+        usage: { inputTokens: 2610, outputTokens: 74 },
+        toolCalls: ['get_document'],
+      }),
       event(
         'tool.start',
-        { name: 'get_document', input: { documentId: customsId, offset: 0 } },
+        {
+          name: 'get_document',
+          input: { documentId: customsId, offset: 0 },
+          toolCallId: 'toolu_seed_2',
+        },
         18.7
       ),
-      event('tool.end', { name: 'get_document', isError: false, result: documentResult }, 18.9),
+      event(
+        'tool.end',
+        {
+          name: 'get_document',
+          toolCallId: 'toolu_seed_2',
+          isError: false,
+          result: documentResult,
+        },
+        18.9
+      ),
       event(
         'step',
         {
@@ -1538,6 +1600,17 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         },
         19
       ),
+      ...modelCall({
+        model: CLAUDE_MODEL,
+        n: 3,
+        from: 19.1,
+        to: 55.1,
+        messages: 5,
+        tools: 6,
+        maxTokens: 4096,
+        usage: { inputTokens: 3520, outputTokens: 1010 },
+        toolCalls: ['submit_answer'],
+      }),
       event(
         'step',
         {
@@ -1559,7 +1632,10 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
 
   // A fortnight of further runs around the two above, so the agents chart on Home has a shape:
   // most succeed, a few fail with the error a person would see, one was cancelled. They reuse
-  // the two runs' input and output, and record only their start and end.
+  // the two runs' input and output, and their timelines are derived from those runs' events
+  // (`pastRunEvents`): a success replays the steps at its own pace, a failure or a cancel shows
+  // what it got through before it stopped — never a bare Started → Finished under an output that
+  // claims three model turns.
   const runners = [owner, admin, member]
   const historyRuns = DEMO_RUN_HISTORY.map((h, i) => {
     const base = h.agentKey === 'summarize-text' ? summaryRun : researchRun
@@ -1574,14 +1650,7 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
       requestedByUserId: (runners[i % runners.length] ?? owner).id,
       startedAt,
       durationSeconds: h.durationSeconds,
-      events: [
-        event('status', { status: 'running', attempt: 1 }, 0),
-        event(
-          'status',
-          h.error ? { status: h.status, error: h.error } : { status: h.status },
-          h.durationSeconds
-        ),
-      ],
+      events: pastRunEvents(base.events, h),
     }
   })
 
@@ -1638,8 +1707,26 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
           data: e.data,
           at,
         })
-        .onConflictDoUpdate({ target: agentRunEvents.id, set: { data: e.data, at } })
+        .onConflictDoUpdate({
+          target: agentRunEvents.id,
+          set: {
+            seq: i + 1,
+            type: e.type as (typeof agentRunEvents.$inferInsert)['type'],
+            data: e.data,
+            at,
+          },
+        })
     }
+    // A re-seed whose timeline got shorter must not leave the old tail behind it.
+    await db
+      .delete(agentRunEvents)
+      .where(
+        and(
+          eq(agentRunEvents.tenantId, tenantId),
+          eq(agentRunEvents.runId, run.id),
+          gt(agentRunEvents.seq, run.events.length)
+        )
+      )
     eventRows += run.events.length
   }
   log(`  runs    ${2 + historyRuns.length} agent runs (${eventRows} events)`)

@@ -4,8 +4,10 @@
  *
  * - `SessionStart` — about ten lines on what the guard does and where the ledger is.
  * - `PreToolUse` (Edit/Write/MultiEdit/NotebookEdit) — a generated file is refused, naming the
- *   command that regenerates it; an existing kit-core file gets one note per session on the seam
- *   that usually fits (silent once the path has a `localEdits` entry).
+ *   command that regenerates it; the first edit to an existing kit-core file in a session is
+ *   paused once (refused, with the seam that usually fits) and the retry goes through — an
+ *   allowed edit's context would reach the model only after the edit landed. Silent once the
+ *   path has a `localEdits` entry.
  * - `PostToolUse` (Edit/Write/MultiEdit) — a UI file is linted (`lib/ui-lint.mjs`) and its
  *   findings are reported as a review, each with its fix.
  * - `Stop` — UI bans still present, or changed kit-core files with no `localEdits` entry, hold
@@ -163,12 +165,9 @@ function main() {
         carriers: settings.core ? findCarriers() : [],
       })
       if (!decision) return
-      if (decision.kind === 'guide') saveState(sessionId, next)
-      process.stdout.write(
-        decision.kind === 'deny'
-          ? denyOutput(decision.reason)
-          : guideOutput('PreToolUse', decision.context)
-      )
+      // A steer pause records the path BEFORE it answers, so the retry goes through.
+      if (decision.steer) saveState(sessionId, next)
+      process.stdout.write(denyOutput(decision.reason))
       return
     }
     if (!isUiPath(rel)) return

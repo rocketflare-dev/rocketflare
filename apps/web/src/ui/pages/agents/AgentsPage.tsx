@@ -15,6 +15,16 @@ import { Link, useNavigate } from 'react-router'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import { useAgentList, useAgentStats, useAwaitingInterruptCount } from '@/ui/hooks/useAgents'
 import { timeAgo } from '@/ui/lib/format'
+import {
+  STACK_BODY,
+  STACK_CELL,
+  STACK_END,
+  STACK_HEAD,
+  STACK_HIDE,
+  STACK_LEAD,
+  STACK_ROW,
+  STACK_TABLE,
+} from '@/ui/lib/stacked-table'
 import { formatAvgDuration, formatTokens, formatUsd, runsSummary } from './agentMetrics'
 import { RunAgentModal } from './RunAgentModal'
 import { RunStatusBadge } from './RunStatusBadge'
@@ -70,8 +80,8 @@ export default function AgentsPage() {
           <EmptyState icon={CpuChipIcon} size="sm" message="No agents registered" />
         ) : (
           <div className="overflow-x-auto">
-            <table className="data-table" aria-label="Agents">
-              <thead>
+            <table className={`data-table ${STACK_TABLE}`} aria-label="Agents">
+              <thead className={STACK_HEAD}>
                 <tr>
                   <th>Agent</th>
                   <th>Last run</th>
@@ -84,7 +94,7 @@ export default function AgentsPage() {
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className={STACK_BODY}>
                 {items.map(agent => (
                   <AgentRow
                     key={agent.key}
@@ -152,8 +162,10 @@ function AgentRow({
 }) {
   const metric = (value: string) => (loading ? '…' : value)
   return (
-    <tr data-agent-key={agent.key} className={LINK_ROW}>
-      <td className="min-w-[18rem]">
+    <tr data-agent-key={agent.key} className={`${LINK_ROW} ${STACK_ROW}`}>
+      {/* Below `sm` the row stacks (`lib/stacked-table.ts`): the agent, then its last run and Run.
+          The 30-day figures stay on the agent's own page, a tap away. */}
+      <td className={`sm:min-w-[18rem] ${STACK_LEAD}`}>
         <div className="flex items-center gap-2 flex-wrap">
           {/* A real link: the agent's page is where its runs are. */}
           <Link to={`/agents/${agent.key}`} className={`font-medium link link-hover ${ROW_LINK}`}>
@@ -165,7 +177,7 @@ function AgentRow({
           {agent.description}
         </p>
       </td>
-      <td className="whitespace-nowrap">
+      <td className={`whitespace-nowrap ${STACK_CELL}`}>
         {stats?.lastRun ? (
           <Link
             to={`/agents/runs/${stats.lastRun.id}`}
@@ -179,21 +191,23 @@ function AgentRow({
           <span className="text-xs text-muted">{loading ? '…' : 'never run'}</span>
         )}
       </td>
-      <td className="text-right tabular-nums whitespace-nowrap">
+      <td className={`text-right tabular-nums whitespace-nowrap ${STACK_HIDE}`}>
         {metric(stats ? runsSummary(stats) : '—')}
       </td>
       {columns.tokens && (
-        <td className="text-right tabular-nums">
+        <td className={`text-right tabular-nums ${STACK_HIDE}`}>
           {metric(stats ? formatTokens(stats.tokens) : '—')}
         </td>
       )}
-      <td className="text-right tabular-nums">{metric(stats ? formatAvgDuration(stats) : '—')}</td>
+      <td className={`text-right tabular-nums ${STACK_HIDE}`}>
+        {metric(stats ? formatAvgDuration(stats) : '—')}
+      </td>
       {columns.cost && (
-        <td className="text-right tabular-nums">
+        <td className={`text-right tabular-nums ${STACK_HIDE}`}>
           {metric(stats ? formatUsd(stats.costUsd) : '—')}
         </td>
       )}
-      <td className="text-right">
+      <td className={`text-right ${STACK_END}`}>
         <button
           type="button"
           className={`btn btn-primary btn-xs gap-1 ${ABOVE_ROW}`}

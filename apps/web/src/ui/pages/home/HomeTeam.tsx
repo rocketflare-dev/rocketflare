@@ -30,6 +30,19 @@ export function roleCounts(roles: Team['roles']): string {
     .join(' · ')
 }
 
+/**
+ * "8 people · 1 owner · 2 admins · 5 members · 1 support visitor". People lists a support
+ * membership as a row, so it is named here rather than silently left out of the count.
+ */
+export function teamDescription(team: Pick<Team, 'total' | 'roles' | 'support'>): string {
+  const people = team.total === 1 ? '1 person' : `${team.total} people`
+  const support =
+    team.support > 0
+      ? ` · ${team.support} support ${team.support === 1 ? 'visitor' : 'visitors'}`
+      : ''
+  return `${people} · ${roleCounts(team.roles)}${support}`
+}
+
 export function HomeTeam() {
   const { data, isLoading } = useHomeSummary()
   const { can } = usePermissions()
@@ -42,10 +55,7 @@ export function HomeTeam() {
   const alone = team.total <= 1 && (invitations?.total ?? 0) === 0
 
   return (
-    <SectionPanel
-      title="Team"
-      description={`${team.total === 1 ? '1 person' : `${team.total} people`} · ${roleCounts(team.roles)}`}
-    >
+    <SectionPanel title="Team" description={teamDescription(team)}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <AvatarStack
           people={team.members.map(m => ({ id: m.userId, name: m.name, avatarUrl: m.avatarUrl }))}

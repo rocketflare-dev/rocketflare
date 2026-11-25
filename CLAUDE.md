@@ -169,10 +169,12 @@ code-quality.md · cloudflare.md · tools.md. Runbooks: `docs/DEPLOY.md` · `doc
 
 ## Changing the core
 
-In a copy, kit core is editable but steered (`scripts/kit-guard.mjs`, CONCEPTS §13): the existing seam
-first (`plugins/types.ts`, `@/plugins/api`, theme tokens), then a new file wired in with one line,
-then an app-owned capability `name@1`. An edit that stands gets a `.rocketflare.json` `localEdits`
-entry with a real reason, shown to the user (a kit bug is `kind: "fix"`, worth reporting upstream).
+In a copy, kit core is editable but steered (`scripts/kit-guard.mjs`, CONCEPTS §13): the first edit
+to a core file in a session is refused once with the seam that fits, and made again it goes through.
+The existing seam first (`plugins/types.ts`, `@/plugins/api`, theme tokens), then a new file wired
+in with one line, then an app-owned capability `name@1`. Only a file the guard flags needs a
+`.rocketflare.json` `localEdits` entry: one with a real reason, shown to the user in your final
+message (a kit bug is `kind: "fix"`, worth reporting upstream).
 Generated files are refused: run the command named. UI work passes `pnpm design:lint`.
 
 ## Non-Negotiables

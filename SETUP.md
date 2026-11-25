@@ -176,8 +176,8 @@ have; the bootstrap's `6/10 plugins` step installs each one that is not already 
 > `git add -A` them into the kit. In an app (`app` set) the surface goes into `.rocketflare.json`.
 
 ```bash
-pnpm plugin add <repo|path>[@ref]          # prints the plan and stops
-pnpm plugin add <repo|path>[@ref] --apply  # copies, writes the barrel lines, records the surface
+pnpm plugin add <id|repo|path>[@ref]       # prints the plan and stops (a bare id: the published catalogue)
+pnpm plugin add <id|repo|path>[@ref] --apply  # copies, writes the barrel lines, records the surface
 pnpm db:generate --name plugin-<id>-<version> && pnpm db:migrate   # the HOST's migration, always
 ```
 
@@ -735,7 +735,7 @@ its own `defaultPlugins` (§1.4b).
 pnpm plugin list                                   # what is installed, and from where
 pnpm plugin check                                  # anchors, kit range, barrel lines, migrations
 pnpm plugin remove analytics --apply               # then pnpm db:generate && pnpm db:migrate
-pnpm plugin add <repo|path>[@ref]                  # read the plan; --apply installs it
+pnpm plugin add <id|repo|path>[@ref]               # read the plan; --apply installs it
 ```
 
 **Every command prints its plan and stops until `--apply`.** Installing a plugin gives it full

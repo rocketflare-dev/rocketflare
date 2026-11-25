@@ -11,9 +11,9 @@
  *   its generator, so the guard names the command (`regenerate`) instead.
  * - `open` — no friction: the examples, Home and its registries, the theme tokens and the logo,
  *   the Login image, the design docs, and anything that is the app's own.
- * - `steer` — the core core. An edit is allowed, with a word first (once per path per session)
- *   about the seam that usually serves better, and a `localEdits` entry in `.rocketflare.json`
- *   if the edit stands — that entry is what `/rf-upgrade` shows when a later kit release changes
+ * - `steer` — the core core. The first edit to one in a session is paused once (refused, with
+ *   the seam that usually serves better) and the retry goes through; a `localEdits` entry in
+ *   `.rocketflare.json` records it if the edit stands — that entry is what `/rf-upgrade` shows when a later kit release changes
  *   the same lines.
  *
  * Every `instead` names a seam that exists in this kit: a member of `ServerPlugin` / `UiPlugin` /
@@ -156,6 +156,52 @@ export const GUARD_RULES = [
     why: 'The declared plugin API (docs/plugin-api.md); every installed plugin compiles against it.',
     instead:
       'Data one plugin shares with another: `extensions` on `ServerPlugin` / `UiPlugin`, read with `extensions()` from `@/plugins/api/peers`. A member the seam lacks is a kit change: say what you needed and raise it upstream.',
+  },
+  {
+    id: 'kit-routes',
+    tier: 'steer',
+    // The routes the kit ships, by name: an app's own `api/routes/<feature>.ts` is its own file,
+    // in this session and every later one. `tests/kit-only/kit-guard-hook.test.ts` keeps the
+    // list equal to the kit's directory.
+    paths: [
+      'apps/web/src/api/routes/access-requests.ts',
+      'apps/web/src/api/routes/activity.ts',
+      'apps/web/src/api/routes/admin.ts',
+      'apps/web/src/api/routes/agents.ts',
+      'apps/web/src/api/routes/agui.ts',
+      'apps/web/src/api/routes/ai-agent-models.ts',
+      'apps/web/src/api/routes/ai-config.ts',
+      'apps/web/src/api/routes/ai-documents.ts',
+      'apps/web/src/api/routes/ai-prompts.ts',
+      'apps/web/src/api/routes/ai-usage.ts',
+      'apps/web/src/api/routes/chat.ts',
+      'apps/web/src/api/routes/evals.ts',
+      'apps/web/src/api/routes/features.ts',
+      'apps/web/src/api/routes/feedback.ts',
+      'apps/web/src/api/routes/files.ts',
+      'apps/web/src/api/routes/groups.ts',
+      'apps/web/src/api/routes/health.ts',
+      'apps/web/src/api/routes/home.ts',
+      'apps/web/src/api/routes/identity-events.ts',
+      'apps/web/src/api/routes/invitations.ts',
+      'apps/web/src/api/routes/invite.ts',
+      'apps/web/src/api/routes/keys.ts',
+      'apps/web/src/api/routes/knowledge.ts',
+      'apps/web/src/api/routes/mcp-connections.ts',
+      'apps/web/src/api/routes/mcp-settings.ts',
+      'apps/web/src/api/routes/mcp.ts',
+      'apps/web/src/api/routes/me.ts',
+      'apps/web/src/api/routes/members.ts',
+      'apps/web/src/api/routes/notifications.ts',
+      'apps/web/src/api/routes/oauth.ts',
+      'apps/web/src/api/routes/tenant.ts',
+      'apps/web/src/api/routes/tenants.ts',
+      'apps/web/src/api/routes/traces.ts',
+      'apps/web/src/api/routes/ws.ts',
+    ],
+    why: 'A route the kit ships; a later kit release changes it in place.',
+    instead:
+      "A new route: a plugin's `ServerPlugin.mounts` (`[prefix, router, middleware?]`), or an app's own `api/routes/<feature>.ts` plus one mount line in `api/index.ts` (docs/ADAPTING.md §3). Extra behaviour on a kit route usually belongs in a service, a tool (`ServerPlugin.tools`) or a hook (`ServerPlugin.hooks`) rather than in the route file.",
   },
   {
     id: 'queue-dispatch',

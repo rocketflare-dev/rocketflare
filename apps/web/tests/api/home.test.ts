@@ -82,6 +82,8 @@ describe('GET /api/home/summary', () => {
 
     // Someone outside the team (a platform admin) acting here is not named on Home.
     const outsider = await createTestUser(db, { name: 'Platform Admin' })
+    // Their support membership is listed in People, so Home counts it apart from the team.
+    await linkUserToTenant(db, outsider.id, tenant.id, 'support')
     await db.insert(activityEvents).values({
       tenantId: tenant.id,
       userId: outsider.id,
@@ -118,7 +120,11 @@ describe('GET /api/home/summary', () => {
     expect(body.agents?.byAgent[0]?.daily.at(-1)).toBe(2)
     expect(body.knowledge).toMatchObject({ total: 1, pending: 0 })
     expect(body.knowledge?.recent[0]).toMatchObject({ title: 'Handbook', factCount: null })
-    expect(body.team).toMatchObject({ total: 2, roles: { owner: 1, admin: 0, member: 1 } })
+    expect(body.team).toMatchObject({
+      total: 2,
+      roles: { owner: 1, admin: 0, member: 1 },
+      support: 1,
+    })
     expect(body.team?.invitations?.total).toBe(1)
     expect(body.activity?.map(a => a.type)).toContain('member.invited')
     expect(body.activity?.find(a => a.type === 'member.invited')?.actor?.name).toBe(owner.name)

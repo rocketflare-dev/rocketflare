@@ -73,6 +73,20 @@ describe('buildTimeline', () => {
     expect(step.kind === 'step' && step.endedAt).toEqual(at(7))
   })
 
+  it('a closed stage that opens again (a resumed run re-entering run()) is a NEW row', () => {
+    const rows = buildTimeline([
+      ev(1, 'step', { key: 'precheck', label: 'Checking the input', status: 'running' }),
+      ev(2, 'step', { key: 'precheck', label: 'Checking the input', status: 'done' }),
+      ev(3, 'interrupt', { interruptId: eid(90), key: 'approve', kind: 'approval', message: '?' }),
+      ev(50, 'step', { key: 'precheck', label: 'Checking the input', status: 'running' }),
+      ev(51, 'step', { key: 'precheck', label: 'Checking the input', status: 'done' }),
+    ])
+    const steps = rows.filter(row => row.kind === 'step')
+    expect(steps).toHaveLength(2)
+    // Merged, the first stage would span the park: 1 → 51 seconds for a check that took one.
+    expect(groupTimeline(rows).map(group => group.durationMs)).toEqual([1000, undefined, 1000])
+  })
+
   it('keeps a tool call’s start time and derives its duration — the `at`-overwrite regression', () => {
     const rows = buildTimeline([
       ev(1, 'tool.start', { name: 'get_document', input: { id: 'a' } }),

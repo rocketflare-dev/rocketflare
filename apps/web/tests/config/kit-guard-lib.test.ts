@@ -18,6 +18,8 @@ import {
   parsePorcelain,
   postToolDecision,
   preToolDecision,
+  RETRY_LINE,
+  sessionStartText,
   stateName,
   stopDecision,
   toRepoPath,
@@ -131,12 +133,17 @@ describe('the ledger', () => {
 describe('PreToolUse', () => {
   const rel = 'apps/web/src/db/client.ts'
 
-  it('speaks once per path per session, with the seam ladder', () => {
+  it('pauses the first edit once with the seam ladder, then lets the retry through', () => {
     const first = preToolDecision({ rel, manifest: COPY, state: null, settings: ON, exists: true })
-    expect(first.decision?.kind).toBe('guide')
-    const text = first.decision && 'context' in first.decision ? first.decision.context : ''
+    expect(first.decision?.kind).toBe('deny')
+    expect(first.decision?.steer).toBe(true)
+    expect(first.state.steered).toContain(rel)
+    const text = first.decision?.reason ?? ''
+    expect(text).toContain('before you make this edit')
     expect(text).toContain('tenantIsolation()')
     expect(text).toContain('localEdits')
+    expect(text).toContain('show the entry in your final message')
+    expect(text).toContain(RETRY_LINE)
     expect(text).toContain('tests/capabilities/<name>@1/app.test.ts')
     expect(text).toContain('https://github.com/x/kit/issues')
     const second = preToolDecision({
@@ -179,9 +186,46 @@ describe('PreToolUse', () => {
       exists: true,
     })
     expect(decision?.kind).toBe('deny')
-    expect(decision && 'reason' in decision ? decision.reason : '').toContain(
-      'node scripts/plugin-api-doc.mjs'
-    )
+    expect(decision?.steer).toBeUndefined()
+    expect(decision?.reason ?? '').toContain('node scripts/plugin-api-doc.mjs')
+  })
+
+  it('denies a sealed path every time, even after a pause', () => {
+    const state = {
+      v: 1,
+      steered: ['docs/plugin-api.md'],
+      post: {},
+      stopBlocked: [],
+      reflexAsked: [],
+    }
+    const { decision } = preToolDecision({
+      rel: 'docs/plugin-api.md',
+      manifest: COPY,
+      state,
+      settings: ON,
+      exists: true,
+    })
+    expect(decision?.kind).toBe('deny')
+  })
+
+  it("steers the kit's own route files, not an app's own route", () => {
+    const kitRoute = 'apps/web/src/api/routes/members.ts'
+    expect(classifyGuardPath(kitRoute).rule?.id).toBe('kit-routes')
+    expect(classifyGuardPath('apps/web/src/api/routes/billing.ts').tier).toBe('open')
+    const { decision } = preToolDecision({
+      rel: kitRoute,
+      manifest: COPY,
+      state: null,
+      settings: ON,
+      exists: true,
+    })
+    expect(decision?.reason ?? '').toContain('ServerPlugin.mounts')
+    expect(decision?.reason ?? '').toContain('docs/ADAPTING.md §3')
+  })
+
+  it('says only a flagged file needs a localEdits entry', () => {
+    expect(sessionStartText({ core: true })).toMatch(/Only a file the guard flags/)
+    expect(sessionStartText({ core: false })).not.toContain('localEdits')
   })
 
   it('points a carried path at its capability note (inert until a carrier exists)', () => {
@@ -196,7 +240,8 @@ describe('PreToolUse', () => {
       exists: true,
       carriers,
     })
-    expect(decision && 'context' in decision ? decision.context : '').toMatch(/region@1.*NOTE\.md/)
+    expect(decision?.reason ?? '').toMatch(/region@1.*NOTE\.md/)
+    expect(decision?.reason ?? '').toContain(RETRY_LINE)
     expect(carriedPaths('')).toEqual([])
   })
 })

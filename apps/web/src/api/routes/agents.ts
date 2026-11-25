@@ -47,7 +47,21 @@ import {
   resolveInterruptRequestSchema,
 } from '@rocketflare/shared/ai/interrupts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, count, desc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm'
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  notInArray,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
+import type { Database } from '../../db/client'
 import { type AgentRunRow, agentRunInterrupts, agentRuns, users } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
@@ -575,6 +589,7 @@ agentsRouter.post(
       status: body.status,
       payload,
       resolvedByUserId: user.id,
+      realtime,
     })
     if (!resolved) {
       throw new ConflictError(
@@ -704,6 +719,43 @@ agentsRouter.post(
  * `canAnswer` travels per item rather than filtering the list: a member under `approvers: 'admin'`
  * is supposed to see that their run is waiting on somebody, and the UI renders it read-only.
  */
+/**
+ * SQL: the ask is ADDRESSED to this reader — the same people `recipientsFor` notifies. Assigned:
+ * the reader is an assignee. Otherwise the agent's `approvers`: `'admin'` (and a run nobody
+ * requested) → the organisation's owners and admins by MEMBERSHIP role, so a support visitor or a
+ * platform admin is not counted as asked; `'requester'` → whoever started the run.
+ */
+function addressedTo(db: Database, auth: AuthContext, tenantId: string, userId: string): SQL {
+  const isTenantAdmin = auth.tenantUser?.role === 'owner' || auth.tenantUser?.role === 'admin'
+  // Plain strings: the column's type is the registry's key union, and the filter narrows nothing.
+  const adminKeys: string[] = Object.keys(AGENTS).filter(key => approversFor(key) === 'admin')
+  const agentKey = sql<string>`${agentRuns.agentKey}`
+  const unassigned = sql`cardinality(${agentRunInterrupts.assigneeUserIds}) = 0 AND cardinality(${agentRunInterrupts.assigneeGroupIds}) = 0`
+  const byAgentRule = and(
+    eq(agentRuns.tenantId, tenantId),
+    isTenantAdmin
+      ? or(
+          adminKeys.length ? inArray(agentKey, adminKeys) : undefined,
+          isNull(agentRuns.requestedByUserId),
+          eq(agentRuns.requestedByUserId, userId)
+        )
+      : and(
+          eq(agentRuns.requestedByUserId, userId),
+          adminKeys.length ? notInArray(agentKey, adminKeys) : undefined
+        )
+  )
+  return or(
+    assignedToSql(tenantId, userId),
+    and(
+      unassigned,
+      inArray(
+        agentRunInterrupts.runId,
+        db.select({ id: agentRuns.id }).from(agentRuns).where(byAgentRule)
+      )
+    )
+  ) as SQL
+}
+
 agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), async c => {
   const { db, tenantId, user, auth } = withAuthAndDb(c)
   guardPermission(c, 'read', 'AgentRun')
@@ -723,7 +775,8 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
         db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
       ),
       isAdminLevel(auth) ? undefined : assignedToSql(tenantId, user.id)
-    )
+    ),
+    query.mine ? addressedTo(db, auth, tenantId, user.id) : undefined
   )
   const [rows, [total]] = await Promise.all([
     db

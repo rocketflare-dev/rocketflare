@@ -2,9 +2,10 @@
  * `/chat` and `/chat/:conversationId`: a left rail of MY conversations (new, delete,
  * paginated) and the thread pane — `ChatBubble` list, the streaming assistant bubble from
  * `useSendMessage`, and the composer (Enter sends, Shift+Enter newline, Stop aborts). A tenant with
- * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets an
- * `EmptyState` whose action is "Configure AI" for `manage AiConfig` holders and "ask an admin"
- * for everyone else. Lazy in App.tsx so the markdown renderer is its own chunk.
+ * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets a call
+ * to action — "Configure AI" for `manage AiConfig` holders, "ask an admin" for everyone else — as
+ * the pane's `EmptyState` with no thread open, or in place of the composer under an open thread,
+ * whose history stays readable. Lazy in App.tsx so the markdown renderer is its own chunk.
  */
 
 import {
@@ -103,7 +104,9 @@ export default function ChatPage() {
   const conversations = list.data?.items ?? []
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-9rem)] min-h-[480px]">
+    // Fills what the shell leaves: the dynamic viewport (a phone's toolbars come and go) less the
+    // 3.5rem header and `main`'s own padding, 1rem a side below `md` and 2rem from it.
+    <div className="flex gap-4 h-[calc(100dvh-5.5rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
       <aside
         aria-label="Conversations"
         className="surface-panel p-0 w-64 shrink-0 hidden md:flex flex-col overflow-hidden"
@@ -171,24 +174,9 @@ export default function ChatPage() {
         aria-label="Conversation"
         className="surface-panel p-0 flex-1 min-w-0 flex flex-col overflow-hidden"
       >
-        {notConfigured ? (
+        {notConfigured && !conversationId ? (
           <div className="flex-1 flex items-center justify-center p-6">
-            <EmptyState
-              icon={SparklesIcon}
-              message="AI is not configured"
-              description={
-                canConfigure
-                  ? 'Add a chat provider so this workspace can answer.'
-                  : 'Ask an administrator to add a chat provider in Settings → AI.'
-              }
-              action={
-                canConfigure ? (
-                  <Link to="/settings?tab=ai" className="btn btn-primary btn-sm">
-                    Configure AI
-                  </Link>
-                ) : undefined
-              }
-            />
+            <NotConfigured canConfigure={canConfigure} />
           </div>
         ) : !conversationId ? (
           <div className="flex-1 flex items-center justify-center p-6">
@@ -237,13 +225,20 @@ export default function ChatPage() {
               // Token counts and the model are inspector detail: shown only with Stats open.
               showUsage={canConfigure && showStats}
             />
-            <Composer
-              key={conversationId}
-              disabled={!thread.data || thread.isError}
-              streaming={isStreaming}
-              onSend={send}
-              onStop={stop}
-            />
+            {notConfigured ? (
+              // The thread stays readable; only the composer gives way to the call to action.
+              <div className="border-t border-[color:var(--border-subtle)] px-4 py-3">
+                <NotConfigured canConfigure={canConfigure} inline />
+              </div>
+            ) : (
+              <Composer
+                key={conversationId}
+                disabled={!thread.data || thread.isError}
+                streaming={isStreaming}
+                onSend={send}
+                onStop={stop}
+              />
+            )}
           </>
         )}
       </section>
@@ -357,6 +352,49 @@ function Transcript({
         />
       )}
       <div ref={bottomRef} />
+    </div>
+  )
+}
+
+/**
+ * No chat provider: "Configure AI" for `manage AiConfig` holders, "ask an administrator" for
+ * everyone else. `inline` is the strip that stands in for the composer under a readable thread.
+ */
+function NotConfigured({
+  canConfigure,
+  inline = false,
+}: {
+  canConfigure: boolean
+  inline?: boolean
+}) {
+  const description = canConfigure
+    ? 'Add a chat provider so this workspace can answer.'
+    : 'Ask an administrator to add a chat provider in Settings → AI.'
+  const action = canConfigure ? (
+    <Link to="/settings?tab=ai" className="btn btn-primary btn-sm">
+      Configure AI
+    </Link>
+  ) : undefined
+  if (!inline) {
+    return (
+      <EmptyState
+        icon={SparklesIcon}
+        message="AI is not configured"
+        description={description}
+        action={action}
+      />
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <SparklesIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">AI is not configured</p>
+          <p className="text-sm text-secondary">{description}</p>
+        </div>
+      </div>
+      {action}
     </div>
   )
 }

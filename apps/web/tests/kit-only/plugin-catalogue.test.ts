@@ -344,3 +344,40 @@ describe('plugin list --available', () => {
     expect(run(host, ['list', '--available', '--no-fetch'], [{ repo: open }]).status).toBe(2)
   })
 })
+
+describe('plugin add <bare id>', () => {
+  let shared: string | null = null
+  const makeHost = () => {
+    shared ??= makeHostOnce()
+    return shared
+  }
+  afterAll(() => {
+    if (shared) rmSync(shared, { recursive: true, force: true })
+  })
+
+  it('resolves the id through the catalogue: the repository, its newest tag and the subdir', () => {
+    const host = makeHost()
+    const open = makeRepo(MONOREPO, ['3.0.0', '3.1.0'])
+    const r = run(host, ['add', 'orders'], [{ repo: open }])
+    expect(`${r.out}${r.err}`).not.toMatch(/does not exist/)
+    expect(r.out).toContain(`orders → ${open}@3.1.0 --subdir plugins/orders`)
+    const pinned = run(host, ['add', 'orders@3.0.0'], [{ repo: open }])
+    expect(pinned.out).toContain(`orders@3.0.0 → ${open}@3.0.0 --subdir plugins/orders`)
+  })
+
+  it('finds a commercial id in its own repository, and refuses an id in neither', () => {
+    const host = makeHost()
+    const open = makeRepo(MONOREPO, ['3.1.0'])
+    const paid = makeRepo(
+      { [`plugins/sites/${PLUGIN_MANIFEST_FILE}`]: manifest('sites', { version: '0.2.0' }) },
+      ['0.2.0']
+    )
+    const sources = [{ repo: open }, { repo: paid, commercial: true }]
+    expect(run(host, ['add', 'sites'], sources).out).toContain(
+      `sites → ${paid}@0.2.0 --subdir plugins/sites`
+    )
+    const none = run(host, ['add', 'nowhere'], sources)
+    expect(none.status).toBe(1)
+    expect(none.err).toMatch(/'nowhere' is not a published plugin/)
+  })
+})

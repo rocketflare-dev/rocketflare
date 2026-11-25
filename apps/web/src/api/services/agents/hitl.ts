@@ -26,7 +26,7 @@ import {
 } from '../../../db/schema'
 import { notifyMany } from '../notifications'
 import type { Realtime } from '../realtime'
-import { parseDurationMs } from './interrupts'
+import { ASK_NOTIFICATION_TYPE, parseDurationMs } from './interrupts'
 
 /** The note an ask rejected by its deadline carries — what the agent and the timeline read. */
 export const TIMEOUT_REJECTION_NOTE = 'Nobody answered before the deadline'
@@ -121,7 +121,7 @@ export async function notifyApprovers(
     recipients,
     {
       tenantId: run.tenantId,
-      type: 'agent_run_awaiting_input',
+      type: ASK_NOTIFICATION_TYPE,
       title: options.reminder
         ? `Reminder: ${agentTitle} is still waiting for your decision`
         : `${agentTitle} needs your decision`,

@@ -151,6 +151,11 @@ export const homeTeamSchema = z.object({
     admin: z.number().int().nonnegative(),
     member: z.number().int().nonnegative(),
   }),
+  /**
+   * Support memberships (a platform admin visiting to help): listed in Settings → People, but
+   * not part of `total` — the team card names them apart so the two counts reconcile.
+   */
+  support: z.number().int().nonnegative().default(0),
   /** Pending invitations; `null` when the reader may not read them. */
   invitations: z
     .object({

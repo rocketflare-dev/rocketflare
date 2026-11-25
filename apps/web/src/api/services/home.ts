@@ -108,14 +108,18 @@ async function homeTeam({ db, auth }: HomeContext): Promise<HomeTeam | null> {
       : null,
   ])
   const roles: Record<TenantRole, number> = { owner: 0, admin: 0, member: 0 }
+  let support = 0
   for (const row of byRole) {
-    // A visiting support person is not one of the team.
+    // A visiting support person is not one of the team — but People lists them, so they are
+    // counted apart and the card says so.
     if (row.role in roles) roles[row.role as TenantRole] = Number(row.n)
+    else if (row.role === 'support') support = Number(row.n)
   }
   return {
     members: faces.map(f => ({ ...f, role: f.role as TenantRole })),
     total: roles.owner + roles.admin + roles.member,
     roles,
+    support,
     invitations: invitations
       ? {
           total: invitations.total,

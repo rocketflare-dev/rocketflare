@@ -37,7 +37,7 @@ import { useAgentList, useAgentRun, useCreateAgentRun } from '@/ui/hooks/useAgen
 import { useAuth } from '@/ui/hooks/useAuth'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { streamEnabled, useRunStream } from '@/ui/hooks/useRunStream'
-import { eventLabel } from '@/ui/lib/format'
+import { eventLabel, runWaitMs } from '@/ui/lib/format'
 import { outputFor } from './outputs'
 import { RunStatusBadge } from './RunStatusBadge'
 import { ActionRequiredPanel } from './run/ActionRequiredPanel'
@@ -153,6 +153,8 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
   const rows = useMemo(() => buildTimeline(run.events), [run.events])
   const pending = useMemo(() => selectPendingInterrupts(run.interrupts), [run.interrupts])
   const stats = useMemo(() => selectWorkStats(rows), [rows])
+  // Recomputed each render (a poll or a nudge), so a parked run's wait grows with the page.
+  const waitedMs = runWaitMs(run, run.interrupts)
   const artifacts = useMemo(() => {
     const stored = selectArtifacts(rows, run.artifacts)
     if (stored.length > 0) return stored
@@ -207,7 +209,9 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
     {
       id: 'usage',
       label: 'Usage',
-      content: <RunUsageTab run={run} stats={stats} requestedBy={requestedBy} />,
+      content: (
+        <RunUsageTab run={run} stats={stats} requestedBy={requestedBy} waitedMs={waitedMs} />
+      ),
     },
     // The operator's view: every record, versions, spend against the budget.
     ...(isAdminLevel()
@@ -229,7 +233,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
         </div>
       )}
 
-      <RunHeader run={run} live={live} />
+      <RunHeader run={run} live={live} waitedMs={waitedMs} />
 
       <RunInputSummary input={run.input} schema={agent?.inputJsonSchema ?? null} />
 

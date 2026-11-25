@@ -74,7 +74,8 @@
      4. Shape: `--radius-*` in `@theme` and DaisyUI's `--radius-field` / `--radius-box`;
         depth: `--shadow-panel` / `--shadow-popover` per theme.
      5. `--font-sans` / `--font-mono` in `@theme`, and the matching `@fontsource-variable/*`
-        import in main.tsx (the package must be in apps/web/package.json).
+        import in main.tsx (the package must be in apps/web/package.json). `--font-heading`
+        (default `var(--font-sans)`) is the face of h1–h3 alone: set it for a heading serif.
      6. `<meta name="theme-color">` in index.html; the paths in shared/LogoMark.tsx, public/logo.svg
         + public/favicon.svg; the login art (components/LoginArt.tsx, which takes its colours from
         the rail and flare tokens) or `LOGIN_PANEL.art = 'type'` in lib/login-panel.ts.
@@ -277,6 +278,12 @@
     color: var(--text-primary);
     letter-spacing: -0.014em;
     text-wrap: balance;
+  }
+
+  /* The heading face: page titles (`PageHeader`'s h1), section titles (`SectionPanel`'s h2), the
+     sign-in heading (Login's h1) and the login panel's name (`.font-heading` in AuthCard) */
+  h1, h2, h3 {
+    font-family: var(--font-heading);
   }
 
   /* An underline that clears the descenders and keeps the face's own weight */

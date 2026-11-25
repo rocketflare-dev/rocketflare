@@ -16,7 +16,7 @@ import HomeDocuments, { documentState } from '@/ui/pages/documents/HomeDocuments
 import Home, { greeting } from '@/ui/pages/Home'
 import { arrivedIds, HomeActivity } from '@/ui/pages/home/HomeActivity'
 import { HomeSpend, spendDirection } from '@/ui/pages/home/HomeSpend'
-import { HomeTeam, roleCounts } from '@/ui/pages/home/HomeTeam'
+import { HomeTeam, roleCounts, teamDescription } from '@/ui/pages/home/HomeTeam'
 import { HOME_SECTIONS, type HomeSection, sectionsFor } from '@/ui/pages/home-sections'
 import {
   IDS,
@@ -55,6 +55,7 @@ const TEAM: HomeTeamPart = {
   ],
   total: 2,
   roles: { owner: 1, admin: 1, member: 0 },
+  support: 0,
   invitations: {
     total: 1,
     recent: [
@@ -337,6 +338,16 @@ describe('HomeTeam', () => {
     expect(roleCounts({ owner: 1, admin: 2, member: 0 })).toBe('1 owner · 2 admins')
   })
 
+  it('names a support visitor apart, so the count reconciles with People', () => {
+    const roles = { owner: 1, admin: 2, member: 5 }
+    expect(teamDescription({ total: 8, roles, support: 0 })).toBe(
+      '8 people · 1 owner · 2 admins · 5 members'
+    )
+    expect(teamDescription({ total: 8, roles, support: 1 })).toBe(
+      '8 people · 1 owner · 2 admins · 5 members · 1 support visitor'
+    )
+  })
+
   it('shows the faces and the invitations waiting', async () => {
     renderSection(<HomeTeam />, summary())
     expect(
@@ -353,6 +364,7 @@ describe('HomeTeam', () => {
         members: [{ userId: IDS.user, name: 'Olivia Bennett', avatarUrl: null, role: 'owner' }],
         total: 1,
         roles: { owner: 1, admin: 0, member: 0 },
+        support: 0,
         invitations: { total: 0, recent: [] },
       },
     })

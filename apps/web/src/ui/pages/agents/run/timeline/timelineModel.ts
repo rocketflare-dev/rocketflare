@@ -19,6 +19,8 @@
  *   would double-push. Every event is therefore deduplicated by `event.id` before anything else.
  * - **An unclosed step is a real state.** A `running` step with no `done` is shown spinning rather
  *   than swallowed, and a DIFFERENT step key implicitly closes the open group.
+ * - **A closed step that opens again is a new row.** A resumed run re-enters `run()` from the top
+ *   and repeats its early stages; merging them into the first would stretch a stage across the park.
  */
 import {
   type AgentRunEventType,
@@ -259,7 +261,14 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           break
         }
         const settled = parsed.data.status !== 'running'
-        const existing = stepIndex.get(parsed.data.key)
+        const found = stepIndex.get(parsed.data.key)
+        const previousRow = found === undefined ? undefined : rows[found]
+        // A stage that already closed and opens AGAIN is a re-entered `run()` (a resume after an
+        // answer, a retry) doing it a second time: a new row. Merged into the first, the stage
+        // would span the whole park — "Checking the input · 18h" for a 3 ms check.
+        const reopened =
+          !settled && previousRow?.kind === 'step' && previousRow.endedSeq !== undefined
+        const existing = reopened ? undefined : found
         if (existing !== undefined) {
           const previous = rows[existing]
           rows[existing] = {
