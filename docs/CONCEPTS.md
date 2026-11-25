@@ -1873,9 +1873,12 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   adds or re-ranges and removes what it drops only when a plugin brought it in — the surface's
   `addedDependencies` record, never range equality — no other plugin declares it and the host
   holds exactly the old range — a range a peer plugin cannot use is refused), worker exports, a tenant-isolation test for tenant
-  tables, `onTenantDeleted` for DOs, table collisions, declared skills, and API prefixes missing from a
-  `run_worker_first` a restore marked. Each finding names file, line and exact edit.
-  Structural checks read comment-free code. It runs where a finding can still be acted on: at the
+  tables, `onTenantDeleted` for DOs, table collisions, declared skills, API prefixes missing from a
+  `run_worker_first` a restore marked, and imports that resolve to nothing (an unresolved import
+  types as `any`, so every type-level check over it would pass; it needs `pnpm install` first).
+  Each finding names file, line and exact edit. Structural checks read comment-free code: worker
+  exports, `onTenantDeleted` and the isolation test are parsed with the TypeScript AST
+  (`typescript6`), so a name inside a comment or a string satisfies none of them. It runs where a finding can still be acted on: at the
   end of `plugin add|upgrade --apply` (exit 8 when the tree it wrote fails), in the plugin's own CI
   (`plugin-ci.yml`) and in `kit.yml` — not in an app's `pnpm gate`, because an undeclared import
   compiles and passes the tests and only breaks at the next upgrade, where the check stops it first.

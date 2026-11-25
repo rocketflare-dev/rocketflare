@@ -13,6 +13,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -64,7 +65,13 @@ function makeHost(
 ) {
   const host = path.join(root, name, 'host')
   mkdirSync(path.join(host, 'docs'), { recursive: true })
-  for (const file of ['scripts', 'package.json', 'docs/plugin-api.md', ...files]) {
+  const tsconfigs = [
+    'tsconfig.base.json',
+    'apps/web/tsconfig.json',
+    'apps/cli/tsconfig.json',
+    'packages/shared/tsconfig.json',
+  ]
+  for (const file of ['scripts', 'package.json', 'docs/plugin-api.md', ...tsconfigs, ...files]) {
     mkdirSync(path.dirname(path.join(host, file)), { recursive: true })
     cpSync(path.join(KIT_ROOT, file), path.join(host, file), { recursive: true })
   }
@@ -72,7 +79,17 @@ function makeHost(
   manifest.surfaces = manifest.surfaces.filter((s: { kind?: string }) => s.kind !== 'plugin')
   edit?.(manifest)
   writeFileSync(path.join(host, '.rocketflare.json'), `${JSON.stringify(manifest, null, 2)}\n`)
-  writeFileSync(path.join(host, '.gitignore'), '.upgrade/\n.rocketflare.local.json\n')
+  writeFileSync(
+    path.join(host, '.gitignore'),
+    '.upgrade/\n.rocketflare.local.json\nnode_modules/\n'
+  )
+  // `plugin check` parses with typescript6 and fails a host with no node_modules: a copy always
+  // has both, so the throwaway host borrows the kit's parser.
+  mkdirSync(path.join(host, 'node_modules'))
+  symlinkSync(
+    realpathSync(path.join(KIT_ROOT, 'node_modules/typescript6')),
+    path.join(host, 'node_modules/typescript6')
+  )
   git(host, ['init', '-q', '-b', 'main'])
   git(host, ['add', '.'])
   git(host, ['commit', '-q', '-m', 'host'])

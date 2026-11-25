@@ -21,7 +21,9 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -403,6 +405,10 @@ function makeHost({ settings = false }: { settings?: boolean } = {}): string {
     'docs/plugin-api.md',
     '.claude/skills/rf-plugin/SKILL.md',
     ...Object.values(BARRELS).map(b => b.file),
+    'tsconfig.base.json',
+    'apps/web/tsconfig.json',
+    'apps/cli/tsconfig.json',
+    'packages/shared/tsconfig.json',
     'apps/web/package.json',
     'apps/cli/package.json',
     'packages/shared/package.json',
@@ -417,6 +423,12 @@ function makeHost({ settings = false }: { settings?: boolean } = {}): string {
   write(root, '.gitignore', '.rocketflare.local.json\n.upgrade/\nnode_modules/\n')
   write(root, 'node_modules/.bin/biome', '#!/bin/sh\nexit 0\n')
   chmodSync(path.join(root, 'node_modules/.bin/biome'), 0o755)
+  // `plugin check` parses with typescript6 and fails a host with no node_modules: a copy always
+  // has both, so the throwaway host borrows the kit's parser.
+  symlinkSync(
+    realpathSync(path.join(REPO_ROOT, 'node_modules/typescript6')),
+    path.join(root, 'node_modules/typescript6')
+  )
   git(root, ['init', '-q'])
   git(root, ['add', '-A'])
   git(root, ['commit', '-qm', 'host'])

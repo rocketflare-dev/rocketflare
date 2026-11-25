@@ -4,7 +4,7 @@ previous: 0.44.1
 date: null
 breaking: false
 migrations: ["chunks.context + context_model; chunks.search_vector regenerated to read context (rewrites chunks)"]
-areas: [api, cli, db, shared, ui, docs]
+areas: [api, cli, db, shared, ui, plugins, docs]
 touches_surfaces: [example-agent-summarize-text]
 requires_surfaces: []
 manual: false
@@ -12,7 +12,7 @@ manual: false
 
 ## What changed
 
-Agent run timelines show each model call inside its stage; knowledge facts gain a Promote picker and a reviewer-only badge nudge; the CLI gains `docs` and `facts`; and an opt-in `knowledge-context` flag gives passages search context.
+Run timelines show each model call inside its stage; knowledge facts gain a Promote picker and a reviewer-only badge nudge; the CLI gains `docs` and `facts`; a `knowledge-context` flag gives passages search context; `plugin check` parses source.
 
 - `services/agents/recording.ts` (new): `recordingChatClient` wraps `ctx.chat.client` so every call writes a `tool.start`/`tool.end` pair marked `kind: 'model'`; `loopEventSink` is the new `ctx.journal.onEvent`.
 - `ToolLoopJournal.onEvent` (new, optional): a `runToolLoop` with a journal and no `onEvent` records its text, tool calls and results through it; a loop with its own `onEvent` is unchanged.
@@ -27,6 +27,7 @@ Agent run timelines show each model call inside its stage; knowledge facts gain 
 - CLI (#150): `docs list|search|ingest|retry` and `facts review|confirm|reject|prefer`.
 - See `docs/CONCEPTS.md` §9 "Knowledge facts" and §11.
 - Contextual prefixes (#148): flag `knowledge-context` (off), job `document.contextualize` (`services/ai/contextualize.ts`, enqueued by `afterTextIndexed`), prompt `knowledge-context`, usage feature `knowledge.context` under the daily knowledge cap, `chunks.context` / `context_model`, `embeddingInput(chunk, context?)`, a re-index of unchanged text keeps contexts, and `POST /api/ai/documents/contextualize` backfills existing documents — the Search page's "Add context" notice (admins only, from the new `/facets` `withoutContext` count). `secondsUntilNextUtcDay` moved from `knowledge/extract.ts` to `ai/usage.ts`. `pnpm eval retrieval --context` measures it. See `docs/CONCEPTS.md` §9 "Contextual prefixes".
+- Plugin checks (#19): `workerExportNames`, `declaresProperty` and `isolationEvidence` in `scripts/lib/plugin-lib.mjs` parse with the TypeScript AST (`typescript6`), so a name in a comment or a string no longer satisfies them; new `unresolvedPluginImports` makes `pnpm plugin check` FAIL on a plugin import that resolves to nothing, each file resolved against its own package's tsconfig (`findProjectTsconfig`, `loadProjectCompilerOptions`). See `docs/CONCEPTS.md` §16.
 
 ## How to apply
 
@@ -46,6 +47,7 @@ Agent run timelines show each model call inside its stage; knowledge facts gain 
 14. If you call `embeddingInput` or import `secondsUntilNextUtcDay` from `knowledge/extract` in your own code, the first gained an optional second argument and the second now lives in `services/ai/usage.ts`.
 15. Take the `SearchPage.tsx` (`ContextBackfillNotice`) and `hooks/useDocuments.ts` (`useContextualizeDocuments`, `facetsPollInterval`) hunks; `documentFacetsSchema` gained a required `withoutContext`, so a test fixture or client of your own that builds facets adds `withoutContext: 0`.
 16. To use it: turn on **Contextual search** for a tenant (Admin → Feature flags), point the `knowledge-context` prompt at a cheap model, then open Search as an admin and click **Add context**.
+17. Take the `scripts/lib/plugin-lib.mjs`, `scripts/lib/plugin-lib.d.mts` and `scripts/plugin.mjs` hunks as they are. `pnpm plugin check` can now fail where it passed: run `pnpm install` first (no `node_modules` is a failure), and fix each `Cannot find module` it names — usually a dependency the plugin never declared, or an import of a host path that has moved.
 
 ## Conflicts to expect
 
@@ -63,3 +65,4 @@ Agent run timelines show each model call inside its stage; knowledge facts gain 
 4. `pnpm --filter @rocketflare/cli test` passes, including `knowledge.test.ts`.
 5. Run `summarize-text` locally: the "Summarising" stage expands to a "Model call · <model> answered" row with token counts, and "Checking the input" shows no chevron.
 6. `pnpm test api apps/web/tests/api/knowledge-context.test.ts` passes; with the flag on for a tenant, upload a document, and its `chunks.context` rows fill in and Settings → Usage shows `knowledge.context`.
+7. `pnpm plugin check` passes; add `import 'no-such-module'` to one installed plugin file and it fails naming that file and line.
