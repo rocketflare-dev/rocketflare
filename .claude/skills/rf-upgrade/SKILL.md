@@ -79,6 +79,12 @@ route around:
 - **`touches-plugin-registry`** (an annotation on an otherwise ordinary `modified` file, listed as
   `<path> — <plugin ids>`) — the kit changed a file an installed plugin also writes a line into. The six barrels are shared, so the kit CAN move ground under a plugin. **Apply the kit
   change, then check the plugin's line survived it** (`pnpm plugin check` is the fastest proof).
+- **`local-edit`** (an annotation, listed as `<path> — <kind>: <reason>`) — the kit changed a file
+  this copy recorded a reason for in `.rocketflare.json` `localEdits` (the guard asks for one when
+  a session changes kit core). **Show the user that reason beside the hunk** before deciding it:
+  it is why their line differs, and usually decides whether theirs or the kit's wins. For a
+  `kind: "fix"` entry, check whether this release carries the same fix (the note, the kit's
+  hunk): if it does, take the kit side and **delete the entry**; if it does not, keep both.
 
 And one hard stop: **exit 6 — an installed plugin does not support the target kit version.** Its
 `requires.kit` range excludes it, and nothing is written. (A **vendored** plugin — `source.repo` is
@@ -205,5 +211,6 @@ after an upgrade are: **run it** (`pnpm dev`), **upgrade the plugins** (step 6, 
 - **Never squash the releases into one commit.** The per-release commit is what makes the next
   upgrade legible.
 - Do not edit `.rocketflare.json` by hand. The script writes it, last — on a clean apply, or on
-  `--continue` once the rejects are resolved.
+  `--continue` once the rejects are resolved. The one exception is `localEdits`: drop a `fix` entry the
+  release made redundant, and update the reason of any entry whose hunk you re-decided.
 - `rm -rf .upgrade` is always safe — it is a cache.

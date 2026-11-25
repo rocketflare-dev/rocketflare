@@ -121,7 +121,7 @@ describe('Documents page', () => {
     )
     await waitFor(() =>
       expect(useToastStore.getState().toasts.map(t => t.message)).toContain(
-        '"Handbook" indexed (3 chunks)'
+        '"Handbook" indexed (3 passages)'
       )
     )
     expect(screen.getByLabelText('Text')).toHaveValue('')

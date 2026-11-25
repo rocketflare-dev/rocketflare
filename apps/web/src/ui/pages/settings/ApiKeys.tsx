@@ -223,6 +223,7 @@ function CreateKeyModal({ open, onClose }: { open: boolean; onClose: () => void 
   }
 
   return (
+    // ui-allow reflex-modal: creating a key is one short step whose result (the secret) must be shown once, in place
     <Modal
       open={open}
       onClose={close}

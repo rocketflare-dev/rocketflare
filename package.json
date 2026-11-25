@@ -19,6 +19,7 @@
     "dev:db:status": "pnpm --filter @rocketflare/web dev:db:status",
     "bootstrap": "node scripts/bootstrap.mjs",
     "design:docs": "node scripts/design-docs.mjs",
+    "design:lint": "node scripts/design-lint.mjs",
     "kit:upgrade": "node scripts/upgrade.mjs",
     "kit:release": "node scripts/release.mjs",
     "plugin": "node scripts/plugin.mjs",

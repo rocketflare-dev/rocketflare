@@ -182,7 +182,8 @@ Everything runs from the root: `pnpm bootstrap` (= `bash scripts/bootstrap.sh` o
 exist; `--offline` / `--online` switch local Workers AI through `.dev.vars`), `pnpm preflight` (the read-only check),
 `pnpm dev`, `pnpm seed` / `pnpm seed --demo`, `pnpm test`, `pnpm cli …`, `pnpm design:docs`
 (`docs/design/*.md` → HTML pages in your brand at `docs/design/html/`; `--open`, `--check`,
-`--contrast` and `--apply-brand` for a palette tried in `docs/design/brand.css`), `pnpm web <script>` (any
+`--contrast` and `--apply-brand` for a palette tried in `docs/design/brand.css`), `pnpm design:lint` (the UI rules in
+`.claude/rules/ui.md` over the UI tree; exit 1 on a ban), `pnpm web <script>` (any
 `apps/web` script), `pnpm db:*`, `pnpm deploy[:staging]`, `pnpm provision tokens` (hidden prompts → `apps/web/.provision.env`)
 then `pnpm provision all` (the deploy orchestrator: Neon, Cloudflare, GitHub, secrets, Resend —
 `pnpm provision --help` lists the phases;

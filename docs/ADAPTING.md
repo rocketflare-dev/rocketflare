@@ -43,7 +43,7 @@ it like any other file except its `kit` block, which names the kit the app came 
 Pick an app slug (`myapp`, lowercase, digits, hyphens; starts with a letter), a package scope
 (`@myapp`) and a display name.
 
-**`/rf-adapt <slug> ["Name"] [--domain <apex>] [--colour <#hex>]`** in Claude Code, or by hand
+**`/rf-adapt <slug> ["Name"] [--domain <apex>] [--colour <#hex|hue>]`** in Claude Code, or by hand
 `node scripts/rename.mjs --dry-run <slug> ["Display Name"] [--domain …] [--colour …]` then the same
 without `--dry-run`, performs the mechanical rows below in one pass and reports the careful ones —
 `.claude/skills/rf-adapt/checklist.md` walks those six, lettered (a)–(f) as in the **Script** column.
@@ -87,8 +87,9 @@ or nothing resolves.
 | `rocketflare-light` / `rocketflare-dark` | `apps/web/src/ui/index.css` theme blocks, `index.html` pre-hydration script, `ThemeToggle.tsx`, `apps/web/tests/ui/theme-toggle.test.tsx` | `myapp-light` / `myapp-dark` (or keep) | automatic (`kebab`) |
 | `rocketflare-dev-postgres` / `rocketflare-test-postgres` | `container_name` in `apps/web/docker-compose.dev.yml` / `docker-compose.test.yml` | `myapp-dev-postgres` / `myapp-test-postgres` — pinned names mean a SECOND checkout of the same kit on one machine shares ONE database (Compose derives the project name `web` from the directory, so `pnpm dev:db:up` attaches to the running container instead of failing; `pnpm bootstrap` detects it and stops unless `--share-db`) until renamed | automatic (`bare`; the `-dev-data` volume too); reported as (c) with the `docker rm` / `volume rm` for the OLD names |
 | `admin@rocketflare.local` | `apps/web/scripts/seed.ts` (the seeded global admin), `DEV_ACCOUNTS` in `apps/web/src/ui/lib/dev-accounts.ts` (the seed and the dev quick-login list both read it), `SETUP.md` | `admin@myapp.local` | automatic (`domain`) |
-| brand colour variables | the header block of `apps/web/src/ui/index.css` (the only place hex values live) | your palette — then `pnpm web test:ui` (contrast gate) | `--colour` rewrites the LIGHT theme's primary hex only (`--color-primary`, `--surface-active`, `--focus-ring`, `--dc-primary-rgb`, `<meta name="theme-color">`); the dark primary, `-content` colours and `--tone-primary-*` tints reported as (e) |
+| brand colour variables | `apps/web/src/shared/theme-tokens.css` + the two `[data-theme]` blocks of `apps/web/src/ui/index.css` (every hued colour is `oklch(L C 35)`, the kit's ember; the header of `index.css` lists the tokens) | your palette — `docs/design/brand.css` + `pnpm design:docs --apply-brand`, then `pnpm web test:ui` (contrast gate) | `--colour <#hex\|hue>` turns every `oklch()` literal to that hue, keeping lightness and chroma, and sets `<meta name="theme-color">`; the flare and the state colours keep their hue; an exact primary is brand.css's — reported as (e) |
 | `LogoMark` | `apps/web/src/ui/components/shared/LogoMark.tsx`, `apps/web/src/ui/public/logo.svg` + favicons | your mark | not touched — reported as (f) |
+| sign-in panel | `apps/web/src/ui/components/LoginArt.tsx` (the drawing) and `LOGIN_PANEL` in `apps/web/src/ui/lib/login-panel.ts` (`art: 'rocket'\|'type'`, `tagline`) | your imagery, or `art: 'type'`; the tagline in your words | the tagline is set from `docs/design/design.json` `app.tagline` when there is one; the drawing is not touched (it recolours from the tokens) — reported with (f) |
 | `EMBEDDING_DIM` (1024) | `packages/shared/src/ai/config.ts` (imported by `apps/web/src/db/schema/chunks.ts` and the `openai*` embeddings adapter) — only if you will NOT use the default `@cf/baai/bge-m3`; see §3 "Changing the embedding model or dimension" | before the first migration, never after | not touched — the decision is flagged in (b) |
 
 Then, from the root: `pnpm install && pnpm gate`. The

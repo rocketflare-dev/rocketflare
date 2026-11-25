@@ -56,7 +56,7 @@ function ArtifactBody({ artifact }: { artifact: AgentArtifact }) {
         </a>
       )
     case 'markdown':
-      return <Markdown content={data.markdown} className="text-sm" />
+      return <Markdown content={data.markdown} spacing="reading" className="text-sm" />
     case 'table':
       return (
         <div className="overflow-x-auto">

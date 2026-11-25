@@ -33,7 +33,7 @@ export function UserMenu() {
         {user.avatarUrl ? (
           <img src={user.avatarUrl} alt="" className="w-7 h-7 rounded-full" />
         ) : (
-          <span className="w-7 h-7 rounded-full grid place-items-center text-xs font-semibold tone-primary">
+          <span className="avatar-initials w-7 h-7 grid place-items-center text-xs font-semibold">
             {initials(user.name, user.email)}
           </span>
         )}

@@ -76,7 +76,7 @@ export const triageResearchAgent: AgentDefinition<TriageResearchInput, TriageRes
     key: 'triage-research',
     title: 'Triage research',
     description:
-      'Answers a question from the knowledge base by screening search hits with typed decisions (ctx.decide), opening only what is relevant, and escalating to the full research agent when the screen cannot settle it.',
+      'Answers a question from the knowledge base by screening the search hits for relevance, opening only what helps, and escalating to the full research agent when the screen cannot settle it.',
     inputSchema: triageResearchInputSchema,
     outputSchema: triageResearchOutputSchema,
     promptKey: 'triage-research',
@@ -209,7 +209,12 @@ async function answer(
     .filter(id => titles.has(id))
     .map(documentId => ({ documentId, title: titles.get(documentId) ?? '' }))
   await ctx.emit({ type: 'text', data: { text: result.answer } })
-  await ctx.step('answer', 'Writing the answer', 'done', `${citations.length} sources`)
+  await ctx.step(
+    'answer',
+    'Writing the answer',
+    'done',
+    `${citations.length} ${citations.length === 1 ? 'source' : 'sources'}`
+  )
   await screenArtifact(ctx, passages, screen.p)
   return {
     answer: result.answer,

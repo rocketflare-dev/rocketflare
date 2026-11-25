@@ -73,9 +73,13 @@ export default function AgentPage() {
       <div className="flex items-center gap-2 flex-wrap">
         <AgentBadges agent={agent} />
       </div>
-      <dl className="grid grid-cols-2 lg:grid-cols-4 gap-3" aria-label="Agent metrics">
+      {/* One panel of figures, not four cards: the numbers describe the runs below them. */}
+      <dl
+        className="surface-panel p-0 grid grid-cols-2 lg:grid-cols-4 divide-x divide-[color:var(--border-subtle)]"
+        aria-label="Agent metrics"
+      >
         {cards.map(card => (
-          <div key={card.label} className="surface-panel px-4 py-3">
+          <div key={card.label} className="px-5 py-3">
             <dt className="text-xs text-secondary">{card.label}</dt>
             <dd className="text-xl font-semibold tabular-nums">{card.value}</dd>
             {card.hint && <dd className="text-xs text-muted">{card.hint}</dd>}

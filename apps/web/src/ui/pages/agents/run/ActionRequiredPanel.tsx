@@ -140,13 +140,15 @@ export function ActionRequiredPanel({
   const title = spec.title ?? 'Action required'
 
   return (
-    <section
-      className="surface-panel border-l-4 border-l-warning"
-      aria-live="polite"
-      aria-label="Action required"
-    >
-      <div className="flex items-start gap-2.5">
-        <ExclamationTriangleIcon className="w-5 h-5 shrink-0 text-warning mt-0.5" />
+    <section className="surface-panel" aria-live="polite" aria-label="Action required">
+      <div className="flex items-start gap-3">
+        {/* The tone sits on the mark, not on a stripe down one side of the panel. */}
+        <span
+          className="tone-warning inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border"
+          aria-hidden="true"
+        >
+          <ExclamationTriangleIcon className="w-4.5 h-4.5" />
+        </span>
         <div className="min-w-0 flex-1 space-y-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
             {/* `tabIndex={-1}` so it can hold focus without becoming a tab stop. */}
@@ -159,7 +161,7 @@ export function ActionRequiredPanel({
               </span>
             )}
           </div>
-          <p className="text-sm text-secondary whitespace-pre-wrap">{spec.message}</p>
+          <p className="text-sm text-secondary whitespace-pre-wrap max-w-[72ch]">{spec.message}</p>
 
           {!canAnswer ? (
             <p className="text-sm text-muted">Waiting for {approverLabel} to answer.</p>

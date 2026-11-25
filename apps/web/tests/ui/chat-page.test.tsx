@@ -78,9 +78,12 @@ async function typeAndSend(text: string) {
 }
 
 describe('Chat page', () => {
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
 
-  it('streams the reply into an assistant bubble and shows usage', async () => {
+  it('streams the reply into an assistant bubble and shows usage only with Stats open', async () => {
     // The stub is stateful: after the POST the thread "has" both messages, as the server would.
     let messages: Array<Omit<Message, 'createdAt'> & { createdAt: string }> = []
     const fetchMock = mount({
@@ -113,6 +116,9 @@ describe('Chat page', () => {
     // rather than `findBy`: the bubbles remount as optimistic ids become persisted ones.
     await waitFor(() => expect(screen.getByText('Hi there')).toBeInTheDocument())
     await waitFor(() => expect(screen.getByText('Hello')).toBeInTheDocument())
+    // Token counts are inspector detail: hidden until Stats is open, then under the answer.
+    expect(screen.queryByText(/12 in · 5 out tokens/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /Stats/ }))
     await waitFor(() => expect(screen.getByText(/12 in · 5 out tokens/)).toBeInTheDocument())
     expect(requestBody(fetchMock, `POST /api/chat/conversations/${CONV}/messages`)).toEqual({
       content: 'Hi there',

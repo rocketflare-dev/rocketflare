@@ -16,7 +16,7 @@ export default function AllRunsPage() {
         title="All runs"
         breadcrumbs={[{ label: 'Agents', to: '/agents' }, { label: 'All runs' }]}
       />
-      <RunsTable titleOf={titleOf} title="Runs" />
+      <RunsTable titleOf={titleOf} />
     </div>
   )
 }

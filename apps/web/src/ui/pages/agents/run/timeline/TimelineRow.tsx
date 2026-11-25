@@ -18,7 +18,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { Markdown } from '@/ui/components/ai/Markdown'
 import { ToolCallRow } from './ToolCallRow'
-import type { TimelineRow as Row } from './timelineModel'
+import { type TimelineRow as Row, statusSentence } from './timelineModel'
 import { JsonDisclosure } from './toolResults'
 
 const ICON = 'w-4 h-4 mt-0.5 shrink-0'
@@ -41,6 +41,8 @@ function RowIcon({ row }: { row: Row }) {
     case 'error':
       return <ExclamationCircleIcon className={`${ICON} text-error`} />
     case 'status':
+      if (row.status === 'failed') return <ExclamationCircleIcon className={`${ICON} text-error`} />
+      if (row.status === 'succeeded') return <CheckCircleIcon className={`${ICON} text-success`} />
       return <ArrowPathIcon className={`${ICON} text-muted`} />
     case 'interrupt':
       return <PauseCircleIcon className={`${ICON} text-warning`} />
@@ -65,10 +67,8 @@ function RowBody({ row }: { row: Row }) {
       return <Markdown content={row.text} className="text-sm" />
     case 'status':
       return (
-        <p className="text-xs text-muted">
-          Status → {row.status}
-          {row.attempt !== undefined && ` (attempt ${row.attempt})`}
-          {row.reason !== undefined && ` · ${row.reason}`}
+        <p className={`text-xs ${row.status === 'failed' ? 'text-secondary' : 'text-muted'}`}>
+          {statusSentence(row)}
         </p>
       )
     case 'error':

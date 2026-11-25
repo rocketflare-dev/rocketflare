@@ -196,12 +196,17 @@ export const documentFacetsSchema = z.object({
 export type DocumentFacets = z.infer<typeof documentFacetsSchema>
 
 /**
- * A `documents.source` as a person reads it: `upload` → "Uploaded or pasted", `agent:<key>` →
- * "Agent · <key>", anything else as it is (a plugin's `m365:mail`, a URL).
+ * A `documents.source` as a person reads it: `upload` → "Uploaded or pasted", `text` → "Pasted",
+ * `agent:<key>` → "<Key in words> agent" ("Summarize text agent"), anything else as it is (a
+ * plugin's `m365:mail`, a URL).
  */
 export function documentSourceLabel(source: string): string {
   if (source === 'upload') return 'Uploaded or pasted'
-  if (source.startsWith('agent:')) return `Agent · ${source.slice('agent:'.length)}`
+  if (source === 'text') return 'Pasted'
+  if (source.startsWith('agent:')) {
+    const words = source.slice('agent:'.length).replace(/[-_]+/g, ' ').trim()
+    return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)} agent` : 'Agent'
+  }
   return source
 }
 

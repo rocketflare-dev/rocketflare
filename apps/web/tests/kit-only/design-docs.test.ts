@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyBrand } from '../../../../scripts/lib/brand.mjs'
+import { themeTokens } from '../../../../scripts/lib/contrast.mjs'
 import { orderPages } from '../../../../scripts/lib/design-docs-lib.mjs'
 import { renderMarkdown } from '../../../../scripts/lib/markdown-lite.mjs'
 import { sanitizeSvg } from '../../../../scripts/lib/svg-sanitize.mjs'
@@ -32,6 +33,15 @@ const COPIED = [
   'apps/web/src/ui/index.html',
   'apps/web/src/ui/public/logo.svg',
 ]
+
+/** This checkout's own token values, per theme: what the copied files start from. */
+const ownTokens = () =>
+  themeTokens(
+    COPIED.slice(0, 2)
+      .map(rel => readFileSync(path.join(REPO, rel), 'utf8'))
+      .join('\n')
+  )
+const reEscape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 let root: string
 const design = (rel: string) => path.join(root, 'docs/design', rel)
@@ -223,7 +233,8 @@ describe('brand.css', () => {
     expect(r.status, r.stderr).toBe(0)
     const tokens = readFileSync(path.join(root, COPIED[0]), 'utf8')
     expect(tokens).toContain('--color-accent: #2dd4bf;')
-    expect(tokens).toContain('--color-accent: #0f766e;') // the light theme's, untouched
+    // The light theme's, untouched.
+    expect(tokens).toContain(`--color-accent: ${ownTokens().light.tokens['--color-accent']};`)
   })
 })
 
@@ -243,12 +254,17 @@ describe('--contrast', () => {
     const r = run('--contrast')
     expect(r.status).toBe(1)
     expect(r.stdout).toMatch(/light \(\S+\): \d+ failing/)
+    const own = ownTokens()
     expect(r.stdout).toMatch(
-      /--color-primary #93c5fd on --surface-panel #ffffff: \d\.\d\d:1, minimum 4\.5:1/
+      new RegExp(
+        `--color-primary #93c5fd on --surface-panel ${reEscape(own.light.tokens['--surface-panel'])}: \\d\\.\\d\\d:1, minimum 4\\.5:1`
+      )
     )
     expect(r.stdout).toMatch(/dark \(\S+\): \d+ failing/)
     expect(r.stdout).toMatch(
-      /--text-muted #3f3f46 on --surface-app #131316: \d\.\d\d:1, minimum 4\.5:1/
+      new RegExp(
+        `--text-muted #3f3f46 on --surface-app ${reEscape(own.dark.tokens['--surface-app'])}: \\d\\.\\d\\d:1, minimum 4\\.5:1`
+      )
     )
     expect(r.stderr).toMatch(/--focus-ring is still the kit's/)
   })

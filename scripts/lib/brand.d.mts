@@ -16,9 +16,49 @@ export interface BrandResult {
   unknown: string[]
   warnings: string[]
   problems: string[]
+  /** Set when brand.css carried `--brand-hue`: the hue the palette was turned from and to. */
+  hue: { from: number; to: number; rotated: number } | null
 }
 export function applyBrand(
   files: { tokensCss: string; indexCss: string; indexHtml?: string | null },
   brandCss: string
 ): BrandResult
 export function themeDeclarations(css: string): Record<string, string>
+export const FIXED_HUE_TOKENS: string[]
+export const BRAND_HUE: string
+export function brandHue(css: string): number | null
+export function rotateHue(css: string, delta: number): { css: string; rotated: number }
+export function hueOf(colour: string): { hue: number; error?: undefined } | { error: string; hue?: undefined }
+export function hexOf(value: string): string | null
+export function setThemeColor(html: string, colour: string): string
+export interface HueResult {
+  tokensCss: string
+  indexCss: string
+  indexHtml: string | null
+  from: number
+  to: number
+  rotated: number
+  primary: string | null
+}
+export function applyHue(
+  files: { tokensCss: string; indexCss: string; indexHtml?: string | null },
+  hue: number
+): HueResult
+export interface LookFiles {
+  tokensCss: string
+  indexCss: string
+  indexHtml?: string | null
+}
+export function adoptDefaultLook(inputs: {
+  current: LookFiles
+  defaults: LookFiles
+  brandCss?: string | null
+}): {
+  tokensCss: string
+  indexCss: string
+  indexHtml: string | null
+  /** `<file> <block> <prop>` for each of the app's own tokens kept beside the defaults. */
+  kept: string[]
+  missing: string[]
+  brand: BrandResult | null
+}

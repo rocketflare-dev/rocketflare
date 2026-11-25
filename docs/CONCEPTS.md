@@ -604,11 +604,52 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
 
 ## 7. UI shell
 
-- **Design tokens (D20)**: two DaisyUI themes in `shared/theme-tokens.css` (read by `ui/index.css` and by public-site stylesheets), where the brand hexes are the only
-  hex values; `contrast.test.ts` gates them. Tailwind scanning is `source(none)` + explicit
-  `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line, and precompiled dependency
-  CSS gets none. The floors and pairs live in `scripts/lib/contrast.mjs`, which the test and the
-  design pages share.
+- **Design tokens (D20)**: two DaisyUI themes in `shared/theme-tokens.css` (read by `ui/index.css`
+  and by public-site stylesheets) and the semantic tokens in the two `[data-theme]` blocks of
+  `ui/index.css`; colour literals live nowhere else, and `contrast.test.ts` gates both files.
+  The default look is ember: a warm rust hue (35) with quiet neutrals, IBM Plex Sans, and the
+  logo's gold as the flare. It is a tinted shell on ONE hue at low chroma, a default any brand
+  recolours from that one hue: every hued colour is a literal `oklch(L C 35)` — the tinted canvas
+  (`--surface-app`), near-white panels, a warm charcoal ink, the primary, the side rail (`--rail-surface`, `-text`, `-text-muted`, `-hover`, `-active`,
+  `-active-text`, `-focus-ring`), five chart series (`--series-1…5`, for categories; a state uses
+  the state colours) and `--selection-surface`. The state colours are hex and `--flare` (the logo's
+  gold: the sign-in drawing's flame, never text or a state) keeps its own hue, so a rebrand that turns
+  the hue (`applyHue` in `scripts/lib/brand.mjs`: the rename's `--colour`, brand.css
+  `--brand-hue`) keeps every lightness, and with it the contrast floors. Shape is in `@theme`
+  (`--radius-control` 8px, `--radius-panel` 14px, `--radius-popover` 12px → `rounded-control`
+  …); depth is `--shadow-panel` / `--shadow-popover`, light only, a shadow or a border and never
+  both, while dark raises a surface by lightness. Fonts are self-hosted `@fontsource-variable`
+  packages imported in `ui/main.tsx` (IBM Plex Sans, JetBrains Mono for code). Density is
+  comfortable; `data-density="compact"` on the root tightens it. Tailwind scanning is
+  `source(none)` + explicit `@source` lines. A plugin's pages get the `../plugins/**/ui/**` line,
+  and precompiled dependency CSS gets none. The floors and pairs live in
+  `scripts/lib/contrast.mjs` — text on every surface, the semantic fills, and the shell's
+  `SHELL_PAIRS` (rail text on the rail and its hover and active fills, the rail focus ring, each
+  series ≥3:1 on a panel, ink on the selection and the active row, the flare on the rail) —
+  which the test and the design pages share.
+- **Sign-in page**: a split screen — the form on the left (dev quick-login below it, marked as
+  development-only), a rail-toned panel on the right that collapses on a narrow screen. The panel
+  shows `components/LoginArt.tsx`, the rocket as tonal linework coloured from the rail and flare
+  tokens, so it follows a new hue until someone replaces it; `LOGIN_PANEL` in
+  `ui/lib/login-panel.ts` (`art: 'rocket'|'type'`, `tagline`) switches to a type-only panel of the
+  app's name and tagline. The tagline is neutral in the kit; the rename sets it from
+  `docs/design/design.json` `app.tagline`.
+- **Home sections**: Home is an operational dashboard laid out from `pages/home-sections.ts`, a
+  registry of `{ id, placement: 'lead'|'main'|'aside', order, guard?, Component }`. A feature owns
+  its own section — the chat composer (`lead`), recent agent runs, recent documents — as one entry
+  pointing at a lazily imported component in its own directory, and the file is listed in each
+  feature surface's `registries`, so deleting a feature deletes its area. Core owns Team, AI spend
+  and Activity (`pages/home/`). One request, `GET /api/home/summary` (`@rocketflare/shared/home`),
+  feeds every section; each renders nothing when its part is `null`. A plugin does not edit the
+  registry: it contributes `UiPlugin.homeCards`. The hand-rolled SVG primitives the sections use
+  are in `components/shared/`: `RunsChart` (bars over days, stacked by status), `TrendLine` (only
+  beside a number that moves) and `AvatarStack`, token-coloured, no chart library.
+- **Provenance**: one treatment for "where this came from" — `components/shared/Provenance.tsx`,
+  `<Provenance sources work? layout="list"|"inline" />`, with the builders `sourceFromCard`,
+  `sourceFromCitation` and `sourceFromFact` and the pieces `ProvenanceLink` / `ProvenanceQuote`.
+  Chat answers (`ChatBubble`), `Markdown` document links (`DocumentLink` renders through
+  `ProvenanceLink`), agent outputs (`pages/agents/outputs/citationSources.ts`), the run timeline's
+  tool results and Knowledge facts all use it. A plugin imports it from `@/plugins/api/ui`.
 - **Design pages** (`pnpm design:docs`, `scripts/design-docs.mjs`): renders `docs/design/*.md` (a
   numeric prefix orders them; the first is `index.html`) and inlines `docs/design/diagrams/*.svg`
   into `docs/design/html/`: static HTML pages in the app's own tokens, light and dark, committed
@@ -621,7 +662,17 @@ re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; 
   and `index.css`: the pages' stylesheet, `--contrast` (the gate's floors, failing pairs printed per
   theme) and `--apply-brand` (writes each property into whichever file defines it, plus
   `<meta name="theme-color">`) all read that one result, and each warns about a derived tone
-  (`--focus-ring`, `--surface-active`, `--tone-*`) that a changed colour left at the kit's value.
+  (`--focus-ring`, `--surface-active`, `--tone-*`, `--rail-active`, `--rail-focus-ring`,
+  `--selection-surface`) that a changed colour left at the kit's value. A brand may set any token
+  either file defines — colours, rail, series, depth, and in `@theme` fonts and radii — and
+  `@theme { --brand-hue: <deg|colour>; }` turns the whole palette first. `--adopt-default-look`
+  (only when asked: an upgrade never restyles) takes the kit release's default token files —
+  from the upgrade's mirror `.upgrade/kit.git` at `.rocketflare.json` `kit.commit`, or
+  `--from <kit checkout>` — translated into the copy's names: `theme-tokens.css` whole, the
+  `[data-theme]` blocks of `index.css` (its styles untouched), `theme-color`; a token of the app's
+  own the defaults lack is kept; then brand.css on top (`adoptDefaultLook`). `/rf-design` also
+  writes `docs/design/DESIGN.md`, the visual system in one page, which `.claude/rules/ui.md` sends
+  agents to before they build a screen.
   `--check` exits 1 when the pages are stale. The output is deterministic, and a rebuild deletes only
   pages carrying the generator's meta tag. The script is not kit-only, so it ships in every copy.
 - **Providers**: ErrorBoundary → QueryClient → Auth → Ability → WebSocket → Router. A global 401
@@ -643,7 +694,11 @@ seeded into the one main tenant (an app wanting a second tenant's owner seeds th
 the CLI prints raw role values, not `ROLE_LABELS`. The rendered design's markdown has no raw HTML,
 footnotes, task lists or reference-style links. It inlines only SVGs under `docs/design/diagrams/`,
 and a brand font is linked from Google Fonts whenever it is not a known system font, without
-checking that Google serves it.
+checking that Google serves it. A hue turn keeps lightness, not WCAG luminance: the light
+`--color-primary` on `--surface-active` falls just under 4.5:1 for hues near 165–210 (cyan), which
+the contrast gate catches and a brand.css nudge fixes. `--adopt-default-look` never ports the new
+look's font imports (`main.tsx`, `package.json`) or components — those arrive with the upgrade's
+patch — and in a brand.css a new font family still needs its package added by hand.
 
 ## 8. Analytics
 
@@ -1731,6 +1786,37 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   (`~/.<slug>/security-runs`) and the guard hook with it. `docs/THREAT-MODEL.md` is the copy's
   own: the `threat-model` surface, and `manual` as well, so `kit:upgrade` shows the kit's diff to it
   and never applies one, and never recreates it once deleted.
+- **A copy is steered, then recorded, when it changes kit core** (`scripts/kit-guard.mjs`, one
+  Claude Code hook entry for `SessionStart`, `PreToolUse`, `PostToolUse` and `Stop`; decisions in
+  `lib/kit-guard-lib.mjs`, the map in `lib/kit-guard-rules.mjs`, kit-owned and ported like any
+  `scripts/lib/` file). The map has three tiers: `sealed` (generated files — the worker types,
+  `docs/plugin-api.md`, the migration journal, the lockfile, the six plugin barrels: the one deny,
+  naming the regenerate command), `open` (the examples and every `example` surface's paths, Home and
+  its registries, the theme tokens, `LogoMark`, `ui/public/`, `docs/design/`, and every path the
+  map does not name — the app's own code), and `steer` (the Worker entry, `api/index.ts`,
+  middleware, auth, the tenancy/driver seam, permissions, the plugin types and `plugins/api`, the
+  queue dispatcher, observability, `scripts/**`, `tests/config/**`, `ui/index.css`). Before the
+  first edit of an EXISTING steer file in a session the agent gets one note — the existing seam
+  (each rule's `instead` names one that exists, or says there is none), a new file wired in with
+  one line, an app-owned capability `name@1` with its test at
+  `apps/web/tests/capabilities/<name>@1/app.test.ts` (#183), or a ledger entry — and nothing once
+  the path is ledgered. No `permissionDecision` is set for a steer note, so the person's own
+  permission prompt still applies. At `Stop`, a tracked steer file changed in the working tree with
+  no acceptable `.rocketflare.json` `localEdits` entry (`{ path, kind: "fix"|"change", reason,
+  seamConsidered, capability?, date }`; a reason under 20 characters or "user asked" is rejected)
+  holds the turn once and the agent drafts the entry and shows it to the person. `kit:upgrade`
+  prints an entry's reason beside every kit change to its path (`localEditFor`), and `/rf-upgrade`
+  drops a `fix` entry once the release carries the fix. The same hook runs the **UI lint**
+  (`lib/ui-lint.mjs`, `pnpm design:lint`, the rules in `.claude/rules/ui.md` "Visual quality"): a
+  review after each edit to a UI file, and bans still in a changed UI file hold the `Stop` once;
+  reflexes are asked once, as a transcript notice, and never hold it. `stop_hook_active` is
+  honoured and every error is silence. The core half runs in a copy (`app != null`) or with
+  `ROCKETFLARE_GUARD=1`; the lint half wherever the guard is on, the kit included;
+  `guard.enabled: false` or `ROCKETFLARE_GUARD=0` turns both off. State is per session in
+  `$TMPDIR/rocketflare-guard/<session_id>.json`. Carried capabilities (#183) are read from
+  `apps/web/src/plugins/<id>/capabilities/<name>/capability.diff` + `NOTE.md` — a provisional
+  location, inert until a carrier exists: a carried path gets "follow its NOTE.md" instead of the
+  ladder, with the path's ledger reason beside it.
 - **Released history is never rewritten** — every copy pins a commit.
 
 **Known gaps:** a copy pinned before 0.10.1 has no update hook until it upgrades (and
@@ -1746,7 +1832,15 @@ because Launch's scaffold runs the rename and nothing is left to rename after it
 `launch.kit.json` as a `manual` diff translated through the token map, so a hunk touching its `kit`
 block reads as renamed (keep the kit's id and name); a copy that predates the contract gets
 `kit.id` only by following that release's porting note; `plugins.add` cannot express an entry
-without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today.
+without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today. The guard is
+Claude Code only (an editor, a terminal or another agent never sees it, and no gate step checks the
+ledger); an edit made through Bash is seen only at `Stop`, through `git status`, so it gets no steer
+note first; `Stop` reads the whole working tree, so in a checkout shared by two sessions one can be
+held for the other's change; core edits committed before a session are not asked about; the UI
+lint is text heuristics (a JSX tag stack it cannot balance reports no nested card), so it misses
+what it cannot see and an earned exception costs a `ui-allow`; `.rocketflare.json` is never ported,
+so an upgraded copy adds `guard` and `localEdits` by hand (absent, the guard runs with an empty
+ledger).
 
 ## 14. Definition of done for the kit
 
@@ -2026,12 +2120,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   its own lazy chunk. `headerItemIssues` (`plugins.test.ts`) refuses a duplicate id or an unknown
   placement.
 - **Home cards (`UiPlugin.homeCards`)**: `{ id, Component, guard?, order? }[]` — Home's "what needs
-  doing" section, above the quick links (approvals waiting, an inbox to triage). `PluginHomeCards`
+  doing" section, under the composer and above the work areas (approvals waiting, an inbox to
+  triage). `PluginHomeCards`
   merges them across plugins, orders by `order`, then plugin id, then card id, and puts each behind
   its guard, its own `Suspense` and its own error boundary, like a header item. A card with nothing
   to ask renders `null`; the section brings no chrome, and with no card passing its guard it is
-  absent. `Component` is `lazy(() => import(...))`. The core quick links are data in
-  `pages/home-links.ts`, so the plugin UI kit never imports the Home page (`plugin-ui-kit-graph.test.ts`).
+  absent. `Component` is `lazy(() => import(...))`. A plugin's `homeLinks` render as a
+  "Shortcuts" panel in Home's side column; the core quick links are no longer on Home (the nav
+  carries them) but stay data in `pages/home-links.ts` as destinations, so the plugin UI kit never
+  imports the Home page (`plugin-ui-kit-graph.test.ts`).
 - **Framing a response (`ctx.embeddable(contentType)`)**: a plugin route that has proved its body
   is an `EMBEDDABLE_MIME_TYPES` type (today PDF) — from its own row, never the request — lets a
   same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6). Any other type

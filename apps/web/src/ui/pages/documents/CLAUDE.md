@@ -13,6 +13,9 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   (+ optional `title`/`source`) to `/api/ai/documents/upload`.
 - Both toast `indexed (n chunks)` / `queued for …` and invalidate `documents`; the list polls
   `DOCUMENT_POLL_MS` while a row is `pending` (there is no document nudge yet).
+- Below `sm` the table stacks (title, then status, when and the actions; `lib/stacked-table.ts`).
+  Source reads in words ("Pasted", "Uploaded file", "Summarize text agent" via
+  `documentSourceLabel`); the count column is "Passages".
 - Rows show `documentTypeLabel(contentType)` under the title and a download link
   (`filePath(fileId)`) when there is an uploaded original; every title is a
   `<Link to={documentPath(doc.id)}>`, pending and failed rows included.
@@ -60,7 +63,9 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   are registered. Dispatches on `fileId`, upload kind and status: a PDF embeds its
   original with `<object>` — **never try to detect failure, the CHILDREN are the fallback** — and
   the header always carries Download original and a Converted text toggle; everything else renders
-  its text (markdown through `components/ai/Markdown`, plain types in a `<pre>`).
+  its text (markdown through `components/ai/Markdown` with `spacing="reading"` — `text/markdown`,
+  converted uploads, and `text/plain` that `looksLikeMarkdown` — plain types in a `<pre>`). The
+  panel has no title unless it is a file's Original / Converted text view.
 - Deep links: `?offset=` is snapped by `windowStart()` so a link and the reader's paging share one
   cache entry; `?chunk=` is the fallback when `charOffset` is null; `?q=` highlights through
   `lib/highlight.ts` as `<mark>` NODES (never `dangerouslySetInnerHTML` over uploaded text).
@@ -69,16 +74,27 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 - Hooks: `useDocumentContent(id, offset)`, `useDocumentPassages(id, filters)`,
   `useDocumentCard(id)`; `documentPollInterval(status)` is the pure decision.
 
-## `DocumentCard` / `DocumentLink` (`components/shared/`)
+## `Provenance`, `DocumentCard`, `DocumentLink` (`components/shared/`)
 
-- `DocumentCard` is the compact citation form and is **markdown-free by construction** — so it sits
-  in the eager barrel and is used from Search and from inside `Markdown` itself (an anchor whose
-  href matches `/documents/<uuid>` renders as a card). Its `excerpt` is the head of the text, not a
-  summary; there is no thumbnail.
-- **`DocumentLink` is the same document on ONE LINE** (icon, title, passage count) for dense lists
-  (the run timeline's tool results, `research-topic`'s Sources), built through
-  `documentLinkProps(card)` where a card is held, so the two cannot drift. Same markdown-free rule.
-  A card where the document IS the content; a link where it is a reference inside something else.
+- **`Provenance` is the one way anything shows where it came from** — a chat answer, an agent's
+  output, a timeline tool result, a knowledge fact. Sources are `ProvenanceSource`s built by
+  `sourceFromCard(card)`, `sourceFromCitation({ documentId, title })` or
+  `sourceFromFact(fact.source, meta)` (deep link to the passage, verbatim quote, "Show in
+  document" at `?tab=document&offset=&end=`); `work` is one line on how it was made (turns,
+  passages screened, a link to the run when the reader is elsewhere). `layout="list"` numbers the
+  sources under a hairline for an answer that stands alone; `layout="inline"` puts them on one
+  wrapping line for a reference inside something else. **No sources and no work renders nothing.**
+  `ProvenanceQuote` is the quote alone, for a page whose document is already the subject
+  (`DocumentFactsPanel`). Never a card inside an answer: that is a nested card.
+- `DocumentCard` is the shape where the document IS the content (Search: one panel per document,
+  its passages set into it as insets). Its `excerpt` is the head of the text, not a summary.
+- `DocumentLink` is `ProvenanceLink` under its older name (plugins import it), built through
+  `documentLinkProps(card)`.
+- All three are **markdown-free by construction**, so they sit in the eager barrel; `Markdown`
+  renders an in-app `/documents/<uuid>` link as a `ProvenanceLink` (type icon, the link's words).
+- Agent outputs fill citations in from the cached document cards with `useCitationSources`
+  (`pages/agents/outputs/citationSources.ts`) — the same `documents.card(id)` entries `Markdown`
+  reads.
 
 ## Search (`SearchPage.tsx`, nav "Search")
 
@@ -97,9 +113,11 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 - `useSearch()` is mutation-style (hits are its `data`), grouped by document under a dense
   `DocumentCard` built client-side from the `useDocuments({ pageSize: 100 })` list (no request per
   hit), with source, date added and an "Only this document" button in its footer. Each hit:
-  `passage n of m` (a `<Link>` to `documentPath(documentId, { offset, chunk, q })`), heading path,
-  dense/lexical/score diagnostics, the passage with query terms as `<mark>` nodes
-  (`lib/highlight.ts`), clamped to four lines past 360 characters with Show more.
+  `Passage n of m` (a `<Link>` to `documentPath(documentId, { offset, chunk, q })`), heading path,
+  and the passage as text (`stripMarkdown`) with the query's whole words, minus stop-words, as
+  `<mark>` nodes (`highlightTerms` in `lib/highlight.ts`), clamped to four lines past 360
+  characters with Show more. Hits sit under `--border-subtle` dividers, no box each; no rank
+  number and no ranking diagnostics (grouped by document, the fused rank would read out of order).
 - With `KNOWLEDGE_FACTS_GUARD`, `useMentionedFacts(query)` (`GET /api/knowledge/mentioned`) puts
   `EntityFactsCard`s above the results; without it nothing under `/api/knowledge` is requested.
 - Stale embeddings: `facets.staleEmbeddings > 0` shows an `alert-info` notice ("N documents were
@@ -114,14 +132,15 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
   The count is documents with no context on ANY passage, so a passage the model left empty never
   keeps the notice up. No success toast.
 - `lexical: 'no_terms'` with no hits → the empty state says the word is too common
-  (`tooCommonMessage`); the server decides, the UI holds no stopword list.
+  (`tooCommonMessage`); the server decides. The UI's own stop-word list only decides what is
+  MARKED, never what is searched.
 - States: skeleton while searching, an EmptyState prompt before the first search, "No matches"
   (with Clear filters when any are set), and after a failure — which toasts — a neutral Try again.
   An empty knowledge base shows an EmptyState linking to `/documents`.
 
 ## Tests
 
-`tests/ui/`: `documents-page`, `search-page`, `document-view`, `document-card`,
+`tests/ui/`: `documents-page`, `search-page`, `document-view`, `document-card`, `provenance`,
 `knowledge-review` (the view switch, the list, the badge, the flag off), `knowledge-entity-page`,
 `knowledge-browse` (the viewer's Facts tab, the span link, the Facts view and its URL); the pure helpers in
 `tests/config/document-helpers.test.ts`.

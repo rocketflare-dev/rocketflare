@@ -1,8 +1,8 @@
 /**
  * Run status as the shared `.status-badge`: the tone comes from `data-status` in
- * `index.css` (`queued`/`running` info, `succeeded` success, `failed`/`cancelled` error,
- * `awaiting_input` the existing warning tone — parked is neither progress nor failure). Tokens
- * only, never a palette class.
+ * `index.css`: `queued`/`running` info, `succeeded` success, `failed` error, `cancelled` neutral
+ * (somebody chose to stop it; nothing went wrong), `awaiting_input` the existing warning tone
+ * (parked is neither progress nor failure). Tokens only, never a palette class.
  *
  * **Only a run the SERVER still owes an answer pulses and announces itself.** `isRunActive` now
  * includes `awaiting_input`, and a badge keyed off it would pulse and `aria-live` a parked run for

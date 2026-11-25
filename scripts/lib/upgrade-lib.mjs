@@ -53,6 +53,20 @@ export function matchesAny(relPath, globs) {
   return globs.some(g => globToRegExp(g).test(relPath))
 }
 
+/**
+ * The `localEdits` entry (`.rocketflare.json`, written at the guard's asking —
+ * `scripts/kit-guard.mjs`) that explains why this copy differs from the kit at `relPath`, or
+ * null. An entry's `path` may be a glob. The upgrade shows its reason beside every kit change to
+ * the path, so the person deciding the hunk sees why the local line is what it is.
+ */
+export function localEditFor(manifest, relPath) {
+  const entries = Array.isArray(manifest?.localEdits) ? manifest.localEdits : []
+  const entry = entries.find(
+    e => typeof e?.path === 'string' && (e.path === relPath || matchesAny(relPath, [e.path]))
+  )
+  return entry ? { kind: entry.kind ?? 'change', reason: String(entry.reason ?? '') } : null
+}
+
 // ---------------------------------------------------------------- manifest
 
 /** `app === null` means this checkout IS the kit, not a copy of it. */

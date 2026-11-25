@@ -13,7 +13,7 @@
  * - an `entity.changed { entity: 'agent-run' }` nudge refetches the run and leaves
  *   `['agent-run-agui']` — the key the stream owns — untouched.
  */
-import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
@@ -333,9 +333,10 @@ describe('RunPage', () => {
     // of what the rows know instead.
     expect(summary).not.toHaveTextContent('Requested')
     fireEvent.click(screen.getByRole('tab', { name: /Usage/ }))
-    expect(await screen.findByText('Requested')).toBeInTheDocument()
-    expect(screen.getByText('Started')).toBeInTheDocument()
-    expect(screen.getByText('Finished')).toBeInTheDocument()
+    const usage = await screen.findByRole('tabpanel')
+    expect(await within(usage).findByText('Requested')).toBeInTheDocument()
+    expect(within(usage).getByText('Started')).toBeInTheDocument()
+    expect(within(usage).getByText('Finished')).toBeInTheDocument()
   })
 
   it('gives the timeline the major column while working, the output once settled', async () => {
@@ -428,6 +429,26 @@ describe('RunPage', () => {
     expect(alert.compareDocumentPosition(screen.getByRole('tab', { name: /Output/ }))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING
     )
+    // The empty output pane points at the reason rather than saying only "no output".
+    expect(screen.getByText('No answer: the run failed')).toBeInTheDocument()
+  })
+
+  it('offers Run again on a failed run, with the same input, and opens the new run', async () => {
+    const NEXT = '00000000-0000-4000-8000-0000000000ff'
+    const failed = run({ status: 'failed', finishedAt: t(4), error: 'The model refused' })
+    const { fetchMock } = mount({
+      [`/api/agents/runs/${RUN_ID}`]: failed,
+      'POST /api/agents/runs': { ...failed, id: NEXT, status: 'queued', error: null },
+      [`/api/agents/runs/${NEXT}`]: { ...failed, id: NEXT, status: 'queued', error: null },
+    })
+    fireEvent.click(await screen.findByRole('button', { name: 'Run again' }))
+    await waitFor(() => {
+      const post = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')
+      expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+        agentKey: failed.agentKey,
+        input: failed.input,
+      })
+    })
   })
 
   it('keeps Cancel usable as Force cancel once a cancel was requested', async () => {

@@ -5,39 +5,31 @@
  */
 import { type ResearchTopicOutput, researchTopicOutputSchema } from '@rocketflare/shared/ai/agents'
 import type { AgentArtifact } from '@rocketflare/shared/ai/artifacts'
-import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import { Markdown } from '@/ui/components/ai/Markdown'
-import { DocumentLink } from '@/ui/components/shared'
+import { Provenance } from '@/ui/components/shared'
+import { useCitationSources } from './citationSources'
 import type { AgentOutput, AgentOutputProps } from './types'
 
 function ResearchTopicOutputView({ output }: AgentOutputProps<ResearchTopicOutput>) {
+  const sources = useCitationSources(output.citations)
+  const turns = `${output.turns} model ${output.turns === 1 ? 'turn' : 'turns'}`
   return (
-    <div className="space-y-4">
-      <Markdown content={output.answer} className="text-sm" />
-      <div>
-        <h3 className="text-sm font-medium mb-1">
-          {output.citations.length > 0 ? 'Sources' : 'No sources'}
-        </h3>
-        {output.citations.length > 0 ? (
-          <ul className="space-y-0.5">
-            {output.citations.map(citation => (
-              <li key={citation.documentId} className="min-w-0">
-                {/* The same one-liner the timeline's tool results use — a source is a link. */}
-                <DocumentLink
-                  id={citation.documentId}
-                  to={documentPath(citation.documentId)}
-                  title={citation.title}
-                />
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-sm text-muted">
-            The agent found nothing in the knowledge base for this question.
-          </p>
-        )}
-      </div>
-      <p className="text-xs text-muted">{output.turns} model turn(s)</p>
+    <div>
+      <Markdown content={output.answer} spacing="reading" className="text-sm max-w-[72ch]" />
+      {output.citations.length === 0 && (
+        <p className="mt-3 text-sm text-muted">
+          Nothing in the knowledge base answered this question.
+        </p>
+      )}
+      <Provenance
+        sources={sources}
+        work={{
+          summary:
+            output.citations.length > 0
+              ? `Read ${output.citations.length} ${output.citations.length === 1 ? 'document' : 'documents'} in ${turns}.`
+              : `Searched in ${turns}.`,
+        }}
+      />
     </div>
   )
 }

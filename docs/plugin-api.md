@@ -871,7 +871,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Two-button confirmation on the `<dialog>` Modal.
 - `function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)`
 - `interface DocumentCardProps`
-- `function DocumentLink({ to, title, meta, status, id }: DocumentLinkProps)`
+- `function DocumentLink({ to, title, meta, status, id, typeLabel }: DocumentLinkProps)`
 - `function documentLinkProps(card: DocumentCardData): DocumentLinkProps`
   A `DocumentCard` as a one-liner: everything that survives the width, nothing that does not.
 - `interface DocumentLinkProps`
@@ -885,8 +885,8 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Pick the first zod issue for a field path out of a `safeParse` failure.
 - `function formatBytes(bytes: number \| null \| undefined, fallback = '—'): string`
   "1.4 MB" — binary units, one decimal past KB, for file sizes on cards and detail rows.
-- `function formatDate(value: Date \| null \| undefined, fallback = '—'): string`
-- `function formatDateTime(value: Date \| null \| undefined, fallback = '—'): string`
+- `function formatDate( value: Date \| null \| undefined, fallback = '—', now = new Date() ): string`
+- `function formatDateTime( value: Date \| null \| undefined, fallback = '—', now = new Date() ): string`
 - `function formatDuration(ms: number): string`
   `1m 12s`, `840ms` — how long something took, for run headers, steps and tool calls.
 - `function initials(name: string \| null \| undefined, email?: string): string`
@@ -894,7 +894,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function LoadingIndicator({ size = 'md', centered = false, fullPage = false, className = '', }: LoadingIndicatorProps)`
   DaisyUI spinner in the primary colour.
 - `function LogoMark({ className = 'w-7 h-7' }: { className?: string })`
-  The Rocketflare mark — a rocket launching from a cloud — inlined so it needs no request and scales with `className`. The fills are the brand illustration colours, fixed on purpose…
+  The Rocketflare mark — a rocket launching from a cloud — inlined so it needs no request and scales with `className`. The fills are the illustration colours, the `--logo-*` tokens…
 - `function MarkdownImageLink({ src, alt }: Pick<ComponentProps<'img'>, 'src' \| 'alt'>)`
 - `function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)`
   `<dialog>`-based modal: native focus trap, Escape and backdrop close, `aria-modal` for free. Controlled — the caller owns `open`. Falls back to the `open` attribute where…
@@ -911,6 +911,16 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
   Page title row: breadcrumbs, a modest title (no enormous headings), description, actions.
 - `function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)`
   "Showing X to Y of Z" + Previous/Next. Renders nothing for a single page.
+- `function passagesLabel(n: number): string \| null`
+- `function Provenance({ sources, work, layout = 'list', heading, lead, className = '', }: ProvenanceProps)`
+- `function ProvenanceLink({ source, className = '', }: { source: ProvenanceSource className?: string })`
+  One source on one line: type icon, title, meta, status. The building block of both layouts.
+- `interface ProvenanceProps`
+- `function ProvenanceQuote({ quote, to, className = '', }: { quote: string \| null \| undefined to?: string \| null className?: string })`
+  A cited passage, verbatim, in an inset well, with "Show in document" when it can be located. Exported for a surface whose source document is already the page (a document's own…
+- `interface ProvenanceSource`
+- `interface ProvenanceWork`
+  How the work was done — the run, its steps — on one line.
 - `function SearchInput({ value, onChange, placeholder = 'Search…', debounceMs = 300, className = '', size = 'md', 'aria-label': ariaLabel = 'Search', }: SearchInputProps)`
   Debounced search box with a clear button, for server-side search on index pages.
 - `function SectionPanel({ title, description, actions, children, className = '', flush = false, }: SectionPanelProps)`
@@ -930,9 +940,17 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)`
 - `function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })`
   Placeholder lines on their own, for panels that stay mounted while loading.
+- `function sourceFromCard(card: DocumentCard): ProvenanceSource`
+  A document card (chat stream, tool result, search) as a source.
+- `function sourceFromCitation(citation: { documentId: string title: string }): ProvenanceSource`
+  A citation an agent returned (`{ documentId, title }`) as a source.
+- `function sourceFromFact( source: { documentId: string documentTitle: string chunkId: string \| null charStart: number \| null charEnd: number \| null quote: string }, meta?: string \| null ): ProvenanceSource`
+  The source of a knowledge fact: its document, linked at the passage, with the verbatim quote.
+- `function sourceTypeIcon(typeLabel: string \| null \| undefined): Icon`
+  The icon a document's type label earns; a plain page when the type is unknown.
 - `interface TabConfig`
 - `function timeAgo(value: Date \| null \| undefined, fallback = 'never'): string`
-  "3 hours ago" — for activity feeds and "last seen".
+  "3h ago" — for activity feeds and "last seen"; the same short form as `timeAgoShort`.
 - `interface Toast`
 - `function ToastContainer()`
   Bottom-right stack. Mount once.
@@ -1889,7 +1907,7 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: ConfirmModal :: function ConfirmModal({ isOpen, title, message, confirmText = 'Confirm', cancelText = 'Cancel', confirmButtonClass = 'btn-primary', isLoading = false, onCancel, onConfirm, }: ConfirmModalProps)
 @/plugins/api/ui :: function :: DocumentCard :: function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps)
 @/plugins/api/ui :: interface :: DocumentCardProps :: interface DocumentCardProps
-@/plugins/api/ui :: function :: DocumentLink :: function DocumentLink({ to, title, meta, status, id }: DocumentLinkProps)
+@/plugins/api/ui :: function :: DocumentLink :: function DocumentLink({ to, title, meta, status, id, typeLabel }: DocumentLinkProps)
 @/plugins/api/ui :: function :: documentLinkProps :: function documentLinkProps(card: DocumentCardData): DocumentLinkProps
 @/plugins/api/ui :: interface :: DocumentLinkProps :: interface DocumentLinkProps
 @/plugins/api/ui :: function :: EmptyState :: function EmptyState({ icon: Icon, message, description, action, className = '', size = 'md', }: EmptyStateProps)
@@ -1897,8 +1915,8 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: FieldError :: function FieldError({ message, id }: { message?: string | null; id?: string })
 @/plugins/api/ui :: function :: fieldErrorFor :: function fieldErrorFor( issues: readonly { path: readonly PropertyKey[]; message: string }[] | undefined, field: string ): string | undefined
 @/plugins/api/ui :: function :: formatBytes :: function formatBytes(bytes: number | null | undefined, fallback = '—'): string
-@/plugins/api/ui :: function :: formatDate :: function formatDate(value: Date | null | undefined, fallback = '—'): string
-@/plugins/api/ui :: function :: formatDateTime :: function formatDateTime(value: Date | null | undefined, fallback = '—'): string
+@/plugins/api/ui :: function :: formatDate :: function formatDate( value: Date | null | undefined, fallback = '—', now = new Date() ): string
+@/plugins/api/ui :: function :: formatDateTime :: function formatDateTime( value: Date | null | undefined, fallback = '—', now = new Date() ): string
 @/plugins/api/ui :: function :: formatDuration :: function formatDuration(ms: number): string
 @/plugins/api/ui :: function :: initials :: function initials(name: string | null | undefined, email?: string): string
 @/plugins/api/ui :: function :: LoadingIndicator :: function LoadingIndicator({ size = 'md', centered = false, fullPage = false, className = '', }: LoadingIndicatorProps)
@@ -1913,6 +1931,13 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: notifyUnauthorized :: function notifyUnauthorized(error: ApiError): void
 @/plugins/api/ui :: function :: PageHeader :: function PageHeader({ title, description, breadcrumbs, badge, actions, className = '', }: PageHeaderProps)
 @/plugins/api/ui :: function :: PaginationControls :: function PaginationControls({ pagination, onPageChange, isLoading = false, className = '', }: PaginationControlsProps)
+@/plugins/api/ui :: function :: passagesLabel :: function passagesLabel(n: number): string | null
+@/plugins/api/ui :: function :: Provenance :: function Provenance({ sources, work, layout = 'list', heading, lead, className = '', }: ProvenanceProps)
+@/plugins/api/ui :: function :: ProvenanceLink :: function ProvenanceLink({ source, className = '', }: { source: ProvenanceSource className?: string })
+@/plugins/api/ui :: interface :: ProvenanceProps :: interface ProvenanceProps
+@/plugins/api/ui :: function :: ProvenanceQuote :: function ProvenanceQuote({ quote, to, className = '', }: { quote: string | null | undefined to?: string | null className?: string })
+@/plugins/api/ui :: interface :: ProvenanceSource :: interface ProvenanceSource
+@/plugins/api/ui :: interface :: ProvenanceWork :: interface ProvenanceWork
 @/plugins/api/ui :: function :: SearchInput :: function SearchInput({ value, onChange, placeholder = 'Search…', debounceMs = 300, className = '', size = 'md', 'aria-label': ariaLabel = 'Search', }: SearchInputProps)
 @/plugins/api/ui :: function :: SectionPanel :: function SectionPanel({ title, description, actions, children, className = '', flush = false, }: SectionPanelProps)
 @/plugins/api/ui :: function :: SectionPanelSkeleton :: function SectionPanelSkeleton({ rows = 4, className = '', }: { rows?: number className?: string })
@@ -1923,6 +1948,10 @@ nothing in the comparison that can throw.
 @/plugins/api/ui :: function :: showToast :: function showToast(message: string, type: ToastType, duration?: number): void
 @/plugins/api/ui :: function :: SideNav :: default function SideNav({ items = navigationConfig, footer, forceCollapsed, }: SideNavProps)
 @/plugins/api/ui :: function :: SkeletonRows :: function SkeletonRows({ rows = 4, className = '' }: { rows?: number; className?: string })
+@/plugins/api/ui :: function :: sourceFromCard :: function sourceFromCard(card: DocumentCard): ProvenanceSource
+@/plugins/api/ui :: function :: sourceFromCitation :: function sourceFromCitation(citation: { documentId: string title: string }): ProvenanceSource
+@/plugins/api/ui :: function :: sourceFromFact :: function sourceFromFact( source: { documentId: string documentTitle: string chunkId: string | null charStart: number | null charEnd: number | null quote: string }, meta?: string | null ): ProvenanceSource
+@/plugins/api/ui :: function :: sourceTypeIcon :: function sourceTypeIcon(typeLabel: string | null | undefined): Icon
 @/plugins/api/ui :: interface :: TabConfig :: interface TabConfig
 @/plugins/api/ui :: function :: timeAgo :: function timeAgo(value: Date | null | undefined, fallback = 'never'): string
 @/plugins/api/ui :: interface :: Toast :: interface Toast

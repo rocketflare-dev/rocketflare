@@ -64,6 +64,7 @@ describe('REALTIME_INVALIDATIONS', () => {
     expect(REALTIME_INVALIDATIONS['invitation.changed']).toEqual([
       queryKeys.invitations.all,
       queryKeys.pendingInvitations.all,
+      queryKeys.home.all,
     ])
   })
 })

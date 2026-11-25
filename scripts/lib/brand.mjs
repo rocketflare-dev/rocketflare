@@ -5,6 +5,13 @@
  * `--tone-*-surface/-border`) in its `[data-theme="…"]` blocks; `apps/web/src/ui/index.html`
  * carries the primary again in `<meta name="theme-color">`.
  *
+ * A brand may set any token either file defines: colours, the rail (`--rail-*`), the chart series
+ * (`--series-1…5`), depth (`--shadow-panel` / `--shadow-popover`), and in `@theme` the fonts
+ * (`--font-sans` / `--font-mono`) and the radii (`--radius-control` / `-panel` / `-popover`).
+ * `@theme { --brand-hue: <degrees or a colour>; }` turns the whole palette to one hue first,
+ * keeping every lightness and chroma (`applyHue`, also the rename's `--colour`); the flare and
+ * the state colours keep their own hue.
+ *
  * brand.css uses the same block shapes — an optional `@theme { --font-sans: … }`, and
  * `@plugin "daisyui/theme" { name: "…-light"; … }` / `[data-theme="…-dark"] { … }` blocks
  * (either shape, for either file's properties) — and holds only the properties it changes. A
@@ -15,7 +22,7 @@
  * and adopts it (`design-docs.mjs --apply-brand` writes the result to disk), so what was checked
  * is what lands. Pure: text in, text out.
  */
-import { declarations, themeKind } from './contrast.mjs'
+import { declarations, parseColour, rgbToOklch, themeKind } from './contrast.mjs'
 
 /** The DaisyUI colours whose derived tones a brand must move with them. */
 const DERIVED = {
@@ -24,11 +31,144 @@ const DERIVED = {
     '--surface-active',
     '--tone-primary-surface',
     '--tone-primary-border',
+    '--rail-active',
+    '--rail-focus-ring',
+    '--selection-surface',
   ],
   '--color-info': ['--tone-info-surface', '--tone-info-border'],
   '--color-success': ['--tone-success-surface', '--tone-success-border'],
   '--color-warning': ['--tone-warning-surface', '--tone-warning-border'],
   '--color-error': ['--tone-error-surface', '--tone-error-border'],
+}
+
+// --------------------------------------------------------------------- Hue
+
+/**
+ * Tokens whose hue is their own under any brand: the flare (the logo's gold). State colours (info, success,
+ * warning, error and their tones) are hex literals, so a hue rotation never reaches them.
+ */
+export const FIXED_HUE_TOKENS = ['--flare']
+
+/** The brand.css `@theme` property that turns the whole palette to one hue (degrees or a colour). */
+export const BRAND_HUE = '--brand-hue'
+
+/** A numeric `oklch(L C H)` / `oklch(L C H / a)` literal; group 3 is the hue. */
+const OKLCH_RE = /oklch\(\s*([\d.]+%?)\s+([\d.]+%?)\s+([\d.]+)(?:deg)?(\s*\/\s*[\d.]+%?)?\s*\)/gi
+
+/** The property a value at `index` belongs to (`--name`), or null outside a declaration. */
+function propertyAt(css, index) {
+  const start = Math.max(css.lastIndexOf(';', index), css.lastIndexOf('{', index)) + 1
+  const names = [...css.slice(start, index).matchAll(/(--[\w-]+)\s*:/g)]
+  return names.at(-1)?.[1] ?? null
+}
+
+const round = (n, places) => Number(n.toFixed(places)).toString()
+const normaliseHue = h => Number((((h % 360) + 360) % 360).toFixed(2))
+
+/**
+ * The brand hue of the token files: the hue most of their `oklch()` literals sit on (the
+ * neutrals, the primary, the rail and the selection all share it), or null when there are none.
+ * Read from the text, never assumed, so a copy already moved off the kit's 35 still works.
+ */
+export function brandHue(css) {
+  const ranges = commentRanges(css)
+  const counts = new Map()
+  for (const m of css.matchAll(OKLCH_RE)) {
+    if (inside(ranges, m.index)) continue
+    if (FIXED_HUE_TOKENS.includes(propertyAt(css, m.index))) continue
+    const h = round(normaliseHue(Number.parseFloat(m[3])), 2)
+    counts.set(h, (counts.get(h) ?? 0) + 1)
+  }
+  let best = null
+  for (const [h, n] of counts) if (best === null || n > counts.get(best)) best = h
+  return best === null ? null : Number(best)
+}
+
+/**
+ * Every `oklch()` literal in `css` turned by `delta` degrees, keeping its lightness and chroma —
+ * the lightness steps are what hold the contrast floors, so a rotation keeps them (WCAG luminance
+ * moves a little with hue at the same lightness: the contrast gate is still the check). Literals
+ * in comments and in a `FIXED_HUE_TOKENS` declaration are left alone; hex literals (the state
+ * colours) are never touched. `{ css, rotated }`.
+ */
+export function rotateHue(css, delta) {
+  const ranges = commentRanges(css)
+  let rotated = 0
+  const out = css.replace(OKLCH_RE, (whole, l, c, h, alpha, index) => {
+    if (inside(ranges, index)) return whole
+    if (FIXED_HUE_TOKENS.includes(propertyAt(css, index))) return whole
+    rotated++
+    const turned = round(normaliseHue(Number.parseFloat(h) + delta), 2)
+    return `oklch(${l} ${c} ${turned}${alpha ?? ''})`
+  })
+  return { css: out, rotated }
+}
+
+/**
+ * The hue of a colour given as `#hex`, `rgb()`, `oklch()` or a bare number of degrees, or an error
+ * string: a grey has no hue to take.
+ */
+export function hueOf(colour) {
+  const v = String(colour ?? '').trim()
+  if (/^\d+(?:\.\d+)?$/.test(v)) {
+    const n = Number(v)
+    return n >= 0 && n <= 360 ? { hue: normaliseHue(n) } : { error: `hue ${v} is not 0–360` }
+  }
+  const rgb = parseColour(v)
+  if (!rgb) return { error: `'${v}' is not a colour (a #hex, rgb(), oklch() or a hue in degrees)` }
+  const [, chroma, hue] = rgbToOklch(rgb)
+  if (chroma < 0.02) return { error: `'${v}' is a grey: it has no hue to take` }
+  return { hue: Number(round(hue, 2)) }
+}
+
+/** `#rrggbb` for a colour this module reads, or null. */
+export function hexOf(value) {
+  const rgb = parseColour(value)
+  return rgb ? `#${rgb.map(c => c.toString(16).padStart(2, '0')).join('')}` : null
+}
+
+/** The light theme's `--color-primary` value in a CSS text, or null. */
+function lightPrimary(css) {
+  for (const b of tokenBlocks(css).filter(x => x.kind === 'light')) {
+    const v = declarations(css.slice(b.start, b.end).replace(/\/\*[\s\S]*?\*\//g, ''))[
+      '--color-primary'
+    ]
+    if (v) return v
+  }
+  return null
+}
+
+/** `index.html` with `<meta name="theme-color">` set to `colour`. */
+export function setThemeColor(html, colour) {
+  return html.replace(
+    /(<meta name="theme-color" content=")[^"]*(")/,
+    (_, a, b) => `${a}${colour.replace(/"/g, "'")}${b}`
+  )
+}
+
+/**
+ * The palette turned to `hue` (degrees): both token files rotated by the same amount from the
+ * hue they are on now, and `<meta name="theme-color">` set to the new light primary as hex.
+ * The one implementation behind the rename's `--colour` and brand.css `--brand-hue`.
+ * `{ tokensCss, indexCss, indexHtml, from, to, rotated, primary }`.
+ */
+export function applyHue({ tokensCss, indexCss, indexHtml = null }, hue) {
+  const from = brandHue(`${tokensCss}\n${indexCss}`)
+  if (from === null) throw new Error('the token files have no oklch() colours to turn')
+  const delta = normaliseHue(hue) - from
+  const t = rotateHue(tokensCss, delta)
+  const x = rotateHue(indexCss, delta)
+  const primaryValue = lightPrimary(t.css)
+  const primary = primaryValue ? hexOf(primaryValue) : null
+  return {
+    tokensCss: t.css,
+    indexCss: x.css,
+    indexHtml: indexHtml !== null && primary ? setThemeColor(indexHtml, primary) : indexHtml,
+    from,
+    to: normaliseHue(hue),
+    rotated: t.rotated + x.rotated,
+    primary,
+  }
 }
 
 /** `[start, end)` of every comment in a CSS text. */
@@ -152,6 +292,27 @@ export function applyBrand(files, brandCss) {
   let indexHtml = files.indexHtml ?? null
   const applied = []
   const unknown = []
+  // `--brand-hue` is not a token: it turns the whole palette first (as the rename's `--colour`
+  // does), and every property the brand names explicitly then lands on top of the turned files.
+  let hue = null
+  if (BRAND_HUE in overrides.theme) {
+    const value = overrides.theme[BRAND_HUE]
+    delete overrides.theme[BRAND_HUE]
+    const h = hueOf(value)
+    if (h.error) problems.push(`@theme ${BRAND_HUE}: ${h.error}; ignored`)
+    else {
+      const r = applyHue({ tokensCss, indexCss, indexHtml }, h.hue)
+      ;({ tokensCss, indexCss, indexHtml } = r)
+      hue = { from: r.from, to: r.to, rotated: r.rotated }
+      applied.push({
+        kind: 'theme',
+        prop: BRAND_HUE,
+        value,
+        files: ['theme-tokens.css', 'index.css'],
+      })
+    }
+  }
+  const base = { tokensCss, indexCss }
   for (const kind of ['theme', 'light', 'dark']) {
     for (const [prop, value] of Object.entries(overrides[kind])) {
       const t = setInBlocks(tokensCss, kind, prop, value)
@@ -165,7 +326,7 @@ export function applyBrand(files, brandCss) {
   }
   const warnings = []
   for (const kind of ['light', 'dark']) {
-    const before = { ...declared(files.tokensCss, kind), ...declared(files.indexCss, kind) }
+    const before = { ...declared(base.tokensCss, kind), ...declared(base.indexCss, kind) }
     for (const [colour, derived] of Object.entries(DERIVED)) {
       if (!(colour in overrides[kind]) || overrides[kind][colour] === before[colour]) continue
       for (const tone of derived) {
@@ -178,15 +339,100 @@ export function applyBrand(files, brandCss) {
     }
   }
   const primary = overrides.light['--color-primary']
-  if (indexHtml !== null && primary)
-    indexHtml = indexHtml.replace(
-      /(<meta name="theme-color" content=")[^"]*(")/,
-      (_, a, b) => `${a}${primary.replace(/"/g, "'")}${b}`
-    )
-  return { tokensCss, indexCss, indexHtml, applied, unknown, warnings, problems }
+  if (indexHtml !== null && primary) indexHtml = setThemeColor(indexHtml, primary)
+  return { tokensCss, indexCss, indexHtml, applied, unknown, warnings, problems, hue }
 }
 
 /** The `@theme` declarations (fonts) of a CSS text. */
 export function themeDeclarations(css) {
   return declared(css, 'theme')
+}
+
+// ------------------------------------------------------------ The default look
+
+const withoutComments = t => t.replace(/\/\*[\s\S]*?\*\//g, '')
+
+/**
+ * The token blocks of `into`, each body replaced by the matching block of `look` (`@theme`,
+ * light, dark) with the declarations `mine` has and `look` lacks appended — a token of the app's
+ * own survives. `into` and `mine` are both the app's file (index.css), or `into` IS `look`
+ * (theme-tokens.css, taken whole). A kind `look` has and `into` lacks lands in `missing`.
+ */
+function lookBlocks({ into, look, mine, kept, missing, file }) {
+  let out = into
+  for (const kind of ['theme', 'light', 'dark']) {
+    const fresh = tokenBlocks(look).find(b => b.kind === kind)
+    if (!fresh) continue
+    const target = tokenBlocks(out).find(b => b.kind === kind)
+    const own = tokenBlocks(mine).find(b => b.kind === kind)
+    const label = `${file} ${kind === 'theme' ? '@theme' : kind}`
+    if (!target) {
+      missing.push(`${label}: no such block to write`)
+      continue
+    }
+    const body = look.slice(fresh.start, fresh.end)
+    const theirs = declarations(withoutComments(body))
+    const extra = own
+      ? Object.entries(declarations(withoutComments(mine.slice(own.start, own.end)))).filter(
+          ([prop]) => !(prop in theirs)
+        )
+      : []
+    for (const [prop] of extra) kept.push(`${label} ${prop}`)
+    const merged = extra.length
+      ? `${body.replace(/\s*$/, '')}\n  /* Kept from this app: not a token of the default look. */\n${extra
+          .map(([prop, value]) => `  ${prop}: ${value};`)
+          .join('\n')}\n`
+      : body
+    out = out.slice(0, target.start) + merged + out.slice(target.end)
+  }
+  return out
+}
+
+/**
+ * The kit's default look adopted by an app, with the app's own brand re-applied on top:
+ * `pnpm design:docs --adopt-default-look`. `current` is the app's three files as they are,
+ * `defaults` the same three from the kit release being adopted, already in the app's names.
+ *
+ * - `theme-tokens.css` becomes the default file (it holds nothing but the look), keeping any
+ *   declaration of the app's own the defaults lack, in its block.
+ * - `index.css` keeps everything but its token blocks, which become the defaults' (keeping the
+ *   app's extra declarations the same way): the rest of that file is styles, which the upgrade's
+ *   own patch ports.
+ * - `<meta name="theme-color">` in `index.html` becomes the default's.
+ * - Then `brandCss` (the app's `docs/design/brand.css`), when there is one, through `applyBrand`,
+ *   so a brand of a hue, fonts and a radius lands whole on the new look.
+ *
+ * Pure. `{ tokensCss, indexCss, indexHtml, kept, missing, brand }`.
+ */
+export function adoptDefaultLook({ current, defaults, brandCss = null }) {
+  const kept = []
+  const missing = []
+  const tokensCss = lookBlocks({
+    into: defaults.tokensCss,
+    look: defaults.tokensCss,
+    mine: current.tokensCss,
+    kept,
+    missing,
+    file: 'theme-tokens.css',
+  })
+  const indexCss = lookBlocks({
+    into: current.indexCss,
+    look: defaults.indexCss,
+    mine: current.indexCss,
+    kept,
+    missing,
+    file: 'index.css',
+  })
+  const color = /<meta name="theme-color" content="([^"]*)"/.exec(defaults.indexHtml ?? '')?.[1]
+  let indexHtml = current.indexHtml ?? null
+  if (indexHtml !== null && color) indexHtml = setThemeColor(indexHtml, color)
+  const brand = brandCss ? applyBrand({ tokensCss, indexCss, indexHtml }, brandCss) : null
+  return {
+    tokensCss: brand?.tokensCss ?? tokensCss,
+    indexCss: brand?.indexCss ?? indexCss,
+    indexHtml: brand ? brand.indexHtml : indexHtml,
+    kept,
+    missing,
+    brand,
+  }
 }

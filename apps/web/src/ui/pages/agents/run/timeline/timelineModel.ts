@@ -112,6 +112,8 @@ export type TimelineRow =
       status: string
       attempt?: number
       reason?: string
+      /** The failure's message, when the status event carried one. */
+      error?: string
       at: Date
     }
   | {
@@ -375,6 +377,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
             status: parsed.data.status,
             ...(parsed.data.attempt !== undefined ? { attempt: parsed.data.attempt } : {}),
             ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+            ...(typeof parsed.data.error === 'string' ? { error: parsed.data.error } : {}),
             at: event.at,
           })
         }
@@ -822,4 +825,36 @@ export function runLayout(
 ): RunLayoutSplit {
   if (override) return override
   return isRunActive(status) ? 'timeline-major' : 'output-major'
+}
+
+/**
+ * A status row as a sentence — "Started", "Failed: the model provider timed out" — never the raw
+ * `Status → running (attempt 1)`. An attempt is named only past the first: attempt 1 is simply
+ * the run starting, and saying it reads as though something had already gone wrong.
+ */
+export function statusSentence(row: {
+  status: string
+  attempt?: number
+  reason?: string
+  error?: string
+}): string {
+  const retry = row.attempt !== undefined && row.attempt > 1
+  const because = (text: string | undefined) =>
+    text ? `: ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
+  switch (row.status) {
+    case 'queued':
+      return 'Queued'
+    case 'running':
+      return retry ? `Started again (attempt ${row.attempt})` : 'Started'
+    case 'awaiting_input':
+      return 'Waiting for an answer'
+    case 'succeeded':
+      return 'Finished'
+    case 'failed':
+      return `Failed${because(row.error ?? row.reason)}`
+    case 'cancelled':
+      return row.reason === 'rejected' ? 'Stopped: the request was declined' : 'Cancelled'
+    default:
+      return `${row.status.charAt(0).toUpperCase()}${row.status.slice(1).replace(/_/g, ' ')}`
+  }
 }

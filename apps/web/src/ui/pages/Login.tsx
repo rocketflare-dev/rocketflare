@@ -148,7 +148,7 @@ export default function Login() {
 
   if (sentTo) {
     return (
-      <AuthCard>
+      <AuthCard split>
         <MagicLinkSentCard email={sentTo} onReset={() => setSentTo(null)} />
       </AuthCard>
     )
@@ -181,9 +181,9 @@ export default function Login() {
     !methods.devLogin
 
   return (
-    <AuthCard>
-      <h1 className="text-lg font-semibold mb-1">Sign in</h1>
-      <p className="text-sm text-secondary mb-5">
+    <AuthCard split>
+      <h1 className="text-2xl font-semibold tracking-tight mb-1.5">Sign in</h1>
+      <p className="text-secondary mb-6">
         {forInvitation
           ? 'Sign in to accept your invitation.'
           : 'Use your work account to continue.'}
@@ -230,7 +230,7 @@ export default function Login() {
               <button
                 key={provider}
                 type="button"
-                className="btn btn-outline w-full justify-start gap-3 font-normal"
+                className="btn btn-outline w-full gap-2.5 font-medium"
                 disabled={busy !== null}
                 onClick={() => signInWith(provider)}
               >
@@ -298,9 +298,15 @@ export default function Login() {
       )}
 
       {methods?.devLogin && (
-        <div className="mt-6 border-t border-dashed border-[color:var(--border-subtle)] pt-4">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted">
-            Dev quick login
+        <section aria-labelledby="dev-login-heading" className="surface-inset mt-8 p-4">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <h2 id="dev-login-heading" className="text-sm font-semibold">
+              Dev quick login
+            </h2>
+            <span className="status-badge no-dot tone-warning">Development only</span>
+          </div>
+          <p className="mb-3 text-xs text-muted">
+            The seeded accounts. Offered only while the server runs in development.
           </p>
           <div className="grid grid-cols-2 gap-2">
             {DEV_ACCOUNTS.map(account => (
@@ -320,7 +326,7 @@ export default function Login() {
               </button>
             ))}
           </div>
-        </div>
+        </section>
       )}
     </AuthCard>
   )
@@ -365,7 +371,7 @@ function PluginMethodButton({
   const button = (
     <button
       type={method.askEmail ? 'submit' : 'button'}
-      className="btn btn-outline w-full justify-start gap-3 font-normal"
+      className="btn btn-outline w-full gap-2.5 font-medium"
       disabled={disabled}
       onClick={method.askEmail ? undefined : () => start()}
     >

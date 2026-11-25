@@ -167,6 +167,14 @@ consulted only for a flag marked `environmentGated`; the rollout state itself li
 Rules (auto-loaded by path): `.claude/rules/api.md` · database.md · ui.md · cli.md · testing.md ·
 code-quality.md · cloudflare.md · tools.md. Runbooks: `docs/DEPLOY.md` · `docs/RLS.md` · `docs/SECURITY-AUDIT.md`
 
+## Changing the core
+
+In a copy, kit core is editable but steered (`scripts/kit-guard.mjs`, CONCEPTS §13): the existing seam
+first (`plugins/types.ts`, `@/plugins/api`, theme tokens), then a new file wired in with one line,
+then an app-owned capability `name@1`. An edit that stands gets a `.rocketflare.json` `localEdits`
+entry with a real reason, shown to the user (a kit bug is `kind: "fix"`, worth reporting upstream).
+Generated files are refused: run the command named. UI work passes `pnpm design:lint`.
+
 ## Non-Negotiables
 
 - **Gate**: `pnpm gate` (lint → typecheck → test → build) passes before every commit — the same

@@ -1,7 +1,7 @@
 /**
  * The `summarize-text` example's typed output view (`outputs/summarize-text.tsx`) through the
  * outputs registry, as the run page's Output tab renders it: the summary, its key points and the
- * link to the indexed document, with a Raw JSON toggle. Part of the example's surface — deleting
+ * link to the indexed document, with a raw JSON view in its menu. Part of the example's surface — deleting
  * the example deletes this file; the run page itself is `run-page.test.tsx`.
  */
 import { screen } from '@testing-library/react'
@@ -35,6 +35,6 @@ describe('the summarize-text output view', () => {
       'href',
       '/documents/55555555-5555-4555-8555-555555555555'
     )
-    expect(screen.getByRole('button', { name: 'Raw JSON' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Show raw JSON' })).toBeInTheDocument()
   })
 })

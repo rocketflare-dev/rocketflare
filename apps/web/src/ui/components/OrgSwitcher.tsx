@@ -54,7 +54,7 @@ export function OrgSwitcher() {
   return (
     <details ref={ref} className="dropdown">
       <summary
-        className="btn btn-ghost btn-sm gap-1.5 max-w-[14rem] font-medium list-none"
+        className="btn btn-ghost btn-sm gap-1.5 max-w-[8.5rem] sm:max-w-[14rem] font-medium list-none"
         aria-label={`Organisation: ${tenant.name}`}
       >
         <BuildingOffice2Icon className="w-4 h-4 text-muted shrink-0" />

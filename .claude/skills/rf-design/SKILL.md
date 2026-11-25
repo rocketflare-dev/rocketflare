@@ -1,6 +1,6 @@
 ---
 name: rf-design
-description: Design an app on the kit with its owner before the first screen — where it is going, the shape questions the kit makes expensive to change later (tenancy, roles and words, AI, money, non-functional needs, licence, integrations and the plugins that already do them), the stages with "Done when", and the brand. Writes docs/design/, renders it as a local site in their brand, and optionally opens the stages as GitHub issues. Review mode reads an existing spec instead of starting blank
+description: Design an app on the kit with its owner before the first screen — where it is going, the shape questions the kit makes expensive to change later (tenancy, roles and words, AI, money, non-functional needs, licence, integrations and the plugins that already do them), the stages with "Done when", and the style (palette, type, density, tone, shape, the sign-in image). Writes docs/design/, renders it as a local site in their brand, and optionally opens the stages as GitHub issues. Review mode reads an existing spec instead of starting blank
 argument-hint: "[--review <spec path>] [--brand <image|url|pdf>]"
 ---
 
@@ -12,14 +12,14 @@ left open, before anyone writes a screen. Then write them down where the build, 
 the rename can read them.
 
 `/rf-start` runs this between setup and the rename. It also runs on its own in an app: to revisit
-a decision, to add a stage, or to run only the brand step when a brand guide arrives
+a decision, to add a stage, or to run only the style step when a brand guide arrives
 (`--brand <file>`).
 
 The conversation moves in this order:
 1. destination (§1);
 2. shape (§2, using `shape.md`);
 3. stages (§3);
-4. brand (§4, using `brand.md`);
+4. style (§4, using `brand.md`);
 5. writing it down (§5);
 6. an independent review (§6);
 7. the rendered design (§7);
@@ -133,12 +133,22 @@ For each stage, write:
 Stage 1 is the smallest slice that touches the real data model. It doesn't include brand polish or
 settings pages.
 
-## 4. Brand
+## 4. Style
 
-Follow `brand.md` (beside this file). They give you a pasted image, a website address or a
-brand-guide PDF. You borrow the palette and the type feel, never their logo or font files. You
-write `docs/design/brand.css` and nudge its tones until they pass the kit's contrast floors. No
-brand yet is fine: skip the step and say `/rf-design --brand <file>` adds one later.
+Follow `brand.md` (beside this file). It settles how the app looks and feels, one question at a
+time:
+- **density:** comfortable (the kit's default) or compact, for screens people work in all day;
+- **tone:** quiet and neutral, or warmer and more expressive;
+- **shape:** the corner radius and whether panels sit on a shadow or a border;
+- **palette:** one hue for the whole shell, or their own colours;
+- **type:** the sans face, and a serif for headings if their brand has one;
+- **the sign-in image:** keep the kit's rocket in their colours, use their own imagery, or show
+  only the name and a tagline.
+
+They may give you a pasted image, a website address or a brand-guide PDF. You borrow the palette
+and the type feel, never their logo or font files. You write `docs/design/brand.css` and nudge it
+until it passes the kit's contrast floors. No brand yet is fine: the kit's neutral look stands,
+and `/rf-design --brand <file>` adds one later. Density, tone and shape still get an answer.
 
 ## 5. Write it down
 
@@ -151,7 +161,8 @@ Write these files. Number prefixes set the order of the rendered pages:
 | `docs/design/03-glossary.md` | their words: the term on screen, what it means, the kit's word it replaces, and the code name (unchanged) |
 | `docs/design/04-stages.md` | the stages from §3 |
 | `docs/design/05-fog.md` | each open question: who can answer it, and by which stage |
-| `docs/design/06-brand.md` | what the brand was borrowed from, the palette before and after the contrast nudge, the font chosen. Only if §4 ran |
+| `docs/design/06-brand.md` | what the style was borrowed from, the palette before and after the contrast nudge, the fonts, and the density, tone, shape and sign-in image chosen. Only if §4 ran |
+| `docs/design/DESIGN.md` | the visual system in one short page, for the agents that build screens later (`.claude/rules/ui.md` sends them here): the hue and what carries it, the fonts, density, radius and depth, the sign-in panel, and anything the owner ruled out ("no gradients"). Facts, not the conversation. Written even when §4 kept the kit's look, so it says so |
 | `docs/design/diagrams/*.svg` | at least `shape.svg`: who the organisations are, who is inside each, and what crosses between them. Use `currentColor` and the tokens' CSS variables (`var(--color-primary)`), never fixed colours, so it follows light and dark |
 | `docs/design/design.json` | the machine-readable summary below |
 
@@ -163,7 +174,7 @@ not suggestions:
 {
   "status": "draft",
   "signedOffAt": null,
-  "app": { "name": "<display name>", "slug": "<slug>", "domain": null },
+  "app": { "name": "<display name>", "slug": "<slug>", "domain": null, "tagline": "<one line>" },
   "owner": { "legalName": "<legal name>", "licence": "all-rights-reserved" },
   "tenancy": { "mode": "<multi|single>", "shape": "<shape id>", "why": "<one line>" },
   "signup": { "mode": "<open|invite_only|approval>", "sso": null },
@@ -177,7 +188,8 @@ not suggestions:
 }
 ```
 
-`tenancy.mode` is the kit's `TENANCY_MODE`. `shape` is one of the ids in `shape.md` §1.
+`app.tagline` is one line in their words, shown on the sign-in panel; the rename writes it into
+`apps/web/src/ui/lib/login-panel.ts`. `tenancy.mode` is the kit's `TENANCY_MODE`. `shape` is one of the ids in `shape.md` §1.
 `signup.mode` is `SIGNUP_MODE`, and `sso` is null or the identity provider's name. `licence` is an
 SPDX id, or `all-rights-reserved`. The glossary and the non-functional requirements live in
 `03-glossary.md` and `02-shape.md` only.

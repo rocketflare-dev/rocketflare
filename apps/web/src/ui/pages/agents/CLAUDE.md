@@ -57,7 +57,7 @@ are in `.claude/rules/ui.md`.
   viewport-relative `max-h` (without it `scrollIntoView` moves the page). Below `lg` the bound is
   dropped on purpose; the "Jump to latest" pill is absolutely positioned over the scroller.
 - **The column split is `runLayout(status, override)`, pure, beside the model** — timeline-major
-  while active, output-major once settled, **and the reader's override wins permanently** (a run
+  while active, output-major once settled (the timeline a sticky aside of about a third), **and the reader's override wins permanently** (a run
   settling mid-read must never swap the columns). The flip chevron is a CHILD of the timeline panel
   on its own right edge — never absolutely positioned over the grid at a percentage (that ignores
   the gutter). The minor column stays narrow but readable, never collapsed to a rail.
@@ -66,8 +66,8 @@ are in `.claude/rules/ui.md`.
 
 - **Do not write tool-result parsers.** `documentCardsFromToolResult(name, result)` in
   `@rocketflare/shared/ai/embeddings` is the one mapper (chat stream, AG-UI projection, persisted
-  message, `run/timeline/toolResults.tsx`); in the timeline it renders as `DocumentLink`
-  one-liners, not cards. Every other tool keeps `<details><pre>` truncated at
+  message, `run/timeline/toolResults.tsx`); in the timeline it renders as an inline
+  `Provenance` (one line of sources), not cards. Every other tool keeps `<details><pre>` truncated at
   `TOOL_RESULT_MAX_CHARS` — a 200 KB result in the DOM is a real hang.
 - An agent should not emit tool frames for its TERMINAL tool: that call is the answer, which the
   Output tab already renders.
@@ -95,7 +95,10 @@ are in `.claude/rules/ui.md`.
   more". It falls back to the JSON **whole** — never per field — when the schema is outside the
   closed set or the input carries an undeclared key (labelling the rest would hide it).
 - **The right pane is `URLTabs` (`?tab=output|artifacts|usage`); `run.error` sits above it,
-  always — a failure is not a tab.** `outputs/` mirrors `forms/`: `outputFor(agentKey) → { schema,
+  always — a failure is not a tab** (`RunErrorAlert`: a panel with an icon, and Run again — the
+  same `useCreateAgentRun` path with the run's input — for `create AgentRun`). Status rows read as
+  sentences (`statusSentence`, pure, beside the model); an attempt is named only past the first.
+  The raw JSON of an output is behind the output's "…" menu, never a peer button. `outputs/` mirrors `forms/`: `outputFor(agentKey) → { schema,
   Component, artifacts? }`, so **an agent is one shared input schema + one `forms/` entry + one
   `outputs/` entry** and no component branches on an agent key. Artifacts come from the table,
   ordered by their event rows, `outputFor().artifacts?.()` the fallback for an agent that declares
@@ -132,7 +135,12 @@ are in `.claude/rules/ui.md`.
 - **Leaving the page never touches the run**; Cancel is the explicit button (`POST …/cancel`, while
   `isRunActive`). Once `cancelRequestedAt` is set it stays ENABLED as "Force cancel" (the server
   terminates the Workflow instance and settles the row). `SteerComposer` posts `POST …/steering`
-  while active; the note is an event row. Requested-by is "You" / short id / "system".
+  while active; the note is an event row. Requested-by is a NAME: `requestedBy { id, name }` rides
+  on the list items and on `GET /runs/:id` (`agentRunListItemSchema`), shown with initials; "You"
+  for the reader, the event in words (`eventLabel`) for an event-started run — never a user id.
+- `RunsTable` stacks below `sm` (agent, then status and when; `lib/stacked-table.ts`, one set of
+  DOM nodes) and takes no `title` where the page heading names the list — the filters are then its
+  first line. Times are `timeAgoShort` with the absolute date as the title.
 - `RunsTable`'s filters live in `useSearchParams` (`/agents/runs?awaiting=1` has a chip), and every
   row is a real `<Link>`. The SideNav badge is `NavItem.badgeKey`/`badgeTone` resolved by
   `useNavBadges()` inside `SideNav`, fed by `GET /interrupts?status=pending&pageSize=1` under

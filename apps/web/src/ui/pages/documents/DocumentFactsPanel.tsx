@@ -6,8 +6,7 @@
  * view), and an open fact carries the inline "Is this still right?" (`FactDoubt`) — nothing here is
  * a queue. Only rendered behind `KNOWLEDGE_FACTS_GUARD`; markdown-free.
  */
-import { CubeIcon, DocumentMagnifyingGlassIcon } from '@heroicons/react/24/outline'
-import { documentPath } from '@rocketflare/shared/ai/embeddings'
+import { CubeIcon } from '@heroicons/react/24/outline'
 import {
   type DocumentFactGroup,
   entityPath,
@@ -20,7 +19,13 @@ import {
   factKeyLabel,
   validityLabel,
 } from '@/ui/components/knowledge/FactParts'
-import { EmptyState, SectionPanel, SkeletonRows } from '@/ui/components/shared'
+import {
+  EmptyState,
+  ProvenanceQuote,
+  SectionPanel,
+  SkeletonRows,
+  sourceFromFact,
+} from '@/ui/components/shared'
 import { useDocumentFacts } from '@/ui/hooks/useKnowledge'
 
 export function DocumentFactsPanel({ documentId }: { documentId: string }) {
@@ -106,7 +111,6 @@ function EntityGroup({ group }: { group: DocumentFactGroup }) {
 function DocumentFactRow({ fact }: { fact: Fact }) {
   const validity = validityLabel(fact)
   const { source } = fact
-  const located = source.charStart !== null
   return (
     <li className="px-5 py-3 text-sm" data-fact={fact.id}>
       <div className="flex flex-wrap items-center gap-2">
@@ -115,28 +119,7 @@ function DocumentFactRow({ fact }: { fact: Fact }) {
         <FactStateBadge state={fact.state} />
         {validity && <span className="text-xs text-muted">{validity}</span>}
       </div>
-      {source.quote && (
-        <div className="mt-1.5 flex items-start gap-2">
-          <blockquote className="flex-1 min-w-0 border-l-2 border-[color:var(--border-subtle)] pl-3 text-secondary whitespace-pre-wrap break-words">
-            {source.quote}
-          </blockquote>
-          {(located || source.chunkId) && (
-            <Link
-              to={documentPath(source.documentId, {
-                tab: 'document',
-                offset: source.charStart,
-                end: source.charEnd,
-                chunk: located ? null : source.chunkId,
-              })}
-              className="btn btn-ghost btn-xs gap-1 shrink-0"
-              title="Open the document at this quote"
-            >
-              <DocumentMagnifyingGlassIcon className="w-4 h-4" aria-hidden="true" />
-              Show in document
-            </Link>
-          )}
-        </div>
-      )}
+      <ProvenanceQuote quote={source.quote} to={sourceFromFact(source).quoteTo} />
       <FactDoubt fact={fact} />
     </li>
   )

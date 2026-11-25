@@ -57,7 +57,7 @@ import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { ApiError } from '@/ui/lib/api-client'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { formatBytes, formatDateTime } from '@/ui/lib/format'
-import { highlightMatches } from '@/ui/lib/highlight'
+import { highlightMatches, looksLikeMarkdown } from '@/ui/lib/highlight'
 import { DocumentFactsPanel } from './DocumentFactsPanel'
 
 /** Content types whose converted text is markdown, so it renders rather than sits in a `<pre>`. */
@@ -171,7 +171,8 @@ function DocumentPanel({
   return (
     <SectionPanel
       flush
-      title={embeddable && !showText ? 'Original' : 'Text'}
+      // The tab already says "Document"; a title is only worth it to say WHICH view of a file this is.
+      title={embeddable ? (showText ? 'Converted text' : 'Original') : undefined}
       actions={
         <div className="flex items-center gap-2">
           {embeddable && (
@@ -291,7 +292,10 @@ function TextView({
     <TextWindow
       window={window}
       documentId={doc.id}
-      markdown={rendersAsMarkdown(doc.contentType)}
+      markdown={
+        rendersAsMarkdown(doc.contentType) ||
+        (doc.contentType === 'text/plain' && looksLikeMarkdown(window.text))
+      }
       q={q}
       highlightAt={target > 0 || end !== null ? target : null}
       highlightEnd={end}
@@ -365,9 +369,9 @@ function TextWindow({
       )}
 
       {rendered ? (
-        <Markdown content={window.text} />
+        <Markdown content={window.text} spacing="reading" className="max-w-[75ch]" />
       ) : (
-        <pre className="whitespace-pre-wrap break-words text-sm font-sans text-secondary">
+        <pre className="whitespace-pre-wrap break-words text-sm font-sans text-secondary max-w-[75ch]">
           {anchorAt !== null && anchorAt >= 0 && anchorAt < window.text.length ? (
             <>
               <PlainText text={window.text.slice(0, anchorAt)} q={q} />
@@ -526,7 +530,7 @@ function DetailsPanel({ doc }: { doc: DocumentRow }) {
                 </div>
                 <details>
                   <summary className="text-xs text-muted cursor-pointer">Text</summary>
-                  <p className="text-sm text-secondary whitespace-pre-wrap break-words mt-1">
+                  <p className="text-sm text-secondary whitespace-pre-wrap break-words mt-1 max-w-[75ch]">
                     {passage.text}
                   </p>
                 </details>

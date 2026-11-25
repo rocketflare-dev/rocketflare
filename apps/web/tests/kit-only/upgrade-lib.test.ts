@@ -29,6 +29,7 @@ import {
   isVendored,
   KIT_ONLY_PATHS,
   kitOnlyGlobs,
+  localEditFor,
   matchesAny,
   parseNote,
   splitDiff,
@@ -813,5 +814,32 @@ describe('upgraderHandoff (#178)', () => {
     expect(upgraderHandoff({ local: here, target: '// an upgrader from before it' })).toBe(
       'too-old'
     )
+  })
+})
+
+describe('localEditFor', () => {
+  const manifest = {
+    localEdits: [
+      {
+        path: 'apps/web/src/db/client.ts',
+        kind: 'fix',
+        reason: 'Retries a dropped pool socket once',
+      },
+      {
+        path: 'apps/web/src/api/middleware/**',
+        kind: 'change',
+        reason: 'Region header for the proxy',
+      },
+    ],
+  }
+
+  it('finds the recorded reason for a path, by exact path or glob, and nothing else', () => {
+    expect(localEditFor(manifest, 'apps/web/src/db/client.ts')).toEqual({
+      kind: 'fix',
+      reason: 'Retries a dropped pool socket once',
+    })
+    expect(localEditFor(manifest, 'apps/web/src/api/middleware/cors.ts')?.kind).toBe('change')
+    expect(localEditFor(manifest, 'apps/web/src/api/index.ts')).toBeNull()
+    expect(localEditFor({}, 'x')).toBeNull()
   })
 })

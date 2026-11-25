@@ -121,7 +121,7 @@ describe('Agents page', () => {
       'href',
       `/agents/${FIXTURE_AGENT}`
     )
-    expect(within(row).getByText('exclusive')).toBeInTheDocument()
+    expect(within(row).getByText('One run at a time')).toBeInTheDocument()
     expect(await within(row).findByText('12 · 1 failed · 1 active')).toBeInTheDocument()
     expect(within(row).getByText(/^15\.3k$/i)).toBeInTheDocument()
     expect(within(row).getByText('42s')).toBeInTheDocument()
@@ -219,5 +219,21 @@ describe('Agents page', () => {
       .find(u => u.includes('status=failed'))
     expect(url).toContain('/api/agents/runs?')
     expect(url).toContain('page=1')
+  })
+
+  it('all runs: names who asked for each run, never a user id', async () => {
+    const OTHER = '00000000-0000-4000-8000-0000000000aa'
+    mount(
+      {
+        '/api/agents/runs': paged([
+          run({ requestedByUserId: OTHER, requestedBy: { id: OTHER, name: 'Priya Raman' } }),
+        ]),
+      },
+      '/agents/runs'
+    )
+    const table = await screen.findByRole('table', { name: 'Agent runs' })
+    expect(within(table).getByText('Priya Raman')).toBeInTheDocument()
+    expect(within(table).getByText('PR')).toBeInTheDocument()
+    expect(table).not.toHaveTextContent(OTHER.slice(0, 8))
   })
 })

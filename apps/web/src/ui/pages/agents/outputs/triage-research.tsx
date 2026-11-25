@@ -7,9 +7,9 @@ import {
   type TriageResearchOutput,
   triageResearchOutputSchema,
 } from '@rocketflare/shared/ai/agents'
-import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import { Markdown } from '@/ui/components/ai/Markdown'
-import { DocumentLink } from '@/ui/components/shared'
+import { Provenance } from '@/ui/components/shared'
+import { useCitationSources } from './citationSources'
 import type { AgentOutput, AgentOutputProps } from './types'
 
 const ROUTE_LABEL: Record<TriageResearchOutput['route'], string> = {
@@ -19,35 +19,23 @@ const ROUTE_LABEL: Record<TriageResearchOutput['route'], string> = {
 }
 
 function TriageResearchOutputView({ output }: AgentOutputProps<TriageResearchOutput>) {
+  const sources = useCitationSources(output.citations)
   return (
-    <div className="space-y-4">
-      <p className="flex flex-wrap items-center gap-2 text-xs text-secondary">
+    <div>
+      <p className="mb-3">
         <span
           className={`badge badge-sm ${output.route === 'escalated' ? 'badge-warning' : 'badge-ghost'}`}
         >
           {ROUTE_LABEL[output.route]}
         </span>
-        <span>
-          {output.kept} of {output.screened} passages kept
-        </span>
       </p>
-      <Markdown content={output.answer} className="text-sm" />
-      {output.citations.length > 0 && (
-        <div>
-          <h3 className="text-sm font-medium mb-1">Sources</h3>
-          <ul className="space-y-0.5">
-            {output.citations.map(citation => (
-              <li key={citation.documentId} className="min-w-0">
-                <DocumentLink
-                  id={citation.documentId}
-                  to={documentPath(citation.documentId)}
-                  title={citation.title}
-                />
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <Markdown content={output.answer} spacing="reading" className="text-sm max-w-[72ch]" />
+      <Provenance
+        sources={sources}
+        work={{
+          summary: `Screened ${output.screened} ${output.screened === 1 ? 'passage' : 'passages'} and kept ${output.kept} — each decision is in the timeline.`,
+        }}
+      />
     </div>
   )
 }

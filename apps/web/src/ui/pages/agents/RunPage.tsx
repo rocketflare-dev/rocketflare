@@ -31,12 +31,13 @@ import { ChevronLeftIcon, ChevronRightIcon, CpuChipIcon } from '@heroicons/react
 import type { AgentInfo, AgentRunWithEvents } from '@rocketflare/shared/ai/agents'
 import { isRunActive } from '@rocketflare/shared/ai/agents'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link, useParams } from 'react-router'
+import { Link, useNavigate, useParams } from 'react-router'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows, URLTabs } from '@/ui/components/shared'
-import { useAgentList, useAgentRun } from '@/ui/hooks/useAgents'
+import { useAgentList, useAgentRun, useCreateAgentRun } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { streamEnabled, useRunStream } from '@/ui/hooks/useRunStream'
+import { eventLabel } from '@/ui/lib/format'
 import { outputFor } from './outputs'
 import { RunStatusBadge } from './RunStatusBadge'
 import { ActionRequiredPanel } from './run/ActionRequiredPanel'
@@ -61,7 +62,8 @@ import {
 /** The two splits as grid templates. Timeline left, output right, in both — only the share moves. */
 const LAYOUT_COLUMNS: Record<RunLayoutSplit, string> = {
   'timeline-major': 'lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]',
-  'output-major': 'lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]',
+  // Settled: the timeline is an aside of about a third, so the answer gets the room it reads in.
+  'output-major': 'lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]',
 }
 
 /**
@@ -93,7 +95,7 @@ function LayoutSplitHandle({ layout, onToggle }: { layout: RunLayoutSplit; onTog
       onClick={onToggle}
       aria-label={label}
       title={label}
-      className="hidden lg:flex absolute right-0 top-1 z-10 translate-x-1/2 btn btn-circle btn-xs border border-[color:var(--border-subtle)] bg-base-100 text-base-content/70 shadow-md hover:bg-base-200 hover:text-base-content"
+      className="hidden lg:flex absolute right-0 top-1 z-10 translate-x-1/2 btn btn-circle btn-xs border border-[color:var(--border-control)] bg-[var(--surface-raised)] text-secondary hover:bg-[var(--surface-hover)] hover:text-[color:var(--text-primary)]"
     >
       <Chevron className="w-3.5 h-3.5" aria-hidden="true" />
     </button>
@@ -141,7 +143,9 @@ export default function RunPage() {
 function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentInfo }) {
   const approvers = agent?.approvers ?? 'requester'
   const { user } = useAuth()
-  const { isAdminLevel } = usePermissions()
+  const { isAdminLevel, can } = usePermissions()
+  const navigate = useNavigate()
+  const runAgain = useCreateAgentRun()
   const live = useLiveRun(run)
   const [layoutOverride, setLayoutOverride] = useState<RunLayoutSplit | null>(null)
   const layout = runLayout(run.status, layoutOverride)
@@ -159,12 +163,21 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
   }, [rows, run.artifacts, run.agentKey, run.output, run.id])
 
   const requestedBy = run.triggerEvent
-    ? `the ${run.triggerEvent} event`
+    ? `the “${eventLabel(run.triggerEvent)}” event`
     : run.requestedByUserId === null
-      ? 'system'
+      ? 'an automatic start'
       : run.requestedByUserId === user?.id
         ? 'you'
-        : run.requestedByUserId.slice(0, 8)
+        : (run.requestedBy?.name ?? 'a former member')
+
+  // The same start path the Run button takes, with the same input; the route decides again.
+  const onRunAgain = can('create', 'AgentRun')
+    ? () =>
+        runAgain.mutate(
+          { agentKey: run.agentKey, input: run.input },
+          { onSuccess: next => navigate(`/agents/runs/${next.id}`) }
+        )
+    : undefined
 
   // The agent's approver policy, mirrored client-side so the panel can explain itself. The SERVER
   // decides — a member under `approvers: 'admin'` gets a 403 either way — this only chooses between
@@ -181,6 +194,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
           runId={run.id}
           output={run.output}
           pending={isRunActive(run.status)}
+          settledAs={run.status === 'failed' || run.status === 'cancelled' ? run.status : undefined}
         />
       ),
     },
@@ -205,7 +219,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
     <div className="space-y-4">
       {/* Above the fold and above the timeline: the decision comes first. */}
       {run.status === 'awaiting_input' && pending[0] && (
-        <div className="sticky top-0 z-20 pb-1 bg-[color:var(--surface-page,transparent)]">
+        <div className="sticky top-0 z-20 pb-1 bg-[var(--surface-app)]">
           <ActionRequiredPanel
             runId={run.id}
             interrupt={pending[0]}
@@ -224,7 +238,7 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
         className={`grid grid-cols-1 ${LAYOUT_COLUMNS[layout]} gap-4 lg:gap-8 items-start`}
         data-layout={layout}
       >
-        <SectionPanel title="Timeline" className="relative order-2 lg:order-1">
+        <SectionPanel title="Timeline" className="relative order-2 lg:order-1 lg:sticky lg:top-4">
           <LayoutSplitHandle
             layout={layout}
             onToggle={() =>
@@ -235,7 +249,13 @@ function RunWorkspace({ run, agent }: { run: AgentRunWithEvents; agent?: AgentIn
           {isRunActive(run.status) && <SteerComposer runId={run.id} />}
         </SectionPanel>
         <div className="order-1 lg:order-2 space-y-3 min-w-0">
-          {run.error && <RunErrorAlert error={run.error} />}
+          {run.error && (
+            <RunErrorAlert
+              error={run.error}
+              onRunAgain={run.status === 'failed' ? onRunAgain : undefined}
+              runningAgain={runAgain.isPending}
+            />
+          )}
           <URLTabs tabs={tabs} defaultTab="output" />
         </div>
       </div>

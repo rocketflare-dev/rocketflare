@@ -15,7 +15,7 @@ export function PendingInvitationsBanner({ className = '' }: { className?: strin
 
   return (
     <section
-      className={`surface-panel !p-0 overflow-hidden border-l-2 border-l-[color:var(--color-info)] ${className}`}
+      className={`surface-panel !p-0 overflow-hidden ${className}`}
       aria-label="Pending invitations"
     >
       <ul className="divide-y divide-[color:var(--border-subtle)]">

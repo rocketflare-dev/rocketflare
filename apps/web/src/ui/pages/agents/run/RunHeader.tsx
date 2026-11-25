@@ -36,7 +36,14 @@ export function RunHeader({
         <dt className="text-muted">Duration</dt>
         <dd className="tabular-nums">
           {elapsed ?? '—'}
-          <span className="text-muted"> · attempt {run.attempt}</span>
+          {/* Only a restarted run names its attempt: "attempt 1" beside an error that speaks of
+              the model provider's own retries reads as a contradiction. */}
+          {run.attempt > 1 && (
+            <span className="text-muted" title="The run was restarted after an interruption">
+              {' '}
+              · attempt {run.attempt}
+            </span>
+          )}
         </dd>
       </dl>
       <div className="flex items-center gap-2 shrink-0">

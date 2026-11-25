@@ -1060,6 +1060,60 @@ async function upsertGroup(
   return row.id
 }
 
+/**
+ * The demo's further agent runs, newest first: when, which agent, how it ended. Failures carry
+ * the error a person would read on the run page.
+ */
+const DEMO_RUN_HISTORY: Array<{
+  daysAgo: number
+  hour: number
+  agentKey: 'summarize-text' | 'research-topic'
+  status: 'succeeded' | 'failed' | 'cancelled'
+  error?: string
+  durationSeconds: number
+}> = [
+  { daysAgo: 0, hour: 1, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 52 },
+  { daysAgo: 0, hour: 3, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 12 },
+  {
+    daysAgo: 1,
+    hour: 2,
+    agentKey: 'research-topic',
+    status: 'failed',
+    error: 'The model provider timed out after 3 attempts',
+    durationSeconds: 95,
+  },
+  { daysAgo: 1, hour: 5, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 15 },
+  { daysAgo: 1, hour: 7, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 61 },
+  { daysAgo: 3, hour: 4, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 11 },
+  { daysAgo: 3, hour: 6, agentKey: 'research-topic', status: 'cancelled', durationSeconds: 20 },
+  { daysAgo: 5, hour: 2, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 47 },
+  { daysAgo: 5, hour: 3, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 13 },
+  { daysAgo: 5, hour: 8, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 14 },
+  {
+    daysAgo: 6,
+    hour: 5,
+    agentKey: 'summarize-text',
+    status: 'failed',
+    error: 'The text is longer than this agent accepts',
+    durationSeconds: 2,
+  },
+  { daysAgo: 7, hour: 3, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 58 },
+  { daysAgo: 8, hour: 6, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 12 },
+  { daysAgo: 9, hour: 2, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 49 },
+  { daysAgo: 9, hour: 4, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 66 },
+  { daysAgo: 10, hour: 5, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 10 },
+  {
+    daysAgo: 11,
+    hour: 3,
+    agentKey: 'research-topic',
+    status: 'failed',
+    error: 'No model is configured for agents',
+    durationSeconds: 1,
+  },
+  { daysAgo: 12, hour: 6, agentKey: 'summarize-text', status: 'succeeded', durationSeconds: 16 },
+  { daysAgo: 13, hour: 4, agentKey: 'research-topic', status: 'succeeded', durationSeconds: 55 },
+]
+
 async function seedDemo(
   db: Database,
   tenant: typeof tenants.$inferSelect,
@@ -1223,7 +1277,12 @@ async function seedDemo(
         createdAt,
         updatedAt: doc.pending ? ago(0, 0, 3) : createdAt,
       })
-      .onConflictDoNothing()
+      // Every demo timestamp is relative to the seed run, so re-seeding keeps the workspace in
+      // the last fortnight instead of ageing into an empty one.
+      .onConflictDoUpdate({
+        target: documents.id,
+        set: { createdAt, updatedAt: doc.pending ? ago(0, 0, 3) : createdAt },
+      })
     if (pieces.length > 0) {
       await db
         .insert(chunks)
@@ -1498,8 +1557,40 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
     ],
   }
 
+  // A fortnight of further runs around the two above, so the agents chart on Home has a shape:
+  // most succeed, a few fail with the error a person would see, one was cancelled. They reuse
+  // the two runs' input and output, and record only their start and end.
+  const runners = [owner, admin, member]
+  const historyRuns = DEMO_RUN_HISTORY.map((h, i) => {
+    const base = h.agentKey === 'summarize-text' ? summaryRun : researchRun
+    const startedAt = ago(h.daysAgo, h.hour, (i * 7) % 50)
+    return {
+      id: demoId(`run:history:${i + 1}`),
+      agentKey: h.agentKey,
+      status: h.status,
+      error: h.error ?? null,
+      input: base.input,
+      output: h.status === 'succeeded' ? base.output : null,
+      requestedByUserId: (runners[i % runners.length] ?? owner).id,
+      startedAt,
+      durationSeconds: h.durationSeconds,
+      events: [
+        event('status', { status: 'running', attempt: 1 }, 0),
+        event(
+          'status',
+          h.error ? { status: h.status, error: h.error } : { status: h.status },
+          h.durationSeconds
+        ),
+      ],
+    }
+  })
+
   let eventRows = 0
-  for (const run of [summaryRun, researchRun]) {
+  for (const run of [
+    { ...summaryRun, status: 'succeeded' as const, error: null, requestedByUserId: owner.id },
+    { ...researchRun, status: 'succeeded' as const, error: null, requestedByUserId: owner.id },
+    ...historyRuns,
+  ]) {
     const finishedAt = new Date(run.startedAt.getTime() + run.durationSeconds * 1000)
     const createdAt = new Date(run.startedAt.getTime() - 1500)
     await db
@@ -1508,11 +1599,11 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         id: run.id,
         tenantId,
         agentKey: run.agentKey,
-        status: 'succeeded',
+        status: run.status,
         input: run.input,
         output: run.output,
-        error: null,
-        requestedByUserId: owner.id,
+        error: run.error,
+        requestedByUserId: run.requestedByUserId,
         instanceId: run.id,
         attempt: 1,
         startedAt: run.startedAt,
@@ -1521,28 +1612,37 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         updatedAt: finishedAt,
       })
       // The input/output and the tool results are derived from the demo documents, so a text
-      // change re-derives them on the next run (ids and timestamps stay as they were).
+      // change re-derives them on the next run; the times move with the seed run.
       .onConflictDoUpdate({
         target: agentRuns.id,
-        set: { input: run.input, output: run.output },
+        set: {
+          input: run.input,
+          output: run.output,
+          startedAt: run.startedAt,
+          finishedAt,
+          createdAt,
+          updatedAt: finishedAt,
+        },
       })
+    const eventKey = run.id === summaryRun.id || run.id === researchRun.id ? run.agentKey : run.id
     for (const [i, e] of run.events.entries()) {
+      const at = new Date(run.startedAt.getTime() + e.offsetSeconds * 1000)
       await db
         .insert(agentRunEvents)
         .values({
-          id: demoId(`run-event:${run.agentKey}:${i + 1}`),
+          id: demoId(`run-event:${eventKey}:${i + 1}`),
           runId: run.id,
           tenantId,
           seq: i + 1,
           type: e.type as (typeof agentRunEvents.$inferInsert)['type'],
           data: e.data,
-          at: new Date(run.startedAt.getTime() + e.offsetSeconds * 1000),
+          at,
         })
-        .onConflictDoUpdate({ target: agentRunEvents.id, set: { data: e.data } })
+        .onConflictDoUpdate({ target: agentRunEvents.id, set: { data: e.data, at } })
     }
     eventRows += run.events.length
   }
-  log(`  runs    2 agent runs (${eventRows} events)`)
+  log(`  runs    ${2 + historyRuns.length} agent runs (${eventRows} events)`)
 
   // -- Activity: two weeks of it, by the people above ---------------------------------------------
   const seedKey = await db.query.apiKeys.findFirst({
@@ -1667,6 +1767,17 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
       at: new Date(run.startedAt.getTime() - 1500),
     })
   }
+  for (const run of historyRuns) {
+    activity.push({
+      key: `run:${run.id}`,
+      userId: run.requestedByUserId,
+      type: 'agent_run.requested',
+      subjectType: 'AgentRun',
+      subjectId: run.id,
+      metadata: { agentKey: run.agentKey },
+      at: new Date(run.startedAt.getTime() - 1500),
+    })
+  }
   const uploaders = [member, ...demoMembers.slice(1, 3).map(m => m.user)]
   uploaders.forEach((u, i) => {
     activity.push({
@@ -1698,7 +1809,10 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
         createdAt: a.at,
       }))
     )
-    .onConflictDoNothing()
+    .onConflictDoUpdate({
+      target: activityEvents.id,
+      set: { createdAt: sql`excluded.created_at` },
+    })
   log(`  events  ${activity.length} activity events over the last 14 days`)
 
   // -- AI usage ledger ---------------------------------------------------------------------------

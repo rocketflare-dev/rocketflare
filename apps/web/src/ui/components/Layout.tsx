@@ -57,7 +57,7 @@ export default function Layout({
       <input id="drawer-toggle" type="checkbox" className="drawer-toggle" />
 
       <div className={`drawer-content flex flex-col ${height}`}>
-        <header className="app-header sticky top-0 z-30 flex items-center border-b px-3 gap-2 h-14">
+        <header className="app-header sticky top-0 z-30 flex items-center border-b px-2 gap-1 sm:px-3 sm:gap-2 h-14">
           <label
             htmlFor="drawer-toggle"
             className="btn btn-ghost btn-sm btn-square lg:hidden"
@@ -71,7 +71,7 @@ export default function Layout({
 
           <div className="flex-1 flex justify-start min-w-0">{headerCenter}</div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             {headerEnd}
             <ThemeToggle />
           </div>

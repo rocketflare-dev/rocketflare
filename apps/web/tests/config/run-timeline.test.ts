@@ -21,6 +21,7 @@ import {
   PREAMBLE_KEY,
   runLayout,
   selectWorkStats,
+  statusSentence,
   TAIL_KEY,
   type TimelineEvent,
   windowGroups,
@@ -406,6 +407,19 @@ describe('formFor', () => {
     expect(formFor({ key: 'nope' as never, inputJsonSchema: null })).toBe(jsonForm)
     // A registered form still wins the first rung.
     expect(formFor({ key: FIXTURE_AGENT, inputJsonSchema: schema })).toBe(fixtureForm)
+  })
+})
+
+describe('statusSentence', () => {
+  it('says what happened in words, naming an attempt only past the first', () => {
+    expect(statusSentence({ status: 'running', attempt: 1 })).toBe('Started')
+    expect(statusSentence({ status: 'running', attempt: 2 })).toBe('Started again (attempt 2)')
+    expect(statusSentence({ status: 'succeeded' })).toBe('Finished')
+    expect(
+      statusSentence({ status: 'failed', error: 'The model provider timed out after 3 attempts' })
+    ).toBe('Failed: the model provider timed out after 3 attempts')
+    expect(statusSentence({ status: 'failed' })).toBe('Failed')
+    expect(statusSentence({ status: 'awaiting_input' })).toBe('Waiting for an answer')
   })
 })
 

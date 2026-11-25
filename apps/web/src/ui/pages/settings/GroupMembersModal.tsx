@@ -237,7 +237,7 @@ function PersonRow({
 function Initials({ name }: { name: string }) {
   return (
     <span
-      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-base-300 text-[0.65rem] font-medium"
+      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-base-300 text-xs font-medium"
       aria-hidden="true"
     >
       {initials(name)}

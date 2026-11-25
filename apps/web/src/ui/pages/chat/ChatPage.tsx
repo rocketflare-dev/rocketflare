@@ -18,7 +18,6 @@ import {
 } from '@heroicons/react/24/outline'
 import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import type { Conversation } from '@rocketflare/shared/ai/chat'
-import { shortModelName } from '@rocketflare/shared/ai/config'
 import { documentCardsFromToolCalls } from '@rocketflare/shared/ai/embeddings'
 import { entityCardsFromToolCalls } from '@rocketflare/shared/ai/knowledge-facts'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
@@ -41,6 +40,7 @@ import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { timeAgo } from '@/ui/lib/format'
 import { ChatStatsPanel } from './ChatStatsPanel'
+import { useHandOverMessage } from './handOver'
 
 /** Whether the inspector was left open. Remembered, because it is a working posture, not a task. */
 const STATS_PREFERENCE_KEY = 'chat:stats'
@@ -76,6 +76,8 @@ export default function ChatPage() {
   const remove = useDeleteConversation()
   const thread = useConversation(conversationId)
   const { send, stop, turn, isStreaming, error: sendError } = useSendMessage(conversationId)
+  // A first message handed over from Home's composer is sent once the thread has loaded.
+  useHandOverMessage(conversationId, Boolean(thread.data) && !isStreaming, send)
   const [deleting, setDeleting] = useState<Conversation | null>(null)
   const [showStats, setShowStats] = useState(readStatsPreference)
   const toggleStats = () => {
@@ -210,18 +212,10 @@ export default function ChatPage() {
         ) : (
           <>
             <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[color:var(--border-subtle)]">
-              <h1 className="text-sm font-semibold truncate">
+              <h1 className="text-sm font-semibold truncate min-w-0">
                 {thread.data?.title ?? 'Conversation'}
               </h1>
               <div className="flex items-center gap-2 shrink-0">
-                {thread.data && (
-                  <span
-                    className="badge badge-ghost badge-sm font-mono"
-                    title={`${thread.data.provider} · ${thread.data.model}`}
-                  >
-                    {shortModelName(thread.data.model)}
-                  </span>
-                )}
                 {canConfigure && (
                   <button
                     type="button"
@@ -240,6 +234,8 @@ export default function ChatPage() {
               loading={thread.isLoading}
               messages={thread.data?.messages}
               turn={turn}
+              // Token counts and the model are inspector detail: shown only with Stats open.
+              showUsage={canConfigure && showStats}
             />
             <Composer
               key={conversationId}
@@ -286,9 +282,11 @@ function Transcript({
   loading,
   messages,
   turn,
+  showUsage,
 }: {
   conversationId: string
   loading: boolean
+  showUsage: boolean
   messages: NonNullable<ReturnType<typeof useConversation>['data']>['messages'] | undefined
   turn: Turn
 }) {
@@ -328,7 +326,7 @@ function Transcript({
               speaker={message.role as 'user' | 'assistant'}
               content={message.content}
               time={message.createdAt}
-              usage={message.usage}
+              usage={showUsage ? message.usage : undefined}
               // Derived, never stored: the same mapper the stream used, over the row's tool calls.
               documents={documentCardsFromToolCalls(message.toolCalls)}
               entities={facts ? entityCardsFromToolCalls(message.toolCalls) : undefined}
@@ -349,8 +347,8 @@ function Transcript({
           speaker="assistant"
           content={turn.text}
           streaming={turn.status === 'streaming'}
-          usage={turn.usage}
-          model={turn.model}
+          usage={showUsage ? turn.usage : undefined}
+          model={showUsage ? turn.model : undefined}
           toolSteps={turn.toolSteps}
           notice={turn.notice ? NOTICE_TEXT[turn.notice] : undefined}
           documents={turn.documents}

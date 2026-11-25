@@ -73,6 +73,15 @@ const CORE_QUERY_KEYS = {
     all: ['activity'] as const,
     list: (filters: object = {}) => ['activity', 'list', filters] as const,
   },
+  /**
+   * `/api/home/summary` — Home's work areas in one request. Its own root, invalidated by the
+   * events behind each part (`REALTIME_INVALIDATIONS` and `HOME_ENTITY_ROOTS` in
+   * `@rocketflare/shared/realtime`).
+   */
+  home: {
+    all: ['home'] as const,
+    summary: ['home', 'summary'] as const,
+  },
   /** `/api/mcp/*` — the organisation's MCP server settings, its tool list and call log */
   mcp: {
     all: ['mcp'] as const,

@@ -4,10 +4,10 @@
  * whose output no longer matches its schema, falls through to the raw JSON, which is a real answer
  * rather than an apology.
  */
-import { CpuChipIcon } from '@heroicons/react/24/outline'
+import { CpuChipIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 import { FeedbackThumbs } from '@/ui/components/ai/FeedbackThumbs'
-import { EmptyState } from '@/ui/components/shared'
+import { EmptyStateCard } from '@/ui/components/shared'
 import { useMyFeedback } from '@/ui/hooks/useFeedback'
 import { outputFor } from '../../outputs'
 import { pretty, truncate } from '../timeline/toolResults'
@@ -17,12 +17,15 @@ export function RunOutputTab({
   runId,
   output,
   pending,
+  settledAs,
 }: {
   agentKey: string
   runId: string
   output: unknown
   /** The run has not produced one yet — a different sentence from "it produced nothing". */
   pending: boolean
+  /** How a run with no output ended, so the empty pane can say why. */
+  settledAs?: 'failed' | 'cancelled'
 }) {
   const [raw, setRaw] = useState(false)
   const hasOutput = output !== null && output !== undefined
@@ -31,11 +34,25 @@ export function RunOutputTab({
   const { data: myVotes } = useMyFeedback('agent_run', hasOutput ? [runId] : [])
   if (output === null || output === undefined) {
     return (
-      <EmptyState
+      <EmptyStateCard
         icon={CpuChipIcon}
         size="sm"
-        message={pending ? 'No answer yet' : 'This run produced no output'}
-        description={pending ? 'The answer appears here the moment the run finishes.' : undefined}
+        message={
+          pending
+            ? 'No answer yet'
+            : settledAs === 'failed'
+              ? 'No answer: the run failed'
+              : settledAs === 'cancelled'
+                ? 'No answer: the run was cancelled'
+                : 'This run produced no output'
+        }
+        description={
+          pending
+            ? 'The answer appears here the moment the run finishes.'
+            : settledAs === 'failed'
+              ? 'Why it failed is above.'
+              : undefined
+        }
       />
     )
   }
@@ -44,30 +61,46 @@ export function RunOutputTab({
   const parsed = entry?.schema.safeParse(output)
 
   return (
-    <div className="space-y-3">
+    <section className="surface-panel space-y-3" aria-label="Output">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1 text-xs text-muted">
           Was this useful?
           <FeedbackThumbs target="agent_run" targetId={runId} rating={myVotes?.get(runId)} />
         </span>
         {parsed?.success && (
-          <button
-            type="button"
-            className="btn btn-ghost btn-xs"
-            aria-pressed={raw}
-            onClick={() => setRaw(value => !value)}
-          >
-            {raw ? 'Formatted' : 'Raw JSON'}
-          </button>
+          // A quiet menu, not a peer button beside the answer: the JSON is for whoever debugs it.
+          <details className="dropdown dropdown-end">
+            <summary
+              className="btn btn-ghost btn-sm btn-square list-none"
+              aria-label="More output options"
+              title="More"
+            >
+              <EllipsisHorizontalIcon className="w-5 h-5" aria-hidden="true" />
+            </summary>
+            <ul className="dropdown-content menu popover-surface z-20 mt-1 w-48 p-1 text-sm">
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={raw}
+                  onClick={e => {
+                    setRaw(value => !value)
+                    e.currentTarget.closest('details')?.removeAttribute('open')
+                  }}
+                >
+                  {raw ? 'Show formatted' : 'Show raw JSON'}
+                </button>
+              </li>
+            </ul>
+          </details>
         )}
       </div>
       {parsed?.success && !raw && entry ? (
         <entry.Component output={parsed.data} runId={runId} />
       ) : (
-        <pre className="surface-inset rounded-lg p-3 text-xs whitespace-pre-wrap break-words max-h-[32rem] overflow-auto">
+        <pre className="surface-inset p-3 text-xs whitespace-pre-wrap break-words max-h-[32rem] overflow-auto">
           {truncate(pretty(output), 20_000)}
         </pre>
       )}
-    </div>
+    </section>
   )
 }

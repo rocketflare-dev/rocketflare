@@ -9,6 +9,16 @@
  *   pnpm design:docs --check          exit 1 when the pages are out of date with its inputs
  *   pnpm design:docs --contrast       the kit's contrast floors over the tokens + brand.css
  *   pnpm design:docs --apply-brand    write brand.css into theme-tokens.css, index.css, index.html
+ *   pnpm design:docs --adopt-default-look [--from <kit checkout>] [--kit-ref <ref>]
+ *                                     take the kit's default look, then brand.css on top
+ *
+ * `--adopt-default-look` runs only when asked: an upgrade never restyles an app. The defaults are
+ * the three token files of the kit release this copy records (`.rocketflare.json` `kit.commit`,
+ * else `kit.version`, which `pnpm kit:upgrade --apply` moves forward), read from the mirror the
+ * upgrade keeps in `.upgrade/kit.git` — so it is run after the upgrade that brought the release.
+ * `--kit-ref` reads another ref from that mirror; `--from <dir>` reads a kit checkout instead
+ * (offline). Either way they are translated into this app's names with the rename's own token
+ * map, and `docs/design/brand.css` is then re-applied on top (`adoptDefaultLook`, brand.mjs).
  *
  * `--root <dir>` points it at another checkout (the tests use a temporary one).
  * The rendering is `scripts/lib/design-docs-lib.mjs`; the contrast rules are
@@ -18,17 +28,25 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { applyBrand } from './lib/brand.mjs'
+import { adoptDefaultLook, applyBrand } from './lib/brand.mjs'
 import { checkTheme } from './lib/contrast.mjs'
 import { designTokens, GENERATOR_META, planPages } from './lib/design-docs-lib.mjs'
+import { mirror } from './lib/git-lib.mjs'
+import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 
-const USAGE = `Usage: node scripts/design-docs.mjs [--open | --check | --contrast | --apply-brand] [--root <dir>]
+const USAGE = `Usage: node scripts/design-docs.mjs [--open | --check | --contrast | --apply-brand |
+                                     --adopt-default-look [--from <dir>] [--kit-ref <ref>]] [--root <dir>]
 
   (no flag)       build docs/design/html/ from docs/design/*.md and print its index.html
   --open          build, then open index.html in the default browser
   --check         exit 1 if docs/design/html/ is out of date with its inputs (builds nothing)
   --contrast      check the tokens with docs/design/brand.css layered on; exit 1 on a failure
   --apply-brand   write docs/design/brand.css into the app's token files, in place
+  --adopt-default-look
+                  replace the app's token files with the kit release's default look (this copy's
+                  .rocketflare.json kit.commit, from .upgrade/kit.git), then re-apply brand.css
+    --from <dir>    read the defaults from a kit checkout instead of the upgrade mirror
+    --kit-ref <ref> read the defaults at another ref of the upgrade mirror
   --root <dir>    the checkout to work in (default: this one)`
 
 const TOKENS_CSS = 'apps/web/src/shared/theme-tokens.css'
@@ -40,17 +58,23 @@ const BRAND = 'docs/design/brand.css'
 const OUT = 'docs/design/html'
 
 function parseArgs(argv) {
-  const opts = { mode: 'build', open: false, root: null }
+  const opts = { mode: 'build', open: false, root: null, from: null, kitRef: null }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--open') opts.open = true
     else if (a === '--check') opts.mode = 'check'
     else if (a === '--contrast') opts.mode = 'contrast'
     else if (a === '--apply-brand') opts.mode = 'apply-brand'
+    else if (a === '--adopt-default-look') opts.mode = 'adopt-default-look'
+    else if (a === '--from') opts.from = argv[++i]
+    else if (a === '--kit-ref') opts.kitRef = argv[++i]
     else if (a === '--root') opts.root = argv[++i]
     else if (a === '--help' || a === '-h') opts.mode = 'help'
     else throw new Error(`unknown argument: ${a}\n\n${USAGE}`)
   }
+  if ((opts.from || opts.kitRef) && opts.mode !== 'adopt-default-look')
+    throw new Error(`--from and --kit-ref go with --adopt-default-look\n\n${USAGE}`)
+  if (opts.from && opts.kitRef) throw new Error('--from and --kit-ref: one source, not both')
   return opts
 }
 
@@ -226,6 +250,94 @@ function applyBrandFiles(root) {
   return 0
 }
 
+const LOOK_FILES = { tokensCss: TOKENS_CSS, indexCss: INDEX_CSS, indexHtml: INDEX_HTML }
+
+/** The kit release's three token files, in this app's names, and where they came from. */
+function readDefaults(root, { from, kitRef }) {
+  let manifest = null
+  try {
+    manifest = JSON.parse(read(root, '.rocketflare.json'))
+  } catch {}
+  let readFile
+  let source
+  if (from) {
+    const dir = path.resolve(from)
+    readFile = rel => readFileSync(path.join(dir, rel), 'utf8')
+    source = dir
+  } else {
+    if (!manifest) throw new Error('no .rocketflare.json: pass --from <a kit checkout>')
+    if (!manifest.app)
+      throw new Error(
+        'this is the kit: its token files ARE the default look. Use --apply-brand for brand.css.'
+      )
+    const dir = path.join(root, '.upgrade', 'kit.git')
+    if (!existsSync(dir))
+      throw new Error(
+        'no kit mirror at .upgrade/kit.git — run `pnpm kit:upgrade` first (it fetches the kit), ' +
+          'or pass --from <a kit checkout>'
+      )
+    const ref = kitRef ?? manifest.kit?.commit ?? manifest.kit?.version
+    if (!ref) throw new Error('.rocketflare.json records no kit commit or version: pass --kit-ref')
+    const kit = mirror(dir)
+    if (!kit.resolves(ref)) throw new Error(`the kit mirror has no ${ref}: pass --kit-ref <ref>`)
+    readFile = rel => kit.show(ref, rel)
+    source = `the kit at ${ref.length === 40 ? ref.slice(0, 12) : ref}`
+  }
+  // In a copy the kit's files speak the kit's names (`rocketflare-light`): translate them as the
+  // rename translated this app, so the theme blocks match.
+  const names = manifest?.app
+    ? deriveNames(manifest.app.slug, manifest.app.display, { domain: manifest.app.domain })
+    : null
+  const files = {}
+  for (const [key, rel] of Object.entries(LOOK_FILES)) {
+    let text
+    try {
+      text = readFile(rel)
+    } catch {
+      throw new Error(`${source} has no ${rel}`)
+    }
+    files[key] = names ? applyReplacements(text, names).text : text
+  }
+  return { files, source }
+}
+
+function adoptDefaultLookFiles(root, opts) {
+  const { files: defaults, source } = readDefaults(root, opts)
+  const brandCss = readIfExists(root, BRAND)
+  const r = adoptDefaultLook({
+    current: {
+      tokensCss: read(root, TOKENS_CSS),
+      indexCss: read(root, INDEX_CSS),
+      indexHtml: readIfExists(root, INDEX_HTML),
+    },
+    defaults,
+    brandCss,
+  })
+  for (const m of r.missing) console.error(`warning: ${m}`)
+  for (const k of r.kept) console.log(`kept ${k} (yours; the default look has no such token)`)
+  for (const p of r.brand?.problems ?? []) console.error(`warning: brand.css: ${p}`)
+  for (const u of r.brand?.unknown ?? [])
+    console.error(`warning: brand.css: ${u} is not a token of the default look; ignored`)
+  for (const w of r.brand?.warnings ?? []) console.error(`warning: ${w}`)
+  for (const [rel, content] of [
+    [TOKENS_CSS, r.tokensCss],
+    [INDEX_CSS, r.indexCss],
+    [INDEX_HTML, r.indexHtml],
+  ]) {
+    if (content === null || content === readIfExists(root, rel)) continue
+    writeFileSync(path.join(root, rel), content)
+    console.log(`wrote ${rel}`)
+  }
+  console.log(
+    `Adopted the default look from ${source}` +
+      (brandCss
+        ? `, with ${BRAND} on top (${r.brand?.applied.length ?? 0} propert${r.brand?.applied.length === 1 ? 'y' : 'ies'}).`
+        : ` (no ${BRAND}: the kit's look as it ships).`) +
+      ' Check it: `pnpm design:docs --contrast`, then `pnpm web test:ui` and a look at the app.'
+  )
+  return 0
+}
+
 function main(argv) {
   const opts = parseArgs(argv)
   const root = path.resolve(
@@ -237,6 +349,7 @@ function main(argv) {
   }
   if (opts.mode === 'contrast') return contrast(root)
   if (opts.mode === 'apply-brand') return applyBrandFiles(root)
+  if (opts.mode === 'adopt-default-look') return adoptDefaultLookFiles(root, opts)
   return build(root, { check: opts.mode === 'check', open: opts.open })
 }
 

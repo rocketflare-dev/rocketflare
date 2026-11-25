@@ -211,6 +211,7 @@ export default function SideNav({
   const { pathname } = useLocation()
   const canAccess = useNavGuard()
   const { name, version } = useAppInfo()
+  const release = version && /^\d/.test(version) ? version : null
   const badges = useNavBadges()
   const [savedCollapsed, setSavedCollapsed] = useBooleanPreference('sideNavCollapsed', false)
   const isLg = useIsLg()
@@ -229,7 +230,7 @@ export default function SideNav({
           data-active={isPathActive(pathname, item.to)}
           title={isCollapsed ? item.label : undefined}
           className={`nav-item flex items-center gap-2.5 ${
-            isCollapsed ? 'justify-center px-3 py-2.5' : 'px-2.5 py-1.5'
+            isCollapsed ? 'justify-center px-3 py-2.5' : 'px-2.5 py-2'
           }`}
         >
           <span className="relative flex-shrink-0">
@@ -240,7 +241,7 @@ export default function SideNav({
               <span
                 data-testid={`nav-badge-dot-${item.badgeKey ?? item.to}`}
                 className={`absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full ${
-                  warn ? 'bg-warning' : 'bg-primary'
+                  warn ? 'bg-warning' : 'bg-[color:var(--rail-focus-ring)]'
                 }`}
                 aria-hidden="true"
               />
@@ -250,7 +251,7 @@ export default function SideNav({
           {!isCollapsed && badge !== undefined && (
             <span
               className={`text-xs tabular-nums ${
-                warn ? 'badge badge-warning badge-sm' : 'text-muted'
+                warn ? 'badge badge-warning badge-sm' : 'rail-muted'
               }`}
             >
               {badge}
@@ -274,27 +275,21 @@ export default function SideNav({
 
   return (
     <aside
-      className={`app-nav h-full text-base-content border-r flex flex-col transition-all duration-300 ${
+      className={`app-nav h-full flex flex-col transition-[width] duration-300 ${
         isCollapsed ? 'w-16' : 'w-56'
       }`}
     >
-      {/* Brand — bottom border lines up with the top bar's so the chrome seam is continuous */}
-      <div
-        className={`flex items-center gap-2.5 h-14 px-4 border-b border-[color:var(--border-default)] ${
-          isCollapsed ? 'justify-center' : ''
-        }`}
-      >
+      {/* Brand — the same height as the top bar, so the logo sits on the header's line */}
+      <div className={`flex items-center gap-2.5 h-14 px-4 ${isCollapsed ? 'justify-center' : ''}`}>
         <Link to="/" className="flex items-center gap-2.5 truncate" aria-label={name}>
           <LogoMark />
           {!isCollapsed && (
-            <span className="text-sm font-semibold tracking-tight text-base-content truncate">
-              {name}
-            </span>
+            <span className="text-[15px] font-semibold tracking-tight truncate">{name}</span>
           )}
         </Link>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5" aria-label="Main">
+      <nav className="flex-1 overflow-y-auto px-3 py-3 space-y-6" aria-label="Main">
         {visible.map(item => {
           if (isNavGroup(item)) {
             return (
@@ -308,21 +303,20 @@ export default function SideNav({
           }
           return renderItem(item)
         })}
-
-        {/* Deployed release (RELEASE_VERSION via /api/health) — quiet, end of the nav */}
-        {version && !isCollapsed && (
-          <div className="px-2.5 pt-4 text-[11px] font-mono text-muted" title="Deployed release">
-            v{version}
-          </div>
-        )}
       </nav>
 
-      {footer && !(forceCollapsed && isLg) && (
-        <div className="px-3 py-2 border-t border-[color:var(--border-subtle)]">{footer}</div>
+      {/* Deployed release (RELEASE_VERSION via /api/health), at the foot of the rail. A dev
+          server reports no release number, so it shows nothing. */}
+      {release && !isCollapsed && (
+        <div className="px-5 pb-2 text-xs rail-muted tabular-nums" title="Deployed release">
+          v{release}
+        </div>
       )}
 
+      {footer && !isCollapsed && <div className="px-3 py-2 border-t rail-divider">{footer}</div>}
+
       {!forceCollapsed && (
-        <div className="p-3 hidden lg:block border-t border-[color:var(--border-subtle)]">
+        <div className="p-3 hidden lg:block border-t rail-divider">
           <button
             type="button"
             onClick={() => setSavedCollapsed(c => !c)}

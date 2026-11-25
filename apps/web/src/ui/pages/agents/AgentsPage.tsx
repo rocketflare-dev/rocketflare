@@ -31,6 +31,13 @@ export default function AgentsPage() {
 
   const items = agents.data?.items ?? []
   const statsOf = (key: string) => stats.data?.items.find(s => s.agentKey === key)
+  // A column of nothing but "—" says nothing: tokens and cost show once any agent has some
+  // (a deployment whose model reports no usage, or prices no call, never grows them).
+  const statItems = stats.data?.items ?? []
+  const columns = {
+    tokens: statItems.some(s => s.tokens > 0),
+    cost: statItems.some(s => s.costUsd > 0),
+  }
 
   return (
     <div>
@@ -50,7 +57,11 @@ export default function AgentsPage() {
           </div>
         }
       />
-      <SectionPanel flush title="Agents" description={`Metrics over the last ${STATS_DAYS} days`}>
+      <SectionPanel
+        flush
+        title={`Last ${STATS_DAYS} days`}
+        description={`${metricWords(columns)} for each agent`}
+      >
         {agents.isLoading ? (
           <div className="p-4">
             <SkeletonRows rows={4} />
@@ -65,9 +76,9 @@ export default function AgentsPage() {
                   <th>Agent</th>
                   <th>Last run</th>
                   <th className="text-right">Runs</th>
-                  <th className="text-right">Tokens</th>
+                  {columns.tokens && <th className="text-right">Tokens</th>}
                   <th className="text-right">Avg time</th>
-                  <th className="text-right">Cost</th>
+                  {columns.cost && <th className="text-right">Cost</th>}
                   <th>
                     <span className="sr-only">Actions</span>
                   </th>
@@ -79,6 +90,7 @@ export default function AgentsPage() {
                     key={agent.key}
                     agent={agent}
                     stats={statsOf(agent.key)}
+                    columns={columns}
                     loading={stats.isLoading}
                     onRun={() => setRunning(agent)}
                   />
@@ -101,20 +113,24 @@ export default function AgentsPage() {
   )
 }
 
+/** "Runs, tokens, time and cost" — only the metrics the table shows. */
+function metricWords(columns: { tokens: boolean; cost: boolean }): string {
+  const words = ['Runs', ...(columns.tokens ? ['tokens'] : []), 'average time']
+  if (columns.cost) words.push('cost')
+  return words.length === 2
+    ? words.join(' and ')
+    : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`
+}
+
 export function AgentBadges({ agent }: { agent: AgentInfo }) {
   return (
     <>
       {agent.exclusive && (
-        <span className="badge badge-ghost badge-sm" title="One run at a time">
-          exclusive
-        </span>
-      )}
-      {agent.policy?.maxTurns && (
         <span
           className="badge badge-ghost badge-sm"
-          title={`Up to ${agent.policy.maxTurns} model turns per run; when it runs out: ${agent.policy.onExhaustion ?? 'final-answer'}`}
+          title="Starting it while a run is still going opens that run instead of a second one"
         >
-          ≤{agent.policy.maxTurns} turns
+          One run at a time
         </span>
       )}
     </>
@@ -124,11 +140,13 @@ export function AgentBadges({ agent }: { agent: AgentInfo }) {
 function AgentRow({
   agent,
   stats,
+  columns,
   loading,
   onRun,
 }: {
   agent: AgentInfo
   stats: AgentStats | undefined
+  columns: { tokens: boolean; cost: boolean }
   loading: boolean
   onRun: () => void
 }) {
@@ -164,11 +182,17 @@ function AgentRow({
       <td className="text-right tabular-nums whitespace-nowrap">
         {metric(stats ? runsSummary(stats) : '—')}
       </td>
-      <td className="text-right tabular-nums">
-        {metric(stats ? formatTokens(stats.tokens) : '—')}
-      </td>
+      {columns.tokens && (
+        <td className="text-right tabular-nums">
+          {metric(stats ? formatTokens(stats.tokens) : '—')}
+        </td>
+      )}
       <td className="text-right tabular-nums">{metric(stats ? formatAvgDuration(stats) : '—')}</td>
-      <td className="text-right tabular-nums">{metric(stats ? formatUsd(stats.costUsd) : '—')}</td>
+      {columns.cost && (
+        <td className="text-right tabular-nums">
+          {metric(stats ? formatUsd(stats.costUsd) : '—')}
+        </td>
+      )}
       <td className="text-right">
         <button
           type="button"

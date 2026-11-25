@@ -14,14 +14,13 @@
  * `components/shared` barrel — every importer is a lazy page.
  */
 import { CheckIcon, HandThumbUpIcon, XMarkIcon } from '@heroicons/react/24/outline'
-import { documentPath } from '@rocketflare/shared/ai/embeddings'
 import {
   type Fact,
   type FactReviewAction,
   type FactState,
   OPEN_REVIEW_FACT_STATES,
 } from '@rocketflare/shared/ai/knowledge-facts'
-import { Link } from 'react-router'
+import { Provenance, sourceFromFact } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { isStaleItem, useReviewFact } from '@/ui/hooks/useKnowledge'
 import { usePermissions } from '@/ui/hooks/usePermissions'
@@ -153,21 +152,12 @@ export function FactItem({ fact, showKey = false }: { fact: Fact; showKey?: bool
           <span className="text-xs text-muted">confirmed {formatDate(fact.confirmedAt)}</span>
         )}
       </div>
-      <div className="text-xs text-muted mt-1">
-        From{' '}
-        <Link
-          to={documentPath(source.documentId, { offset: source.charStart, chunk: source.chunkId })}
-          className="link link-primary"
-        >
-          {source.documentTitle}
-        </Link>{' '}
-        · {formatDate(fact.observedAt)}
-      </div>
-      {source.quote && (
-        <blockquote className="mt-1.5 border-l-2 border-[color:var(--border-subtle)] pl-3 text-sm text-secondary whitespace-pre-wrap break-words">
-          {source.quote}
-        </blockquote>
-      )}
+      <Provenance
+        layout="inline"
+        lead="From"
+        className="mt-1"
+        sources={[sourceFromFact(source, formatDate(fact.observedAt))]}
+      />
       <FactDoubt fact={fact} />
     </div>
   )
