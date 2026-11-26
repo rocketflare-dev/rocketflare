@@ -24,7 +24,10 @@ interface ProviderOptions extends Omit<RenderOptions, 'wrapper'> {
   queryClient?: QueryClient
   /**
    * `SessionResponse` → signed in (seeded + fetch-stubbed); `null` → `/auth/session` answers 401;
-   * omitted → the auth stack is mounted but fetch is left exactly as the test stubbed it.
+   * omitted → the auth stack is mounted and fetch is left exactly as the test stubbed it; with no
+   * stub at all, `/auth/session` answers 401 as for `null` and anything else 404. Never a real
+   * request: `AuthProvider` asks for the session on mount, and an unstubbed one settles after the
+   * file's environment is torn down ("window is not defined" from react-dom, failing the run).
    */
   session?: SessionResponse | null
 }
@@ -43,6 +46,12 @@ export function renderWithProviders(
   if (session !== undefined) {
     stubSessionFetch(session)
     if (session) queryClient.setQueryData(queryKeys.auth.session, session)
+  } else if (!vi.isMockFunction(globalThis.fetch)) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn<FetchLike>(async () => notFoundResponse())
+    )
+    stubSessionFetch(null)
   }
 
   function Wrapper({ children }: { children: ReactNode }) {
