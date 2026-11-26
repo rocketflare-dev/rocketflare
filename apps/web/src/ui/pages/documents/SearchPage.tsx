@@ -67,7 +67,7 @@ import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { formatDate } from '@/ui/lib/format'
-import { highlightMatches } from '@/ui/lib/highlight'
+import { highlightMatches, stripMarkdown } from '@/ui/lib/highlight'
 
 /** The URL parameters this page owns besides `q`. */
 const FILTER_PARAMS = ['documentId', 'source', 'type', 'from', 'to'] as const
@@ -189,10 +189,7 @@ export default function SearchPage() {
 
   return (
     <div className="max-w-6xl">
-      <PageHeader
-        title="Search"
-        description="Ask the knowledge base a question — meaning and keywords, fused."
-      />
+      <PageHeader title="Search" description="Ask the knowledge base a question." />
       <form onSubmit={submit} className="surface-panel mb-4" role="search" noValidate>
         <div className="flex gap-2">
           <label className="input flex-1 min-w-0">
@@ -316,7 +313,7 @@ interface SearchFiltersProps {
   onClear: () => void
 }
 
-const LEGEND = 'text-xs font-semibold uppercase tracking-wide text-muted mb-1.5'
+const LEGEND = 'text-sm font-semibold text-secondary mb-1.5'
 
 function SearchFilters({
   state,
@@ -563,13 +560,17 @@ function SearchResults({
       </p>
       {groups.map(group => {
         const doc = documents.find(d => d.id === group.documentId)
+        const card = cardFor(group, doc)
         return (
-          <section key={group.documentId} className="space-y-2">
-            <DocumentCard
-              dense
-              card={cardFor(group, doc)}
-              to={documentPath(group.documentId, { q: data.query })}
-              footer={
+          // One panel per document: the document, then its passages set into it as insets —
+          // never a card above a stack of loose boxes.
+          <DocumentCard
+            key={group.documentId}
+            dense
+            card={card}
+            to={documentPath(group.documentId, { q: data.query })}
+            footer={
+              <>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
                   {doc?.source && <span>{documentSourceLabel(doc.source)}</span>}
                   {doc && <span>Added {formatDate(doc.createdAt)}</span>}
@@ -583,14 +584,17 @@ function SearchResults({
                     Only this document
                   </button>
                 </div>
-              }
-            />
-            <ol className="space-y-2 sm:pl-8">
-              {group.hits.map(hit => (
-                <SearchHitRow key={hit.chunkId} hit={hit} query={data.query} />
-              ))}
-            </ol>
-          </section>
+                <ol
+                  className="mt-2 divide-y divide-[color:var(--border-subtle)] border-t border-[color:var(--border-subtle)]"
+                  aria-label={`Passages from ${card.title}`}
+                >
+                  {group.hits.map(hit => (
+                    <SearchHitRow key={hit.chunkId} hit={hit} query={data.query} />
+                  ))}
+                </ol>
+              </>
+            }
+          />
         )
       })}
     </section>
@@ -765,11 +769,15 @@ const CLAMP_CHARS = 360
 
 function SearchHitRow({ hit, query }: { hit: SearchHit; query: string }) {
   const [open, setOpen] = useState(false)
-  const long = hit.text.length > CLAMP_CHARS
+  // A snippet is read as text: the passage's markdown syntax (`##`, `| --- |`) is noise here.
+  const text = useMemo(() => stripMarkdown(hit.text), [hit.text])
+  const long = text.length > CLAMP_CHARS
   return (
-    <li className="surface-inset rounded-lg p-3 text-sm space-y-1.5" data-rank={hit.rank}>
+    // Passages are separated by a hairline, not boxed: a box per hit inside the document's panel
+    // is a card in a card. No rank number either — hits are grouped by document, so the fused
+    // order would read 1, 4, 2; the order on the page is the ranking.
+    <li className="py-3 text-sm space-y-1.5" data-rank={hit.rank}>
       <div className="flex items-center gap-x-2 gap-y-1 flex-wrap text-xs">
-        <span className="font-semibold tabular-nums text-muted">#{hit.rank}</span>
         {/*
           The passage deep link: `offset` is where it starts in the text, `chunk` the fallback when
           that could not be resolved (a re-chunked document), `q` so the viewer highlights it.
@@ -783,7 +791,7 @@ function SearchHitRow({ hit, query }: { hit: SearchHit; query: string }) {
           className="link link-primary font-medium tabular-nums"
           title="Open this passage in the document"
         >
-          passage {hit.seq + 1} of {hit.documentPassages}
+          Passage {hit.seq + 1} of {hit.documentPassages}
         </Link>
         {hit.headingPath && (
           <span
@@ -793,26 +801,11 @@ function SearchHitRow({ hit, query }: { hit: SearchHit; query: string }) {
             {hit.headingPath}
           </span>
         )}
-        <span className="ml-auto flex items-center gap-1.5 text-muted">
-          {hit.denseRank !== null && (
-            <span className="badge badge-ghost badge-sm" title="Rank by meaning (vector)">
-              dense #{hit.denseRank}
-            </span>
-          )}
-          {hit.lexicalRank !== null && (
-            <span className="badge badge-ghost badge-sm" title="Rank by keywords (full text)">
-              lexical #{hit.lexicalRank}
-            </span>
-          )}
-          <span className="tabular-nums" title="Reciprocal-rank-fusion score">
-            score {hit.score.toFixed(3)}
-          </span>
-        </span>
       </div>
       <p
-        className={`whitespace-pre-wrap break-words leading-relaxed ${long && !open ? 'line-clamp-4' : ''}`}
+        className={`whitespace-pre-line break-words leading-relaxed max-w-[75ch] ${long && !open ? 'line-clamp-4' : ''}`}
       >
-        <Highlighted text={hit.text} query={query} />
+        <Highlighted text={text} query={query} />
       </p>
       {long && (
         <button

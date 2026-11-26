@@ -94,48 +94,67 @@ resources are created later (`SETUP.md` Part 3), with these names.
 
 ## (e) Brand colour — the user's choice
 
-**What to check.** With `--colour`, the script rewrote the light theme's primary
-(`--color-primary`, `--surface-active`, `--focus-ring`, `--dc-primary-rgb`) in
-`apps/web/src/ui/index.css` and `<meta name="theme-color">` in `apps/web/src/ui/index.html`.
-Without it, the kit's blue is still there. Either way the rest of the palette is untouched: the
-dark theme's `--color-primary`, both `--color-primary-content` values (text on the accent), the
-`--tone-primary-*` tints, `--color-accent`, and the neutral ramp. The header comment block of
-`index.css` ("REBRANDING — change these and nothing else") lists every knob.
+**What to check.** The palette is `oklch()` on one hue (the kit's default, ember, is 35) in
+`apps/web/src/shared/theme-tokens.css` and the two `[data-theme]` blocks of
+`apps/web/src/ui/index.css`. With `--colour <#hex|hue>`, the script turned every one of those
+literals to the colour's hue, keeping each lightness and chroma (which is what keeps contrast),
+and set `<meta name="theme-color">` in `apps/web/src/ui/index.html` to the new light primary. The
+flare (the logo's gold, in the sign-in drawing) and the state colours keep their own hue. It takes
+only the HUE: an exact primary of the user's own lightness is a brand.css job. Without `--colour`,
+the kit's ember (a warm rust at low chroma) is still there. The header comment block of `index.css`
+("REBRANDING — change these and nothing else") lists every knob.
 
 **How to check.**
 ```
-grep -n "color-primary\|surface-active\|focus-ring\|dc-primary-rgb\|tone-primary" apps/web/src/ui/index.css
+grep -n "color-primary\|rail-surface\|series-1\|flare" apps/web/src/shared/theme-tokens.css apps/web/src/ui/index.css
 pnpm web test:ui
 ```
-Expect the new hex where the script said, and `tests/ui/contrast.test.ts` green (WCAG AA: text
-4.5:1, controls and focus ring 3:1).
+Expect the new hue as each literal's third number (the flare unchanged), and
+`tests/ui/contrast.test.ts` green (WCAG AA: text 4.5:1, controls, focus ring and chart series 3:1).
 
-**From the design.** If `docs/design/brand.css` exists (the `rf-design` brand step, signed off),
+**From the design.** If `docs/design/brand.css` exists (the `rf-design` style step, signed off),
 apply it instead of asking: `pnpm design:docs --apply-brand` writes each property into whichever of
-`theme-tokens.css` and `index.css` defines it, plus `<meta name="theme-color">`. Then run
-`pnpm web test:ui`. Show the user `git diff --stat` and the swatches from
-`docs/design/06-brand.md`. Skip `--colour` on the rename in that case, because the brand already
-sets the primary.
+`theme-tokens.css` and `index.css` defines it (a `--brand-hue` turns the whole palette first), plus
+`<meta name="theme-color">`. A brand.css that names a new font also needs its
+`@fontsource-variable/*` package added to `apps/web/package.json` and imported in
+`apps/web/src/ui/main.tsx`. Then run `pnpm web test:ui`. Show the user `git diff --stat` and the
+swatches from `docs/design/06-brand.md`. Skip `--colour` on the rename in that case, because the
+brand already sets the hue.
 
-**What to change.** Ask the user for their palette. Change the values in `index.css` only (the
-`/* blue-600 */`-style comments beside them are now stale — update or drop them). Re-run
-`pnpm web test:ui` after every change; a failing contrast test names the token and the ratio.
+**What to change.** Ask the user for their colour. The simplest answer is a hue: the rename has
+already run, so write `@theme { --brand-hue: <n>; }` in `docs/design/brand.css` and run
+`pnpm design:docs --apply-brand`. Re-run `pnpm web test:ui` after
+every change; a failing contrast test names the token and the ratio.
 
-## (f) Logo — report only
+## (f) Logo and the sign-in panel — report only
 
 **What to check.** `apps/web/src/ui/components/shared/LogoMark.tsx` (inline SVG paths),
 `apps/web/src/ui/public/logo.svg` and `apps/web/src/ui/public/favicon.svg` still carry the kit's
 rocket. The script never touches them.
 
+Beside them, the sign-in page's right-hand panel:
+- **the image:** `apps/web/src/ui/components/LoginArt.tsx`, the kit's rocket as tonal linework.
+  It takes its colours from the rail and flare tokens, so it already wears the new hue, but it is
+  still the kit's picture;
+- **the tagline:** `LOGIN_PANEL.tagline` in `apps/web/src/ui/lib/login-panel.ts`. The rename set it
+  from `docs/design/design.json` `app.tagline` when the design has one (the report says which);
+  otherwise it is still the kit's neutral line.
+
 **How to check.**
 ```
 ls -la apps/web/src/ui/public/ apps/web/src/ui/components/shared/LogoMark.tsx
+grep -n "art:\|tagline:" apps/web/src/ui/lib/login-panel.ts
 ```
-Open http://localhost:3000 once the app runs: the mark in the header and the browser tab.
+Open http://localhost:3000 once the app runs: the mark in the header and the browser tab, then sign
+out to see the sign-in panel.
 
 **What to change.** Replace the `<path>`s in `LogoMark.tsx` (keep the `viewBox` and the
 `className` prop) and the two svgs with the user's mark. A monochrome mark can use
-`fill="currentColor"` with `className="text-primary"` to follow the theme.
+`fill="currentColor"` with `className="text-primary"` to follow the theme. For the panel, do what
+`docs/design/06-brand.md` recorded, or ask: keep the rocket in their colours, replace the SVG in
+`LoginArt.tsx` with imagery they own (colours from `currentColor` and the `.login-art*` classes,
+so it follows the theme), or set `art: 'type'` in `login-panel.ts` for the name and tagline alone.
+Write the tagline in their words if the rename did not.
 
 ## (g) Installed plugins — translated on the way in, and again on the way forward
 

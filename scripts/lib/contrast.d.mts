@@ -30,6 +30,7 @@ export function rgbToOklch(rgb: number[]): [number, number, number]
 export function oklchText(rgb: number[]): string
 export function parseColour(value: string): Rgb | null
 export function contrastRatio(a: number[], b: number[]): number
+export const SHELL_PAIRS: Array<[string, string, number]>
 export function contrastPairs(): Array<[string, string, number]>
 export const EQUAL_TOKENS: Array<[string, string]>
 export function checkPair(

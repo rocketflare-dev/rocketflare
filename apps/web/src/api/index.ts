@@ -44,6 +44,7 @@ import { feedbackRouter } from './routes/feedback'
 import { filesRouter } from './routes/files'
 import { groupsRouter } from './routes/groups'
 import { healthRouter } from './routes/health'
+import { homeRouter } from './routes/home'
 import { identityEventsRouter } from './routes/identity-events'
 import { invitationsRouter } from './routes/invitations'
 import { inviteRouter } from './routes/invite'
@@ -176,6 +177,7 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/keys', keysRouter],
   ['/api/notifications', notificationsRouter],
   ['/api/activity', activityRouter],
+  ['/api/home', homeRouter],
   ['/api/access-requests', accessRequestsRouter],
   ['/api/files', filesRouter],
   ['/api/ai/config', aiConfigRouter],

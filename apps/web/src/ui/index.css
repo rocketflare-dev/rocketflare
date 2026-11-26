@@ -35,23 +35,57 @@
    Design system — token-first. Components consume these variables (or the DaisyUI semantic
    classes derived from them), never hard-coded colours.
 
-   REBRANDING — change these and nothing else:
-     1. `--color-primary` / `--color-primary-content` in BOTH theme blocks (the one accent).
-        Keep `--focus-ring`, `--surface-active`, `--tone-primary-*` in step with it.
-     2. `--color-accent` (secondary accent, e.g. automation/AI affordances).
-     3. The neutral ramp: `--surface-*`, `--border-*`, `--text-*` per theme. The app ships a
-        cool grey (zinc) ramp; swap for a warm or tinted ramp of the same LIGHTNESS steps.
-     4. `--color-secondary` MUST equal `--text-secondary` — see the note in the light theme.
-     5. `--font-sans` / `--font-mono` in `@theme` (system stack by default; add @fontsource
-        imports in main.tsx if self-hosting).
-     6. `<meta name="theme-color">` in index.html and the paths in shared/LogoMark.tsx, public/logo.svg +
-        public/favicon.svg.
+   THE LOOK — ember: a warm rust hue (35) with quiet neutrals, IBM Plex Sans, and the logo's gold
+   as the flare. A tinted shell: a lightly tinted canvas, a side rail in a deep tone of the brand hue
+   with light text, near-white content panels a hair lighter than the canvas, a softened charcoal
+   ink, and one real primary for actions and selection. Elevation is declared once per surface: a
+   panel has a shadow (offset + blur, never a glow) and no border in light; in dark it is raised by
+   lightness, with no shadow. State colours appear only where they mean a state.
+
+   TOKENS (per theme, in the two `[data-theme]` blocks below; DaisyUI's in `../shared/theme-tokens.css`):
+     Surfaces   --surface-app (canvas) · -panel (content) · -raised (popovers, modals) · -inset
+                (table heads, wells) · -hover · -active (selected row / item, a primary tint) ·
+                -header (the top bar, on the canvas) · -nav / -nav-hover (light chrome: menus,
+                secondary panes — NOT the rail)
+     Borders    --border-subtle (separators) · -default · -strong · -control (≥3:1, inputs)
+     Text       --text-primary (the ink) · -secondary · -muted (all ≥4.5:1 on every surface)
+     Rail       --rail-surface · -border · -text · -text-muted · -hover · -active (selection, the
+                primary on the rail) · -active-text · -focus-ring. The login panel wears the rail tokens too.
+     Series     --series-1 … --series-5: chart series derived from the hue, each ≥3:1 on the
+                panel. For categories; a STATE uses --color-success/-warning/-error instead.
+     Flare      --flare: the one bright note (the login art's flame, the logo's gold). Never a state, never text.
+     Depth      --shadow-panel · --shadow-popover (one elevation each, light only).
+     Tones      --tone-<state>-surface / -border: a state's tint and edge (status badges).
+     Browser    --selection-surface (::selection), --focus-ring (outlines, ≥3:1).
+     Chat       --surface-bubble (an assistant turn) · --selection-bubble (a selection inside a turn).
+     Shape      --radius-control (8px) · -panel (14px) · -popover (12px), in `@theme`.
+
+   REBRANDING — change these and nothing else (or write `docs/design/brand.css` and let
+   `design-docs.mjs --apply-brand` write them):
+     1. The brand hue. Every hued literal is `oklch(L C 35)`; replace 35 with the new hue in BOTH
+        files (`../shared/theme-tokens.css` and the two blocks below), keeping L and C. That moves
+        the neutrals, the primary, the rail, the series and the selection together. The accent and
+        four of the series sit at a fixed offset from it (accent 340 = hue − 55; series 345, 80,
+        15, 50 = hue − 50, + 45, − 20, + 15): move them by the same amount. The flare keeps its gold.
+     2. `--color-primary` / `--color-primary-content` in BOTH theme blocks, if the action colour
+        should be its own hue. Keep `--focus-ring`, `--surface-active`, `--rail-active`,
+        `--selection-surface` and `--tone-primary-*` in step with it.
+     3. `--color-secondary` MUST equal `--text-secondary` — see the note in the light theme.
+     4. Shape: `--radius-*` in `@theme` and DaisyUI's `--radius-field` / `--radius-box`;
+        depth: `--shadow-panel` / `--shadow-popover` per theme.
+     5. `--font-sans` / `--font-mono` in `@theme`, and the matching `@fontsource-variable/*`
+        import in main.tsx (the package must be in apps/web/package.json). `--font-heading`
+        (default `var(--font-sans)`) is the face of h1–h3 alone: set it for a heading serif.
+     6. `<meta name="theme-color">` in index.html; the paths in shared/LogoMark.tsx, public/logo.svg
+        + public/favicon.svg; the login art (components/LoginArt.tsx, which takes its colours from
+        the rail and flare tokens) or `LOGIN_PANEL.art = 'type'` in lib/login-panel.ts.
    Theme NAMES (`rocketflare-light` / `rocketflare-dark`) appear in index.html, ThemeToggle.tsx and tests — a
    single find/replace if you rename them.
 
    Contrast floors (WCAG AA): text ≥ 4.5:1 on its surface, `--border-control` ≥ 3:1 on the
-   panel, `--focus-ring` ≥ 3:1. Every semantic colour is a tone dark (light theme) or light
-   (dark theme) enough to be BOTH readable text on the panel AND a fill carrying its
+   panel, `--focus-ring` ≥ 3:1, rail text ≥ 4.5:1 on the rail and on its hover and active
+   fills, each series ≥ 3:1 on the panel. Every semantic colour is a tone dark (light theme) or
+   light (dark theme) enough to be BOTH readable text on the panel AND a fill carrying its
    `-content` colour — one token, two jobs, which is how DaisyUI's `badge-*`/`alert-*` use it.
    ========================================================================== */
 
@@ -59,95 +93,137 @@
 
 /* ------------------------------------------------ Semantic surface tokens */
 [data-theme="rocketflare-light"] {
-  /* White chrome (nav + header) framing a light grey canvas, white content cards.
-     Structure comes from hairline borders, not shadow. */
-  --surface-app: #f4f4f5; /* zinc-100 — canvas */
-  --surface-nav: #ffffff;
-  --surface-header: #ffffff;
-  --surface-panel: #ffffff; /* content cards */
-  --surface-raised: #ffffff; /* popovers / modals */
-  --surface-inset: #e4e4e7; /* zinc-200 — inset boxes, table heads, neutral tags */
-  --surface-hover: #f4f4f5; /* row / card hover on white */
-  --surface-nav-hover: #f4f4f5;
-  --surface-active: color-mix(in srgb, #2563eb 10%, #ffffff); /* soft accent tint */
+  --surface-app: oklch(0.962 0.006 35); /* canvas: lightly tinted, a hair under the panels */
+  --surface-nav: oklch(0.995 0.002 35); /* light chrome (menus, panes); the rail is --rail-* */
+  --surface-header: oklch(0.962 0.006 35); /* the top bar sits on the canvas */
+  --surface-panel: oklch(0.995 0.002 35); /* content panels: near-white */
+  --surface-raised: oklch(0.998 0.001 35); /* popovers / modals */
+  --surface-inset: oklch(0.945 0.008 35); /* inset boxes, table heads, neutral tags */
+  --surface-hover: oklch(0.962 0.006 35); /* row / card hover on a panel */
+  --surface-nav-hover: oklch(0.952 0.008 35);
+  --surface-active: oklch(0.95 0.02 35); /* a primary tint: the selected row or item */
 
-  --border-subtle: #e4e4e7; /* zinc-200 — separators */
-  --border-default: #d4d4d8; /* zinc-300 — cards */
-  --border-strong: #a1a1aa; /* zinc-400 — active / selected */
+  --border-subtle: oklch(0.925 0.008 35); /* separators */
+  --border-default: oklch(0.885 0.01 35);
+  --border-strong: oklch(0.75 0.013 35); /* active / selected */
   /* WCAG 1.4.11 wants ≥3:1 for the boundary that IDENTIFIES a control. Cards and separators
      stay quiet; inputs, selects and checkboxes use this. */
-  --border-control: #71717a; /* zinc-500 */
+  --border-control: oklch(0.6 0.016 35);
 
-  --text-primary: #18181b; /* zinc-900 */
-  --text-secondary: #3f3f46; /* zinc-700 */
-  --text-muted: #52525b; /* zinc-600 — 7:1 on white, still ≥4.5:1 on the inset */
+  --text-primary: oklch(0.3 0.016 35); /* the ink */
+  --text-secondary: oklch(0.43 0.016 35);
+  --text-muted: oklch(0.505 0.014 35); /* still ≥4.5:1 on the inset */
 
-  --focus-ring: #2563eb; /* solid, never a diluted mix — a 45% wash cannot reach 3:1 */
-  --overlay: color-mix(in srgb, #18181b 40%, transparent);
-  --shadow-panel: none; /* flat: borders on the canvas define surfaces */
-  --shadow-popover: 0 6px 20px -6px rgb(24 24 27 / 0.14), 0 1px 2px rgb(24 24 27 / 0.06);
+  /* The rail: the deepest tone of the hue, light text, the primary marking the current page. */
+  --rail-surface: oklch(0.285 0.032 35);
+  --rail-border: oklch(0.355 0.032 35);
+  --rail-text: oklch(0.95 0.008 35);
+  --rail-text-muted: oklch(0.78 0.02 35);
+  --rail-hover: oklch(0.335 0.036 35);
+  --rail-active: oklch(0.5 0.108 35); /* = --color-primary */
+  --rail-active-text: oklch(0.99 0.003 35);
+  --rail-focus-ring: oklch(0.78 0.08 35); /* the page's ring is too dark to see on the rail */
+
+  /* Chart series: the hue first, then its neighbours, alternating light and deep. */
+  --series-1: oklch(0.5 0.104 35);
+  --series-2: oklch(0.6 0.08 345);
+  --series-3: oklch(0.53 0.104 80);
+  --series-4: oklch(0.62 0.048 15);
+  --series-5: oklch(0.42 0.064 50);
+
+  --flare: oklch(0.8 0.15 85); /* the one bright note: the logo's gold, the flame */
+
+  --focus-ring: oklch(0.5 0.108 35); /* solid, never a diluted mix — a wash cannot reach 3:1 */
+  --selection-surface: oklch(0.88 0.048 35);
+  /* An assistant chat turn: a light step off the panel, so links and muted text keep 4.5:1 and
+     a selection still shows on it */
+  --surface-bubble: oklch(0.952 0.008 35);
+  --selection-bubble: oklch(0.8 0.07 35);
+  --overlay: color-mix(in srgb, oklch(0.3 0.016 35) 40%, transparent);
+  /* Elevation, declared once: a soft offset shadow, no border. */
+  --shadow-panel: 0 1px 2px oklch(0.3 0.016 35 / 0.06), 0 4px 14px -6px oklch(0.3 0.016 35 / 0.12);
+  --shadow-popover: 0 12px 32px -10px oklch(0.3 0.016 35 / 0.24), 0 2px 6px -2px oklch(0.3 0.016 35 / 0.1);
 
   /* Status tints: explicit tones (100 surface / 300 border), not `color-mix(<semantic> 12%)`,
      which tints towards the surface and pushes the label under the floor in dark mode. */
-  --tone-primary-surface: #eff6ff; /* blue-50 — primary is a 600, so blue-100 under it is 4.2:1 */
-  --tone-primary-border: #93c5fd; /* blue-300 */
+  --tone-primary-surface: oklch(0.955 0.02 35);
+  --tone-primary-border: oklch(0.82 0.056 35);
   --tone-info-surface: #e0f2fe; /* sky-100 */
   --tone-info-border: #7dd3fc; /* sky-300 */
   --tone-success-surface: #dcfce7; /* green-100 */
   --tone-success-border: #86efac; /* green-300 */
-  --tone-warning-surface: #fef3c7; /* amber-100 */
-  --tone-warning-border: #fcd34d; /* amber-300 */
-  --tone-error-surface: #fee2e2; /* red-100 */
-  --tone-error-border: #fca5a5; /* red-300 */
+  --tone-warning-surface: #fef9c3; /* yellow-100 */
+  --tone-warning-border: #fde047; /* yellow-300 */
+  --tone-error-surface: #ffe4e6; /* rose-100 */
+  --tone-error-border: #fda4af; /* rose-300 */
 }
 
 [data-theme="rocketflare-dark"] {
-  /* Same STRUCTURE as light: the canvas is the darkest plane, chrome and cards lift above it,
-     nothing approaches #000 (a near-black canvas makes cards indistinguishable from it). */
-  --surface-app: #131316; /* canvas */
-  --surface-nav: #1c1c20; /* left rail + top bar, lifted like the light theme's white chrome */
-  --surface-header: #1c1c20;
-  --surface-panel: #27272a; /* zinc-800 — content cards */
-  --surface-raised: #3f3f46; /* zinc-700 — popovers / modals */
-  --surface-inset: #1c1c20; /* table heads, inset boxes: just below panel */
-  --surface-hover: #3f3f46;
-  --surface-nav-hover: #27272a;
-  --surface-active: color-mix(in srgb, #60a5fa 18%, #1c1c20);
+  /* Same STRUCTURE as light, raised by lightness instead of shadow: the rail is the deepest
+     plane, then the canvas, then panels, then popovers. Nothing approaches black. */
+  --surface-app: oklch(0.195 0.01 35); /* canvas */
+  --surface-nav: oklch(0.245 0.011 35);
+  --surface-header: oklch(0.195 0.01 35);
+  --surface-panel: oklch(0.245 0.011 35); /* content panels */
+  --surface-raised: oklch(0.29 0.013 35); /* popovers / modals */
+  --surface-inset: oklch(0.215 0.01 35); /* table heads, inset boxes: just below panel */
+  --surface-hover: oklch(0.29 0.013 35);
+  --surface-nav-hover: oklch(0.29 0.013 35);
+  --surface-active: oklch(0.32 0.04 35);
 
-  --border-subtle: #3f3f46; /* zinc-700 — separators */
-  --border-default: #52525b; /* zinc-600 — cards */
-  --border-strong: #71717a; /* zinc-500 — active / selected */
-  --border-control: #71717a; /* strong/control merge: control-grade 3:1 is right for both */
+  --border-subtle: oklch(0.3 0.011 35); /* separators */
+  --border-default: oklch(0.34 0.013 35);
+  --border-strong: oklch(0.46 0.014 35); /* active / selected */
+  --border-control: oklch(0.58 0.016 35);
 
-  --text-primary: #fafafa; /* zinc-50 */
-  --text-secondary: #d4d4d8; /* zinc-300 */
-  --text-muted: #acacb4; /* just above zinc-400: 4.6:1 on raised/hover (zinc-400 is 4.1:1) */
+  --text-primary: oklch(0.95 0.005 35);
+  --text-secondary: oklch(0.84 0.01 35);
+  --text-muted: oklch(0.73 0.013 35); /* ≥4.5:1 on raised / hover */
 
-  --focus-ring: #60a5fa;
-  --overlay: color-mix(in srgb, #09090b 65%, transparent);
+  --rail-surface: oklch(0.17 0.019 35);
+  --rail-border: oklch(0.24 0.016 35);
+  --rail-text: oklch(0.93 0.006 35);
+  --rail-text-muted: oklch(0.74 0.016 35);
+  --rail-hover: oklch(0.215 0.018 35);
+  --rail-active: oklch(0.38 0.072 35);
+  --rail-active-text: oklch(0.97 0.005 35);
+  --rail-focus-ring: oklch(0.75 0.088 35);
+
+  --series-1: oklch(0.74 0.088 35);
+  --series-2: oklch(0.78 0.072 345);
+  --series-3: oklch(0.74 0.088 80);
+  --series-4: oklch(0.66 0.04 15);
+  --series-5: oklch(0.85 0.048 50);
+
+  --flare: oklch(0.84 0.14 88);
+
+  --focus-ring: oklch(0.75 0.088 35);
+  --selection-surface: oklch(0.42 0.064 35);
+  --surface-bubble: oklch(0.29 0.013 35);
+  --selection-bubble: oklch(0.48 0.085 35);
+  --overlay: color-mix(in srgb, oklch(0.12 0.008 35) 65%, transparent);
+  /* Raised by lightness: panels cast no shadow. A popover keeps a short one, because it floats
+     over content of the same lightness. */
   --shadow-panel: none;
-  --shadow-popover: 0 8px 24px -8px rgb(9 9 11 / 0.72), 0 1px 2px rgb(9 9 11 / 0.5);
+  --shadow-popover: 0 12px 32px -10px oklch(0.1 0.008 35 / 0.7);
 
   /* Tone 950 sits BELOW the panel so a badge reads as an inset well, keeping its tone-300
      label at the same contrast its light-theme twin gets. */
-  --tone-primary-surface: #172554; /* blue-950 */
-  --tone-primary-border: #1e40af; /* blue-800 */
+  --tone-primary-surface: oklch(0.27 0.048 35);
+  --tone-primary-border: oklch(0.42 0.08 35);
   --tone-info-surface: #082f49; /* sky-950 */
   --tone-info-border: #0369a1; /* sky-700 */
   --tone-success-surface: #052e16; /* green-950 */
   --tone-success-border: #15803d; /* green-700 */
   --tone-warning-surface: #451a03; /* amber-950 */
   --tone-warning-border: #b45309; /* amber-700 */
-  --tone-error-surface: #450a0a; /* red-950 */
-  --tone-error-border: #b91c1c; /* red-700 */
+  --tone-error-surface: #4c0519; /* rose-950 */
+  --tone-error-border: #be123c; /* rose-700 */
 }
 
-/* ------------------------------------------------ Shape / spacing / motion */
+/* ------------------------------------------------ Spacing / density / motion
+   The radii are in `@theme` (`../shared/theme-tokens.css`) so a brand can set them. */
 :root {
-  --radius-control: 5px;
-  --radius-panel: 6px;
-  --radius-popover: 8px;
-
   --control-height-sm: 30px;
   --control-height-md: 36px;
   --control-height-lg: 42px;
@@ -163,9 +239,9 @@
   --dur-panel: 180ms;
   --dur-drawer: 240ms;
 
-  /* density-driven (see [data-density]) */
+  /* density-driven (see [data-density]): comfortable by default */
   --row-height: 46px;
-  --panel-pad: 20px;
+  --panel-pad: 22px;
 }
 
 /* ================================================================== Base */
@@ -177,24 +253,43 @@
   body {
     background: var(--surface-app);
     color: var(--text-primary);
+    caret-color: var(--color-primary);
     font-size: 15px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  /* Tabular, aligned numerals for data-heavy surfaces */
+  ::selection {
+    background: var(--selection-surface);
+    color: var(--text-primary);
+  }
+
   code, kbd, samp, pre, .font-mono {
     font-family: var(--font-mono);
   }
 
-  th, td, .tabular-nums {
+  /* Tabular, aligned numerals wherever numbers line up: tables, badges, times, counts */
+  th, td, time, data, .badge, .status-badge, .tabular-nums {
     font-variant-numeric: tabular-nums;
   }
 
   h1, h2, h3, h4 {
     color: var(--text-primary);
     letter-spacing: -0.014em;
+    text-wrap: balance;
+  }
+
+  /* The heading face: page titles (`PageHeader`'s h1), section titles (`SectionPanel`'s h2), the
+     sign-in heading (Login's h1) and the login panel's name (`.font-heading` in AuthCard) */
+  h1, h2, h3 {
+    font-family: var(--font-heading);
+  }
+
+  /* An underline that clears the descenders and keeps the face's own weight */
+  a, .link {
+    text-underline-offset: 0.22em;
+    text-decoration-thickness: from-font;
   }
 
   /* One consistent, visible focus ring everywhere */
@@ -234,7 +329,9 @@
   }
 }
 
-/* =========================================================== Density modes */
+/* =========================================================== Density modes
+   Comfortable is the default (`:root` above); `data-density="compact"` on <html> tightens rows
+   and panel padding for dense admin screens. */
 [data-density="compact"] {
   --row-height: 38px;
   --panel-pad: 14px;
@@ -243,29 +340,33 @@
 /* ============================================================= Primitives
    Only cross-cutting primitives live here. Page-specific styling stays in the component. */
 @layer components {
-  /* Flat by default — a hairline border on the canvas defines every surface. */
+  /* Buttons are flat: elevation belongs to surfaces, not controls. */
   .btn {
     box-shadow: none;
   }
 
-  /* Cards (DaisyUI .card): defined by border, not shadow */
+  /* Elevation is declared ONCE per surface, as `--shadow-panel` (an offset, blurred shadow in
+     light, `none` in dark where the panel is raised by lightness). A panel never also has a
+     border: a component that needs an edge uses `.surface-inset` or a divider instead. */
   .card {
-    border: 1px solid var(--border-default);
-    box-shadow: none;
+    background: var(--surface-panel);
+    border: none;
+    box-shadow: var(--shadow-panel);
     border-radius: var(--radius-panel);
   }
 
-  /* Panel: the default container — surface + thin border, flat */
+  /* Panel: the default container */
   .surface-panel {
     background: var(--surface-panel);
-    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-panel);
     border-radius: var(--radius-panel);
     padding: var(--panel-pad);
   }
+  /* A well inside a panel: set into it, so a border and no shadow */
   .surface-inset {
     background: var(--surface-inset);
     border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-panel);
+    border-radius: var(--radius-control);
   }
 
   /* Control boundaries at ≥3:1 (WCAG 1.4.11). DaisyUI's stock border is base-content at ~20%,
@@ -292,11 +393,8 @@
     z-index: 1;
     background: var(--surface-panel);
     color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-weight: 500;
-    font-size: 11px;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    font-weight: 600;
+    font-size: 12.5px;
     text-align: left;
     padding: 8px 14px 10px;
     border-bottom: 1px solid var(--border-strong);
@@ -349,7 +447,7 @@
     align-items: center;
     gap: 6px;
     padding: 2px 8px;
-    border-radius: 4px;
+    border-radius: 6px;
     font-size: 12px;
     font-weight: 500;
     line-height: 1.5;
@@ -392,14 +490,15 @@
     border-color: var(--tone-warning-border);
   }
   .status-badge[data-status="failed"],
-  .status-badge[data-status="cancelled"],
   .status-badge[data-status="rejected"],
   .status-badge[data-status="revoked"] {
     color: var(--color-error);
     background: var(--tone-error-surface);
     border-color: var(--tone-error-border);
   }
+  /* Stopped on purpose: a person chose it, so it is not a failure. */
   .status-badge[data-status="draft"],
+  .status-badge[data-status="cancelled"],
   .status-badge[data-status="inactive"] {
     color: var(--text-secondary);
     background: var(--surface-inset);
@@ -433,20 +532,33 @@
     color: var(--text-muted);
   }
 
-  /* Application shell — quiet, but each layer visually distinct */
+  /* Application shell: the canvas, the deep rail, the top bar on the canvas */
   .app-canvas {
     background: var(--surface-app);
   }
-  .app-nav {
-    background: var(--surface-nav);
-    border-color: var(--border-default);
-  }
   .app-header {
     background: var(--surface-header);
-    border-color: var(--border-default);
+    border-color: var(--border-subtle);
   }
 
-  /* Left-nav item: subtle filled active state, accent icon, no bar */
+  /* The rail and the login panel: the hue's deepest tone, light text */
+  .app-nav,
+  .rail-surface {
+    background: var(--rail-surface);
+    color: var(--rail-text);
+    border-color: var(--rail-border);
+  }
+  .rail-muted {
+    color: var(--rail-text-muted);
+  }
+  .rail-divider {
+    border-color: var(--rail-border);
+  }
+  .app-nav :focus-visible {
+    outline-color: var(--rail-focus-ring);
+  }
+
+  /* A nav item in a light menu (user menu, org switcher, chat list): a soft filled active state */
   .nav-item {
     color: var(--text-secondary);
     border-radius: var(--radius-control);
@@ -473,33 +585,169 @@
     color: var(--color-primary);
   }
 
-  /* Mono uppercase section labels */
-  .nav-group-label {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--text-muted);
+  /* The same item on the rail: light text, the primary as the selection */
+  .app-nav .nav-item {
+    color: var(--rail-text-muted);
+  }
+  .app-nav .nav-item svg {
+    color: var(--rail-text-muted);
+  }
+  .app-nav .nav-item:hover {
+    background: var(--rail-hover);
+    color: var(--rail-text);
+  }
+  .app-nav .nav-item:hover svg {
+    color: var(--rail-text);
+  }
+  .app-nav .nav-item[data-active="true"] {
+    background: var(--rail-active);
+    color: var(--rail-active-text);
+    font-weight: 600;
+  }
+  .app-nav .nav-item[data-active="true"] svg {
+    color: var(--rail-active-text);
   }
 
-  /* Popover surface (dropdown menus, user menu) — raised, bordered, one shadow token */
+  /* A group's heading: plain words in the body face, quieter than the items under it */
+  .nav-group-label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-muted);
+  }
+  .app-nav .nav-group-label {
+    color: var(--rail-text-muted);
+  }
+
+  /* Popover surface (dropdown menus, user menu, a rail tooltip): raised, one shadow token, no
+     border. It sets its own ink, so it reads the same inside the dark rail. */
   .popover-surface {
     background: var(--surface-raised);
-    border: 1px solid var(--border-default);
+    color: var(--text-primary);
     border-radius: var(--radius-popover);
     box-shadow: var(--shadow-popover);
   }
 }
 
-/* Subtle page background used by auth / error pages */
+/* A ghost button on the rail (the collapse toggle). Unlayered on purpose: DaisyUI 5 ships `.btn`
+   in its own layer inside `utilities`, which a rule in `components` cannot beat. */
+.app-nav .btn-ghost {
+  --btn-rest-fg: var(--rail-text-muted);
+  --btn-fg: var(--rail-text-muted);
+}
+.app-nav .btn-ghost:hover {
+  --btn-rest-fg: var(--rail-text);
+  --btn-fg: var(--rail-text);
+  background-color: var(--rail-hover);
+}
+
+/* ---------------------------------------------- DaisyUI overrides (unlayered)
+   The rules below must beat DaisyUI's own, which ship in layers inside `utilities`: a rule in
+   `@layer components` loses to them whatever its specificity, so these sit outside every layer.
+   `tests/ui/contrast.test.ts` holds them here. */
+
+/* Field labels: DaisyUI draws them in the ink at 60%, under 4.5:1 on the panel. */
+.label {
+  color: var(--text-secondary);
+}
+
+/* Tabs: DaisyUI draws an inactive tab in the ink at 50%, under 3:1. The text ramp instead. */
+.tab {
+  color: var(--text-secondary);
+}
+.tab:is(
+    :hover,
+    :checked,
+    label:has(:checked),
+    .tab-active,
+    [aria-selected="true"],
+    [aria-current="true"],
+    [aria-current="page"]
+  ) {
+  color: var(--text-primary);
+}
+.tab:is(:disabled, .tab-disabled, [aria-disabled="true"]) {
+  color: var(--text-muted);
+}
+
+/* The type floor is 12px: DaisyUI's `-xs` sizes are 10–11px. The control keeps its xs height. */
+.btn-xs {
+  --fontsize: 0.75rem;
+}
+.input-xs,
+.select-xs,
+.textarea-xs {
+  --font-size-min: 0.75rem;
+}
+.badge-xs,
+.kbd-xs,
+.file-input-xs {
+  font-size: 0.75rem;
+}
+
+/* An assistant chat turn on its own light step (DaisyUI's is the border grey, where links and
+   muted text fall under 4.5:1 and a selection disappears). A selection inside any bubble is a
+   step darker than the page's, and on the primary-filled user turn it inverts. */
+.chat-bubble:not(.chat-bubble-primary) {
+  background-color: var(--surface-bubble);
+  color: var(--text-primary);
+}
+.chat-bubble ::selection,
+.chat-bubble::selection {
+  background: var(--selection-bubble);
+  color: var(--text-primary);
+}
+.chat-bubble-primary ::selection,
+.chat-bubble-primary::selection {
+  background: var(--color-primary-content);
+  color: var(--color-primary);
+}
+
+/* A whole-row link (`pages/agents/rowLink.ts` stretches the link's ::after over the row). Its
+   outline sits outside the row, where the neighbouring rows paint over all but one edge: draw
+   it inside instead, and tint the row. */
+tr:has(a:focus-visible) {
+  background: var(--surface-hover);
+}
+tr a:focus-visible::after {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-control);
+}
+
+/* Initials in place of a photo: a tinted disc with a primary edge (≥3:1 on the top bar), so it
+   reads as an avatar rather than two stray letters. */
+.avatar-initials {
+  background: var(--surface-active);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+  border-radius: 999px;
+}
+
+/* The sign-in panel's drawing (components/LoginArt.tsx): lines in the rail's light tone, the
+   body a step up from the rail, the flame in the flare's gold, the one bright note. All from tokens, so it rebrands. */
+.login-art {
+  color: var(--rail-text-muted);
+}
+.login-art .login-art-fill {
+  fill: var(--rail-hover);
+}
+.login-art .login-art-faint {
+  opacity: 0.45;
+}
+.login-art .login-art-flare {
+  fill: var(--flare);
+  stroke: var(--flare);
+}
+.login-art .login-art-core {
+  fill: var(--rail-text);
+  stroke: var(--rail-text);
+  opacity: 0.85;
+}
+
+/* The page behind the auth and error pages: the plain canvas. (The name is kept for the pages
+   and plugins that use it.) */
 .main-gradient {
-  background: radial-gradient(
-      120% 80% at 50% -10%,
-      color-mix(in srgb, var(--color-primary) 8%, transparent) 0%,
-      transparent 60%
-    ),
-    var(--surface-app);
+  background: var(--surface-app);
 }
 
 /* Toast entrance (no animation plugin — one keyframe is enough) */
@@ -515,4 +763,28 @@
 }
 .toast-in {
   animation: toast-in var(--dur-panel) ease-out;
+}
+
+/* Home's one authored motion: an activity item arriving over the realtime nudge slides in. Off
+   entirely under reduced motion (not merely shortened). */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes activity-arrive {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+      background: var(--surface-active);
+    }
+    60% {
+      opacity: 1;
+      transform: translateY(0);
+      background: var(--surface-active);
+    }
+    to {
+      background: transparent;
+    }
+  }
+  .activity-arrive {
+    border-radius: var(--radius-control);
+    animation: activity-arrive 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
 }

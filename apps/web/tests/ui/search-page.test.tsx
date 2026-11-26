@@ -1,6 +1,6 @@
 /**
- * `/search`: search POSTs `{ query, limit, documentId?, filters? }` and renders hits ranked with
- * dense/lexical badges; `?documentId=` preselects the per-document filter and is sent; the filter
+ * `/search`: search POSTs `{ query, limit, documentId?, filters? }` and renders hits in ranked
+ * order, with no ranking diagnostics; `?documentId=` preselects the per-document filter and is sent; the filter
  * column offers the facets' sources and types (grouped by label) and a date range, all in the URL
  * and re-running the search; the facts block shows only with the flag; an empty knowledge base
  * shows an empty state pointing at `/documents`.
@@ -119,7 +119,7 @@ const searchCalls = (fetchMock: ReturnType<typeof stubFetch>) =>
 describe('Search page', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('searches and renders ranked hits with dense/lexical badges', async () => {
+  it('searches and renders ranked hits, without rank numbers or ranking diagnostics', async () => {
     const fetchMock = mount({
       'POST /api/ai/documents/search': (init: RequestInit | undefined) => {
         const { query } = JSON.parse(String(init?.body)) as { query: string }
@@ -147,13 +147,10 @@ describe('Search page', () => {
     const results = await screen.findByRole('region', { name: 'Search results' })
     const rows = within(results).getAllByRole('listitem')
     expect(rows.map(r => r.getAttribute('data-rank'))).toEqual(['1', '2'])
-    expect(rows[0]).toHaveTextContent('#1')
-    expect(rows[0]).toHaveTextContent('passage 1 of 4')
-    expect(rows[0]).toHaveTextContent('dense #1')
-    expect(rows[0]).toHaveTextContent('lexical #2')
+    expect(rows[0]).toHaveTextContent('Passage 1 of 4')
     expect(rows[0]).toHaveTextContent('Snippet 1')
-    expect(rows[1]).toHaveTextContent('lexical #1')
-    expect(rows[1]).not.toHaveTextContent('dense #')
+    // The ranking's internals are not the reader's business.
+    expect(results).not.toHaveTextContent(/#\d|dense|lexical|score/)
     // Hits group under a card per document, built from the list the page already fetched.
     expect(within(results).getByRole('link', { name: 'Release notes' })).toBeInTheDocument()
     // The hit's own link is the passage deep link, carrying the offset, the chunk and the query.
@@ -234,7 +231,7 @@ describe('Search page', () => {
     )
     const filters = await screen.findByRole('complementary', { name: 'Search filters' })
     await within(filters).findByLabelText(/Uploaded or pasted/)
-    expect(within(filters).getByLabelText(/Agent · weekly-digest/)).not.toBeChecked()
+    expect(within(filters).getByLabelText(/Weekly digest agent/)).not.toBeChecked()
     // The two Excel media types are ONE option, counted together.
     const excel = within(filters).getByLabelText(/Excel/)
     expect(excel.closest('label')).toHaveTextContent('Excel2')

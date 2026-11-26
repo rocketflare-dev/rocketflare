@@ -14,7 +14,7 @@
 import { documentCardsFromToolResult } from '@rocketflare/shared/ai/embeddings'
 import { entityCardsFromToolResult } from '@rocketflare/shared/ai/knowledge-facts'
 import { Link } from 'react-router'
-import { DocumentLink, documentLinkProps } from '@/ui/components/shared'
+import { Provenance, sourceFromCard } from '@/ui/components/shared'
 
 /** Longest JSON blob rendered into a `<pre>`. Past it the reader gets the head and a byte count. */
 export const TOOL_RESULT_MAX_CHARS = 4_000
@@ -47,13 +47,9 @@ export function ToolResultCards({ name, result }: { name: string; result: unknow
   return (
     <>
       {cards.length > 0 && (
-        <ul className="mt-1.5 space-y-0.5" aria-label="Documents this answer used">
-          {cards.map(card => (
-            <li key={card.id} className="min-w-0">
-              <DocumentLink {...documentLinkProps(card)} />
-            </li>
-          ))}
-        </ul>
+        <div className="mt-1.5" role="group" aria-label="Documents this answer used">
+          <Provenance layout="inline" sources={cards.map(sourceFromCard)} />
+        </div>
       )}
       {entities.length > 0 && (
         <ul className="mt-1.5 space-y-0.5" aria-label="Facts this answer used">

@@ -31,6 +31,32 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { type AgentRunInterruptRow, agentRunInterrupts } from '../../../db/schema'
 import { type ToolApproval, toolInputSchema } from '../ai/agent-loop'
+import { markNotificationsReadByData } from '../notifications'
+import type { Realtime } from '../realtime'
+
+/** The notification type `notifyApprovers` writes for an ask. */
+export const ASK_NOTIFICATION_TYPE = 'agent_run_awaiting_input'
+
+/**
+ * An ask that is no longer pending (answered, declined, expired) clears its notifications — the
+ * first one and the reminder, for every recipient — so the bell never counts a question that is
+ * over. Marked read rather than deleted: the list still shows that it was asked.
+ */
+function clearAskNotifications(
+  db: Database,
+  tenantId: string,
+  interruptIds: string[],
+  realtime?: Realtime
+) {
+  return markNotificationsReadByData(
+    db,
+    tenantId,
+    ASK_NOTIFICATION_TYPE,
+    'interruptId',
+    interruptIds,
+    realtime
+  )
+}
 
 /** What an agent hands `ctx.interrupt`, and what the runtime turns into a row. */
 export interface RequestInterruptInput {
@@ -179,6 +205,8 @@ export interface ResolveInterruptInput {
   status: 'resolved' | 'cancelled'
   payload?: unknown
   resolvedByUserId: string | null
+  /** Nudges the bells of the people the ask notified (their notifications are marked read). */
+  realtime?: Realtime
 }
 
 /**
@@ -206,6 +234,7 @@ export async function resolveInterrupt(
       )
     )
     .returning()
+  if (row) await clearAskNotifications(db, input.tenantId, [row.id], input.realtime)
   return row ?? null
 }
 
@@ -216,9 +245,10 @@ export async function resolveInterrupt(
 export async function expireInterrupts(
   db: Database,
   tenantId: string,
-  runId: string
+  runId: string,
+  realtime?: Realtime
 ): Promise<AgentRunInterruptRow[]> {
-  return db
+  const rows = await db
     .update(agentRunInterrupts)
     .set({ status: 'expired' })
     .where(
@@ -229,6 +259,13 @@ export async function expireInterrupts(
       )
     )
     .returning()
+  await clearAskNotifications(
+    db,
+    tenantId,
+    rows.map(row => row.id),
+    realtime
+  )
+  return rows
 }
 
 /**

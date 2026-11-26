@@ -2,9 +2,10 @@
  * `/chat` and `/chat/:conversationId`: a left rail of MY conversations (new, delete,
  * paginated) and the thread pane — `ChatBubble` list, the streaming assistant bubble from
  * `useSendMessage`, and the composer (Enter sends, Shift+Enter newline, Stop aborts). A tenant with
- * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets an
- * `EmptyState` whose action is "Configure AI" for `manage AiConfig` holders and "ask an admin"
- * for everyone else. Lazy in App.tsx so the markdown renderer is its own chunk.
+ * no chat provider (readiness `none`, or a 503 `ai_not_configured` from create/send) gets a call
+ * to action — "Configure AI" for `manage AiConfig` holders, "ask an admin" for everyone else — as
+ * the pane's `EmptyState` with no thread open, or in place of the composer under an open thread,
+ * whose history stays readable. Lazy in App.tsx so the markdown renderer is its own chunk.
  */
 
 import {
@@ -18,7 +19,6 @@ import {
 } from '@heroicons/react/24/outline'
 import type { KitNoticeCode } from '@rocketflare/shared/ai/agui'
 import type { Conversation } from '@rocketflare/shared/ai/chat'
-import { shortModelName } from '@rocketflare/shared/ai/config'
 import { documentCardsFromToolCalls } from '@rocketflare/shared/ai/embeddings'
 import { entityCardsFromToolCalls } from '@rocketflare/shared/ai/knowledge-facts'
 import { type FormEvent, type KeyboardEvent, useEffect, useRef, useState } from 'react'
@@ -41,6 +41,7 @@ import { isAiNotConfigured } from '@/ui/lib/aguiStream'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
 import { timeAgo } from '@/ui/lib/format'
 import { ChatStatsPanel } from './ChatStatsPanel'
+import { useHandOverMessage } from './handOver'
 
 /** Whether the inspector was left open. Remembered, because it is a working posture, not a task. */
 const STATS_PREFERENCE_KEY = 'chat:stats'
@@ -76,6 +77,8 @@ export default function ChatPage() {
   const remove = useDeleteConversation()
   const thread = useConversation(conversationId)
   const { send, stop, turn, isStreaming, error: sendError } = useSendMessage(conversationId)
+  // A first message handed over from Home's composer is sent once the thread has loaded.
+  useHandOverMessage(conversationId, Boolean(thread.data) && !isStreaming, send)
   const [deleting, setDeleting] = useState<Conversation | null>(null)
   const [showStats, setShowStats] = useState(readStatsPreference)
   const toggleStats = () => {
@@ -101,7 +104,9 @@ export default function ChatPage() {
   const conversations = list.data?.items ?? []
 
   return (
-    <div className="flex gap-4 h-[calc(100vh-9rem)] min-h-[480px]">
+    // Fills what the shell leaves: the dynamic viewport (a phone's toolbars come and go) less the
+    // 3.5rem header and `main`'s own padding, 1rem a side below `md` and 2rem from it.
+    <div className="flex gap-4 h-[calc(100dvh-5.5rem)] md:h-[calc(100dvh-7.5rem)] min-h-[480px]">
       <aside
         aria-label="Conversations"
         className="surface-panel p-0 w-64 shrink-0 hidden md:flex flex-col overflow-hidden"
@@ -169,24 +174,9 @@ export default function ChatPage() {
         aria-label="Conversation"
         className="surface-panel p-0 flex-1 min-w-0 flex flex-col overflow-hidden"
       >
-        {notConfigured ? (
+        {notConfigured && !conversationId ? (
           <div className="flex-1 flex items-center justify-center p-6">
-            <EmptyState
-              icon={SparklesIcon}
-              message="AI is not configured"
-              description={
-                canConfigure
-                  ? 'Add a chat provider so this workspace can answer.'
-                  : 'Ask an administrator to add a chat provider in Settings → AI.'
-              }
-              action={
-                canConfigure ? (
-                  <Link to="/settings?tab=ai" className="btn btn-primary btn-sm">
-                    Configure AI
-                  </Link>
-                ) : undefined
-              }
-            />
+            <NotConfigured canConfigure={canConfigure} />
           </div>
         ) : !conversationId ? (
           <div className="flex-1 flex items-center justify-center p-6">
@@ -210,18 +200,10 @@ export default function ChatPage() {
         ) : (
           <>
             <header className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-[color:var(--border-subtle)]">
-              <h1 className="text-sm font-semibold truncate">
+              <h1 className="text-sm font-semibold truncate min-w-0">
                 {thread.data?.title ?? 'Conversation'}
               </h1>
               <div className="flex items-center gap-2 shrink-0">
-                {thread.data && (
-                  <span
-                    className="badge badge-ghost badge-sm font-mono"
-                    title={`${thread.data.provider} · ${thread.data.model}`}
-                  >
-                    {shortModelName(thread.data.model)}
-                  </span>
-                )}
                 {canConfigure && (
                   <button
                     type="button"
@@ -240,14 +222,23 @@ export default function ChatPage() {
               loading={thread.isLoading}
               messages={thread.data?.messages}
               turn={turn}
+              // Token counts and the model are inspector detail: shown only with Stats open.
+              showUsage={canConfigure && showStats}
             />
-            <Composer
-              key={conversationId}
-              disabled={!thread.data || thread.isError}
-              streaming={isStreaming}
-              onSend={send}
-              onStop={stop}
-            />
+            {notConfigured ? (
+              // The thread stays readable; only the composer gives way to the call to action.
+              <div className="border-t border-[color:var(--border-subtle)] px-4 py-3">
+                <NotConfigured canConfigure={canConfigure} inline />
+              </div>
+            ) : (
+              <Composer
+                key={conversationId}
+                disabled={!thread.data || thread.isError}
+                streaming={isStreaming}
+                onSend={send}
+                onStop={stop}
+              />
+            )}
           </>
         )}
       </section>
@@ -286,9 +277,11 @@ function Transcript({
   loading,
   messages,
   turn,
+  showUsage,
 }: {
   conversationId: string
   loading: boolean
+  showUsage: boolean
   messages: NonNullable<ReturnType<typeof useConversation>['data']>['messages'] | undefined
   turn: Turn
 }) {
@@ -328,7 +321,7 @@ function Transcript({
               speaker={message.role as 'user' | 'assistant'}
               content={message.content}
               time={message.createdAt}
-              usage={message.usage}
+              usage={showUsage ? message.usage : undefined}
               // Derived, never stored: the same mapper the stream used, over the row's tool calls.
               documents={documentCardsFromToolCalls(message.toolCalls)}
               entities={facts ? entityCardsFromToolCalls(message.toolCalls) : undefined}
@@ -349,8 +342,8 @@ function Transcript({
           speaker="assistant"
           content={turn.text}
           streaming={turn.status === 'streaming'}
-          usage={turn.usage}
-          model={turn.model}
+          usage={showUsage ? turn.usage : undefined}
+          model={showUsage ? turn.model : undefined}
           toolSteps={turn.toolSteps}
           notice={turn.notice ? NOTICE_TEXT[turn.notice] : undefined}
           documents={turn.documents}
@@ -359,6 +352,49 @@ function Transcript({
         />
       )}
       <div ref={bottomRef} />
+    </div>
+  )
+}
+
+/**
+ * No chat provider: "Configure AI" for `manage AiConfig` holders, "ask an administrator" for
+ * everyone else. `inline` is the strip that stands in for the composer under a readable thread.
+ */
+function NotConfigured({
+  canConfigure,
+  inline = false,
+}: {
+  canConfigure: boolean
+  inline?: boolean
+}) {
+  const description = canConfigure
+    ? 'Add a chat provider so this workspace can answer.'
+    : 'Ask an administrator to add a chat provider in Settings → AI.'
+  const action = canConfigure ? (
+    <Link to="/settings?tab=ai" className="btn btn-primary btn-sm">
+      Configure AI
+    </Link>
+  ) : undefined
+  if (!inline) {
+    return (
+      <EmptyState
+        icon={SparklesIcon}
+        message="AI is not configured"
+        description={description}
+        action={action}
+      />
+    )
+  }
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex min-w-0 items-start gap-2.5">
+        <SparklesIcon className="mt-0.5 h-4 w-4 shrink-0 text-muted" aria-hidden="true" />
+        <div className="min-w-0">
+          <p className="text-sm font-medium">AI is not configured</p>
+          <p className="text-sm text-secondary">{description}</p>
+        </div>
+      </div>
+      {action}
     </div>
   )
 }

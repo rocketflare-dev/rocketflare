@@ -19,6 +19,12 @@
     "example-dashboard-tenant-overview": "0.6.0"
   },
   "history": [],
+  "$guard": "The Claude Code guard (`scripts/kit-guard.mjs`, docs/CONCEPTS.md §13): a UI review after every edit to a UI file, and — in a copy — a note before an edit to kit core on the seam that usually fits, with generated files refused. `enabled: false` turns it off for everyone; `ROCKETFLARE_GUARD=0` for one shell.",
+  "guard": {
+    "enabled": true
+  },
+  "$localEdits": "Why this copy differs from the kit in a kit-core file: one { \"path\", \"kind\": \"fix\"|\"change\", \"reason\", \"seamConsidered\", \"capability\"?, \"date\" } per edit that stands. The guard asks for an entry at the end of a turn that changed core without one; `/rf-upgrade` shows the reason beside every kit hunk that lands on the path, and drops a `fix` entry once a kit release carries the fix. Empty in the kit.",
+  "localEdits": [],
   "surfaces": [
     {
       "id": "example-agent-summarize-text",
@@ -56,6 +62,7 @@
         "apps/web/src/ui/pages/agents/forms/research-topic.tsx",
         "apps/web/tests/api/agent-research.test.ts",
         "apps/web/src/ui/pages/agents/outputs/research-topic.tsx",
+        "apps/web/tests/ui/agent-output-research-topic.test.tsx",
         "apps/evals/suites/agents/research-topic.eval.ts",
         "apps/evals/datasets/research-topic.jsonl",
         "apps/evals/baselines/agents-research-topic.json",
@@ -156,9 +163,14 @@
         "apps/web/tests/api/agui-run.test.ts",
         "apps/web/tests/api/chat.test.ts",
         "apps/web/tests/api/chat-tools.test.ts",
-        "apps/web/tests/ui/chat-page.test.tsx"
+        "apps/web/tests/ui/chat-page.test.tsx",
+        "apps/web/tests/ui/chat-hand-over.test.tsx"
       ],
-      "registries": ["apps/web/src/api/index.ts", "apps/web/src/ui/App.tsx"]
+      "registries": [
+        "apps/web/src/api/index.ts",
+        "apps/web/src/ui/App.tsx",
+        "apps/web/src/ui/pages/home-sections.ts#HOME_SECTIONS"
+      ]
     },
     {
       "id": "feature-agents",
@@ -179,7 +191,8 @@
         "apps/web/src/plugins/api/agent-runs.ts",
         "apps/web/tests/api/plugin-agent-runs.test.ts",
         "apps/web/tests/api/agent-run-routes.test.ts",
-        "apps/web/tests/api/agent-run-runtime.test.ts"
+        "apps/web/tests/api/agent-run-runtime.test.ts",
+        "apps/web/tests/ui/home-runs.test.tsx"
       ],
       "registries": [
         "apps/web/src/worker.ts",
@@ -192,7 +205,9 @@
         "apps/web/src/plugins/api/emit.ts#EventCtx.startAgentRun",
         "apps/web/src/plugins/api/emit.ts#EventCtx.startBoundAgent",
         "apps/web/src/api/services/events/subscribers.ts#agentTriggerSubscribers",
-        "apps/web/tests/kit/unit.ts#recordingAgentRuns"
+        "apps/web/tests/kit/unit.ts#recordingAgentRuns",
+        "apps/web/src/ui/pages/home-sections.ts#HOME_SECTIONS",
+        "apps/web/src/api/services/home.ts#homeSummary"
       ]
     },
     {
@@ -210,12 +225,15 @@
         "apps/web/src/api/queues/handlers/document-index.ts",
         "apps/web/src/api/queues/handlers/document-convert.ts",
         "apps/web/src/plugins/api/knowledge.ts",
-        "apps/web/tests/api/plugin-ingest.test.ts"
+        "apps/web/tests/api/plugin-ingest.test.ts",
+        "apps/web/src/api/services/ai/home-knowledge.ts"
       ],
       "registries": [
         "apps/web/src/api/index.ts",
         "apps/web/src/ui/App.tsx",
-        "apps/web/src/plugins/api/index.ts"
+        "apps/web/src/plugins/api/index.ts",
+        "apps/web/src/ui/pages/home-sections.ts#HOME_SECTIONS",
+        "apps/web/src/api/services/home.ts#homeSummary"
       ]
     },
     {

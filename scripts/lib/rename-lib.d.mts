@@ -109,16 +109,26 @@ export function rewriteIntConstant(
 export function rewritePrefixComments(source: string, prefix: string, margin: number): string
 
 export function hexToRgb(hex: string): string
+export function designTagline(designJson: unknown): string | null
+export function applyTagline(source: string, tagline: string): string | null
+export function colourProblem(colour: string): string | null
 export interface ColourResult {
-  css: string
+  tokensCss: string
+  indexCss: string
   html: string
-  from: string
-  to: string
+  /** The hue the palette was on, and the hue it was turned to (degrees). */
+  from: number
+  to: number
+  /** The new light primary as hex, also written to `<meta name="theme-color">`. */
+  primary: string | null
   cssReplacements: number
   htmlReplaced: boolean
   manual: string[]
 }
-export function applyColour(files: { css: string; html: string }, colour: string): ColourResult
+export function applyColour(
+  files: { tokensCss: string; indexCss: string; html: string },
+  colour: string
+): ColourResult
 
 export const APP_START_VERSION: string
 export const APP_CHANGELOG: string

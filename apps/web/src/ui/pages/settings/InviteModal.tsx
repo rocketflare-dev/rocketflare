@@ -71,6 +71,7 @@ export function InviteModal({ open, onClose }: { open: boolean; onClose: () => v
   const count = parseEmailList(emails).length
 
   return (
+    // ui-allow reflex-modal: inviting is a quick step from the members list; emails, role and groups are one action
     <Modal
       open={open}
       onClose={close}

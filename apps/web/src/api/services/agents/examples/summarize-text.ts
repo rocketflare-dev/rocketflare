@@ -36,6 +36,42 @@ import type { AgentDefinition } from '../registry'
 
 export const SUBMIT_SUMMARY_TOOL = 'submit_summary'
 
+/** Longest subject an indexed summary's title carries, before the "Summary: " prefix. */
+export const SUMMARY_TITLE_MAX_CHARS = 80
+
+/** Markdown decoration a first line may carry: heading marks, list bullets, emphasis. */
+function plainLine(line: string): string {
+  return line
+    .replace(/^\s{0,3}(#{1,6}\s+|[-*+•]\s+|>\s*)/, '')
+    .replace(/[*_`]+/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function clip(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cut = text.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > max / 2 ? cut.slice(0, space) : cut).replace(/[\s,;:.–—-]+$/, '')}…`
+}
+
+/**
+ * The title an indexed summary is stored, searched and CITED under — "Summary: <what it is
+ * about>", never a timestamp nobody can tell apart from the next one (the document's own
+ * `createdAt` already says when). The subject is the text's heading when it opens with one, else
+ * its first sentence, else the summary's; clipped at a word to `SUMMARY_TITLE_MAX_CHARS`.
+ */
+export function summaryDocumentTitle(text: string, summary: string): string {
+  const firstSentence = (value: string) => {
+    const line = plainLine(value.split('\n').find(l => l.trim()) ?? '')
+    return line.match(/^(.+?)[.!?](\s|$)/)?.[1] ?? line
+  }
+  const opening = text.split('\n').find(l => l.trim()) ?? ''
+  const heading = /^\s{0,3}#{1,6}\s/.test(opening) ? plainLine(opening) : ''
+  const subject = heading || firstSentence(text) || firstSentence(summary)
+  return subject ? `Summary: ${clip(subject, SUMMARY_TITLE_MAX_CHARS)}` : 'Summary'
+}
+
 /** What the model returns — the `documentId` is added by the agent, not the model. */
 const submitSummarySchema = z.object({
   summary: z.string().min(1).describe('The summary, in the requested style.'),
@@ -150,7 +186,7 @@ export const summarizeTextAgent: AgentDefinition<SummarizeTextInput, SummarizeTe
           {
             tenantId: ctx.tenantId,
             userId: ctx.userId,
-            title: `Summary ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`,
+            title: summaryDocumentTitle(text, result.summary),
             text: [result.summary, ...result.keyPoints.map(p => `- ${p}`)].join('\n\n'),
             source: 'agent:summarize-text',
           },

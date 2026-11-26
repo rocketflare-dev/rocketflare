@@ -1,7 +1,7 @@
 ---
 name: rf-adapt
 description: Rename a fresh copy of the kit to your app (package scope, worker, database, CLI, themes, domain), then walk the rows that need a human
-argument-hint: "<slug> [\"Display Name\"] [--domain example.com] [--colour #hex]"
+argument-hint: "<slug> [\"Display Name\"] [--domain example.com] [--colour #hex|hue]"
 ---
 
 # Adapt — rename the kit to your app
@@ -72,7 +72,8 @@ then (g) if `pnpm plugin list` printed anything, then (h), the licence. For each
 command, show the result, and either confirm "nothing to do" or make the change the row describes —
 with the user's yes for anything that is a design choice (colour, logo, domain). Rows (a), (c), (d)
 are usually already done by the script; (b) is a database decision; (e) and (f) are the user's
-brand (applied from `docs/design/brand.css` when the design has one); (g) verifies that the
+brand (applied from `docs/design/brand.css` when the design has one) and (f) includes the sign-in
+panel's image and tagline; (g) verifies that the
 rename reached the installed plugins; (h) makes the app's `LICENSE` its owner's, taken from
 `design.json` `owner` when there is one.
 

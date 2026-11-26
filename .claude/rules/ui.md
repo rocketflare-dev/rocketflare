@@ -32,6 +32,64 @@ providers, identity flow: `apps/web/src/ui/CLAUDE.md`.
   `<dialog>` `Modal` capped at `max-h-[85vh]` — the BODY scrolls, title and actions stay. No new
   UI library without a stated reason in the PR
 
+## Visual quality
+
+**Before UI work, read `docs/design/DESIGN.md` if it exists** — the app's own visual system wins
+over the defaults below. `pnpm design:lint` checks what a heuristic can see (`scripts/lib/ui-lint.mjs`),
+and the guard reports it after every edit under `ui/**` or `plugins/*/ui/**`. An earned exception
+is `// ui-allow <rule>: <reason>` on the line above; an allow with no reason is itself a finding.
+
+**The craft floor** — every screen, before it ships:
+
+- Contrast at the floors `contrast.test.ts` holds (text 4.5:1, control edges and focus 3:1)
+- One type scale with a readable measure: prose at 65–75ch, never full-width paragraphs
+- Every state: hover, focus, disabled, loading (a skeleton shaped like the content), error, empty
+  (an `EmptyState` that says what to do next)
+- The browser's own surfaces themed: selection, caret, scrollbars, the focus ring, link underline
+  offset, tabular numerals wherever numbers line up
+- Copy in the product's own words — the thing the person is doing, never the kit's internals or a
+  raw event code
+- One authored motion moment per screen at most; everything else is a short state transition
+
+**Bans** — never right, so the lint fails on them:
+
+- `gradient-text` — gradient-filled type reads as decoration and fails contrast at its pale end.
+  Solid `--text-primary`; size and weight carry emphasis
+- `eyebrow-label` — a small uppercase kicker above a heading repeats the heading and pushes it
+  down. Context goes under the title (`PageHeader` / `SectionPanel` description)
+- `glow-shadow` — a zero-offset or coloured halo is light from nowhere; it reads as a toy.
+  Elevation is `--shadow-panel` / `--shadow-popover`
+- `side-stripe` — a thick border on one side of a rounded box fights its own corner. Use a tone
+  (`.tone-*`, `.status-badge`) or the icon and the words
+- `emoji-icon` — emoji and symbol glyphs render differently per platform and carry no accessible
+  name. Heroicons (`currentColor`), or the word
+- `border-and-shadow` — elevation is declared once: a surface has a border OR a shadow
+  (`.surface-panel` already chose)
+- `raw-colour` / `palette-utility` — a literal colour or `bg-blue-50` ignores the theme, dark mode
+  and the brand step. Tokens (`--surface-*`, `--text-*`, `--border-*`, `--tone-*`) or DaisyUI
+  semantic classes; raw values live only in custom-property definitions and `theme-tokens.css`
+- `tiny-type` — under 12px is unreadable for many people. `text-xs` (12px) is the floor; quieten
+  with `.text-muted`, not size. DaisyUI's `-xs` controls are lifted to it in `ui/index.css`
+- `hard-shadow` — an offset shadow with no blur is a print costume, not depth
+- `nested-card` — a card inside a card doubles every edge and wastes the padding. Inside a
+  `SectionPanel`, group with space, a `--border-subtle` divider or `.surface-inset`
+- `decorative-background` — stripes, dots and grid paper behind content are noise. Flat
+  `--surface-app` / `--surface-panel`
+
+**Reflexes** — usually wrong, sometimes earned. The lint notes them and the guard asks once,
+"does the brief earn it?":
+
+- `identical-card-grid` — a grid of same-shaped icon cards is a menu pretending to be content; a
+  list, a table or the nav usually says it better
+- `hero-metric` — a giant number with a tiny label tells nobody what to do. Put the number in the
+  work area it describes
+- `decorative-chart` — a ring or sparkline with no question behind it. `RunsChart` / `TrendLine`
+  only beside the number they explain
+- `decorative-mono` — monospace is for code, ids and aligned figures, not a label costume
+- `reflex-modal` — a form of three or more fields, or anything somebody acts on, is usually a page
+  (see Conventions)
+- `section-numbers` — "01 / 02" headings number what the layout already orders
+
 ## Data layer
 
 - Imports: `@/ui/...` and `@rocketflare/shared/...` (never a relative path into `packages/`); never
@@ -156,5 +214,8 @@ its eager-entry import allowlist: `apps/web/src/plugins/CLAUDE.md`.
 A plugin's top-bar control is a `UiPlugin.header` item rendered by `PluginHeaderSlot`, never an
 edit to `Layout` or `App.tsx`: each item sits behind its own guard, `Suspense` and error boundary,
 so a header item that throws must render nothing rather than break the shell. A card on Home is a
-`UiPlugin.homeCards` entry rendered by `PluginHomeCards` the same way, never an edit to `Home.tsx`;
-the core quick links are data in `pages/home-links.ts`, which hooks import instead of the page.
+`UiPlugin.homeCards` entry rendered by `PluginHomeCards` the same way, never an edit to `Home.tsx`.
+Home's work areas are `pages/home-sections.ts` entries, each owned by its feature and fed by one
+`GET /api/home/summary`; an app adds its own area there. The core quick links are data in
+`pages/home-links.ts` (destinations, no longer rendered on Home), which hooks import instead of the
+page.

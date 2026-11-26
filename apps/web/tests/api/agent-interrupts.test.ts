@@ -322,6 +322,60 @@ describe('ctx.interrupt parks the run', () => {
     const bell = await db.select().from(notifications).where(eq(notifications.userId, user.id))
     expect(bell).toHaveLength(1)
   })
+
+  it('answering the ask marks its notification read, so the bell stops counting it', async () => {
+    const env = createTestEnv()
+    installAgent(
+      async ctx => {
+        await ctx.interrupt({ key: 'confirm-send', spec: APPROVAL })
+        return {}
+      },
+      { approvers: 'admin' }
+    )
+    const { run, tenant, user } = await claimedRun(env, 'owner')
+    await execute(env, run.id, tenant.id)
+    const [ask] = await listInterrupts(db, tenant.id, run.id)
+    if (!ask) throw new Error('expected the ask')
+    await resolveInterrupt(db, {
+      tenantId: tenant.id,
+      runId: run.id,
+      interruptId: ask.id,
+      status: 'resolved',
+      resolvedByUserId: user.id,
+    })
+    const [row] = await db.select().from(notifications).where(eq(notifications.userId, user.id))
+    expect(row?.readAt).toBeInstanceOf(Date)
+  })
+
+  it('an ask expired under a cancelled run marks its notification read too', async () => {
+    const env = createTestEnv()
+    installAgent(
+      async ctx => {
+        await ctx.interrupt({ key: 'confirm-send', spec: APPROVAL })
+        return {}
+      },
+      { approvers: 'admin' }
+    )
+    const { run, tenant, user } = await claimedRun(env, 'owner')
+    await execute(env, run.id, tenant.id)
+    // Another tenant's unread notification with the same shape is never touched.
+    const other = await createTestTenantWithUser(db, 'owner')
+    await db.insert(notifications).values({
+      tenantId: other.tenant.id,
+      userId: other.user.id,
+      type: 'agent_run_awaiting_input',
+      title: 'elsewhere',
+      data: { runId: run.id, interruptId: (await listInterrupts(db, tenant.id, run.id))[0]?.id },
+    })
+    await expireInterrupts(db, tenant.id, run.id)
+    const [mine] = await db.select().from(notifications).where(eq(notifications.userId, user.id))
+    expect(mine?.readAt).toBeInstanceOf(Date)
+    const [theirs] = await db
+      .select()
+      .from(notifications)
+      .where(eq(notifications.userId, other.user.id))
+    expect(theirs?.readAt).toBeNull()
+  })
 })
 
 describe('T3: an interrupt raised inside a tool handler parks the run', () => {

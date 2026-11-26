@@ -3,7 +3,8 @@
  * `lookup_facts`, or `search_knowledge`'s facts block: the name and type, the facts the tool
  * returned with their state badges, and a link to the entity page. Built from the turn's
  * `CUSTOM kit.entity` events while streaming, and from the persisted `toolCalls` by the same pure
- * mapper (`entityCardsFromToolCalls`) afterwards. Markdown-free.
+ * mapper (`entityCardsFromToolCalls`) afterwards. Markdown-free. An inset, not a panel: it sits
+ * inside the answer's bubble (and above Search results), and a panel there would be a nested card.
  */
 import { CubeIcon } from '@heroicons/react/24/outline'
 import type { ChatEntityCard } from '@rocketflare/shared/ai/knowledge-facts'
@@ -12,7 +13,7 @@ import { FactStateBadge, factKeyLabel } from './FactParts'
 
 export function EntityFactsCard({ card }: { card: ChatEntityCard }) {
   return (
-    <article className="surface-panel rounded-lg p-3" data-entity={card.entity.id}>
+    <article className="surface-inset p-3" data-entity={card.entity.id}>
       <div className="flex items-start gap-3">
         <CubeIcon className="w-5 h-5 shrink-0 mt-0.5 text-muted" aria-hidden="true" />
         <div className="min-w-0 flex-1">

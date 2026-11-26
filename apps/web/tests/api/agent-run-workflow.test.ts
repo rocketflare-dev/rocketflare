@@ -225,6 +225,8 @@ describe('AgentRunWorkflow', () => {
     expect(doc).toMatchObject({
       tenantId: tenant.id,
       source: 'agent:summarize-text',
+      // Named for what it is about, not when it was written — research cites it by this title.
+      title: 'Summary: Volcanoes erupt',
       status: 'indexed',
       chunkCount: 1,
       embeddingModel: '@cf/baai/bge-m3',

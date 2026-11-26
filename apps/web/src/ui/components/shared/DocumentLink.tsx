@@ -1,33 +1,18 @@
 /**
- * One knowledge document on ONE LINE — icon, title, and the one fact that still fits beside it.
+ * One knowledge document on ONE LINE — the inline form of a `Provenance` source (type icon,
+ * title, the one fact that still fits beside it). Kept as its own name because plugins import
+ * it; new code passes sources to `Provenance` (`layout="inline"`) instead.
  *
- * `DocumentCard` is the right shape where the document IS the content (Search results, a citation
- * standing alone in an answer). It is the wrong shape inside a dense list: a run timeline's tool
- * result cites four documents, and four cards push the next stage off the screen. This is the same
- * data rendered as what it is in that context — a link.
+ * `DocumentCard` is the right shape where the document IS the content (Search results). This is
+ * the shape for a reference inside something else.
  *
- * **Markdown-free by construction**, like `DocumentCard` beside it: heroicons, `react-router`
- * and the shared types only, because it lives in the barrel `App.tsx` imports eagerly.
+ * **Markdown-free by construction**: it lives in the barrel `App.tsx` imports eagerly.
  *
- * It takes primitives rather than a `DocumentCard` object so a CITATION (`{ documentId, title }` —
- * all `research-topic` returns) can use it too; `documentLinkProps(card)` is the adapter for the
- * callers that do hold a card, so the two sites cannot drift on what "one line" means.
+ * It takes primitives rather than a `DocumentCard` object so a CITATION (`{ documentId, title }`)
+ * can use it too; `documentLinkProps(card)` is the adapter for the callers that hold a card.
  */
-import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/embeddings'
-import { Link } from 'react-router'
-
-const STATUS_LABELS: Record<DocumentCardData['status'], string> = {
-  pending: 'Indexing',
-  indexed: 'Indexed',
-  failed: 'Failed',
-}
-
-const STATUS_TONE: Record<DocumentCardData['status'], string> = {
-  pending: 'pending',
-  indexed: 'completed',
-  failed: 'failed',
-}
+import { ProvenanceLink, passagesLabel } from './Provenance'
 
 export interface DocumentLinkProps {
   to: string
@@ -37,22 +22,16 @@ export interface DocumentLinkProps {
   /** Only rendered when it is not `indexed`: "this one is still converting" is worth the space. */
   status?: DocumentCardData['status']
   id?: string
+  /** "PDF", "Markdown"… picks the icon and is shown before `meta`. */
+  typeLabel?: string | null
 }
 
-export function DocumentLink({ to, title, meta, status, id }: DocumentLinkProps) {
+export function DocumentLink({ to, title, meta, status, id, typeLabel }: DocumentLinkProps) {
   return (
-    <span className="flex items-center gap-1.5 min-w-0 text-sm" data-document={id}>
-      <DocumentTextIcon className="w-4 h-4 shrink-0 text-muted" aria-hidden="true" />
-      <Link to={to} className="link link-primary truncate">
-        {title}
-      </Link>
-      {meta && <span className="text-xs text-muted tabular-nums shrink-0">{meta}</span>}
-      {status && status !== 'indexed' && (
-        <span className="status-badge shrink-0" data-status={STATUS_TONE[status]}>
-          {STATUS_LABELS[status]}
-        </span>
-      )}
-    </span>
+    <ProvenanceLink
+      className="flex text-sm"
+      source={{ id: id ?? to, to, title, meta, status, typeLabel }}
+    />
   )
 }
 
@@ -62,7 +41,8 @@ export function documentLinkProps(card: DocumentCardData): DocumentLinkProps {
     id: card.id,
     to: card.href,
     title: card.title,
-    meta: `${card.passages} ${card.passages === 1 ? 'passage' : 'passages'}`,
+    meta: passagesLabel(card.passages) ?? undefined,
     status: card.status,
+    typeLabel: card.typeLabel,
   }
 }

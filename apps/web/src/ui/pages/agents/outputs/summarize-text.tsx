@@ -14,11 +14,11 @@ import type { AgentOutput, AgentOutputProps } from './types'
 function SummarizeTextOutputView({ output }: AgentOutputProps<SummarizeTextOutput>) {
   return (
     <div className="space-y-4">
-      <Markdown content={output.summary} className="text-sm" />
+      <Markdown content={output.summary} spacing="reading" className="text-sm max-w-[72ch]" />
       {output.keyPoints.length > 0 && (
         <div>
           <h3 className="text-sm font-medium mb-1">Key points</h3>
-          <ul className="list-disc pl-5 text-sm space-y-0.5">
+          <ul className="list-disc pl-5 text-sm space-y-0.5 max-w-[72ch]">
             {output.keyPoints.map(point => (
               <li key={point}>{point}</li>
             ))}

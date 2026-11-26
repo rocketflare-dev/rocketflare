@@ -44,12 +44,22 @@ export type RealtimeEvent = z.infer<typeof realtimeEventSchema>
  * `queryKeys`; `entity.changed` is resolved from its payload at runtime and `ping` invalidates
  * nothing. A ui test asserts every root here is a real `queryKeys` family.
  */
+/**
+ * Home's summary (`GET /api/home/summary`) aggregates several families, so it is a root of its
+ * own that the events behind its parts also invalidate — including, through
+ * `HOME_ENTITY_ROOTS`, the `entity.changed` nudges of the families it summarises.
+ */
+const HOME = ['home']
+
+/** The `entity.changed` roots Home's summary includes a part of. */
+export const HOME_ENTITY_ROOTS: readonly string[] = ['agent-run', 'documents', 'knowledge']
+
 const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   'notification.created': [['notifications']],
   'notification.read': [['notifications']],
-  'member.changed': [['members']],
-  'invitation.changed': [['invitations'], ['pending-invitations']],
-  'tenant.changed': [['tenant'], ['tenants'], ['auth']],
+  'member.changed': [['members'], HOME],
+  'invitation.changed': [['invitations'], ['pending-invitations'], HOME],
+  'tenant.changed': [['tenant'], ['tenants'], ['auth'], HOME],
   // Sent to the affected people only (`nudgeUsers`): their ability to see content changed, so the
   // session (which carries their groups), both visibility-bearing resources and the groups view
   // are all stale at once.
@@ -61,6 +71,7 @@ const CORE_REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
     ['groups'],
     ['knowledge'],
     ['knowledge-review-count'],
+    HOME,
   ],
   // Features ride the session, so the session is what has to be re-fetched; `features` covers the
   // read-only list the CLI and the debugging surface use.
@@ -89,7 +100,9 @@ export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
 export function invalidationsFor(event: RealtimeEvent): string[][] {
   if (event.type === 'entity.changed') {
     const parsed = entityChangedPayloadSchema.safeParse(event.payload)
-    return parsed.success ? [[parsed.data.entity]] : []
+    if (!parsed.success) return []
+    const root = parsed.data.entity
+    return HOME_ENTITY_ROOTS.includes(root) ? [[root], HOME] : [[root]]
   }
   return REALTIME_INVALIDATIONS[event.type]
 }

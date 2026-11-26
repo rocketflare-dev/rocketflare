@@ -1,6 +1,6 @@
 /**
- * The core Home quick links as data. `Home` renders them (after every plugin's `homeLinks`) and
- * `useNavigationEntries` lists them as destinations. A leaf module, like `settings/tabs.ts`: the
+ * The core quick links as data. `useNavigationEntries` lists them as destinations; Home no longer
+ * renders them (its body is work areas, `home-sections.ts`), only a plugin's `homeLinks`. A leaf module, like `settings/tabs.ts`: the
  * plugin UI API (`@/plugins/api/ui`) reaches it through `useNavigationEntries`, and importing the
  * PAGE from there pulled Home's whole import graph into anything that compiles the plugin UI kit —
  * `apps/evals` included, which has no Vite client types for a component reading `import.meta.env`.

@@ -68,7 +68,7 @@ function TenantNotificationsBell() {
                 <>
                   <div className="text-sm font-medium truncate">{n.title}</div>
                   {n.body && <div className="text-xs text-secondary line-clamp-2">{n.body}</div>}
-                  <div className="text-[11px] text-muted mt-0.5">{timeAgo(n.createdAt)}</div>
+                  <div className="text-xs text-muted mt-0.5">{timeAgo(n.createdAt)}</div>
                 </>
               )
               const className =

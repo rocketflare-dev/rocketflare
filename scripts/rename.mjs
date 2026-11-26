@@ -3,7 +3,7 @@
  * Rename a fresh copy of the kit to your app — `docs/ADAPTING.md` §1 as one command.
  *
  *   node scripts/rename.mjs [--dry-run] [--force] [--skip-install]
- *                           [--domain <apex>] [--colour <#hex>] <slug> ["Display Name"]
+ *                           [--domain <apex>] [--colour <#hex|hue>] <slug> ["Display Name"]
  *
  * Walks every text file git knows about (tracked + untracked, `.gitignore` honoured, plus
  * `apps/web/.dev.vars` when it exists so the local DB URL follows the compose file), applies the
@@ -15,7 +15,7 @@
  *   (b) `apps/web/migrations/**` names the RLS role — rename BEFORE the first migration — warned
  *   (c) the docker `container_name`s / volume — renamed, reported
  *   (d) staging names keep `-staging` — the parity test is the proof — reported
- *   (e) `--colour` rewrites the light theme's primary hex; the rest of the palette is yours — reported
+ *   (e) `--colour` turns the whole palette to the colour's hue, keeping every lightness — reported
  *   (f) `LogoMark` / `logo.svg` / `favicon.svg` are a human choice — reported
  *
  * First it DELETES what only the kit is — every file under a `kitOnly` glob in `.rocketflare.json`
@@ -53,8 +53,10 @@ import {
   API_KEY_HANDLE_MARGIN,
   applyColour,
   applyReplacements,
+  applyTagline,
   CLASS_IDS,
   deriveNames,
+  designTagline,
   isBinary,
   isExcluded,
   KIT,
@@ -84,6 +86,8 @@ const CLI_CONFIG_TS = 'apps/cli/src/config.ts'
 const INDEX_CSS = 'apps/web/src/ui/index.css'
 const THEME_TOKENS_CSS = 'apps/web/src/shared/theme-tokens.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
+const LOGIN_PANEL_TS = 'apps/web/src/ui/lib/login-panel.ts'
+const DESIGN_JSON = 'docs/design/design.json'
 const MIGRATIONS_DIR = 'apps/web/migrations/'
 const DEV_VARS = 'apps/web/.dev.vars'
 // The two package.json files that could wire the kit-only vitest project (or a kit-only script).
@@ -417,38 +421,61 @@ function main(argv) {
   )
   // (e) colour
   if (names.colour) {
-    // The brand tokens live in their own file; the same hex recurs in index.css's semantic tokens.
-    const SPLIT = '/*__rocketflare_css_split__*/'
     const r = applyColour(
       {
-        css: `${current(THEME_TOKENS_CSS)}${SPLIT}${current(INDEX_CSS)}`,
+        tokensCss: current(THEME_TOKENS_CSS),
+        indexCss: current(INDEX_CSS),
         html: current(INDEX_HTML),
       },
       names.colour
     )
-    const [tokensCss, indexCss] = r.css.split(SPLIT)
-    edits.set(THEME_TOKENS_CSS, tokensCss)
-    edits.set(INDEX_CSS, indexCss)
+    edits.set(THEME_TOKENS_CSS, r.tokensCss)
+    edits.set(INDEX_CSS, r.indexCss)
     edits.set(INDEX_HTML, r.html)
     report.push(
       [
-        `(e) Colour: light-theme primary ${r.from} → ${r.to} in ${THEME_TOKENS_CSS} + ${INDEX_CSS} (${r.cssReplacements} occurrences: ` +
-          '--color-primary, --surface-active, --focus-ring; plus --dc-primary-rgb)' +
-          `${r.htmlReplaced ? ` and <meta name="theme-color"> in ${INDEX_HTML}` : ''}. Left for you:`,
+        `(e) Colour: the palette turned from hue ${r.from} to ${r.to} (${names.colour}) in ${THEME_TOKENS_CSS} + ` +
+          `${INDEX_CSS} (${r.cssReplacements} oklch() literals, each keeping its lightness and chroma; ` +
+          'the flare and the state colours keep their own hue)' +
+          `${r.htmlReplaced ? `, and <meta name="theme-color"> in ${INDEX_HTML} is now ${r.primary}` : ''}. Left for you:`,
         ...r.manual.map(m => `      - ${m}`),
         '    Then run the contrast gate: `pnpm web test:ui` (tests/ui/contrast.test.ts).',
       ].join('\n')
     )
   } else {
     report.push(
-      `(e) Colour: unchanged (no --colour). The brand hexes live in ${THEME_TOKENS_CSS}; ` +
-        'after any change run `pnpm web test:ui` (contrast gate).'
+      `(e) Colour: unchanged (no --colour). The palette is oklch() on one hue in ${THEME_TOKENS_CSS} + ` +
+        `${INDEX_CSS}; \`--colour <#hex|hue>\` turns it, docs/design/brand.css (\`/rf-design\`) sets the rest. ` +
+        'After any change run `pnpm web test:ui` (contrast gate).'
     )
   }
-  // (f) logo
+  // (f) logo, and the sign-in panel beside it
   report.push(
     '(f) Logo: apps/web/src/ui/components/shared/LogoMark.tsx, apps/web/src/ui/public/logo.svg and ' +
       'favicon.svg still carry the kit mark — replace the paths in all three yourself (not touched).'
+  )
+  const design = existsSync(path.join(REPO_ROOT, DESIGN_JSON))
+    ? (() => {
+        try {
+          return JSON.parse(readFileSync(path.join(REPO_ROOT, DESIGN_JSON), 'utf8'))
+        } catch {
+          return null
+        }
+      })()
+    : null
+  const tagline = designTagline(design)
+  const panel = existsSync(path.join(REPO_ROOT, LOGIN_PANEL_TS)) ? current(LOGIN_PANEL_TS) : null
+  const withTagline = tagline && panel !== null ? applyTagline(panel, tagline) : null
+  if (withTagline !== null && withTagline !== panel) edits.set(LOGIN_PANEL_TS, withTagline)
+  report.push(
+    `    Sign-in panel: ${
+      withTagline !== null
+        ? `the tagline in ${LOGIN_PANEL_TS} is now ${DESIGN_JSON}'s app.tagline ("${tagline}")`
+        : `the tagline in ${LOGIN_PANEL_TS} is still the kit's neutral line${
+            tagline ? ' (no LOGIN_PANEL.tagline to rewrite)' : ` (no app.tagline in ${DESIGN_JSON})`
+          } — write it in the product's words`
+    }. The drawing (components/LoginArt.tsx) is the kit's rocket in your colours: replace it ` +
+      "with your own imagery, or set LOGIN_PANEL.art = 'type' for the name and tagline alone."
   )
 
   // (j) licence

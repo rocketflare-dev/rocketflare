@@ -6,6 +6,10 @@ import type { Names } from './rename-lib.d.mts'
 
 export function globToRegExp(glob: string): RegExp
 export function matchesAny(relPath: string, globs: readonly string[]): boolean
+export function localEditFor(
+  manifest: { localEdits?: unknown[] } | null | undefined,
+  relPath: string
+): { kind: string; reason: string } | null
 
 export type SurfaceKind = 'example' | 'optional-feature' | 'plugin'
 export interface PluginSource {

@@ -5,9 +5,11 @@
  * allowlist, optional title and source) → `POST /upload` as multipart — either answers 201,
  * `indexed` at once for small texts or `pending` until the queue lands (conversion + indexing for
  * PDF/Office/HTML) — the list polls while any row is pending. The paginated documents table comes
- * FIRST (title with its type, source, status with the failure reason on hover, chunks, created, a
- * link to the viewer at `/documents/:id`, download link for uploaded originals, delete after confirm — own rows for everyone, any row for
- * `delete Document`), the add tabs below it. Hybrid search is its own page, `/search`.
+ * FIRST (title with its type, source in words, status with the failure reason on hover, passages,
+ * when it was added, a link to the viewer at `/documents/:id`, download link for uploaded
+ * originals, delete after confirm — own rows for everyone, any row for `delete Document`), the add
+ * tabs below it; below `sm` each row stacks (title, status, when, actions). Hybrid search is its
+ * own page, `/search`.
  */
 
 import {
@@ -25,6 +27,7 @@ import {
   type Document,
   type DocumentStatus,
   documentPath,
+  documentSourceLabel,
   documentTypeLabel,
   INGEST_TEXT_MAX_CHARS,
   ingestTextRequestSchema,
@@ -64,7 +67,17 @@ import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { usePermissions } from '@/ui/hooks/usePermissions'
 import { showToast } from '@/ui/lib/api-client'
 import { KNOWLEDGE_FACTS_GUARD } from '@/ui/lib/feature-guards'
-import { formatDateTime } from '@/ui/lib/format'
+import { formatDateTime, timeAgoShort } from '@/ui/lib/format'
+import {
+  STACK_BODY,
+  STACK_CELL,
+  STACK_END,
+  STACK_HEAD,
+  STACK_HIDE,
+  STACK_LEAD,
+  STACK_ROW,
+  STACK_TABLE,
+} from '@/ui/lib/stacked-table'
 import { FACTS_VIEW_PARAMS, FactsBrowser } from './FactsBrowser'
 import { ReviewList } from './ReviewList'
 
@@ -119,7 +132,7 @@ export default function DocumentsPage() {
     <div className="max-w-6xl">
       <PageHeader
         title="Knowledge"
-        description="Documents this workspace can search. Anything indexed here is searchable on the Search page and available to every agent through the search_knowledge and get_document tools."
+        description="Documents this workspace can search. Anything indexed here can be found on the Search page, and every agent can search and read it too."
       />
       {facts && (
         <ViewSwitch
@@ -239,7 +252,7 @@ function IngestForm() {
           doc.deduplicated
             ? `"${doc.title}" is already in the knowledge base`
             : doc.status === 'indexed'
-              ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+              ? `"${doc.title}" indexed (${doc.chunkCount} passages)`
               : `"${doc.title}" queued for indexing`,
           'success'
         )
@@ -378,7 +391,7 @@ function UploadForm() {
             doc.deduplicated
               ? `"${doc.title}" is already in the knowledge base`
               : doc.status === 'indexed'
-                ? `"${doc.title}" indexed (${doc.chunkCount} chunks)`
+                ? `"${doc.title}" indexed (${doc.chunkCount} passages)`
                 : doc.status === 'failed'
                   ? `"${doc.title}" could not be indexed`
                   : `"${doc.title}" queued for conversion and indexing`,
@@ -478,6 +491,16 @@ function UploadForm() {
   )
 }
 
+/**
+ * Where a document came from, in words: pasted text, an uploaded file, an agent by name. The blank
+ * source of the Paste form is stored as `upload`, so a row without a file there was pasted.
+ */
+function sourceLabel(doc: Document): string {
+  if (!doc.source) return '—'
+  if (doc.source === 'upload') return doc.fileId ? 'Uploaded file' : 'Pasted'
+  return documentSourceLabel(doc.source)
+}
+
 function DocumentsTable() {
   const { user, tenant } = useAuth()
   const { can } = usePermissions()
@@ -509,7 +532,7 @@ function DocumentsTable() {
           </label>
           <select
             id="docs-status"
-            className="select select-xs"
+            className="select select-sm w-auto"
             value={status}
             onChange={e => {
               setStatus(e.target.value as DocumentStatus | '')
@@ -541,23 +564,23 @@ function DocumentsTable() {
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="data-table" aria-label="Documents">
-            <thead>
+          <table className={`data-table ${STACK_TABLE}`} aria-label="Documents">
+            <thead className={STACK_HEAD}>
               <tr>
                 <th>Title</th>
                 <th>Source</th>
                 <th>Status</th>
-                <th className="text-right">Chunks</th>
-                <th>Created</th>
+                <th className="text-right">Passages</th>
+                <th>Added</th>
                 <th className="text-right">
                   <span className="sr-only">Actions</span>
                 </th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className={STACK_BODY}>
               {rows.map(doc => (
-                <tr key={doc.id}>
-                  <td>
+                <tr key={doc.id} className={STACK_ROW}>
+                  <td className={STACK_LEAD}>
                     {/* Pending and failed rows link too: the viewer is where their state is
                         explained, and a PDF is readable before its text has converted. */}
                     <Link to={documentPath(doc.id)} className="link link-primary font-medium">
@@ -568,8 +591,8 @@ function DocumentsTable() {
                       <AccessBadge visibility={doc.visibility} groups={doc.groups} />
                     </div>
                   </td>
-                  <td className="text-secondary">{doc.source ?? '—'}</td>
-                  <td>
+                  <td className={`text-secondary ${STACK_HIDE}`}>{sourceLabel(doc)}</td>
+                  <td className={STACK_CELL}>
                     <span
                       className="status-badge"
                       data-status={STATUS_TONE[doc.status]}
@@ -578,11 +601,16 @@ function DocumentsTable() {
                       {STATUS_LABELS[doc.status]}
                     </span>
                   </td>
-                  <td className="text-right tabular-nums text-secondary">{doc.chunkCount}</td>
-                  <td className="whitespace-nowrap text-secondary">
-                    {formatDateTime(doc.createdAt)}
+                  <td className={`text-right tabular-nums text-secondary ${STACK_HIDE}`}>
+                    {doc.chunkCount}
                   </td>
-                  <td className="text-right whitespace-nowrap">
+                  <td
+                    className={`whitespace-nowrap text-secondary max-sm:text-sm ${STACK_CELL}`}
+                    title={formatDateTime(doc.createdAt)}
+                  >
+                    {timeAgoShort(doc.createdAt)}
+                  </td>
+                  <td className={`text-right whitespace-nowrap ${STACK_END}`}>
                     {doc.status === 'failed' && canShare(doc) && (
                       // Owner or `manage Document` — the route's rule, same as visibility.
                       <button
@@ -659,7 +687,7 @@ function DocumentsTable() {
       <ConfirmModal
         isOpen={deleting !== null}
         title="Delete document"
-        message={`Delete "${deleting?.title ?? ''}"? Its chunks leave the search index for good.`}
+        message={`Delete "${deleting?.title ?? ''}"? Its passages leave the search index for good.`}
         confirmText="Delete"
         confirmButtonClass="btn-error"
         isLoading={remove.isPending}

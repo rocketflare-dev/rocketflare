@@ -582,6 +582,67 @@ describe('GET /api/agents/interrupts (the inbox)', () => {
   })
 })
 
+describe('GET /api/agents/interrupts?mine=true (what "waiting on you" counts)', () => {
+  const parse = (body: unknown) => paginatedResponse(interruptInboxItemSchema).parse(body)
+  const mine = async (cookie: Record<string, string>, env: TestEnv) =>
+    parse(
+      await json(
+        await request(
+          '/api/agents/interrupts?status=pending&mine=true',
+          { headers: cookie },
+          { env }
+        )
+      )
+    )
+
+  it('counts only the asks put to the reader: the requester’s, never every ask an admin can read', async () => {
+    const a = await actor('member')
+    const env = createTestEnv()
+    const own = await parked(env, a)
+    const admin = await memberOf(a.tenant.id, 'admin')
+    // A platform admin visiting through a support membership.
+    const visitor = await createTestUser(db)
+    await linkUserToTenant(db, visitor.id, a.tenant.id, 'support')
+    const visitorCookie = sessionCookieHeader(await createTestSession(db, visitor.id, a.tenant.id))
+
+    expect((await mine(a.cookie, env)).items.map(i => i.runId)).toEqual([own.run.id])
+    // `approvers: 'requester'`: the member was asked, so nobody else is waited on — though both may
+    // read (and answer) it in the full inbox.
+    expect((await mine(admin.cookie, env)).pagination.total).toBe(0)
+    expect((await mine(visitorCookie, env)).pagination.total).toBe(0)
+  })
+
+  it('under approvers: admin, counts for the owners and admins — not for a support visitor', async () => {
+    installAgent(FIXTURE_AGENT, async () => ({}), { approvers: 'admin' })
+    const a = await actor('member')
+    const env = createTestEnv()
+    const asked = await parked(env, a)
+    const admin = await memberOf(a.tenant.id, 'admin')
+    const visitor = await createTestUser(db)
+    await linkUserToTenant(db, visitor.id, a.tenant.id, 'support')
+    const visitorCookie = sessionCookieHeader(await createTestSession(db, visitor.id, a.tenant.id))
+
+    expect((await mine(admin.cookie, env)).items.map(i => i.runId)).toEqual([asked.run.id])
+    expect((await mine(visitorCookie, env)).pagination.total).toBe(0)
+    // The requester can see it but was not asked.
+    expect((await mine(a.cookie, env)).pagination.total).toBe(0)
+  })
+
+  it('an assigned ask counts for its assignee and nobody else', async () => {
+    const a = await actor('owner')
+    const env = createTestEnv()
+    const assignee = await memberOf(a.tenant.id)
+    const asked = await parked(env, a, [
+      {
+        key: 'review',
+        spec: { ...APPROVAL, assignees: { userIds: [assignee.user.id], groupIds: [] } },
+      },
+    ])
+    expect((await mine(assignee.cookie, env)).items.map(i => i.runId)).toEqual([asked.run.id])
+    expect((await mine(a.cookie, env)).pagination.total).toBe(0)
+  })
+})
+
 describe('GET /api/agents/runs/:id', () => {
   it('carries the run’s asks and artifacts for real, and ?events=0 is the bare row', async () => {
     const a = await actor()

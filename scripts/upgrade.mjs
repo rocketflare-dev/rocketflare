@@ -76,6 +76,7 @@ import {
   classifyPath,
   countLines,
   kitOnlyGlobs,
+  localEditFor,
   matchesAny,
   NOTES_SUBDIR,
   notePath,
@@ -503,6 +504,12 @@ function main(argv) {
       .map(p => p.id)
     if (owners.length > 0) f.touchesPluginRegistry = owners
   }
+  // Why this copy differs from the kit here, when it recorded it (`localEdits`): shown beside the
+  // kit's change so the hunk is decided knowing what the local line is for.
+  for (const f of files) {
+    const edit = localEditFor(manifest, f.path)
+    if (edit) f.localEdit = edit
+  }
 
   // Every path this release names, before anything is written — a plan run included, because its
   // artifacts are written under the same paths. An added file also must not land through a symlink.
@@ -638,6 +645,7 @@ function main(argv) {
       reason: f.reason,
       surface: f.surface,
       touchesPluginRegistry: f.touchesPluginRegistry,
+      ...(f.localEdit ? { localEdit: f.localEdit } : {}),
       ...(f.merge ? { merge: f.merge } : {}),
     })),
     renames,
@@ -936,6 +944,16 @@ function report(plan, notes, applicable, { dryRun, applied, applyDeletes, remove
     for (const f of registryTouches) {
       lines.push(`  ${f.path} — ${f.touchesPluginRegistry.join(', ')}`)
     }
+  }
+  const localEdits = plan.files.filter(f => f.localEdit)
+  if (localEdits.length > 0) {
+    lines.push(
+      '',
+      'local-edit — the kit changed a file this copy recorded a reason for (`localEdits`). Decide',
+      'each hunk with the reason in view; drop a `fix` entry once this release carries the fix:'
+    )
+    for (const f of localEdits)
+      lines.push(`  ${f.path} — ${f.localEdit.kind}: ${f.localEdit.reason}`)
   }
   const manual = [
     ...bucket('manual'),

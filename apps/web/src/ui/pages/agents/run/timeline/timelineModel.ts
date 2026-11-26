@@ -19,6 +19,8 @@
  *   would double-push. Every event is therefore deduplicated by `event.id` before anything else.
  * - **An unclosed step is a real state.** A `running` step with no `done` is shown spinning rather
  *   than swallowed, and a DIFFERENT step key implicitly closes the open group.
+ * - **A closed step that opens again is a new row.** A resumed run re-enters `run()` from the top
+ *   and repeats its early stages; merging them into the first would stretch a stage across the park.
  */
 import {
   type AgentRunEventType,
@@ -112,6 +114,8 @@ export type TimelineRow =
       status: string
       attempt?: number
       reason?: string
+      /** The failure's message, when the status event carried one. */
+      error?: string
       at: Date
     }
   | {
@@ -257,7 +261,14 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
           break
         }
         const settled = parsed.data.status !== 'running'
-        const existing = stepIndex.get(parsed.data.key)
+        const found = stepIndex.get(parsed.data.key)
+        const previousRow = found === undefined ? undefined : rows[found]
+        // A stage that already closed and opens AGAIN is a re-entered `run()` (a resume after an
+        // answer, a retry) doing it a second time: a new row. Merged into the first, the stage
+        // would span the whole park — "Checking the input · 18h" for a 3 ms check.
+        const reopened =
+          !settled && previousRow?.kind === 'step' && previousRow.endedSeq !== undefined
+        const existing = reopened ? undefined : found
         if (existing !== undefined) {
           const previous = rows[existing]
           rows[existing] = {
@@ -375,6 +386,7 @@ export function buildTimeline(events: readonly TimelineEvent[]): TimelineRow[] {
             status: parsed.data.status,
             ...(parsed.data.attempt !== undefined ? { attempt: parsed.data.attempt } : {}),
             ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+            ...(typeof parsed.data.error === 'string' ? { error: parsed.data.error } : {}),
             at: event.at,
           })
         }
@@ -822,4 +834,36 @@ export function runLayout(
 ): RunLayoutSplit {
   if (override) return override
   return isRunActive(status) ? 'timeline-major' : 'output-major'
+}
+
+/**
+ * A status row as a sentence — "Started", "Failed: the model provider timed out" — never the raw
+ * `Status → running (attempt 1)`. An attempt is named only past the first: attempt 1 is simply
+ * the run starting, and saying it reads as though something had already gone wrong.
+ */
+export function statusSentence(row: {
+  status: string
+  attempt?: number
+  reason?: string
+  error?: string
+}): string {
+  const retry = row.attempt !== undefined && row.attempt > 1
+  const because = (text: string | undefined) =>
+    text ? `: ${text.charAt(0).toLowerCase()}${text.slice(1)}` : ''
+  switch (row.status) {
+    case 'queued':
+      return 'Queued'
+    case 'running':
+      return retry ? `Started again (attempt ${row.attempt})` : 'Started'
+    case 'awaiting_input':
+      return 'Waiting for an answer'
+    case 'succeeded':
+      return 'Finished'
+    case 'failed':
+      return `Failed${because(row.error ?? row.reason)}`
+    case 'cancelled':
+      return row.reason === 'rejected' ? 'Stopped: the request was declined' : 'Cancelled'
+    default:
+      return `${row.status.charAt(0).toUpperCase()}${row.status.slice(1).replace(/_/g, ' ')}`
+  }
 }

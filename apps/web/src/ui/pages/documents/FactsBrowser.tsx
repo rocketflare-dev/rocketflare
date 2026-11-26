@@ -27,7 +27,7 @@ import { formatDate } from '@/ui/lib/format'
 export const FACTS_VIEW_PARAMS = ['ftype', 'fsource', 'needs', 'fq', 'fpage'] as const
 
 const PAGE_SIZE = 25
-const LEGEND = 'text-xs font-semibold uppercase tracking-wide text-muted mb-1.5'
+const LEGEND = 'text-sm font-semibold text-secondary mb-1.5'
 
 export function FactsBrowser() {
   const [params, setParams] = useSearchParams()

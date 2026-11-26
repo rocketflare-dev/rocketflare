@@ -15,6 +15,16 @@ import { Link, useNavigate } from 'react-router'
 import { EmptyState, PageHeader, SectionPanel, SkeletonRows } from '@/ui/components/shared'
 import { useAgentList, useAgentStats, useAwaitingInterruptCount } from '@/ui/hooks/useAgents'
 import { timeAgo } from '@/ui/lib/format'
+import {
+  STACK_BODY,
+  STACK_CELL,
+  STACK_END,
+  STACK_HEAD,
+  STACK_HIDE,
+  STACK_LEAD,
+  STACK_ROW,
+  STACK_TABLE,
+} from '@/ui/lib/stacked-table'
 import { formatAvgDuration, formatTokens, formatUsd, runsSummary } from './agentMetrics'
 import { RunAgentModal } from './RunAgentModal'
 import { RunStatusBadge } from './RunStatusBadge'
@@ -31,6 +41,13 @@ export default function AgentsPage() {
 
   const items = agents.data?.items ?? []
   const statsOf = (key: string) => stats.data?.items.find(s => s.agentKey === key)
+  // A column of nothing but "—" says nothing: tokens and cost show once any agent has some
+  // (a deployment whose model reports no usage, or prices no call, never grows them).
+  const statItems = stats.data?.items ?? []
+  const columns = {
+    tokens: statItems.some(s => s.tokens > 0),
+    cost: statItems.some(s => s.costUsd > 0),
+  }
 
   return (
     <div>
@@ -50,7 +67,11 @@ export default function AgentsPage() {
           </div>
         }
       />
-      <SectionPanel flush title="Agents" description={`Metrics over the last ${STATS_DAYS} days`}>
+      <SectionPanel
+        flush
+        title={`Last ${STATS_DAYS} days`}
+        description={`${metricWords(columns)} for each agent`}
+      >
         {agents.isLoading ? (
           <div className="p-4">
             <SkeletonRows rows={4} />
@@ -59,26 +80,27 @@ export default function AgentsPage() {
           <EmptyState icon={CpuChipIcon} size="sm" message="No agents registered" />
         ) : (
           <div className="overflow-x-auto">
-            <table className="data-table" aria-label="Agents">
-              <thead>
+            <table className={`data-table ${STACK_TABLE}`} aria-label="Agents">
+              <thead className={STACK_HEAD}>
                 <tr>
                   <th>Agent</th>
                   <th>Last run</th>
                   <th className="text-right">Runs</th>
-                  <th className="text-right">Tokens</th>
+                  {columns.tokens && <th className="text-right">Tokens</th>}
                   <th className="text-right">Avg time</th>
-                  <th className="text-right">Cost</th>
+                  {columns.cost && <th className="text-right">Cost</th>}
                   <th>
                     <span className="sr-only">Actions</span>
                   </th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className={STACK_BODY}>
                 {items.map(agent => (
                   <AgentRow
                     key={agent.key}
                     agent={agent}
                     stats={statsOf(agent.key)}
+                    columns={columns}
                     loading={stats.isLoading}
                     onRun={() => setRunning(agent)}
                   />
@@ -101,20 +123,24 @@ export default function AgentsPage() {
   )
 }
 
+/** "Runs, tokens, time and cost" — only the metrics the table shows. */
+function metricWords(columns: { tokens: boolean; cost: boolean }): string {
+  const words = ['Runs', ...(columns.tokens ? ['tokens'] : []), 'average time']
+  if (columns.cost) words.push('cost')
+  return words.length === 2
+    ? words.join(' and ')
+    : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`
+}
+
 export function AgentBadges({ agent }: { agent: AgentInfo }) {
   return (
     <>
       {agent.exclusive && (
-        <span className="badge badge-ghost badge-sm" title="One run at a time">
-          exclusive
-        </span>
-      )}
-      {agent.policy?.maxTurns && (
         <span
           className="badge badge-ghost badge-sm"
-          title={`Up to ${agent.policy.maxTurns} model turns per run; when it runs out: ${agent.policy.onExhaustion ?? 'final-answer'}`}
+          title="Starting it while a run is still going opens that run instead of a second one"
         >
-          ≤{agent.policy.maxTurns} turns
+          One run at a time
         </span>
       )}
     </>
@@ -124,18 +150,22 @@ export function AgentBadges({ agent }: { agent: AgentInfo }) {
 function AgentRow({
   agent,
   stats,
+  columns,
   loading,
   onRun,
 }: {
   agent: AgentInfo
   stats: AgentStats | undefined
+  columns: { tokens: boolean; cost: boolean }
   loading: boolean
   onRun: () => void
 }) {
   const metric = (value: string) => (loading ? '…' : value)
   return (
-    <tr data-agent-key={agent.key} className={LINK_ROW}>
-      <td className="min-w-[18rem]">
+    <tr data-agent-key={agent.key} className={`${LINK_ROW} ${STACK_ROW}`}>
+      {/* Below `sm` the row stacks (`lib/stacked-table.ts`): the agent, then its last run and Run.
+          The 30-day figures stay on the agent's own page, a tap away. */}
+      <td className={`sm:min-w-[18rem] ${STACK_LEAD}`}>
         <div className="flex items-center gap-2 flex-wrap">
           {/* A real link: the agent's page is where its runs are. */}
           <Link to={`/agents/${agent.key}`} className={`font-medium link link-hover ${ROW_LINK}`}>
@@ -147,7 +177,7 @@ function AgentRow({
           {agent.description}
         </p>
       </td>
-      <td className="whitespace-nowrap">
+      <td className={`whitespace-nowrap ${STACK_CELL}`}>
         {stats?.lastRun ? (
           <Link
             to={`/agents/runs/${stats.lastRun.id}`}
@@ -161,15 +191,23 @@ function AgentRow({
           <span className="text-xs text-muted">{loading ? '…' : 'never run'}</span>
         )}
       </td>
-      <td className="text-right tabular-nums whitespace-nowrap">
+      <td className={`text-right tabular-nums whitespace-nowrap ${STACK_HIDE}`}>
         {metric(stats ? runsSummary(stats) : '—')}
       </td>
-      <td className="text-right tabular-nums">
-        {metric(stats ? formatTokens(stats.tokens) : '—')}
+      {columns.tokens && (
+        <td className={`text-right tabular-nums ${STACK_HIDE}`}>
+          {metric(stats ? formatTokens(stats.tokens) : '—')}
+        </td>
+      )}
+      <td className={`text-right tabular-nums ${STACK_HIDE}`}>
+        {metric(stats ? formatAvgDuration(stats) : '—')}
       </td>
-      <td className="text-right tabular-nums">{metric(stats ? formatAvgDuration(stats) : '—')}</td>
-      <td className="text-right tabular-nums">{metric(stats ? formatUsd(stats.costUsd) : '—')}</td>
-      <td className="text-right">
+      {columns.cost && (
+        <td className={`text-right tabular-nums ${STACK_HIDE}`}>
+          {metric(stats ? formatUsd(stats.costUsd) : '—')}
+        </td>
+      )}
+      <td className={`text-right ${STACK_END}`}>
         <button
           type="button"
           className={`btn btn-primary btn-xs gap-1 ${ABOVE_ROW}`}

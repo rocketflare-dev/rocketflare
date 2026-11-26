@@ -29,7 +29,7 @@ export function RunInputSummary({
 
   return (
     <section className="surface-panel px-4 py-3" aria-label="Run input">
-      <h2 className="text-xs font-semibold text-muted uppercase tracking-wide mb-2">Input</h2>
+      <h2 className="text-sm font-semibold mb-2">Input</h2>
       {summary.kind === 'fields' ? (
         <dl className="grid grid-cols-1 sm:grid-cols-[minmax(0,10rem)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
           {summary.values.map(value => (
@@ -73,7 +73,7 @@ function JsonBlock({ text }: { text: string }) {
   const [open, setOpen] = useState(!long)
   return (
     <div>
-      <pre className="surface-inset rounded-lg p-3 text-xs whitespace-pre-wrap break-words max-h-[24rem] overflow-auto">
+      <pre className="surface-inset p-3 text-xs whitespace-pre-wrap break-words max-h-[24rem] overflow-auto">
         {open ? text : `${text.slice(0, INPUT_VALUE_PREVIEW_CHARS)}…`}
       </pre>
       {long && (

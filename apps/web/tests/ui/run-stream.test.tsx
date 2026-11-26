@@ -162,7 +162,7 @@ describe("['agent-run-agui'] is deliberately not a nudge target", () => {
       at: new Date().toISOString(),
       payload: { entity: 'agent-run', id: RUN_ID },
     })
-    expect(nudge).toEqual([queryKeys.agentRuns.all])
+    expect(nudge).toEqual([queryKeys.agentRuns.all, queryKeys.home.all])
     expect(nudge).not.toContainEqual(queryKeys.agentRunAgui.all)
   })
 

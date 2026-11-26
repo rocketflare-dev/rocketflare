@@ -148,6 +148,14 @@ describe('SideNav', () => {
     await waitFor(() => expect(screen.getByText('v1.2.3')).toBeInTheDocument())
   })
 
+  it('shows no version on a dev server, which reports no release number', async () => {
+    stubHealthFetch({ version: 'dev', env: 'development', name: 'Health Name' })
+    renderWithProviders(<SideNav items={config} />, { session: makeSession() })
+    // The name arrives in the same /api/health answer as the version.
+    await waitFor(() => expect(screen.getByLabelText('Health Name')).toBeInTheDocument())
+    expect(screen.queryByText(/^v/)).not.toBeInTheDocument()
+  })
+
   it('hides items whose guard is denied: without an organisation only unguarded items show', () => {
     vi.stubGlobal('fetch', stubHealthFetch())
     renderWithProviders(<SideNav items={config} />, {

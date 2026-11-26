@@ -141,7 +141,7 @@ function TenantFooter() {
   if (!tenant) return null
   return (
     <div className="flex items-center justify-between gap-2 px-1 py-1 text-xs">
-      <span className="truncate text-secondary" title={tenant.name}>
+      <span className="truncate rail-muted" title={tenant.name}>
         {tenant.name}
       </span>
       <RoleBadge role={tenant.role} />

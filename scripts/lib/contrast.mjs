@@ -6,8 +6,9 @@
  *
  * The floors: text ≥ 4.5:1 on every surface it sits on, each DaisyUI colour ≥ 4.5:1 against its
  * `-content`, each semantic colour readable as text on the panel and on its own tone surface,
- * `--border-control` and `--focus-ring` ≥ 3:1, and `--color-secondary` equal to
- * `--text-secondary` (DaisyUI's `text-secondary` utility must mean the token).
+ * `--border-control` and `--focus-ring` ≥ 3:1, the shell's rail, series, selection and flare
+ * (`SHELL_PAIRS`), and `--color-secondary` equal to `--text-secondary` (DaisyUI's
+ * `text-secondary` utility must mean the token).
  *
  * Pure: it takes CSS text and returns data. A theme is found by its name's `-light` / `-dark`
  * suffix, so a renamed copy's `<slug>-light` matches without a code change.
@@ -125,8 +126,8 @@ const number = (s, percentOf = 1) =>
 /**
  * sRGB 0–255 for a token value, or null when it is not a colour this module reads: `#rgb`,
  * `#rrggbb`, `rgb(r g b)` / `rgb(r, g, b)`, `oklch(L C H)` and `color-mix(in srgb|oklch, A p%, B)`.
- * The kit's own tokens use only hex and `color-mix(in srgb, …)`; the rest is what a brand step
- * may write.
+ * The kit's own tokens are `oklch()` on the brand hue, hex for the state colours, and
+ * `color-mix(in srgb, …)`.
  */
 export function parseColour(value) {
   const v = String(value).trim()
@@ -182,6 +183,31 @@ const TEXT_SURFACES = [
   '--surface-hover',
 ]
 
+/**
+ * The tinted shell's pairs: rail text on the rail and on its hover and selected fills, the
+ * rail's focus ring on the rail, each chart series as a graphic on the panel (3:1, WCAG 1.4.11),
+ * ink on the text-selection and selected-row fills, the primary as text on a selected row, and
+ * the flare on the rail-toned login panel it draws on; text, links and the selection on an
+ * assistant chat turn (`--surface-bubble`), and the initials avatar's primary edge on the top bar.
+ */
+export const SHELL_PAIRS = [
+  ['--rail-text', '--rail-surface', 4.5],
+  ['--rail-text-muted', '--rail-surface', 4.5],
+  ['--rail-text', '--rail-hover', 4.5],
+  ['--rail-text-muted', '--rail-hover', 4.5],
+  ['--rail-active-text', '--rail-active', 4.5],
+  ['--rail-focus-ring', '--rail-surface', 3],
+  ...[1, 2, 3, 4, 5].map(i => [`--series-${i}`, '--surface-panel', 3]),
+  ['--text-primary', '--selection-surface', 4.5],
+  ['--text-primary', '--surface-active', 4.5],
+  ['--color-primary', '--surface-active', 4.5],
+  ['--flare', '--rail-surface', 3],
+  ...TEXT.map(t => [t, '--surface-bubble', 4.5]),
+  ['--color-primary', '--surface-bubble', 4.5],
+  ['--text-primary', '--selection-bubble', 4.5],
+  ['--color-primary', '--surface-header', 3],
+]
+
 /** `[foreground, background, floor]` — the same list for both themes. */
 export function contrastPairs() {
   return [
@@ -194,6 +220,7 @@ export function contrastPairs() {
     ['--border-control', '--surface-panel', 3],
     ['--focus-ring', '--surface-panel', 3],
     ['--focus-ring', '--surface-app', 3],
+    ...SHELL_PAIRS,
   ]
 }
 

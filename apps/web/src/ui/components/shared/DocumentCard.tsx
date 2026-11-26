@@ -9,11 +9,11 @@
  * `documents.summary` column and no rasterisation on Workers): it is null while a document is
  * still converting, and for a converted PDF it is usually the cover page.
  */
-import { DocumentTextIcon } from '@heroicons/react/24/outline'
 import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/embeddings'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { formatBytes } from '@/ui/lib/format'
+import { sourceTypeIcon } from './Provenance'
 
 const STATUS_LABELS: Record<DocumentCardData['status'], string> = {
   pending: 'Indexing',
@@ -39,13 +39,11 @@ export interface DocumentCardProps {
 }
 
 export function DocumentCard({ card, to, dense = false, footer }: DocumentCardProps) {
+  const TypeIcon = sourceTypeIcon(card.typeLabel)
   return (
-    <article
-      className={`surface-panel rounded-lg ${dense ? 'p-3' : 'p-4'}`}
-      data-document={card.id}
-    >
+    <article className={`surface-panel ${dense ? 'p-3' : 'p-4'}`} data-document={card.id}>
       <div className="flex items-start gap-3">
-        <DocumentTextIcon className="w-5 h-5 shrink-0 mt-0.5 text-muted" aria-hidden="true" />
+        <TypeIcon className="w-5 h-5 shrink-0 mt-0.5 text-muted" aria-hidden="true" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <Link to={to ?? card.href} className="link link-primary font-medium truncate">
@@ -65,7 +63,9 @@ export function DocumentCard({ card, to, dense = false, footer }: DocumentCardPr
             {card.sizeBytes !== null && ` · ${formatBytes(card.sizeBytes)}`}
           </p>
           {!dense && card.excerpt && (
-            <p className="text-sm text-secondary mt-2 line-clamp-3 break-words">{card.excerpt}</p>
+            <p className="text-sm text-secondary mt-2 line-clamp-3 break-words max-w-[70ch]">
+              {card.excerpt}
+            </p>
           )}
           {footer && <div className="mt-2">{footer}</div>}
         </div>

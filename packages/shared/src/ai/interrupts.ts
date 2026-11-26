@@ -402,6 +402,16 @@ export type ResolveInterruptRequest = z.infer<typeof resolveInterruptRequestSche
 
 export const interruptInboxQuerySchema = paginationQuerySchema.extend({
   status: agentInterruptStatusSchema.default('pending'),
+  /**
+   * `true`: only the asks ADDRESSED to the caller — the people the ask notified: its assignees,
+   * else the run's requester (`approvers: 'requester'`) or the organisation's owners and admins
+   * (`approvers: 'admin'`, or a run nobody requested). What "waiting on you" counts; without it an
+   * admin sees every ask they may read, including one put to somebody else.
+   */
+  mine: z
+    .enum(['true', 'false'])
+    .transform(v => v === 'true')
+    .optional(),
 })
 export type InterruptInboxQuery = z.infer<typeof interruptInboxQuerySchema>
 

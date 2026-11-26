@@ -1,8 +1,8 @@
 /**
  * One chat turn on DaisyUI's `chat` primitives. User turns render verbatim (pre-wrapped);
  * assistant turns render as Markdown. The trailing streaming bubble passes `streaming` (a dots
- * indicator, `aria-busy`), optional tool one-liners, a strip of `DocumentCard`s for whatever the
- * turn's knowledge tools surfaced, and the `usage` footnote appears once the
+ * indicator, `aria-busy`), optional tool one-liners, the turn's `Provenance` (the documents its
+ * knowledge tools surfaced, numbered under the answer), and the `usage` footnote appears once the
  * `usage` frame (or the persisted message) carries it. Memoised for the same reason `Markdown` is.
  */
 import { CheckCircleIcon } from '@heroicons/react/24/outline'
@@ -11,7 +11,7 @@ import type { DocumentCard as DocumentCardData } from '@rocketflare/shared/ai/em
 import type { ChatEntityCard } from '@rocketflare/shared/ai/knowledge-facts'
 import { memo, type ReactNode } from 'react'
 import { EntityFactsCard } from '@/ui/components/knowledge/EntityFactsCard'
-import { DocumentCard } from '@/ui/components/shared'
+import { Provenance, sourceFromCard } from '@/ui/components/shared'
 import type { ToolStep } from '@/ui/hooks/useChat'
 import { Markdown } from './Markdown'
 
@@ -128,11 +128,7 @@ function ChatBubbleImpl({
           </div>
         )}
         {documents && documents.length > 0 && (
-          <div className="mt-2 space-y-1.5">
-            {documents.map(card => (
-              <DocumentCard key={card.id} card={card} dense />
-            ))}
-          </div>
+          <Provenance sources={documents.map(sourceFromCard)} />
         )}
         {error && (
           <p role="alert" className="mt-2 text-xs text-error">

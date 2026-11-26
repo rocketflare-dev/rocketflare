@@ -21,6 +21,7 @@
  * `domain` runs before `cfgdir` because `app.rocketflare.dev` contains `.rocketflare`; `dbuser`
  * runs before `bare` for the identifier reason above. Case-sensitive throughout.
  */
+import { applyHue, hueOf } from './brand.mjs'
 
 /** What the kit calls itself today — the left-hand side of every replacement. */
 export const KIT = Object.freeze({
@@ -93,9 +94,7 @@ export function deriveNames(slug, display, options = {}) {
     throw new Error(`domain '${domain}' does not look like an apex host (example.com)`)
   }
   const colour = options.colour ?? null
-  if (colour !== null && !HEX_COLOUR_RE.test(colour)) {
-    throw new Error(`colour '${colour}' must be a 6-digit hex like #2563eb`)
-  }
+  if (colour !== null && colourProblem(colour)) throw new Error(`colour: ${colourProblem(colour)}`)
   const trimmed = typeof display === 'string' ? display.trim() : ''
   // A newline here would break more than the rename: `scripts/upgrade.mjs` translates kit diffs
   // with these same replacements, and its hunk headers are only safe because every substitution
@@ -362,49 +361,66 @@ export function rewritePrefixComments(source, prefix, margin) {
   )
 }
 
+/** The sign-in panel's tagline: `design.json` `app.tagline`, or null when it has none. */
+export function designTagline(designJson) {
+  const t = designJson?.app?.tagline
+  if (typeof t !== 'string') return null
+  const line = t.trim()
+  return line && !/[\r\n]/.test(line) && line.length <= 160 ? line : null
+}
+
+/**
+ * `ui/lib/login-panel.ts` with `LOGIN_PANEL.tagline` set to `tagline`, or null when the file has
+ * no `tagline:` string to rewrite (a copy that replaced the panel). Quoted single unless the line
+ * holds an apostrophe; `pnpm lint:fix` after the rename settles the rest.
+ */
+export function applyTagline(source, tagline) {
+  const at = source.search(/\bLOGIN_PANEL\b[^=\n]*=/)
+  const re = /(\btagline:\s*)(['"`])((?:\\.|(?!\2)[^\n])*)\2/
+  if (at === -1 || !re.test(source.slice(at))) return null
+  const quoted = tagline.includes("'")
+    ? JSON.stringify(tagline)
+    : `'${tagline.replace(/\\/g, '\\\\')}'`
+  return source.slice(0, at) + source.slice(at).replace(re, (_m, head) => `${head}${quoted}`)
+}
+
 /** `#2563eb` → `37, 99, 235`. */
 export function hexToRgb(hex) {
   const n = Number.parseInt(hex.slice(1), 16)
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(', ')
 }
 
+/** The problem with a `--colour` value, or null: a `#hex`, `rgb()`, `oklch()` or hue in degrees. */
+export function colourProblem(colour) {
+  return hueOf(colour).error ?? null
+}
+
 /**
- * Row (e): the light theme's `--color-primary` hex (read from the file, never assumed) replaced
- * everywhere it appears in `index.css` (`--color-primary`, `--surface-active`, `--focus-ring`),
- * the matching `--dc-primary-rgb` triple, and `<meta name="theme-color">` in `index.html`. The
- * dark theme's primary, the `-content` colours and the `--tone-primary-*` tints are reported as
- * manual: they are separate design decisions (contrast), not the same value.
+ * Row (e): the palette turned to the colour's HUE. Every `oklch(L C H)` literal in the two token
+ * files (the neutrals, the primary, the rail, the series, the selection, the tones) moves by the
+ * same angle and keeps its lightness and chroma, which is what holds the contrast floors; the
+ * flare and the state colours (hex) keep their own hue. `<meta name="theme-color">` in
+ * `index.html` becomes the new light primary. The colour's own lightness is NOT used: the
+ * primary stays as light as the kit's, so text on it still passes. The same code as brand.css
+ * `--brand-hue` (`scripts/lib/brand.mjs` `applyHue`).
  */
-export function applyColour({ css, html }, colour) {
-  const m = css.match(/--color-primary:\s*(#[0-9a-fA-F]{6})/)
-  if (!m) throw new Error('index.css has no `--color-primary: #hex` line to rewrite')
-  const from = m[1].toLowerCase()
-  const cssOut = css
-    .replace(new RegExp(from, 'gi'), colour)
-    .replace(/(--dc-primary-rgb:\s*)\d+,\s*\d+,\s*\d+/, `$1${hexToRgb(colour)}`)
-  const htmlOut = html.replace(
-    /(<meta name="theme-color" content=")#[0-9a-fA-F]{6}(")/,
-    `$1${colour}$2`
-  )
-  const cssHits = (css.match(new RegExp(from, 'gi')) ?? []).length
-  const dark = [...css.matchAll(/--color-primary:\s*(#[0-9a-fA-F]{6})/g)]
-    .map(x => x[1].toLowerCase())
-    .filter(hex => hex !== from)
+export function applyColour({ tokensCss, indexCss, html }, colour) {
+  const h = hueOf(colour)
+  if (h.error) throw new Error(h.error)
+  const r = applyHue({ tokensCss, indexCss, indexHtml: html }, h.hue)
   return {
-    css: cssOut,
-    html: htmlOut,
-    from,
-    to: colour,
-    cssReplacements: cssHits,
-    htmlReplaced: htmlOut !== html,
+    tokensCss: r.tokensCss,
+    indexCss: r.indexCss,
+    html: r.indexHtml,
+    from: r.from,
+    to: r.to,
+    primary: r.primary,
+    cssReplacements: r.rotated,
+    htmlReplaced: r.indexHtml !== html,
     manual: [
-      ...dark.map(
-        hex => `dark theme \`--color-primary: ${hex}\` (+ its --surface-active / --focus-ring)`
-      ),
-      '`--color-primary-content` in both themes (text on the accent — check contrast)',
-      "`--tone-primary-surface` / `--tone-primary-border` (the accent's 100 / 300 tints)",
-      '`--color-accent` (the secondary accent), if the palette has one',
-      `the "/* blue-600 */"-style comments beside the rewritten values (now stale)`,
+      'an exact primary (its own lightness or chroma): set `--color-primary` and its derived tones in docs/design/brand.css (`/rf-design`)',
+      `the comments in both files that name the kit's hue ${r.from} (now stale)`,
+      'shared/LogoMark.tsx, public/logo.svg and favicon.svg keep their own colours (row f)',
     ],
   }
 }
@@ -509,12 +525,12 @@ export function restartAppVersion(packageJson, kitVersion) {
 // ---------------------------------------------------------------- argv
 
 export const USAGE = `usage: node scripts/rename.mjs [--dry-run] [--force] [--skip-install]
-                              [--domain <apex>] [--colour <#hex>] <slug> ["Display Name"]
+                              [--domain <apex>] [--colour <#hex|hue>] <slug> ["Display Name"]
 
   <slug>            lowercase, digits, hyphens (my-app); becomes @<slug>/*, the worker, bin, themes
   "Display Name"    what people see (APP_NAME, titles); default: Title Case of the slug
   --domain <apex>   replaces rocketflare.dev / rocketflare.local; default <slug>.example.com
-  --colour <#hex>   the primary brand colour (light theme); then run: pnpm web test:ui
+  --colour <#hex|hue>  the brand hue (a colour's hue, or degrees); then run: pnpm web test:ui
   --dry-run         print the table of replacements per file and change nothing
   --force           run on a dirty git tree (commit or stash first, normally)
   --skip-install    do not run pnpm install / biome at the end (offline; run them yourself)
@@ -550,8 +566,8 @@ export function parseArgs(argv) {
   const [slug, display] = positional
   const problem = validateSlug(slug)
   if (problem) return { error: problem }
-  if (opts.colour !== undefined && !HEX_COLOUR_RE.test(opts.colour)) {
-    return { error: `--colour '${opts.colour}' must be a 6-digit hex like #2563eb` }
+  if (opts.colour !== undefined && colourProblem(opts.colour)) {
+    return { error: `--colour: ${colourProblem(opts.colour)}` }
   }
   return { ...opts, slug, display }
 }

@@ -2,21 +2,37 @@
  * The runs table, shared by `/agents/runs` (every agent) and `/agents/:agentKey` (one agent,
  * `fixedAgentKey`, which drops the agent filter and column). Status filters and paging live in the
  * URL (`useSearchParams`), so `/agents/runs?awaiting=1` is a link the badges can point at, and every
- * row is a real `<Link>`, so a run opens in a new tab.
+ * row is a real `<Link>`, so a run opens in a new tab. Below `sm` each row stacks (agent, then
+ * status and when) — `lib/stacked-table.ts`.
  */
 import { CpuChipIcon } from '@heroicons/react/24/outline'
 import {
   AGENT_KEYS,
   type AgentKey,
-  type AgentRun,
+  type AgentRunListItem,
   type AgentRunStatus,
   agentRunStatusSchema,
 } from '@rocketflare/shared/ai/agents'
 import { Link, useSearchParams } from 'react-router'
-import { EmptyState, PaginationControls, SectionPanel, SkeletonRows } from '@/ui/components/shared'
+import {
+  Avatar,
+  EmptyState,
+  PaginationControls,
+  SectionPanel,
+  SkeletonRows,
+} from '@/ui/components/shared'
 import { useAgentRuns } from '@/ui/hooks/useAgents'
 import { useAuth } from '@/ui/hooks/useAuth'
-import { formatDateTime, runDuration } from '@/ui/lib/format'
+import { eventLabel, formatDateTime, runDuration, timeAgoShort } from '@/ui/lib/format'
+import {
+  STACK_BODY,
+  STACK_CELL,
+  STACK_HEAD,
+  STACK_HIDE,
+  STACK_LEAD,
+  STACK_ROW,
+  STACK_TABLE,
+} from '@/ui/lib/stacked-table'
 import { RunStatusBadge, STATUS_LABELS } from './RunStatusBadge'
 import { LINK_ROW, ROW_LINK } from './rowLink'
 
@@ -49,11 +65,12 @@ function useRunFilters() {
 export function RunsTable({
   titleOf,
   fixedAgentKey,
-  title = 'Runs',
+  title,
 }: {
   titleOf: (agentKey: string) => string
   /** One agent's runs: no agent filter, no agent column. */
   fixedAgentKey?: AgentKey
+  /** Omit where the page heading already names the list. */
   title?: string
 }) {
   const { user } = useAuth()
@@ -62,78 +79,75 @@ export function RunsTable({
   const runs = useAgentRuns({ page, agentKey, status })
   const rows = runs.data?.items ?? []
 
-  const requestedBy = (run: AgentRun) =>
+  const requestedBy = (run: AgentRunListItem) =>
     run.triggerEvent ? (
-      // Started by a plugin event (D42): the event's name is who asked.
-      <span
-        className="font-mono text-xs text-muted"
-        title={`Started by the ${run.triggerEvent} event`}
-      >
-        {run.triggerEvent}
+      // Started by a plugin event: the event, in words, is who asked.
+      <span className="text-secondary" title={`Started by the ${run.triggerEvent} event`}>
+        {eventLabel(run.triggerEvent)}
       </span>
     ) : run.requestedByUserId === null ? (
-      <span className="text-muted">system</span>
+      <span className="text-muted">Automatic</span>
     ) : run.requestedByUserId === user?.id ? (
-      'You'
+      <Person name={user.name ?? 'You'} label="You" />
+    ) : run.requestedBy ? (
+      <Person name={run.requestedBy.name} />
     ) : (
-      <span className="font-mono text-xs text-muted" title={run.requestedByUserId}>
-        {run.requestedByUserId.slice(0, 8)}
-      </span>
+      <span className="text-muted">A former member</span>
     )
 
-  return (
-    <SectionPanel
-      flush
-      title={title}
-      actions={
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            className={`btn btn-xs ${awaiting ? 'btn-warning' : 'btn-ghost'}`}
-            aria-pressed={awaiting}
-            onClick={() => patch({ awaiting: awaiting ? null : '1', status: null })}
-          >
-            Awaiting input
-          </button>
-          {!fixedAgentKey && (
-            <>
-              <label htmlFor="runs-agent" className="sr-only">
-                Agent
-              </label>
-              <select
-                id="runs-agent"
-                className="select select-xs"
-                value={agentKey}
-                onChange={e => patch({ agentKey: e.target.value })}
-              >
-                <option value="">All agents</option>
-                {AGENT_KEYS.map(key => (
-                  <option key={key} value={key}>
-                    {titleOf(key)}
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
-          <label htmlFor="runs-status" className="sr-only">
-            Status
+  const filters = (
+    <div className="flex flex-wrap items-center gap-2">
+      {!fixedAgentKey && (
+        <>
+          <label htmlFor="runs-agent" className="sr-only">
+            Agent
           </label>
           <select
-            id="runs-status"
-            className="select select-xs"
-            value={status}
-            onChange={e => patch({ status: e.target.value, awaiting: null })}
+            id="runs-agent"
+            className="select select-sm w-auto"
+            value={agentKey}
+            onChange={e => patch({ agentKey: e.target.value })}
           >
-            <option value="">Any status</option>
-            {agentRunStatusSchema.options.map(s => (
-              <option key={s} value={s}>
-                {STATUS_LABELS[s]}
+            <option value="">All agents</option>
+            {AGENT_KEYS.map(key => (
+              <option key={key} value={key}>
+                {titleOf(key)}
               </option>
             ))}
           </select>
-        </div>
-      }
-    >
+        </>
+      )}
+      <label htmlFor="runs-status" className="sr-only">
+        Status
+      </label>
+      <select
+        id="runs-status"
+        className="select select-sm w-auto"
+        value={status}
+        onChange={e => patch({ status: e.target.value, awaiting: null })}
+      >
+        <option value="">Any status</option>
+        {agentRunStatusSchema.options.map(s => (
+          <option key={s} value={s}>
+            {STATUS_LABELS[s]}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className={`btn btn-sm ${awaiting ? 'btn-warning' : 'btn-outline'}`}
+        aria-pressed={awaiting}
+        onClick={() => patch({ awaiting: awaiting ? null : '1', status: null })}
+      >
+        Awaiting input
+      </button>
+    </div>
+  )
+
+  return (
+    <SectionPanel flush title={title} actions={title ? filters : undefined}>
+      {/* No title: the filters are the panel's first line, across its width. */}
+      {!title && <div className="px-5 pt-4 pb-3">{filters}</div>}
       {runs.isLoading ? (
         <div className="p-4">
           <SkeletonRows rows={4} />
@@ -157,44 +171,48 @@ export function RunsTable({
         />
       ) : (
         <div className="overflow-x-auto">
-          <table className="data-table" aria-label="Agent runs">
-            <thead>
+          <table className={`data-table ${STACK_TABLE}`} aria-label="Agent runs">
+            <thead className={STACK_HEAD}>
               <tr>
-                <th>Status</th>
                 <th>{fixedAgentKey ? 'Run' : 'Agent'}</th>
+                <th>Status</th>
                 <th>Requested by</th>
                 <th>Started</th>
-                <th>Finished</th>
-                <th>Duration</th>
+                <th className="text-right">Duration</th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map(run => (
-                <tr key={run.id} className={LINK_ROW}>
-                  <td>
-                    <RunStatusBadge status={run.status} />
-                  </td>
-                  <td className="font-medium">
-                    {/* A real link, so middle-click and open-in-new-tab work — half the point of
-                        a run being a page. */}
-                    <Link to={`/agents/runs/${run.id}`} className={`link link-hover ${ROW_LINK}`}>
-                      {fixedAgentKey ? (
-                        <span className="font-mono text-xs">{run.id.slice(0, 8)}</span>
-                      ) : (
-                        titleOf(run.agentKey)
-                      )}
-                    </Link>
-                  </td>
-                  <td>{requestedBy(run)}</td>
-                  <td className="whitespace-nowrap text-secondary">
-                    {formatDateTime(run.startedAt ?? run.createdAt)}
-                  </td>
-                  <td className="whitespace-nowrap text-secondary">
-                    {formatDateTime(run.finishedAt)}
-                  </td>
-                  <td className="tabular-nums text-secondary">{runDuration(run) ?? '—'}</td>
-                </tr>
-              ))}
+            <tbody className={STACK_BODY}>
+              {rows.map(run => {
+                const started = run.startedAt ?? run.createdAt
+                return (
+                  <tr key={run.id} className={`${LINK_ROW} ${STACK_ROW}`}>
+                    <td className={`font-medium ${STACK_LEAD}`}>
+                      {/* A real link, so middle-click and open-in-new-tab work — half the point
+                          of a run being a page. */}
+                      <Link to={`/agents/runs/${run.id}`} className={`link link-hover ${ROW_LINK}`}>
+                        {fixedAgentKey ? (
+                          <span className="font-mono text-xs">{run.id.slice(0, 8)}</span>
+                        ) : (
+                          titleOf(run.agentKey)
+                        )}
+                      </Link>
+                    </td>
+                    <td className={STACK_CELL}>
+                      <RunStatusBadge status={run.status} />
+                    </td>
+                    <td className={STACK_HIDE}>{requestedBy(run)}</td>
+                    <td
+                      className={`whitespace-nowrap text-secondary max-sm:text-sm ${STACK_CELL}`}
+                      title={formatDateTime(started)}
+                    >
+                      {timeAgoShort(started)}
+                    </td>
+                    <td className={`text-right tabular-nums text-secondary ${STACK_HIDE}`}>
+                      {runDuration(run) ?? '—'}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -209,5 +227,15 @@ export function RunsTable({
         </div>
       )}
     </SectionPanel>
+  )
+}
+
+/** A requester: their initials and their name ("You" for the reader). */
+function Person({ name, label }: { name: string; label?: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 whitespace-nowrap">
+      <Avatar person={{ id: name, name }} size="sm" />
+      {label ?? name}
+    </span>
   )
 }

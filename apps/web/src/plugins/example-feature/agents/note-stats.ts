@@ -42,7 +42,7 @@ export const exampleNoteStatsAgent: PluginAgent<Input, ExampleNoteStatsOutput> =
   meta: {
     key: EXAMPLE_NOTE_STATS_AGENT,
     title: 'Example note stats',
-    description: 'Counts the words in a new example note. Started by example-feature.note.created.',
+    description: 'Counts the words in each new example note, as soon as it is created.',
     inputSchema: exampleNoteStatsInputSchema,
     outputSchema: exampleNoteStatsOutputSchema,
     promptKey: EXAMPLE_NOTE_STATS_PROMPT,

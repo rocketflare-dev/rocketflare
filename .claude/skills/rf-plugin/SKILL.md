@@ -62,16 +62,16 @@ install, offering the ones not yet installed, then continue below with that id. 
 rather than installing can read https://rocketflare.dev/plugins.
 
 ```
-pnpm plugin add <repo|path>[@ref] [--subdir <dir>]
+pnpm plugin add <id|repo|path>[@ref] [--subdir <dir>]
 ```
 
-**A bare id** (`/rf-plugin add analytics`) is a first-party plugin: repo
-`https://github.com/rocketflare-dev/rocketflare-plugins.git`, `--subdir plugins/<id>`, `@` its
-newest release tag (`git ls-remote --tags --refs <repo> | sed 's#.*/##' | sort -V | tail -1`) —
-never the default branch, which can be ahead of every release. Leaving the `@ref` off does the
-same: a repository with no ref is read at its newest `X.Y.Z` tag. An id the catalogue lists under
-`Commercial plugins` is the same shape in `rocketflare-dev/rocketflare-commercial-plugins`. An id
-in neither is not published: ask for the repository.
+**A bare id** (`/rf-plugin add analytics`) is passed as it is: `pnpm plugin add analytics` looks
+it up in the same catalogue `list --available` reads and prints what it resolved to
+(`analytics → <repo>@<newest tag> --subdir plugins/analytics`) — the first-party repository, else
+the commercial one, at its newest release tag, never the default branch, which can be ahead of
+every release. `<id>@X.Y.Z` pins the release. Leaving the `@ref` off a repository does the same: it
+is read at its newest `X.Y.Z` tag. An id in neither repository stops (exit 1): it is not
+published, so ask for the repository.
 
 A **repo URL** is mirrored under `.upgrade/plugins/` (`--no-fetch` reuses the cache offline); a
 **local path** is read directly, which is the authoring loop (step 6). Expect a plan with these

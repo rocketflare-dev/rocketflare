@@ -8,7 +8,7 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 
 - The run page, timeline, action panel, agent forms/outputs, `useAgents` / `useRunStream` /
   `useNavBadges` → `pages/agents/CLAUDE.md`
-- Knowledge list, document viewer, search, `DocumentCard` / `DocumentLink`, `useDocuments` →
+- Knowledge list, document viewer, search, `Provenance` / `DocumentCard` / `DocumentLink`, `useDocuments` →
   `pages/documents/CLAUDE.md`
 - The chat page or `useChat` / `useSendMessage` → `pages/chat/CLAUDE.md`
 - A Settings tab (AI providers, agent models, groups, people) → `pages/settings/CLAUDE.md`
@@ -40,8 +40,8 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   plugin groups by `composeNav`, filtered by `filterNavConfig`), guards (`ProtectedRoute`,
   `RequireGuard`, `AdminRoute`, `GlobalAdminRoute`), `permissions/` (`AbilityProvider` unpacks
   `session.permissions`; `IfCan`/`IfCannot`), realtime (`WebSocketProvider`, `WebSocketStatus`,
-  `ConnectionBanner`), `shared/` (generic primitives + the visibility trio + `DocumentCard` /
-  `DocumentLink`, all markdown-free — the eager barrel), `ai/` (`Markdown`, `ChatBubble`,
+  `ConnectionBanner`), `shared/` (generic primitives + the visibility trio + `Provenance` /
+  `DocumentCard` / `DocumentLink`, all markdown-free — the eager barrel), `ai/` (`Markdown`, `ChatBubble`,
   `StatRows`, `FeedbackThumbs` — lazy chunks only).
 - `hooks/` — `useAuth` (session, `status`, `selectTenant`, `logout`, `applySession`,
   `useTenancyMode`), `usePermissions` (`can/cannot/isOwnerLevel/isAdminLevel/isGlobalAdmin`),
@@ -51,7 +51,10 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
   `['groups']` family and `useMyGroups` is the only one a plain member may call; `useAiUsage` keys
   on the PRESET and derives the window in `queryFn`; `useSearch` is mutation-style.
 - `lib/` — see `lib/CLAUDE.md`. `stores/websocketStore.ts` — the one zustand store.
-- `pages/` — route components, lazy except Home/Login/NotFound. `admin/` is nested routes under
+- `pages/` — route components, lazy except Home/Login/NotFound. Home lays out
+  `home-sections.ts` (each feature's area: `chat/HomeComposer`, `agents/HomeRuns`,
+  `documents/HomeDocuments`; core Team, AI spend, Activity in `home/`) over one `useHome()` query
+  (`GET /api/home/summary`). `admin/` is nested routes under
   `AdminLayout` (the `globalAdmin` guard). `public/` — static assets copied as-is.
 
 ## Routes and guards

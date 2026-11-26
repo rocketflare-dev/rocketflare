@@ -50,6 +50,7 @@ export function ApproveRequestModal({
     issues?.find(i => i.path[0] === 'approve' && i.path[1] === field)?.message
 
   return (
+    // ui-allow reflex-modal: an approval decided in place from the request list; the role and tenant picks are one decision, not a page of work
     <Modal
       open
       onClose={onClose}

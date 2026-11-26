@@ -13,6 +13,7 @@ import {
   type AgentRunStatus,
   agentListResponseSchema,
   agentRunEventSchema,
+  agentRunListItemSchema,
   agentRunSchema,
   agentRunWithEventsSchema,
   agentStatsResponseSchema,
@@ -37,7 +38,7 @@ import {
 import { ApiError, api, showToast } from '@/ui/lib/api-client'
 import { cleanFilters, queryKeys, toSearchParams } from '@/ui/lib/query-keys'
 
-export const agentRunsResponseSchema = paginatedResponse(agentRunSchema)
+export const agentRunsResponseSchema = paginatedResponse(agentRunListItemSchema)
 
 /** How often an open, still-active run re-reads its row + events without a nudge. */
 export const RUN_POLL_MS = 3000
@@ -47,6 +48,9 @@ export interface AgentRunsFilters {
   pageSize?: number
   agentKey?: string
   status?: AgentRunStatus | ''
+  /** ISO instants: created at or after `since`, before `until` — one day of runs on Home. */
+  since?: string
+  until?: string
 }
 
 /**
@@ -274,7 +278,8 @@ export function useAwaitingInterruptCount(enabled = true) {
   return useQuery({
     queryKey: queryKeys.agentRuns.awaiting,
     queryFn: () =>
-      api.get('/api/agents/interrupts?status=pending&pageSize=1', {
+      // `mine`: the asks put to this reader, not every ask an admin may read.
+      api.get('/api/agents/interrupts?status=pending&mine=true&pageSize=1', {
         schema: interruptInboxResponseSchema,
       }),
     enabled,

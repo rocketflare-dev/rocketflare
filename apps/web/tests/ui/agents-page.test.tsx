@@ -9,6 +9,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useToastStore } from '@/ui/components/shared/Toast'
+import { STACK_HIDE, STACK_ROW, STACK_TABLE } from '@/ui/lib/stacked-table'
 import AgentPage from '@/ui/pages/agents/AgentPage'
 import AgentsPage from '@/ui/pages/agents/AgentsPage'
 import AllRunsPage from '@/ui/pages/agents/AllRunsPage'
@@ -121,7 +122,7 @@ describe('Agents page', () => {
       'href',
       `/agents/${FIXTURE_AGENT}`
     )
-    expect(within(row).getByText('exclusive')).toBeInTheDocument()
+    expect(within(row).getByText('One run at a time')).toBeInTheDocument()
     expect(await within(row).findByText('12 · 1 failed · 1 active')).toBeInTheDocument()
     expect(within(row).getByText(/^15\.3k$/i)).toBeInTheDocument()
     expect(within(row).getByText('42s')).toBeInTheDocument()
@@ -136,6 +137,24 @@ describe('Agents page', () => {
       fetchMock.mock.calls.filter(([input]) => String(input).includes('/api/agents/stats'))
     ).toHaveLength(1)
     expect(screen.getByRole('link', { name: 'All runs' })).toHaveAttribute('href', '/agents/runs')
+  })
+
+  it('stacks below sm like the runs table: the agent, its last run and Run stay; the figures go', async () => {
+    mount()
+    const table = await screen.findByRole('table', { name: 'Agents' })
+    const row = within(table).getByText('Fixture agent').closest('tr') as HTMLElement
+    // jsdom applies no media query, so this pins the shared classes (`lib/stacked-table.ts`).
+    expect(table).toHaveClass(STACK_TABLE)
+    expect(row.className).toContain(STACK_ROW)
+    const cellOf = (el: HTMLElement) => el.closest('td') as HTMLElement
+    const hidden = (el: HTMLElement) => cellOf(el).className.includes(STACK_HIDE)
+    expect(hidden(within(row).getByRole('link', { name: 'Last run of Fixture agent' }))).toBe(false)
+    expect(hidden(within(row).getByRole('button', { name: 'Run Fixture agent' }))).toBe(false)
+    expect(hidden(await within(row).findByText('12 · 1 failed · 1 active'))).toBe(true)
+    // The lead cell's minimum width is a desktop rule; on a phone it would force the overflow.
+    expect(cellOf(within(row).getByRole('link', { name: 'Fixture agent' })).className).not.toMatch(
+      /(^|\s)min-w-\[18rem\]/
+    )
   })
 
   it("an agent's page shows its metrics and only its runs", async () => {
@@ -219,5 +238,21 @@ describe('Agents page', () => {
       .find(u => u.includes('status=failed'))
     expect(url).toContain('/api/agents/runs?')
     expect(url).toContain('page=1')
+  })
+
+  it('all runs: names who asked for each run, never a user id', async () => {
+    const OTHER = '00000000-0000-4000-8000-0000000000aa'
+    mount(
+      {
+        '/api/agents/runs': paged([
+          run({ requestedByUserId: OTHER, requestedBy: { id: OTHER, name: 'Priya Raman' } }),
+        ]),
+      },
+      '/agents/runs'
+    )
+    const table = await screen.findByRole('table', { name: 'Agent runs' })
+    expect(within(table).getByText('Priya Raman')).toBeInTheDocument()
+    expect(within(table).getByText('PR')).toBeInTheDocument()
+    expect(table).not.toHaveTextContent(OTHER.slice(0, 8))
   })
 })

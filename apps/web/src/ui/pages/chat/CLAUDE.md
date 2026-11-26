@@ -32,8 +32,10 @@ the SSE transport rules are in `.claude/rules/ui.md` → Streaming.
 
 `ai_not_configured` (503) — from `POST /api/chat/conversations` (`ApiError`, toast suppressed in
 the hook) or from the send (`AiNotConfiguredError`, `isAiNotConfigured()`) — or readiness
-`chat.ready === false` → the `EmptyState` with a "Configure AI" link to `/settings?tab=ai` for
-`manage AiConfig`, "ask an administrator" otherwise.
+`chat.ready === false` → `NotConfigured`: a "Configure AI" link to `/settings?tab=ai` for
+`manage AiConfig`, "ask an administrator" otherwise. With no conversation open it is the pane's
+`EmptyState`; with one open the thread still renders, read-only, and the call to action takes the
+composer's place — a tenant whose provider was removed can still read its history.
 
 ## Tests
 

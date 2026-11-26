@@ -25,6 +25,7 @@
 import type { AgentRunTimeline } from '@rocketflare/shared/ai/agent-timeline'
 import {
   type AgentRun,
+  type AgentRunListItem,
   type AgentRunWithEvents,
   type AgentStatsResponse,
   agentRunListQuerySchema,
@@ -46,8 +47,22 @@ import {
   resolveInterruptRequestSchema,
 } from '@rocketflare/shared/ai/interrupts'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, count, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm'
-import { type AgentRunRow, agentRunInterrupts, agentRuns } from '../../db/schema'
+import {
+  and,
+  count,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  lt,
+  notInArray,
+  or,
+  type SQL,
+  sql,
+} from 'drizzle-orm'
+import type { Database } from '../../db/client'
+import { type AgentRunRow, agentRunInterrupts, agentRuns, users } from '../../db/schema'
 import { guardPermission, isAdminLevel } from '../middleware/permissions'
 import { recordActivity } from '../services/activity'
 import { projectRunToAgui } from '../services/agents/agui-projection'
@@ -241,19 +256,30 @@ agentsRouter.get('/runs', validate('query', agentRunListQuerySchema), async c =>
       ? eq(agentRuns.parentRunId, query.parentRunId)
       : isNull(agentRuns.parentRunId),
     query.since ? gte(agentRuns.createdAt, query.since) : undefined,
+    query.until ? lt(agentRuns.createdAt, query.until) : undefined,
     query.agentVersion ? eq(agentRuns.agentVersion, query.agentVersion) : undefined
   )
   const [rows, [total]] = await Promise.all([
+    // The requester's NAME rides along so the list never shows a user id. The join is through a
+    // row already filtered to this tenant, so it names only people who started a run here.
     db
-      .select()
+      .select({ run: agentRuns, requesterName: users.name })
       .from(agentRuns)
+      .leftJoin(users, eq(users.id, agentRuns.requestedByUserId))
       .where(where)
       .orderBy(desc(agentRuns.createdAt))
       .limit(limit)
       .offset(offset),
     db.select({ n: count() }).from(agentRuns).where(where),
   ])
-  return c.json(paginated(rows.map(toAgentRun), total?.n ?? 0, query))
+  const items: AgentRunListItem[] = rows.map(({ run, requesterName }) => ({
+    ...toAgentRun(run),
+    requestedBy:
+      run.requestedByUserId && requesterName !== null
+        ? { id: run.requestedByUserId, name: requesterName }
+        : null,
+  }))
+  return c.json(paginated(items, total?.n ?? 0, query))
 })
 
 // ---- POST /api/agents/runs ------------------------------------------------------------------------
@@ -365,14 +391,23 @@ agentsRouter.get('/runs/:id', async c => {
   // read AFTER it, because `expireParkedRun` is exactly the thing that rewrites them.
   const events = await listEvents(db, tenantId, row.id)
   const run = await settleOnRead(c, row, { lastEventAt: events.at(-1)?.at ?? null })
-  const [interrupts, artifacts, decisions, usage] = await Promise.all([
+  const [interrupts, artifacts, decisions, usage, requester] = await Promise.all([
     listInterrupts(db, tenantId, run.id),
     listArtifacts(db, tenantId, run.id),
     listDecisions(db, tenantId, run.id),
     runSpend(db, tenantId, run.id),
+    // Named through the run, which is already this tenant's and visible to the caller.
+    run.requestedByUserId
+      ? db
+          .select({ id: users.id, name: users.name })
+          .from(users)
+          .where(eq(users.id, run.requestedByUserId))
+          .then(found => found[0] ?? null)
+      : Promise.resolve(null),
   ])
   const body: AgentRunWithEvents = {
     ...toAgentRun(run),
+    requestedBy: requester,
     events: events.map(toAgentRunEvent),
     interrupts: interrupts.map(toAgentRunInterrupt),
     artifacts: artifacts.map(toAgentArtifact),
@@ -554,6 +589,7 @@ agentsRouter.post(
       status: body.status,
       payload,
       resolvedByUserId: user.id,
+      realtime,
     })
     if (!resolved) {
       throw new ConflictError(
@@ -683,6 +719,43 @@ agentsRouter.post(
  * `canAnswer` travels per item rather than filtering the list: a member under `approvers: 'admin'`
  * is supposed to see that their run is waiting on somebody, and the UI renders it read-only.
  */
+/**
+ * SQL: the ask is ADDRESSED to this reader — the same people `recipientsFor` notifies. Assigned:
+ * the reader is an assignee. Otherwise the agent's `approvers`: `'admin'` (and a run nobody
+ * requested) → the organisation's owners and admins by MEMBERSHIP role, so a support visitor or a
+ * platform admin is not counted as asked; `'requester'` → whoever started the run.
+ */
+function addressedTo(db: Database, auth: AuthContext, tenantId: string, userId: string): SQL {
+  const isTenantAdmin = auth.tenantUser?.role === 'owner' || auth.tenantUser?.role === 'admin'
+  // Plain strings: the column's type is the registry's key union, and the filter narrows nothing.
+  const adminKeys: string[] = Object.keys(AGENTS).filter(key => approversFor(key) === 'admin')
+  const agentKey = sql<string>`${agentRuns.agentKey}`
+  const unassigned = sql`cardinality(${agentRunInterrupts.assigneeUserIds}) = 0 AND cardinality(${agentRunInterrupts.assigneeGroupIds}) = 0`
+  const byAgentRule = and(
+    eq(agentRuns.tenantId, tenantId),
+    isTenantAdmin
+      ? or(
+          adminKeys.length ? inArray(agentKey, adminKeys) : undefined,
+          isNull(agentRuns.requestedByUserId),
+          eq(agentRuns.requestedByUserId, userId)
+        )
+      : and(
+          eq(agentRuns.requestedByUserId, userId),
+          adminKeys.length ? notInArray(agentKey, adminKeys) : undefined
+        )
+  )
+  return or(
+    assignedToSql(tenantId, userId),
+    and(
+      unassigned,
+      inArray(
+        agentRunInterrupts.runId,
+        db.select({ id: agentRuns.id }).from(agentRuns).where(byAgentRule)
+      )
+    )
+  ) as SQL
+}
+
 agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), async c => {
   const { db, tenantId, user, auth } = withAuthAndDb(c)
   guardPermission(c, 'read', 'AgentRun')
@@ -702,7 +775,8 @@ agentsRouter.get('/interrupts', validate('query', interruptInboxQuerySchema), as
         db.select({ id: agentRuns.id }).from(agentRuns).where(runsWhere)
       ),
       isAdminLevel(auth) ? undefined : assignedToSql(tenantId, user.id)
-    )
+    ),
+    query.mine ? addressedTo(db, auth, tenantId, user.id) : undefined
   )
   const [rows, [total]] = await Promise.all([
     db

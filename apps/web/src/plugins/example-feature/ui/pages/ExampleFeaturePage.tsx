@@ -24,7 +24,7 @@ import {
 
 export default function ExampleFeaturePage() {
   const { user } = useAuth()
-  const { can } = usePermissions()
+  const { can, isGlobalAdmin } = usePermissions()
   const notes = useExampleNotes()
   const create = useCreateExampleNote()
   const remove = useDeleteExampleNote()
@@ -55,9 +55,16 @@ export default function ExampleFeaturePage() {
         <div className="space-y-3 text-sm">
           <p>
             You are seeing this because <code>example-feature</code> is on for this organisation.
-            Turn it off under Admin → Feature flags and this page, its nav item and the whole{' '}
-            <code>/api/example-feature</code> mount disappear — for every role, including a global
-            admin.
+            Feature flags belong to the platform, not to an organisation:{' '}
+            {isGlobalAdmin() ? (
+              <>
+                turn it off under <a href="/admin/feature-flags">Admin → Feature flags</a>
+              </>
+            ) : (
+              <>a platform administrator can turn it off</>
+            )}
+            , and this page, its nav item and the whole <code>/api/example-feature</code> mount
+            disappear — for every role, including a global admin.
           </p>
           <p className="text-muted">
             All of it is one plugin: <code>apps/web/src/plugins/example-feature</code>,{' '}

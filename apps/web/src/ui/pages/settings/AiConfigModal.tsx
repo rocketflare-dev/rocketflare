@@ -257,6 +257,7 @@ function AiConfigForm({
   const err = (field: string) => fieldErrorFor(issues, field)
 
   return (
+    // ui-allow reflex-modal: a provider is a short-lived edit from the settings table; the fields are one credential and leaving the table loses its context
     <Modal
       open={open}
       onClose={onClose}
