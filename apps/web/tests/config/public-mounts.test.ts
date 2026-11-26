@@ -1,13 +1,15 @@
 /**
  * The host's guards on a plugin's PUBLIC mounts (`config` project, no database). A test-local app
- * wired with the SAME two calls `api/index.ts` makes — `apiBodyLimit(publicBodyLimitOverrides(…))`
+ * wired with the SAME two calls `api/index.ts` makes — `apiBodyLimit({ overrides: publicBodyLimitOverrides(…) })`
  * at step 5 and `mountPublicRoutes(…)` in the mount section — so what is exercised is the wiring,
  * not a copy of it:
  *
  *   - a mount that declares nothing is rate-limited per IP (`PUBLIC_MOUNT_RATE_LIMIT`), in a bucket
  *     of its own; `rateLimit: false` turns that off; no `RATE_LIMIT_KV` → no limit;
  *   - `bodyLimitBytes` replaces the 1 MB cap beneath its prefix, for JSON, form-encoded and
- *     `application/scim+json` bodies alike, while every other `/api` path keeps 1 MB.
+ *     `application/scim+json` bodies alike, while every other `/api` path keeps 1 MB;
+ *   - the Worker upload URL's prefix, alone, takes the cap its function answers for the request;
+ *   - a plugin's deprecated `uploadPaths` / `uploadLimits` keep their caps.
  */
 import type { Hono } from 'hono'
 import { describe, expect, it } from 'vitest'
@@ -45,7 +47,7 @@ function echoRouter(): Hono<AppEnv> {
 function hostApp(mounts: readonly PluginPublicMount[]): Hono<AppEnv> {
   const app = createRouter()
   app.onError(errorHandler)
-  app.use('/api/*', apiBodyLimit(publicBodyLimitOverrides(mounts)))
+  app.use('/api/*', apiBodyLimit({ overrides: publicBodyLimitOverrides(mounts) }))
   mountPublicRoutes(app, mounts)
   app.route('/api/other', echoRouter())
   return app
@@ -54,62 +56,32 @@ function hostApp(mounts: readonly PluginPublicMount[]): Hono<AppEnv> {
 const env = (kv?: MemoryKV) => ({ RATE_LIMIT_KV: kv }) as unknown as AppEnv['Bindings']
 const fromIp = (ip: string) => ({ headers: { 'cf-connecting-ip': ip } })
 
-describe('plugin upload paths', () => {
+describe('the Worker upload URL', () => {
+  const LIMIT = MAX_JSON_BODY_BYTES * 3
   const app = createRouter()
   app.onError(errorHandler)
-  app.use('/api/*', apiBodyLimit([], ['/api/orders/upload']))
-  app.route('/api/orders', echoRouter())
-  const big = { method: 'POST', body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1) }
-
-  it('skips the JSON cap beneath a declared path only', async () => {
-    expect((await app.request('/api/orders/upload', big)).status).not.toBe(413)
-    expect((await app.request('/api/orders/uploads', big)).status).toBe(413)
-    expect((await app.request('/api/orders', big)).status).toBe(413)
-  })
-})
-
-describe('plugin upload limits', () => {
-  const LIMIT = MAX_UPLOAD_PATH_BODY_BYTES + 1024 * 1024
-  const app = createRouter()
-  app.onError(errorHandler)
+  let cap = LIMIT
   app.use(
     '/api/*',
-    apiBodyLimit(
-      [],
-      ['/api/orders/files'],
-      pluginUploadLimits([
-        { uploadLimits: { '/api/orders/upload': LIMIT } },
-        { uploadLimits: { '/api/orders/huge': MAX_PLUGIN_UPLOAD_LIMIT_BYTES * 4 } },
-      ])
-    )
+    apiBodyLimit({ workerUpload: { prefix: '/api/upload-content', maxBytes: () => cap } })
   )
-  app.route('/api/orders', echoRouter())
-  const post = (bytes: number, type = 'application/octet-stream') => ({
-    method: 'POST',
-    headers: { 'Content-Type': type },
-    body: 'x'.repeat(bytes),
-  })
-  const atCap = LIMIT + MULTIPART_OVERHEAD_BYTES
+  app.route('/api/upload-content', echoRouter())
+  app.route('/api/uploads', echoRouter())
+  const put = (bytes: number) => ({ method: 'PUT', body: 'x'.repeat(bytes) })
 
-  it('lets a non-JSON body up to its cap through on the exact path, and 413s one byte over', async () => {
-    expect((await app.request('/api/orders/upload', post(atCap))).status).toBe(200)
-    expect((await app.request('/api/orders/upload', post(atCap + 1))).status).toBe(413)
-  })
-
-  it('keeps the 1 MB cap for a JSON body on that path', async () => {
-    const json = post(MAX_JSON_BODY_BYTES + 1, 'application/json')
-    expect((await app.request('/api/orders/upload', json)).status).toBe(413)
+  it('takes a body up to the cap answered for the request beneath its prefix, and 413s one byte over', async () => {
+    expect((await app.request('/api/upload-content/x', put(LIMIT))).status).toBe(200)
+    expect((await app.request('/api/upload-content/x', put(LIMIT + 1))).status).toBe(413)
+    cap = MAX_JSON_BODY_BYTES
+    expect((await app.request('/api/upload-content/x', put(LIMIT))).status).toBe(413)
+    cap = LIMIT
   })
 
-  it('lifts nothing beside the exact path', async () => {
-    const big = post(MAX_UPLOAD_PATH_BODY_BYTES + 1)
-    expect((await app.request('/api/orders/upload/x', big)).status).toBe(413)
-    expect((await app.request('/api/orders/files', big)).status).toBe(413)
-  })
-
-  it('clamps a limit above the ceiling', async () => {
-    const over = post(MAX_PLUGIN_UPLOAD_LIMIT_BYTES + MULTIPART_OVERHEAD_BYTES + 1)
-    expect((await app.request('/api/orders/huge', over)).status).toBe(413)
+  it('lifts nothing beside it: every other /api path keeps the 1 MB cap', async () => {
+    expect((await app.request('/api/uploads', put(MAX_JSON_BODY_BYTES + 1))).status).toBe(413)
+    expect((await app.request('/api/upload-contents', put(MAX_JSON_BODY_BYTES + 1))).status).toBe(
+      413
+    )
   })
 })
 
@@ -227,5 +199,63 @@ describe('public mount body limit', () => {
       expect(res.status, path).toBe(413)
     }
     expect((await post('/api/hooks/plain', 'application/json', '{"a":1}')).status).toBe(200)
+  })
+})
+
+describe('plugin upload paths (deprecated)', () => {
+  const app = createRouter()
+  app.onError(errorHandler)
+  app.use('/api/*', apiBodyLimit({ pluginUploadPaths: ['/api/orders/upload'] }))
+  app.route('/api/orders', echoRouter())
+  const big = { method: 'POST', body: 'x'.repeat(MAX_JSON_BODY_BYTES + 1) }
+
+  it('skips the JSON cap beneath a declared path only', async () => {
+    expect((await app.request('/api/orders/upload', big)).status).not.toBe(413)
+    expect((await app.request('/api/orders/uploads', big)).status).toBe(413)
+    expect((await app.request('/api/orders', big)).status).toBe(413)
+  })
+})
+
+describe('plugin upload limits (deprecated)', () => {
+  const LIMIT = MAX_UPLOAD_PATH_BODY_BYTES + 1024 * 1024
+  const app = createRouter()
+  app.onError(errorHandler)
+  app.use(
+    '/api/*',
+    apiBodyLimit({
+      pluginUploadPaths: ['/api/orders/files'],
+      uploadLimits: pluginUploadLimits([
+        { uploadLimits: { '/api/orders/upload': LIMIT } },
+        { uploadLimits: { '/api/orders/huge': MAX_PLUGIN_UPLOAD_LIMIT_BYTES * 4 } },
+      ]),
+    })
+  )
+  app.route('/api/orders', echoRouter())
+  const post = (bytes: number, type = 'application/octet-stream') => ({
+    method: 'POST',
+    headers: { 'Content-Type': type },
+    body: 'x'.repeat(bytes),
+  })
+  const atCap = LIMIT + MULTIPART_OVERHEAD_BYTES
+
+  it('lets a non-JSON body up to its cap through on the exact path, and 413s one byte over', async () => {
+    expect((await app.request('/api/orders/upload', post(atCap))).status).toBe(200)
+    expect((await app.request('/api/orders/upload', post(atCap + 1))).status).toBe(413)
+  })
+
+  it('keeps the 1 MB cap for a JSON body on that path', async () => {
+    const json = post(MAX_JSON_BODY_BYTES + 1, 'application/json')
+    expect((await app.request('/api/orders/upload', json)).status).toBe(413)
+  })
+
+  it('lifts nothing beside the exact path', async () => {
+    const big = post(MAX_UPLOAD_PATH_BODY_BYTES + 1)
+    expect((await app.request('/api/orders/upload/x', big)).status).toBe(413)
+    expect((await app.request('/api/orders/files', big)).status).toBe(413)
+  })
+
+  it('clamps a limit above the ceiling', async () => {
+    const over = post(MAX_PLUGIN_UPLOAD_LIMIT_BYTES + MULTIPART_OVERHEAD_BYTES + 1)
+    expect((await app.request('/api/orders/huge', over)).status).toBe(413)
   })
 })

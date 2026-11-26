@@ -42,6 +42,7 @@
  * verified API facts. wrangler runs as `pnpm exec wrangler` INSIDE apps/web.
  */
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline/promises'
 import { readManifest } from '../../../scripts/lib/manifest.mjs'
@@ -112,6 +113,7 @@ import {
   readPluginResources,
   siteHostsFromToml,
 } from './provision/plugin-resources'
+import { r2BucketBlocks, uploadCorsPolicy, uploadVars } from './provision/r2-uploads'
 import { redact } from './provision/redact'
 import { emailFromFor, ResendClient, resendRecordsToDns, zoneCandidates } from './provision/resend'
 import { generateHexKey, listWorkerSecrets, putWorkerSecret } from './provision/secrets'
@@ -1044,6 +1046,7 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
   )
   const left = tomlPlaceholders(fs.readFileSync(tomlFor(env), 'utf8'))
   if (left.length) throw new ProvisionError(`${tomlBasename(env)} still has ${left.join(', ')}`)
+  await configureDirectUploads(env)
   await run(
     'git',
     ['diff', '--stat', '--', 'apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml'],
@@ -1059,6 +1062,33 @@ async function cloudflarePhase(env: EnvName, flags: Flags): Promise<void> {
     verifyLine(
       `cloudflare ${env} ok — ${tomlBasename(env)} patched (DATABASE_DRIVER=${driver}); run \`pnpm provision cloudflare ${other}\` and the provisioned parity test runs then`
     )
+  }
+}
+
+/**
+ * Direct uploads: the vars the Worker presigns with, and on every bucket of the toml a CORS rule
+ * letting the app's origin `PUT` with the signed headers. Idempotent (a set var is rewritten only
+ * when it differs; the CORS policy is replaced whole). The key pair is `secrets <env>`'s.
+ */
+async function configureDirectUploads(env: EnvName): Promise<void> {
+  const text = fs.readFileSync(tomlFor(env), 'utf8')
+  const vars = uploadVars(text, requireToken('CLOUDFLARE_ACCOUNT_ID'))
+  if (patchTomlFile(tomlFor(env), { setVars: vars })) {
+    log(`${tomlBasename(env)}: ${Object.keys(vars).join(', ')} written`)
+  }
+  const appUrl = readTomlString(text, 'APP_URL')
+  if (!appUrl)
+    throw new ProvisionError(`${tomlBasename(env)} has no APP_URL for the upload CORS rule`)
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rf-cors-'))
+  const file = path.join(dir, 'cors.json')
+  try {
+    fs.writeFileSync(file, JSON.stringify(uploadCorsPolicy(appUrl)))
+    for (const { bucketName } of r2BucketBlocks(text)) {
+      await wrangler(['r2', 'bucket', 'cors', 'set', bucketName, '--file', file, '--force'])
+      log(`r2 ${bucketName}: CORS allows PUT from ${new URL(appUrl).origin}`)
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
   }
 }
 
@@ -1361,6 +1391,14 @@ async function secretsPhase(env: EnvName, flags: Flags): Promise<void> {
     }
     await putWorkerSecret(env, v.key, value)
     set.push(v.key)
+  }
+
+  for (const key of ['R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY'] as const) {
+    if (!set.includes(key) && !existing.includes(key)) {
+      warn(
+        `${key} is not set — uploads in ${env} go through the Worker, at most 10 MB a file. For direct uploads, create an R2 API token (Object Read & Write on this environment's buckets), put its key pair in ${TOKEN_FILE_LABEL} and re-run \`pnpm provision secrets ${env}\` (docs/DEPLOY.md § Direct uploads)`
+      )
+    }
   }
 
   const after = await listWorkerSecrets(env)

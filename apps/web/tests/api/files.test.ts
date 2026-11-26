@@ -1,5 +1,7 @@
 /**
- * `/api/files` end to end over the in-memory R2 bucket: avatar upload sets `users.avatarUrl`
+ * `/api/files` end to end over the in-memory R2 bucket, its files arriving through the `avatars`
+ * and `uploads` targets of `/api/uploads` (`tests/api/uploads.test.ts` covers the flow itself):
+ * avatar upload sets `users.avatarUrl`
  * and stores the object; MIME allowlist (415) and size cap (413); download streams the bytes with
  * Content-Type / Cache-Control / ETag; tenant isolation (404); delete = owner or admin+. Plus the
  * header matrix the document viewer depends on: a PDF is `inline` AND framable (`SAMEORIGIN` +
@@ -9,7 +11,7 @@
 import { uploadResponseSchema } from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { activityEvents, files, users } from '@/db/schema'
+import { activityEvents, files, pendingUploads, users } from '@/db/schema'
 import {
   createTestSession,
   createTestTenantWithUser,
@@ -19,6 +21,7 @@ import {
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { json, request } from '../helpers/request'
+import { directUpload, type TestUploadFile } from '../helpers/uploads'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
@@ -44,24 +47,19 @@ async function memberOf(tenantId: string, role: 'member' | 'admin' = 'member') {
   return { user, cookie: sessionCookieHeader(await createTestSession(db, user.id, tenantId)) }
 }
 
+/** The direct upload (presign → PUT → confirm), answering the confirm — or the refusal. */
 function upload(
   env: TestEnv,
   cookie: Record<string, string>,
-  file: { bytes: BufferSource | string; name: string; type: string },
-  scope = 'avatars'
+  file: TestUploadFile,
+  target = 'avatars'
 ) {
-  const form = new FormData()
-  form.append('file', new Blob([file.bytes], { type: file.type }), file.name)
-  return request(
-    `/api/files?scope=${scope}`,
-    { method: 'POST', headers: cookie, body: form },
-    { env }
-  )
+  return directUpload(env, cookie, target, file)
 }
 
 const png = (name = 'me.png') => ({ bytes: PNG_BYTES, name, type: 'image/png' })
 
-describe('POST /api/files?scope=avatars', () => {
+describe('the avatars and uploads targets', () => {
   it('201 → row, object in R2, users.avatarUrl = /api/files/<id>, activity recorded', async () => {
     const { owner, tenant, cookie } = await tenantWithOwner()
     const env = createTestEnv()
@@ -86,7 +84,6 @@ describe('POST /api/files?scope=avatars', () => {
     expect(stored).toBeDefined()
     expect(Buffer.from(stored?.body ?? new Uint8Array()).equals(PNG_BYTES)).toBe(true)
     expect(stored?.httpMetadata?.contentType).toBe('image/png')
-    expect(stored?.customMetadata).toMatchObject({ tenantId: tenant.id, ownerUserId: owner.id })
 
     const [user] = await db.select().from(users).where(eq(users.id, owner.id))
     expect(user?.avatarUrl).toBe(`/api/files/${body.id}`)
@@ -108,8 +105,8 @@ describe('POST /api/files?scope=avatars', () => {
     expect(await json(anon)).toMatchObject({ error: expect.any(String), statusCode: 401 })
   })
 
-  it('415 unsupported_media_type for a non-image avatar; 400 file_required without a file', async () => {
-    const { cookie } = await tenantWithOwner()
+  it('415 unsupported_media_type for a non-image avatar, before any URL is handed out', async () => {
+    const { cookie, tenant } = await tenantWithOwner()
     const env = createTestEnv()
     const bad = await upload(env, cookie, { bytes: 'hello', name: 'notes.txt', type: 'text/plain' })
     expect(bad.status).toBe(415)
@@ -120,22 +117,9 @@ describe('POST /api/files?scope=avatars', () => {
     })
     expect(stubs(env).files.objects.size).toBe(0)
 
-    const form = new FormData()
-    form.append('other', 'x')
-    const missing = await request(
-      '/api/files?scope=avatars',
-      { method: 'POST', headers: cookie, body: form },
-      { env }
-    )
-    expect(missing.status).toBe(400)
-    expect(await json(missing)).toMatchObject({ statusCode: 400, code: 'file_required' })
-
-    const notMultipart = await request(
-      '/api/files?scope=avatars',
-      { method: 'POST', headers: cookie },
-      { env, json: { file: 'x' } }
-    )
-    expect(notMultipart.status).toBe(400)
+    expect(
+      await db.select().from(pendingUploads).where(eq(pendingUploads.tenantId, tenant.id))
+    ).toEqual([])
   })
 
   it('413 payload_too_large above MAX_UPLOAD_BYTES (any scope)', async () => {
@@ -153,11 +137,25 @@ describe('POST /api/files?scope=avatars', () => {
     expect(stubs(env).files.objects.size).toBe(0)
   })
 
-  it('400 validation_failed for an unknown scope', async () => {
+  it('400 unknown_upload_target for a target nobody declared; 400 file_empty for nothing', async () => {
     const { cookie } = await tenantWithOwner()
     const res = await upload(createTestEnv(), cookie, png(), 'secrets')
     expect(res.status).toBe(400)
-    expect(await json(res)).toMatchObject({ statusCode: 400, code: 'validation_failed' })
+    expect(await json(res)).toMatchObject({ statusCode: 400, code: 'unknown_upload_target' })
+    const empty = await upload(createTestEnv(), cookie, {
+      bytes: '',
+      name: 'a.png',
+      type: 'image/png',
+    })
+    expect(empty.status).toBe(400)
+    expect(await json(empty)).toMatchObject({ statusCode: 400, code: 'file_empty' })
+  })
+
+  it('503 storage_not_configured without the FILES binding', async () => {
+    const { cookie } = await tenantWithOwner()
+    const res = await upload(createTestEnv({ FILES: undefined }), cookie, png())
+    expect(res.status).toBe(503)
+    expect(await json(res)).toMatchObject({ code: 'storage_not_configured' })
   })
 })
 

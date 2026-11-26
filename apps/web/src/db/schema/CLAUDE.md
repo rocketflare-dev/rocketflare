@@ -64,8 +64,9 @@ closes a cycle back through `plugins/schema.ts`.
 | `oauth_clients` | `oauth.ts` | — | **revoked** | a CACHE of each MCP client's metadata document, keyed by `client_id` (its https URL): name, `redirect_uris`, logo, `fetched_at` (refetched after 24 h) |
 | `oauth_requests` | `oauth.ts` | — | **revoked** | one authorization request: pending 10 min, then the code (`codeHash` unique, 60 s, single-use via `consumedAt`), bound to client, redirect, PKCE challenge, resource, `userId` and `grantId` (cascade). Swept nightly by `pruneMcp` |
 | `mcp_tool_calls` | `mcp.ts` | `tenant_id` | ✓ | the MCP call log — `userId`/`grantId` set null, `clientId`, `tool`, `outcome` (`ok\|error\|rate_limited\|denied`), `code`, `durationMs`, `costMicrocents` (null for now). **Never arguments or results.** Indexes `(tenant_id, created_at DESC)`, `(tenant_id, tool, created_at)`, `(tenant_id, grant_id)`; kept `MCP_CALL_RETENTION_DAYS` |
+| `pending_uploads` | `pending-uploads.ts` | `tenant_id` | ✓ | one direct upload between presign and confirm (`services/uploads/`): `userId` cascade, `target`, `bucket` (the BINDING name), `key` unique, `filename`, `contentType`, `sizeBytes` (what the signature promised), `state` jsonb (the target's `prepare` output), `tokenHash` (only for an upload through the Worker's own URL), `confirmedAt` (the compare-and-set claim; a failed confirm clears it), `expiresAt`. Index `(tenant_id, expires_at)`; the nightly `prunePendingUploads` deletes unconfirmed rows WITH their objects, confirmed ones row-only |
 
-35 policies (`tenants`, `users` + 33 tenant tables); 6 revoked tables = `RLS_REVOKED_TABLES` =
+36 policies (`tenants`, `users` + 34 tenant tables); 6 revoked tables = `RLS_REVOKED_TABLES` =
 `RLS_EXCLUDED_TABLES`. jsonb columns are `$type<>()`d from `@rocketflare/shared` (type-only imports).
 
 ## Conventions

@@ -2,7 +2,7 @@
  * `/documents`: the tenant knowledge base. Two URL tabs (`?tab=text|file`, `URLTabs` like
  * Settings) below the list — paste text (title, text counted against `INGEST_TEXT_MAX_CHARS`, optional source) →
  * `POST /api/ai/documents/ingest`, or upload a file (type/size checked client-side with the shared
- * allowlist, optional title and source) → `POST /upload` as multipart — either answers 201,
+ * allowlist, optional title and source) → the `documents` upload target (straight to storage) — either answers 201,
  * `indexed` at once for small texts or `pending` until the queue lands (conversion + indexing for
  * PDF/Office/HTML) — the list polls while any row is pending. The paginated documents table comes
  * FIRST (title with its type, source in words, status with the failure reason on hover, passages,

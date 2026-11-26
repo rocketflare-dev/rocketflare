@@ -381,6 +381,7 @@ The server surface: the context family, and the types a plugin must be able to n
   What `ctx.env` is (`Cloudflare.Env`), named for the same reason.
 - `type PluginConfig = AppConfig`
   What `ctx.config` is, named so a plugin's own function signature can take it.
+- `interface PluginConfirmedUpload`
 - `interface PluginContext`
   The four things every execution context carries, whatever invoked it.
   - `db: Database`
@@ -448,6 +449,9 @@ The server surface: the context family, and the types a plugin must be able to n
   `callStructuredTool` minus what the runtime supplies.
 - `type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' \| 'maxTokens' \| 'approvals' \| 'runApproved' \| 'journal' > & { maxTokens?: number }`
   `runToolLoop` minus what the runtime supplies.
+- `interface PluginUploadPrepared`
+- `interface PluginUploadPrepareInput<F = unknown>`
+- `interface PluginUploadTarget<F = unknown>`
 - `function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision`
   The cookie-free half: usable from any `PluginContext` — a public handler, a job, a cron.
 - `async function prunePlatformDocuments( ctx: JobCtx \| CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>`
@@ -596,10 +600,10 @@ The server surface: the context family, and the types a plugin must be able to n
     Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadTargets?: readonly PluginUploadTarget[]`
+    Kinds of file people upload STRAIGHT to storage — never through the Worker. Each is a target of `POST /api/uploads` (`id` `<plugin id>.<name>`; `tests/config/plugins.test.ts`…
   - `uploadPaths?: readonly string[]`
-    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
   - `uploadLimits?: Readonly<Record<string, number>>`
-    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -1065,10 +1069,10 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
     Feature keys this plugin's own CONFIG switches on for the deployment, unioned with `FEATURES_ENABLED`, so an `environmentGated` flag can follow a plugin's vars rather than need a…
   - `grants?: Partial<Record<EffectiveRole, RoleGrant>>`
     Per-role CASL rules, applied after the core matrix — additive, never a replacement.
+  - `uploadTargets?: readonly PluginUploadTarget[]`
+    Kinds of file people upload STRAIGHT to storage — never through the Worker. Each is a target of `POST /api/uploads` (`id` `<plugin id>.<name>`; `tests/config/plugins.test.ts`…
   - `uploadPaths?: readonly string[]`
-    Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one…
   - `uploadLimits?: Readonly<Record<string, number>>`
-    EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`, each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and…
   - `rlsExcludedTables?: readonly string[]`
     Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each.
   - `unscopedAllowlist?: Readonly<Record<string, string>>`
@@ -1622,6 +1626,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: PluginAuth.features :: features: readonly string[]
 @/plugins/api :: type :: PluginBindings :: type PluginBindings = AppBindings
 @/plugins/api :: type :: PluginConfig :: type PluginConfig = AppConfig
+@/plugins/api :: interface :: PluginConfirmedUpload :: interface PluginConfirmedUpload
 @/plugins/api :: interface :: PluginContext :: interface PluginContext
 @/plugins/api :: member :: PluginContext.db :: db: Database
 @/plugins/api :: member :: PluginContext.config :: config: PluginConfig
@@ -1659,6 +1664,9 @@ nothing in the comparison that can throw.
 @/plugins/api :: interface :: PluginSignInInput :: interface PluginSignInInput
 @/plugins/api :: type :: PluginStructuredOptions :: type PluginStructuredOptions = Omit< CallStructuredToolOptions<T>, 'model' | 'maxTokens' > & { maxTokens?: number }
 @/plugins/api :: type :: PluginToolLoopOptions :: type PluginToolLoopOptions = Omit< RunToolLoopOptions, 'model' | 'maxTokens' | 'approvals' | 'runApproved' | 'journal' > & { maxTokens?: number }
+@/plugins/api :: interface :: PluginUploadPrepared :: interface PluginUploadPrepared
+@/plugins/api :: interface :: PluginUploadPrepareInput :: interface PluginUploadPrepareInput<F = unknown>
+@/plugins/api :: interface :: PluginUploadTarget :: interface PluginUploadTarget<F = unknown>
 @/plugins/api :: function :: provisionFor :: function provisionFor(ctx: PluginContext, pluginId: string): PluginProvision
 @/plugins/api :: function :: prunePlatformDocuments :: async function prunePlatformDocuments( ctx: JobCtx | CronCtx, input: { source: string; keepExternalIds: readonly string[] } ): Promise<number>
 @/plugins/api :: const :: PUBLIC_MOUNT_ROOT :: const PUBLIC_MOUNT_ROOT: "/api/hooks"
@@ -1747,6 +1755,7 @@ nothing in the comparison that can throw.
 @/plugins/api :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
 @/plugins/api :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/api :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/api :: member :: ServerPlugin.uploadTargets :: uploadTargets?: readonly PluginUploadTarget[]
 @/plugins/api :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/api :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/api :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]
@@ -2017,6 +2026,7 @@ nothing in the comparison that can throw.
 @/plugins/types :: member :: ServerPlugin.eventHandlers :: eventHandlers?: readonly EventHandler[]
 @/plugins/types :: member :: ServerPlugin.deploymentFeatures :: deploymentFeatures?: (config: AppConfig) => readonly string[]
 @/plugins/types :: member :: ServerPlugin.grants :: grants?: Partial<Record<EffectiveRole, RoleGrant>>
+@/plugins/types :: member :: ServerPlugin.uploadTargets :: uploadTargets?: readonly PluginUploadTarget[]
 @/plugins/types :: member :: ServerPlugin.uploadPaths :: uploadPaths?: readonly string[]
 @/plugins/types :: member :: ServerPlugin.uploadLimits :: uploadLimits?: Readonly<Record<string, number>>
 @/plugins/types :: member :: ServerPlugin.rlsExcludedTables :: rlsExcludedTables?: readonly string[]

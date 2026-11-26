@@ -22,6 +22,7 @@ import { chunks, documents, files } from '@/db/schema'
 import { createTestSession, createTestTenantWithUser, sessionCookieHeader } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { json, request } from '../helpers/request'
+import { directUpload } from '../helpers/uploads'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
@@ -72,13 +73,7 @@ const search = (cookie: Record<string, string>, env: TestEnv, body: Record<strin
   request('/api/ai/documents/search', { method: 'POST', headers: cookie }, { env, json: body })
 
 function upload(env: TestEnv, cookie: Record<string, string>, bytes: string, name: string) {
-  const form = new FormData()
-  form.append('file', new Blob([bytes], { type: '' }), name)
-  return request(
-    '/api/ai/documents/upload',
-    { method: 'POST', headers: cookie, body: form },
-    { env }
-  )
+  return directUpload(env, cookie, 'documents', { bytes, name, type: '' })
 }
 
 const sha256 = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex')

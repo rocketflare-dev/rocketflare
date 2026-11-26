@@ -2,7 +2,7 @@
  * `/documents`: the ingest form counts characters against `INGEST_TEXT_MAX_CHARS`, validates
  * with the shared schema and POSTs the exact body (then toasts and clears); the upload tab refuses
  * a wrong type or an oversized file before any request and POSTs the chosen file as multipart to
- * `/api/ai/documents/upload` with the optional title; the table shows status badges with the
+ * `/api/uploads` (the `documents` target: presign, PUT, confirm) with the optional title; the table shows status badges with the
  * failure reason, every title linking to the viewer, a download link only for uploaded originals,
  * and only offers delete on own rows
  * (any row for admin+); a failed row offers Retry (owner or admin+), which posts, re-reads the
@@ -26,6 +26,7 @@ import {
   requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
+import { uploadCalls, uploadRoutes } from './helpers/uploads'
 
 const now = '2025-06-01T00:00:00Z'
 const DOC_A = '55555555-5555-4555-8555-555555555555'
@@ -127,16 +128,14 @@ describe('Documents page', () => {
     expect(screen.getByLabelText('Text')).toHaveValue('')
   })
 
-  it('uploads the chosen file as multipart with the optional title, then toasts and clears', async () => {
-    const fetchMock = mount({
-      'POST /api/ai/documents/upload': (init: RequestInit | undefined) => {
-        const form = init?.body as FormData
-        const file = form.get('file') as File
-        return jsonResponse(
+  it('uploads the chosen file straight to storage with its fields, then toasts and clears', async () => {
+    const fetchMock = mount(
+      uploadRoutes(
+        jsonResponse(
           doc({
             id: DOC_C,
-            title: String(form.get('title') ?? file.name),
-            source: file.name,
+            title: 'Q3 report',
+            source: 'report.pdf',
             contentType: 'application/pdf',
             fileId: FILE_ID,
             status: 'pending',
@@ -145,8 +144,8 @@ describe('Documents page', () => {
           }),
           201
         )
-      },
-    })
+      )
+    )
     fireEvent.click(await screen.findByRole('tab', { name: 'Upload file' }))
     const input = screen.getByLabelText('Upload document') as HTMLInputElement
     expect(input.accept).toBe(DOCUMENT_UPLOAD_ACCEPT)
@@ -160,21 +159,20 @@ describe('Documents page', () => {
     fireEvent.change(screen.getByLabelText(/^Title/), { target: { value: 'Q3 report' } })
     fireEvent.click(screen.getByRole('button', { name: 'Upload document' }))
 
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.some(
-          ([url, init]) => String(url) === '/api/ai/documents/upload' && init?.method === 'POST'
-        )
-      ).toBe(true)
-    )
-    const call = fetchMock.mock.calls.find(([url]) => String(url) === '/api/ai/documents/upload')
-    const body = call?.[1]?.body as FormData
-    expect(body).toBeInstanceOf(FormData)
-    expect((body.get('file') as File).name).toBe('report.pdf')
-    expect(body.get('title')).toBe('Q3 report')
-    expect(body.get('source')).toBeNull()
-    // Multipart: the browser sets the boundary — no JSON content type.
-    expect(new Headers(call?.[1]?.headers).get('Content-Type')).toBeNull()
+    await waitFor(() => expect(uploadCalls(fetchMock).confirmed).toBe(true))
+    const { presign, put } = uploadCalls(fetchMock)
+    expect(presign).toEqual({
+      target: 'documents',
+      name: 'report.pdf',
+      contentType: 'application/pdf',
+      size: 3,
+      // Every field the form holds, visibility included — the old form post dropped it.
+      fields: { title: 'Q3 report', visibility: 'tenant', groupIds: [] },
+    })
+    // The bytes go to storage with exactly the signed headers, and never with the session cookie.
+    expect((put?.body as File | undefined)?.name).toBe('report.pdf')
+    expect(put?.credentials).toBe('omit')
+    expect(new Headers(put?.headers).get('If-None-Match')).toBe('*')
     await waitFor(() =>
       expect(useToastStore.getState().toasts.map(t => t.message)).toContain(
         '"Q3 report" queued for conversion and indexing'
@@ -184,7 +182,7 @@ describe('Documents page', () => {
   })
 
   it('refuses a wrong type or an oversized file before any request', async () => {
-    const fetchMock = mount({ 'POST /api/ai/documents/upload': doc() })
+    const fetchMock = mount(uploadRoutes(doc()))
     fireEvent.click(await screen.findByRole('tab', { name: 'Upload file' }))
     const input = screen.getByLabelText('Upload document') as HTMLInputElement
 
@@ -199,9 +197,7 @@ describe('Documents page', () => {
     fireEvent.change(input, { target: { files: [big] } })
     expect(await screen.findByRole('alert')).toHaveTextContent(/MB or smaller/)
     expect(screen.getByRole('button', { name: 'Upload document' })).toBeDisabled()
-    expect(fetchMock.mock.calls.some(([url]) => String(url) === '/api/ai/documents/upload')).toBe(
-      false
-    )
+    expect(uploadCalls(fetchMock).presign).toBeUndefined()
   })
 
   it('shows status badges with the failure reason, a download link for originals, delete only on own rows', async () => {

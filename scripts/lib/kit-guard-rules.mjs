@@ -197,6 +197,7 @@ export const GUARD_RULES = [
       'apps/web/src/api/routes/tenant.ts',
       'apps/web/src/api/routes/tenants.ts',
       'apps/web/src/api/routes/traces.ts',
+      'apps/web/src/api/routes/uploads.ts',
       'apps/web/src/api/routes/ws.ts',
     ],
     why: 'A route the kit ships; a later kit release changes it in place.',

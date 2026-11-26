@@ -158,9 +158,13 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
 - **A route serving a PDF a page frames calls `ctx.embeddable(row.contentType)`** — the type from
   YOUR row, before any 304 early return; only an `EMBEDDABLE_MIME_TYPES` type is let through
   (`SAMEORIGIN` + `frame-ancestors 'self'` for that response). Never a header of your own.
-- **A file above 10 MB** goes to an exact path in `uploadLimits` (`{ '/api/<id>/upload': bytes }`,
-  ≤ 50 MiB, `uploadLimitIssues`), never a wider `uploadPaths` prefix; the route still mounts its own
-  `bodyLimit` and checks each file.
+- **A file upload is an `uploadTargets` entry** (`PluginUploadTarget`, `<id>.<name>`, ≤ 5 GiB,
+  `uploadTargetIssues`), never a route taking the bytes — no body above 1 MB reaches the Worker.
+  `prepare` authorises and checks `fields` before the URL is signed; `confirm` gets the stored
+  object's key, size and type (already checked against the declaration) and `read()`, and answers
+  the response. The client is `api.upload('<id>.<name>', file, { fields })`. CONCEPTS §16.
+  `uploadPaths` / `uploadLimits` (a multipart route taking the bytes) still work but are
+  DEPRECATED: never add one; move an existing one to `uploadTargets`.
 - **Storage is `ctx.storage()`** (keyed `tenants/<tenantId>/<id>/…`, so `tenant.purge` removes it),
   never `env.FILES` with a hand-built prefix.
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:

@@ -28,6 +28,7 @@ import { getAgent, isAgentKey } from './services/agents/registry'
 import { sweepRun } from './services/agents/runs'
 import { pruneInvitationSendCounters, pruneInvitations } from './services/invitations'
 import { runPruneMcp } from './services/mcp/retention'
+import { prunePendingUploads } from './services/uploads/service'
 import type { AppBindings } from './types'
 import { type Logger, loggerFor } from './utils/core/logger'
 import { pruneTenantCreationCounters } from './utils/db/tenant-helpers'
@@ -277,6 +278,18 @@ export const pruneEvents: ScheduledTask = {
 }
 
 /** Nightly retention for the MCP server: the call log, expired tokens, spent OAuth requests. */
+/**
+ * Direct uploads whose URL and confirm window are both over: an unconfirmed one loses its object
+ * (it was never recorded, or its confirm failed), a confirmed one only its row.
+ */
+export const prunePendingUploadsTask: ScheduledTask = {
+  name: 'prunePendingUploads',
+  async run({ db, env, logger }) {
+    const result = await prunePendingUploads(db, env)
+    logger.info(result, 'prunePendingUploads: removed expired direct uploads')
+  },
+}
+
 export const pruneMcp: ScheduledTask = {
   name: 'pruneMcp',
   async run({ db, config, logger }) {
@@ -287,7 +300,14 @@ export const pruneMcp: ScheduledTask = {
 
 /** Cron expression → tasks. Keep in sync with `[triggers] crons` in both wrangler tomls. */
 const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
-  '0 4 * * *': [pruneExpired, pruneAiSpans, pruneEvents, pruneAgentTurns, pruneMcp],
+  '0 4 * * *': [
+    pruneExpired,
+    pruneAiSpans,
+    pruneEvents,
+    pruneAgentTurns,
+    pruneMcp,
+    prunePendingUploadsTask,
+  ],
   '*/10 * * * *': [sweepLostRuns, sendReminders],
 }
 

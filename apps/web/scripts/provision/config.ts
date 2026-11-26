@@ -86,6 +86,9 @@ export const OPTIONAL_WORKER_SECRETS = [
   'LANGFUSE_PUBLIC_KEY',
   'LANGFUSE_SECRET_KEY',
   'OTEL_EXPORTER_OTLP_HEADERS',
+  // Direct uploads: an R2 API token's S3 key pair, scoped to the app's buckets (docs/DEPLOY.md).
+  'R2_ACCESS_KEY_ID',
+  'R2_SECRET_ACCESS_KEY',
 ] as const
 
 let tokenFileMemo: Record<string, string> | undefined

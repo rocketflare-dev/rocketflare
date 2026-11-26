@@ -5,14 +5,17 @@
  * (`tenants/<tenantId>/<scope>/<uuid>-<name>`) so one prefix scopes a whole tenant for listing
  * or bulk deletion; the UUID makes every key unique regardless of the client's filename.
  *
- * Bytes stream THROUGH the Worker on download (no presigned URLs — the binding cannot mint them).
+ * Uploads go straight to storage (`services/uploads`: a presigned `PUT` over R2's S3 API — the
+ * binding cannot mint one); downloads stream THROUGH the Worker over the binding.
  * `wrangler dev` emulates R2 locally, so there is no filesystem adapter.
  */
 import {
   AVATAR_MIME_TYPES,
   type FileScope,
+  filePath,
   isAvatarMimeType,
   MAX_UPLOAD_BYTES,
+  type StoredFile,
 } from '@rocketflare/shared/files'
 import { eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
@@ -215,7 +218,7 @@ export interface StoreUploadInput {
   tenantId: string
   ownerUserId: string
   scope: FileScope
-  /** The multipart part — a Blob carries its length, which R2 needs. */
+  /** The bytes — a Blob carries its length, which R2 needs. */
   file: Blob
   /** The client's filename (sanitised here). */
   filename: string
@@ -225,7 +228,8 @@ export interface StoreUploadInput {
 /**
  * Put the bytes under a tenant-scoped key, then insert the `files` row that is the ONLY thing the
  * browser can name. No orphaned objects: if the row cannot be written the object is deleted again.
- * Shared by `/api/files` (avatars, generic uploads) and `/api/ai/documents/upload` (originals).
+ * Used by a plugin's `ingestDocument` with bytes it already holds; a person's upload goes straight
+ * to storage instead (`services/uploads`) and is recorded with `recordStoredFile`.
  */
 export async function storeUploadedFile(
   db: Database,
@@ -238,6 +242,41 @@ export async function storeUploadedFile(
     contentType: input.contentType,
     metadata: { tenantId: input.tenantId, ownerUserId: input.ownerUserId, scope: input.scope },
   })
+  return recordStoredFile(db, storage, {
+    tenantId: input.tenantId,
+    ownerUserId: input.ownerUserId,
+    scope: input.scope,
+    key,
+    filename,
+    contentType: input.contentType,
+    sizeBytes: input.file.size,
+  })
+}
+
+export interface RecordStoredFileInput {
+  tenantId: string
+  ownerUserId: string
+  scope: FileScope
+  /** Already in storage, under `tenants/<tenantId>/`. */
+  key: string
+  /** Already sanitised. */
+  filename: string
+  contentType: string
+  sizeBytes: number
+}
+
+/**
+ * The `files` row for an object that is already stored (a confirmed direct upload). If the row
+ * cannot be written the object is deleted, so a failure leaves neither.
+ */
+export async function recordStoredFile(
+  db: Database,
+  storage: StorageService,
+  input: RecordStoredFileInput
+): Promise<FileRow> {
+  if (!input.key.startsWith(tenantStoragePrefix(input.tenantId))) {
+    throw new Error(`files: key ${input.key} is outside the tenant's prefix`)
+  }
   try {
     const [row] = await db
       .insert(files)
@@ -245,17 +284,32 @@ export async function storeUploadedFile(
         tenantId: input.tenantId,
         ownerUserId: input.ownerUserId,
         scope: input.scope,
-        key,
-        filename,
+        key: input.key,
+        filename: input.filename,
         contentType: input.contentType,
-        sizeBytes: input.file.size,
+        sizeBytes: input.sizeBytes,
       })
       .returning()
     if (!row) throw new Error('files: insert returned no row')
     return row
   } catch (err) {
-    await storage.delete(key).catch(() => {})
+    await storage.delete(input.key).catch(() => {})
     throw err
+  }
+}
+
+/** The API's view of a `files` row: the download URL, never the key. */
+export function toStoredFile(row: FileRow): StoredFile {
+  return {
+    id: row.id,
+    tenantId: row.tenantId,
+    ownerUserId: row.ownerUserId,
+    scope: row.scope,
+    filename: row.filename,
+    contentType: row.contentType,
+    sizeBytes: row.sizeBytes,
+    url: filePath(row.id),
+    createdAt: row.createdAt,
   }
 }
 

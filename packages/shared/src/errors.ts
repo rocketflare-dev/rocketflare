@@ -132,6 +132,17 @@ export const ERROR_CODES = {
    * outside the organisation's "who can connect" policy. Never 401: signing in again changes nothing.
    */
   mcpNotAllowed: 'mcp_not_allowed',
+  /** 400 on `POST /api/uploads`: no core target and no installed plugin's has that id. */
+  unknownUploadTarget: 'unknown_upload_target',
+  /** 410 on confirm (or the local `PUT`): the upload's URL expired; the object, if any, is gone. */
+  uploadExpired: 'upload_expired',
+  /** 400 on confirm: nothing arrived at the upload's URL. */
+  uploadMissing: 'upload_missing',
+  /**
+   * 400 on confirm: what arrived is not what was declared — another size or `Content-Type`. The
+   * object is deleted; start a new upload.
+   */
+  uploadMismatch: 'upload_mismatch',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

@@ -69,11 +69,6 @@ export const fileSchema = z.object({
 })
 export type StoredFile = z.infer<typeof fileSchema>
 
-/** `POST /api/files?scope=` → 201 with the row. */
+/** The `avatars` / `uploads` targets' confirm (`POST /api/uploads/:id/confirm`) → 201 with the row. */
 export const uploadResponseSchema = fileSchema
 export type UploadResponse = z.infer<typeof uploadResponseSchema>
-
-export const uploadQuerySchema = z.object({
-  scope: fileScopeSchema.default('uploads'),
-})
-export type UploadQuery = z.infer<typeof uploadQuerySchema>

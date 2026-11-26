@@ -3,7 +3,7 @@
  * hostile-internet endpoints with no session, so the host — not each handler — throttles and
  * size-caps them. Two halves, because they run at two points of the middleware order:
  *
- *   - the body cap is chosen at step 5 (`apiBodyLimit(publicBodyLimitOverrides(mounts))`), before
+ *   - the body cap is chosen at step 5 (`apiBodyLimit({ overrides: publicBodyLimitOverrides(mounts) })`), before
  *     any parsing or DB work, exactly where the 1 MB JSON cap runs;
  *   - the rate limit is applied PER MOUNT by `mountPublicRoutes`, like `authRateLimit` — a per-IP
  *     KV window named after the prefix, default `PUBLIC_MOUNT_RATE_LIMIT`, `false` to turn it off.

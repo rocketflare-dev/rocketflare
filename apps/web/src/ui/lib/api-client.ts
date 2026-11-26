@@ -7,12 +7,13 @@
  *   defence in depth and lets a server-side rule single out the SPA if it ever needs to.
  * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@rocketflare/shared/errors`)
  * - Optional zod `schema` validates the response body
- * - `api.upload(url, formData)` posts multipart (no JSON content-type; the browser sets the boundary)
+ * - `api.upload(target, file)` is the direct upload: presign, `PUT` straight to storage, confirm
  * - 401 → the registered unauthorized handler. `AuthProvider` wires it to
  *   `queryClient.clear()` + redirect to `/login?returnUrl=…`.
  */
 
 import { type ApiErrorBody, apiErrorSchema } from '@rocketflare/shared/errors'
+import { confirmUploadPath, createUploadResponseSchema } from '@rocketflare/shared/uploads'
 import type { z } from 'zod'
 import { showToast } from '../components/shared/Toast'
 
@@ -135,7 +136,7 @@ export async function parseErrorBody(response: Response): Promise<ApiErrorBody> 
   }
 }
 
-type RequestBody = string | FormData
+type RequestBody = string
 
 async function request<T>(
   url: string,
@@ -150,13 +151,11 @@ async function request<T>(
     ...fetchOptions
   } = options
 
-  // multipart: let the browser set `Content-Type` with its boundary.
-  const isMultipart = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
   const response = await fetch(url, {
     credentials: 'include',
     ...fetchOptions,
     headers: {
-      ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
+      'Content-Type': 'application/json',
       'X-Requested-With': 'fetch',
       ...fetchOptions.headers,
     },
@@ -229,8 +228,48 @@ export const api = {
       ...options,
     })
   },
-  /** `POST` a `FormData` body (file uploads). Same envelope/schema handling as the rest. */
-  upload<T>(url: string, form: FormData, options?: ApiRequestOptions<T>): Promise<T> {
-    return request<T>(url, { method: 'POST', body: form, showErrorToast: true, ...options })
+  /**
+   * Upload a file STRAIGHT to storage — the bytes never pass through the Worker. Three steps:
+   * `POST /api/uploads` (every check the target makes, before a byte moves), `PUT` the file to the
+   * URL it answers with exactly its headers, then `POST /api/uploads/:id/confirm`, whose answer is
+   * the target's (`schema` parses it). A refused `PUT` is an `ApiError` with code
+   * `upload_refused`; the server's own errors keep their codes. Errors toast, as for any mutation.
+   */
+  async upload<T>(
+    target: string,
+    file: File,
+    options: ApiRequestOptions<T> & { fields?: Record<string, unknown> } = {}
+  ): Promise<T> {
+    const { fields, ...rest } = options
+    const toastOnError = rest.showErrorToast ?? true
+    const ticket = await request(UPLOADS_PATH, {
+      method: 'POST',
+      ...withBody({ target, name: file.name, contentType: file.type, size: file.size, fields }),
+      schema: createUploadResponseSchema,
+      showErrorToast: toastOnError,
+    })
+    // No cookie: the URL is its own credential, and R2 is another origin.
+    const put = await fetch(ticket.url, {
+      method: ticket.method,
+      headers: ticket.headers,
+      body: file,
+      credentials: 'omit',
+    }).catch(() => null)
+    if (!put?.ok) {
+      const error = new ApiError({
+        error: 'The file could not be uploaded — try again',
+        statusCode: put?.status ?? 0,
+        code: 'upload_refused',
+      })
+      if (toastOnError) showToast(error.message, 'error')
+      throw error
+    }
+    return request<T>(confirmUploadPath(ticket.uploadId), {
+      method: 'POST',
+      showErrorToast: true,
+      ...rest,
+    })
   },
 }
+
+const UPLOADS_PATH = '/api/uploads'

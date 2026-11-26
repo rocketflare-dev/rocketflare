@@ -88,7 +88,7 @@ export function errorResponse(status: number, error = 'Error', code?: string) {
 export const notFoundResponse = () => errorResponse(404, 'Not found', 'not_found')
 export const unauthorizedResponse = () => errorResponse(401, 'Unauthorized', 'unauthorized')
 
-type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
+export type FetchLike = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
 
 /** `{ 'GET /api/members': handler }`; the method defaults to GET when omitted from the key. */
 export type RouteTable = Record<

@@ -66,6 +66,7 @@ import {
   headerItemIssues,
   isPluginEntry,
   isPluginFile,
+  MAX_UPLOAD_TARGET_BYTES,
   PLUGIN_IMPORT_ENFORCEMENT,
   pluginIdOfPath,
   pluginImportIssue,
@@ -79,6 +80,7 @@ import {
   uiEntryIssues,
   uploadLimitIssues,
   uploadPathIssues,
+  uploadTargetIssues,
 } from '../helpers/plugins'
 import { createTestEnv } from '../mocks/bindings'
 
@@ -789,7 +791,7 @@ describe('installed plugins', () => {
     expect(issues).toEqual([])
   })
 
-  it('skips the body cap only beneath its own API prefix', () => {
+  it('a deprecated uploadPaths entry skips the body cap only beneath its own API prefix', () => {
     expect(uploadPathIssues('orders', ['/api/orders/upload'])).toEqual([])
     expect(uploadPathIssues('orders', ['/api/orders/'])).toHaveLength(1)
     expect(uploadPathIssues('orders', ['/api/files'])).toHaveLength(1)
@@ -799,7 +801,7 @@ describe('installed plugins', () => {
     )
   })
 
-  it('declares upload limits on its own exact paths, within the host ceiling', () => {
+  it('a deprecated uploadLimits entry is its own exact path, within the host ceiling', () => {
     expect(uploadLimitIssues('orders', { '/api/orders/upload': 25 * 1024 * 1024 })).toEqual([])
     expect(uploadLimitIssues('orders', { '/api/files': 1 })).toHaveLength(1)
     expect(uploadLimitIssues('orders', { '/api/orders/': 1 })).toHaveLength(1)
@@ -809,6 +811,28 @@ describe('installed plugins', () => {
       uploadLimitIssues('orders', { '/api/orders/upload': MAX_PLUGIN_UPLOAD_LIMIT_BYTES + 1 })
     ).toHaveLength(1)
     expect(serverPlugins.flatMap(p => uploadLimitIssues(p.shared.id, p.uploadLimits))).toEqual([])
+  })
+
+  it('declares upload targets under its own id, each once, within a single PUT', () => {
+    expect(uploadTargetIssues('orders', [{ id: 'orders.receipt', maxBytes: 1024 }])).toEqual([])
+    expect(uploadTargetIssues('orders', [{ id: 'avatars', maxBytes: 1 }])).toHaveLength(1)
+    expect(uploadTargetIssues('orders', [{ id: 'billing.receipt', maxBytes: 1 }])).toHaveLength(1)
+    expect(uploadTargetIssues('orders', [{ id: 'orders.a.b', maxBytes: 1 }])).toHaveLength(1)
+    expect(uploadTargetIssues('orders', [{ id: 'orders.Receipt', maxBytes: 1 }])).toHaveLength(1)
+    expect(
+      uploadTargetIssues('orders', [
+        { id: 'orders.receipt', maxBytes: 1 },
+        { id: 'orders.receipt', maxBytes: 1 },
+      ])
+    ).toHaveLength(1)
+    expect(uploadTargetIssues('orders', [{ id: 'orders.receipt', maxBytes: 0 }])).toHaveLength(1)
+    expect(uploadTargetIssues('orders', [{ id: 'orders.receipt', maxBytes: 1.5 }])).toHaveLength(1)
+    expect(
+      uploadTargetIssues('orders', [
+        { id: 'orders.receipt', maxBytes: MAX_UPLOAD_TARGET_BYTES + 1 },
+      ])
+    ).toHaveLength(1)
+    expect(serverPlugins.flatMap(p => uploadTargetIssues(p.shared.id, p.uploadTargets))).toEqual([])
   })
 
   it('declares public-mount guards within the host ceilings', () => {

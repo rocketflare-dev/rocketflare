@@ -1,6 +1,6 @@
 /**
  * The signed-in person: `GET/PATCH /api/me`, per-tenant preferences, linked sign-in
- * providers, and the avatar upload (`POST /api/files?scope=avatars`). Profile edits also
+ * providers, and the avatar upload (the `avatars` target of `/api/uploads`). Profile edits also
  * refresh the session (name/avatar live there too).
  *
  * Contract note: `/api/me` is assumed to return `userSchema` and `/api/me/preferences`
@@ -67,20 +67,17 @@ export function validateAvatarFile(file: File): string | null {
   return null
 }
 
-/** Uploads to `/api/files?scope=avatars`; the server sets `users.avatarUrl`, so refresh both caches. */
+/** The `avatars` upload target; the server sets `users.avatarUrl`, so refresh both caches. */
 export function useUploadAvatar() {
   const queryClient = useQueryClient()
   const { refresh } = useAuth()
   return useMutation({
-    mutationFn: (file: File) => {
-      const form = new FormData()
-      form.append('file', file, file.name)
-      return api.upload('/api/files?scope=avatars', form, {
+    mutationFn: (file: File) =>
+      api.upload('avatars', file, {
         schema: uploadResponseSchema,
         showSuccessToast: true,
         successMessage: 'Photo updated',
-      })
-    },
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.me.all })
       await queryClient.invalidateQueries({ queryKey: queryKeys.auth.all })

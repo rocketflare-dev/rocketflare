@@ -390,6 +390,17 @@ const coreConfigSchema = z.object({
       .optional()
   ),
   RESEND_API_KEY: optionalString,
+  /**
+   * Direct-to-storage uploads (`services/uploads`): the account whose R2 S3 API signs the `PUT`
+   * URLs, and the S3 name of the `FILES` bucket (the binding cannot tell the Worker its own name).
+   * Both are `[vars]`; the key pair is a secret, from an R2 API token scoped to the app's buckets.
+   * Without all four a DEPLOYED Worker answers `POST /api/uploads` with 503
+   * `storage_not_configured`; `development` falls back to a `PUT` on the Worker itself.
+   */
+  R2_ACCOUNT_ID: optionalString,
+  FILES_BUCKET_NAME: optionalString,
+  R2_ACCESS_KEY_ID: optionalString,
+  R2_SECRET_ACCESS_KEY: optionalString,
   /** Comma-separated emails promoted to global admin on first VERIFIED login. */
   BOOTSTRAP_ADMIN_EMAILS: csvList,
   GOOGLE_CLIENT_ID: optionalString,
@@ -502,6 +513,16 @@ export function oauthRedirectUri(cfg: AppConfig, provider: OAuthProviderName): s
 
 /** Without a Resend key, magic links are logged instead of sent (zero-creds first run). */
 export const hasEmail = (cfg: AppConfig): boolean => Boolean(cfg.RESEND_API_KEY)
+
+/** The R2 S3 API key pair and account, when all are set — what presigning an upload needs. */
+export function r2SigningCredentials(
+  cfg: AppConfig
+): { accountId: string; accessKeyId: string; secretAccessKey: string } | null {
+  const { R2_ACCOUNT_ID: accountId, R2_ACCESS_KEY_ID: accessKeyId } = cfg
+  const secretAccessKey = cfg.R2_SECRET_ACCESS_KEY
+  if (!accountId || !accessKeyId || !secretAccessKey) return null
+  return { accountId, accessKeyId, secretAccessKey }
+}
 
 /** Providers whose client id AND secret are both present — the login page shows only these. */
 export function configuredOAuthProviders(cfg: AppConfig): OAuthProviderName[] {

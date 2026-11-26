@@ -48,6 +48,8 @@ const CORE_UNSCOPED_ALLOWLIST: Record<string, string> = {
     'assertMayOwnAnother counts the organisations ONE person owns across every tenant — that is the MAX_OWNED_TENANTS_PER_USER ceiling, read under a lock on the user row',
   'src/api/services/mcp/retention.ts':
     'runPruneMcp is the nightly MCP retention: calls past MCP_CALL_RETENTION_DAYS, tokens past their own expiry and spent refresh tokens past the retry grace and grants whose code was never redeemed are cleared across every tenant in one statement each, like the span prune; a stale client metadata cache row goes only when no grant in any tenant names its client',
+  'src/api/services/uploads/service.ts':
+    "receiveLocalUpload is the development stand-in for R2's presigned PUT: it runs before any session, so the upload id names the row and the token hash stored on it is the credential, exactly as a signature is on R2; prunePendingUploads is the nightly cron deleting upload reservations past their confirm deadline across every tenant, from the (tenant_id, expires_at) index",
   'src/api/observability/span-store.ts':
     'insertSpans is an INSERT, never a read: every row carries the tenant_id of the trace that recorded it (a span without one is dropped by toSpanRow), and one flush may hold spans from more than one tenant',
 }

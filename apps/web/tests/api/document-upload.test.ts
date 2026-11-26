@@ -1,5 +1,6 @@
 /**
- * `POST /api/ai/documents/upload` end to end over the in-memory R2 bucket and the AI stub:
+ * The `documents` upload target (`/api/uploads`, presign → PUT → confirm) end to end over the
+ * in-memory R2 bucket and the AI stub:
  * a Markdown file (declared type empty, as browsers send `.md`) is decoded and indexed inline —
  * object under `tenants/<t>/documents/`, `files` row scope `documents`, `fileId` on the document,
  * chunks present; a PDF returns `pending` with a `document.convert` job on the queue and no
@@ -22,6 +23,7 @@ import {
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
 import { json, request } from '../helpers/request'
+import { directUpload } from '../helpers/uploads'
 import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 
 const db = setupTestDatabase()
@@ -41,20 +43,14 @@ interface Part {
   type: string
 }
 
+/** The `documents` target, all three steps; answers the confirm — or the refusal before it. */
 function upload(
   env: TestEnv,
   cookie: Record<string, string>,
   file: Part,
-  fields: Record<string, string> = {}
+  fields: Record<string, unknown> = {}
 ) {
-  const form = new FormData()
-  form.append('file', new Blob([file.bytes], { type: file.type }), file.name)
-  for (const [k, v] of Object.entries(fields)) form.append(k, v)
-  return request(
-    '/api/ai/documents/upload',
-    { method: 'POST', headers: cookie, body: form },
-    { env }
-  )
+  return directUpload(env, cookie, 'documents', file, fields)
 }
 
 const MD = '# Handbook\n\nThe volcano erupted.\r\n\r\nBananas are yellow.'
@@ -65,7 +61,7 @@ const pdf = (name = 'report.pdf'): Part => ({
   type: 'application/pdf',
 })
 
-describe('POST /api/ai/documents/upload', () => {
+describe('the documents upload target', () => {
   it('a Markdown file (empty declared type) → 201 indexed, object + files row + fileId + chunks', async () => {
     const { tenant, user, cookie } = await actor()
     const env = createTestEnv()
@@ -207,15 +203,6 @@ describe('POST /api/ai/documents/upload', () => {
     expect(empty.status).toBe(400)
     expect(await json(empty)).toMatchObject({ code: 'file_empty' })
 
-    const form = new FormData()
-    form.append('title', 'no file')
-    const none = await request(
-      '/api/ai/documents/upload',
-      { method: 'POST', headers: cookie, body: form },
-      { env }
-    )
-    expect(none.status).toBe(400)
-    expect(await json(none)).toMatchObject({ code: 'file_required' })
     expect(stubs(env).files.objects.size).toBe(0)
   })
 

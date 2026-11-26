@@ -60,7 +60,10 @@ import { oauthRouter, wellKnownRouter } from './routes/oauth'
 import { tenantRouter } from './routes/tenant'
 import { tenantsRouter } from './routes/tenants'
 import { tracesRouter } from './routes/traces'
+import { localUploadRouter, uploadsRouter } from './routes/uploads'
 import { wsRouter } from './routes/ws'
+import { LOCAL_UPLOAD_PREFIX, MAX_WORKER_UPLOAD_BYTES } from './services/uploads/service'
+import { uploadTargets } from './services/uploads/targets'
 import type { AppEnv } from './types'
 import { assertNoReservedPluginPaths, isApiPath } from './utils/routes/api-prefixes'
 import { createRouter } from './utils/routes/router'
@@ -94,16 +97,26 @@ app.use('*', requestIdMiddleware, requestLogger)
 app.use('*', configMiddleware)
 app.use('*', securityHeaders)
 
-// 5. Reject oversized bodies before any parsing or DB work. The upload routes mount their own
-//    (larger) limit, and a public mount's `bodyLimitBytes` replaces the 1 MB cap beneath its
-//    prefix — see middleware/body-limit.ts.
+// 5. Reject oversized bodies before any parsing or DB work. No core route takes a file (uploads
+//    go through `/api/uploads`); a public mount's `bodyLimitBytes` replaces the 1 MB cap beneath
+//    its prefix; the Worker's own upload URL takes up to the largest target in development and
+//    `MAX_WORKER_UPLOAD_BYTES` deployed; a plugin's deprecated `uploadPaths` / `uploadLimits` keep
+//    their caps — see middleware/body-limit.ts.
+const LARGEST_UPLOAD_TARGET = Math.max(...[...uploadTargets().values()].map(t => t.maxBytes))
 app.use(
   '/api/*',
-  apiBodyLimit(
-    publicBodyLimitOverrides(publicMounts),
-    serverPlugins.flatMap(p => p.uploadPaths ?? []),
-    pluginUploadLimits(serverPlugins)
-  )
+  apiBodyLimit({
+    overrides: publicBodyLimitOverrides(publicMounts),
+    workerUpload: {
+      prefix: LOCAL_UPLOAD_PREFIX,
+      maxBytes: c =>
+        c.get('config').APP_ENV === 'development'
+          ? LARGEST_UPLOAD_TARGET
+          : Math.min(LARGEST_UPLOAD_TARGET, MAX_WORKER_UPLOAD_BYTES),
+    },
+    pluginUploadPaths: serverPlugins.flatMap(p => p.uploadPaths ?? []),
+    uploadLimits: pluginUploadLimits(serverPlugins),
+  })
 )
 // A plugin may own a prefix outside `/api` (a protocol endpoint); it gets the JSON cap too.
 for (const prefix of serverPlugins.flatMap(p => p.apiPrefixes ?? [])) {
@@ -141,6 +154,9 @@ app.route('/auth', authRouter)
 app.route('/api/identity', identityEventsRouter)
 app.use('/api/invite/:token/accept', authRateLimit)
 app.route('/api/invite', inviteRouter)
+// The Worker's stand-in for R2's presigned PUT, handed out when the R2 key pair is not set: the
+// URL's token is its credential, as the signature is R2's, so it is not in the authed table.
+app.route(LOCAL_UPLOAD_PREFIX, localUploadRouter)
 // The MCP server: an OAuth access token is its only credential, resolved by the route itself
 // (never `authMiddleware`, which takes cookies and API keys). Its own CORS, deployment gate and
 // Origin rule are in `routes/mcp.ts`; the global CORS skips it (`middleware/cors.ts`).
@@ -180,6 +196,7 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   ['/api/home', homeRouter],
   ['/api/access-requests', accessRequestsRouter],
   ['/api/files', filesRouter],
+  ['/api/uploads', uploadsRouter],
   ['/api/ai/config', aiConfigRouter],
   ['/api/ai/prompts', aiPromptsRouter],
   ['/api/ai/usage', aiUsageRouter],
