@@ -302,10 +302,13 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
     private rather than public, and a hidden row answers the SAME 404 as a missing one.
 - Producers: assert on `stubs(env).queue.messages` (RecordingQueue) — `body.type`, `body.payload` —
   and that the route did NOT do the work itself (no `[email:dev]` line, no provider fetch)
-- Uploads: `new FormData()` + `form.append('file', new File([bytes], 'a.png', { type: 'image/png' }))`
-  as the request body (no `Content-Type` header — the runtime sets the boundary); assert the row, the
-  object in `stubs(env).files.objects`, and the 413/415 envelopes (`files.test.ts`,
-  `document-upload.test.ts`)
+- Uploads: `directUpload(env, cookie, target, { bytes, name, type }, fields?)`
+  (`tests/helpers/uploads.ts`) runs presign → the Worker's own PUT URL (no R2 keys in tests) → confirm and answers
+  the confirm (or the refusal before it); `createUploadRequest` / `putUpload` / `confirmUploadRequest`
+  are the steps alone. Assert the row, the object in `stubs(env).files.objects`, and the 413/415
+  envelopes (`files.test.ts`, `document-upload.test.ts`; the shared flow — mismatch, expiry,
+  cross-tenant 404, prune — is `uploads.test.ts`). A UI test stubs the three calls with
+  `uploadRoutes(confirmAnswer)` and reads them back with `uploadCalls` (`tests/ui/helpers/uploads.ts`)
 
 ## What every API test file includes
 

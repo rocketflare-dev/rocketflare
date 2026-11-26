@@ -56,6 +56,7 @@ import { enqueueJob, type JobsQueue } from '../jobs'
 import { deleteDocumentsWithFacts } from '../knowledge/remove'
 import {
   deleteStoredFile,
+  recordStoredFile,
   type StorageService,
   sanitizeFilename,
   storeUploadedFile,
@@ -770,8 +771,13 @@ export interface IngestFileInput {
   tenantId: string
   /** Required: a `files` row always has an owner (it cascades from the user). */
   userId: string
-  /** The multipart part (a Blob carries the length R2 needs). */
-  file: Blob
+  /**
+   * The bytes: a Blob the caller holds (a plugin's `ingestDocument`), stored here; or an object a
+   * direct upload ALREADY put in storage (`services/uploads`), recorded in place and read back only
+   * when its text is decoded here. A stored original that ends up unused (a duplicate, an unchanged
+   * re-sync) is deleted.
+   */
+  file: Blob | StoredOriginal
   /** The client's filename — the storage key, the default title and the default source derive from it. */
   filename: string
   /** Resolved by `resolveDocumentUploadType` at the route (415 before this is called). */
@@ -787,6 +793,16 @@ export interface IngestFileInput {
   origin?: DocumentOrigin
   reviewerUserId?: string | null
 }
+
+/** An object already in storage under the tenant's prefix — a confirmed direct upload. */
+export interface StoredOriginal {
+  key: string
+  size: number
+  read(): Promise<Blob>
+}
+
+const isStoredOriginal = (file: Blob | StoredOriginal): file is StoredOriginal =>
+  !(file instanceof Blob) && 'key' in file
 
 export interface IngestFileDeps extends IngestDeps {
   /** `createR2Storage(env.FILES)` — the route answers 503 `storage_not_configured` without it. */
@@ -830,8 +846,16 @@ export async function ingestFile(
   // duplicate answers the existing document without an R2 object or `files` row to clean up.
   let text: string | null = null
   let hash: string | null = null
+  const original = input.file
+  const stored = isStoredOriginal(original) ? original : null
+  /** A duplicate or unchanged answer stored nothing — so a direct upload's object goes too. */
+  const dropUnused = async () => {
+    if (stored) await deps.storage.delete(stored.key).catch(() => {})
+  }
   if (input.type.kind === 'text') {
-    text = normalizeDocumentText(await decodeText(input.file))
+    text = normalizeDocumentText(
+      await decodeText(stored ? await stored.read() : (original as Blob))
+    )
     hash = await contentHash(text)
     const source = input.source?.trim() || sanitizeFilename(input.filename || 'file')
     const visibility = input.visibility ?? 'tenant'
@@ -852,22 +876,36 @@ export async function ingestFile(
           },
           input.groupIds
         )
+        await dropUnused()
         return { document, mode: 'unchanged', deduplicated: false }
       }
     } else {
       const duplicate = await findDuplicate(db, input.tenantId, source, hash, visibility)
-      if (duplicate) return { document: duplicate, mode: 'unchanged', deduplicated: true }
+      if (duplicate) {
+        await dropUnused()
+        return { document: duplicate, mode: 'unchanged', deduplicated: true }
+      }
     }
   }
 
-  const stored = await storeUploadedFile(db, deps.storage, {
-    tenantId: input.tenantId,
-    ownerUserId: input.userId,
-    scope: 'documents',
-    file: input.file,
-    filename: input.filename,
-    contentType: input.type.contentType,
-  })
+  const fileRow = stored
+    ? await recordStoredFile(db, deps.storage, {
+        tenantId: input.tenantId,
+        ownerUserId: input.userId,
+        scope: 'documents',
+        key: stored.key,
+        filename: sanitizeFilename(input.filename || 'file'),
+        contentType: input.type.contentType,
+        sizeBytes: stored.size,
+      })
+    : await storeUploadedFile(db, deps.storage, {
+        tenantId: input.tenantId,
+        ownerUserId: input.userId,
+        scope: 'documents',
+        file: original as Blob,
+        filename: input.filename,
+        contentType: input.type.contentType,
+      })
   const pieces: TextChunk[] = text !== null ? chunkText(text) : []
 
   let row: DocumentRow | undefined
@@ -877,12 +915,12 @@ export async function ingestFile(
       tenantId: input.tenantId,
       ownerUserId: input.userId,
       title: input.title?.trim() || titleFromFilename(input.filename),
-      source: input.source?.trim() || stored.filename,
+      source: input.source?.trim() || fileRow.filename,
       contentType: input.type.contentType,
-      sizeBytes: input.file.size,
+      sizeBytes: original.size,
       content: text,
       contentHash: hash,
-      fileId: stored.id,
+      fileId: fileRow.id,
       status: 'pending' as const,
       visibility: input.visibility ?? 'tenant',
       origin: input.origin ?? 'upload',
@@ -903,10 +941,10 @@ export async function ingestFile(
     if (!row) throw new Error('documents: insert returned no row')
     if (!external) await grantDocumentGroups(db, input.tenantId, row, input.groupIds)
   } catch (err) {
-    await deleteStoredFile(db, deps.storage, stored).catch(() => {})
+    await deleteStoredFile(db, deps.storage, fileRow).catch(() => {})
     throw err
   }
-  if (previous?.fileId && previous.fileId !== stored.id) {
+  if (previous?.fileId && previous.fileId !== fileRow.id) {
     await dropStoredFile(db, deps.storage, input.tenantId, previous.fileId)
   }
 

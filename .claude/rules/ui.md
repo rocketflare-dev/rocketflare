@@ -113,9 +113,11 @@ is `// ui-allow <rule>: <reason>` on the line above; an allow with no reason is 
 - Pagination meta is `{ page, pageSize, total, totalPages }`; every list renders
   `PaginationControls` (hides itself at one page). Forms: controlled inputs validated with the
   server's `@rocketflare/shared` schema, `FieldError` per field
-- Files (D23): `api.upload(url, formData, { schema })` posts multipart **without** a JSON
-  `Content-Type`. Check type/size with `@rocketflare/shared/files` first (`validateAvatarFile`) so
-  413/415 are a backstop. `<img src={user.avatarUrl}>` needs an `onError` fallback to initials —
+- Files (D23): `api.upload(target, file, { fields, schema })` is the direct upload — presign
+  (`POST /api/uploads`), `PUT` the file straight to storage with exactly the answered headers and
+  no cookie, then confirm, whose answer `schema` parses. Never post a file to the Worker. Check
+  type/size with `@rocketflare/shared/files` first (`validateAvatarFile`) so 413/415 are a
+  backstop. `<img src={user.avatarUrl}>` needs an `onError` fallback to initials —
   the object is tenant-scoped, the URL is not
 - **A third-party provider with its own TanStack Query** escapes the global `onError`: give it a
   `QueryClient` mapping 401 → `notifyUnauthorized`, and pass `credentials` + `X-Requested-With`

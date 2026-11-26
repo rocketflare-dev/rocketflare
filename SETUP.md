@@ -971,7 +971,7 @@ in `apps/web/.dev.vars.example` (skip `DATABASE_DRIVER` and `NEON_LOCAL_PROXY` �
 ```bash
 # one per name: OAUTH_ENCRYPTION_KEY RESEND_API_KEY BOOTSTRAP_ADMIN_EMAILS GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET
 #   MICROSOFT_CLIENT_ID MICROSOFT_CLIENT_SECRET OIDC_CLIENT_SECRET ANTHROPIC_API_KEY EMBEDDINGS_API_KEY LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY
-#   OTEL_EXPORTER_OTLP_HEADERS TYPESAFE_API_KEY
+#   OTEL_EXPORTER_OTLP_HEADERS TYPESAFE_API_KEY R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
 printf '%s' "$OAUTH_ENCRYPTION_KEY" | pnpm web exec wrangler secret put OAUTH_ENCRYPTION_KEY -c wrangler.staging.toml
 ```
 `wrangler secret put NAME` reads the value from stdin when stdin is not a terminal — pipe it with
@@ -979,7 +979,10 @@ printf '%s' "$OAUTH_ENCRYPTION_KEY" | pnpm web exec wrangler secret put OAUTH_EN
 (interactively it prompts). `pnpm provision secrets <env>` does exactly this for every name exported
 in the shell. Repeat without `-c` for production after its first deploy. Use different keys per
 environment. `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`, `TYPESAFE_API_KEY`, the two `LANGFUSE_*` keys and `OTEL_EXPORTER_OTLP_HEADERS` are optional
-(Part 2.5/2.6): skip them and the features degrade as described there.
+(Part 2.5/2.6): skip them and the features degrade as described there. `R2_ACCESS_KEY_ID` /
+`R2_SECRET_ACCESS_KEY` are an R2 API token's key pair (`docs/DEPLOY.md` § Direct uploads): without
+them uploads go through the Worker instead, capped at 10 MB a file deployed; locally they stay
+blank.
 Verify: `pnpm web exec wrangler secret list -c wrangler.staging.toml` shows the names;
 `curl https://<staging-host>/api/health` returns ok, `curl https://<staging-host>/api/ready` returns
 ok (it runs a query — a 503 there means the Worker cannot reach Neon: under `neon` a missing or

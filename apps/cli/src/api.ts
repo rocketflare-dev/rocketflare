@@ -5,6 +5,7 @@
  * `CliApiError` with `status: 0` so callers only ever handle one error type.
  */
 import { apiErrorSchema } from '@rocketflare/shared/errors'
+import { confirmUploadPath, createUploadResponseSchema } from '@rocketflare/shared/uploads'
 import type { z } from 'zod'
 import { CliError, EXIT_ERROR, EXIT_FORBIDDEN, EXIT_NOT_LOGGED_IN } from './errors'
 import { BIN_NAME, VERSION } from './package-info'
@@ -86,12 +87,26 @@ export interface ApiClient {
   del<T = unknown>(path: string, options?: RequestOptions<T>): Promise<T>
   /** A file's bytes, for a download route that does not answer JSON. Errors are the usual `CliApiError`. */
   getBytes(path: string): Promise<Uint8Array>
-  /** Multipart POST, for an upload route. The response is parsed like `request`. */
-  postForm<T = unknown>(
-    path: string,
-    form: FormData,
-    options?: Pick<RequestOptions<T>, 'schema'>
-  ): Promise<T>
+  /**
+   * Upload a file STRAIGHT to storage through an upload target (`avatars`, `uploads`,
+   * `documents`, or a plugin's `<id>.<name>`): `POST /api/uploads`, `PUT` the bytes to the URL it
+   * answers (no API key — the URL is its own credential), then `POST /api/uploads/:id/confirm`,
+   * whose answer is the target's and is parsed by `schema`.
+   */
+  upload<T = unknown>(target: string, file: UploadFile, options?: UploadOptions<T>): Promise<T>
+}
+
+export interface UploadFile {
+  name: string
+  /** `''` lets the target decide (a document's type is resolved from its extension). */
+  contentType: string
+  bytes: Uint8Array
+}
+
+export interface UploadOptions<T> {
+  schema?: z.ZodType<T>
+  /** The target's own fields — a document's `title`, `source`, `visibility`, `groupIds`. */
+  fields?: Record<string, unknown>
 }
 
 export function buildUrl(serverUrl: string, path: string, query?: Record<string, QueryValue>) {
@@ -157,7 +172,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return { status: response.status, raw, data: parsed.data }
   }
 
-  async function sendRaw(method: 'GET' | 'POST', path: string, init: RequestInit) {
+  async function sendRaw(method: 'GET', path: string, init: RequestInit) {
     const url = buildUrl(serverUrl, path)
     let response: Response
     try {
@@ -184,27 +199,46 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       const response = await sendRaw('GET', path, { headers: authHeaders(options, '*/*') })
       return new Uint8Array(await response.arrayBuffer())
     },
-    postForm: async <T>(
-      path: string,
-      form: FormData,
-      formOptions?: Pick<RequestOptions<T>, 'schema'>
-    ): Promise<T> => {
-      const response = await sendRaw('POST', path, {
-        headers: authHeaders(options, 'application/json'),
-        body: form,
+    upload: async <T>(target: string, file: UploadFile, uploadOptions: UploadOptions<T> = {}) => {
+      const ticket = await request('POST', '/api/uploads', {
+        body: {
+          target,
+          name: file.name,
+          contentType: file.contentType,
+          size: file.bytes.byteLength,
+          fields: uploadOptions.fields,
+        },
+        schema: createUploadResponseSchema,
       })
-      const raw = await readBody(response)
-      if (!formOptions?.schema) return raw as T
-      const parsed = formOptions.schema.safeParse(raw)
-      if (!parsed.success) {
+      let put: Response
+      try {
+        put = await fetchImpl(ticket.data.url, {
+          method: ticket.data.method,
+          headers: ticket.data.headers,
+          body: new Blob([file.bytes as Uint8Array<ArrayBuffer>]),
+          signal: AbortSignal.timeout(timeoutMs),
+        })
+      } catch (cause) {
         throw new CliApiError({
-          status: response.status,
-          code: 'invalid_response',
-          body: raw,
-          message: `Unexpected response from POST ${path}: ${parsed.error.issues[0]?.message ?? 'invalid'}`,
+          status: 0,
+          code: 'network_error',
+          message: `Could not upload ${file.name} to storage (${describeCause(cause)})`,
+          cause,
         })
       }
-      return parsed.data
+      if (!put.ok) {
+        throw new CliApiError({
+          status: put.status,
+          code: 'upload_refused',
+          body: await readBody(put),
+          message: `Storage refused the upload of ${file.name} (HTTP ${put.status})`,
+          hint: 'The URL may have expired; run the command again.',
+        })
+      }
+      const confirmed = await request('POST', confirmUploadPath(ticket.data.uploadId), {
+        schema: uploadOptions.schema,
+      })
+      return confirmed.data as T
     },
     get: (path, o) => request('GET', path, o).then(r => r.data),
     post: (path, o) => request('POST', path, o).then(r => r.data),

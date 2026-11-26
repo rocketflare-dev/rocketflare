@@ -89,11 +89,14 @@ Rules:
   line classification is a linear scan — never add a backtracking regex on the upload path; text is normalised —
   `normalizeDocumentText`, control chars + CRLF — before it is stored or chunked);
   `ingest.ts` — `ingestText(db, cfg, env, input, { jobs })` and `ingestFile(db, cfg, env, input, {
-  jobs, storage })` (original to R2 as a `files` row scope `documents`, `fileId` on the document).
+  jobs, storage })` (original to R2 as a `files` row scope `documents`, `fileId` on the document;
+  `input.file` is a `Blob` to store, or a `StoredOriginal { key, size, read() }` the direct upload
+  already put in R2 — then a dedupe or an unchanged hash deletes that object again).
   Text-like types index inline ≤ 50 chunks else a `document.index` job; PDF/Office/HTML enqueue
   `document.convert` (`convertAndIndexDocument`). `indexDocument` is shared with the handlers.
-  Everything that can 503 (`resolveEmbeddings`, `canConvert`) runs BEFORE any write; the upload
-  route maps `ConversionNotConfiguredError` → 503 `conversion_not_configured`;
+  Everything that can 503 (`resolveEmbeddings`, `canConvert`) runs BEFORE any write — for an
+  upload, in the `documents` target's `prepare` (`services/uploads/targets.ts`), before the URL is
+  signed (503 `conversion_not_configured`);
   `ConversionFailedError` is the permanent case. Inline indexing is ONE `ingest document` span
   (`IngestDeps.tracer` — the route's `withAuth` tracer; under the active span when one exists), so
   its `traceEmbed` batches nest; the span's output is the outcome, never the row (it holds the text).

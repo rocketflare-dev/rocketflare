@@ -1,6 +1,6 @@
 /**
  * Your account: name/avatar (`updateProfileRequestSchema` → `PATCH /api/me`), an avatar
- * upload (`POST /api/files?scope=avatars` — type/size checked client-side first) and the
+ * upload (the `avatars` target of `/api/uploads` — type/size checked client-side first) and the
  * sign-in methods linked to it. Connecting a provider is a full-page OAuth round trip in LINK
  * mode (`?link=1&returnUrl=/profile`, so the identity attaches to THIS user instead of signing
  * in as whoever it matches); disconnecting is refused when it would leave no way to sign in.

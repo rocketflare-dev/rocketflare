@@ -1,5 +1,6 @@
 /**
- * Profile → avatar upload: a picked image is POSTed as multipart to `/api/files?scope=avatars`;
+ * Profile → avatar upload: a picked image goes through `api.upload('avatars', …)` — presign, a
+ * `PUT` straight to storage, confirm;
  * a wrong type or an oversized file is refused client-side (no request); "Remove" clears the
  * avatar via `PATCH /api/me`.
  */
@@ -15,6 +16,7 @@ import {
   requestBody,
   stubFetch,
 } from './helpers/renderWithProviders'
+import { uploadCalls, uploadRoutes } from './helpers/uploads'
 
 const FILE_ID = '99999999-9999-4999-8999-999999999999'
 
@@ -23,7 +25,7 @@ function stubProfileRoutes(user = makeUser(), extra: Record<string, unknown> = {
     '/api/me': { ...user, preferences: {} },
     '/auth/methods': { magicLink: true, providers: [], devLogin: false },
     '/auth/providers': { providers: [] },
-    'POST /api/files': {
+    ...uploadRoutes({
       id: FILE_ID,
       tenantId: IDS.tenant,
       ownerUserId: IDS.user,
@@ -33,7 +35,7 @@ function stubProfileRoutes(user = makeUser(), extra: Record<string, unknown> = {
       sizeBytes: 3,
       url: `/api/files/${FILE_ID}`,
       createdAt: '2025-06-01T00:00:00Z',
-    },
+    }),
     'PATCH /api/me': (init: RequestInit | undefined) => ({
       ...user,
       ...(JSON.parse(String(init?.body)) as object),
@@ -42,15 +44,10 @@ function stubProfileRoutes(user = makeUser(), extra: Record<string, unknown> = {
   })
 }
 
-const uploadCall = (fetchMock: ReturnType<typeof stubFetch>) =>
-  fetchMock.mock.calls.find(
-    ([input, init]) => init?.method === 'POST' && String(input).startsWith('/api/files')
-  )
-
 describe('Profile → avatar upload', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('POSTs the chosen image as multipart to /api/files?scope=avatars', async () => {
+  it('uploads the chosen image straight to storage through the avatars target', async () => {
     const fetchMock = stubProfileRoutes()
     renderWithProviders(<Profile />, { session: makeSession() })
     const input = (await screen.findByLabelText('Upload photo')) as HTMLInputElement
@@ -59,15 +56,17 @@ describe('Profile → avatar upload', () => {
     const file = new File([new Uint8Array([1, 2, 3])], 'me.png', { type: 'image/png' })
     fireEvent.change(input, { target: { files: [file] } })
 
-    await waitFor(() => expect(uploadCall(fetchMock)).toBeDefined())
-    const [url, init] = uploadCall(fetchMock) as [string, RequestInit]
-    expect(url).toBe('/api/files?scope=avatars')
-    expect(init.body).toBeInstanceOf(FormData)
-    const sent = (init.body as FormData).get('file')
-    expect(sent).toBeInstanceOf(File)
-    expect((sent as File).name).toBe('me.png')
-    // multipart: the browser sets the boundary, so no JSON content-type may be forced
-    expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined()
+    await waitFor(() => expect(uploadCalls(fetchMock).confirmed).toBe(true))
+    const { presign, put } = uploadCalls(fetchMock)
+    expect(presign).toMatchObject({
+      target: 'avatars',
+      name: 'me.png',
+      contentType: 'image/png',
+      size: 3,
+    })
+    expect(put?.body).toBeInstanceOf(File)
+    expect((put?.body as File | undefined)?.name).toBe('me.png')
+    expect(new Headers(put?.headers).get('Content-Type')).toBe('image/png')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
@@ -87,7 +86,7 @@ describe('Profile → avatar upload', () => {
     fireEvent.change(input, { target: { files: [big] } })
     expect(await screen.findByRole('alert')).toHaveTextContent(/5 MB or smaller/)
 
-    expect(uploadCall(fetchMock)).toBeUndefined()
+    expect(uploadCalls(fetchMock).presign).toBeUndefined()
   })
 
   it('shows Remove only with an avatar and clears it with PATCH /api/me', async () => {

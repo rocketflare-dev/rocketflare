@@ -357,14 +357,14 @@ signed-in account is not checked, and the host trusts the plugin's word that it 
   API prefix, so a missing route never returns `index.html`. Order and exceptions:
   `.claude/rules/api.md`.
 - **Body limits**: 1 MB on `/api/*`, `/auth/*` and a plugin's prefixes outside `/api`, before any
-  parsing (413 `payload_too_large`). Beneath an upload prefix (`/api/files`,
-  `/api/ai/documents/upload`, a plugin's `uploadPaths`) a JSON body keeps the 1 MB cap, and any
-  other body is capped at `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB multipart overhead, the
-  largest file an upload route may take); each upload route mounts its own tighter cap and checks
-  the exact per-file size itself. A public mount's `bodyLimitBytes` replaces the cap (§16). A
-  plugin's `uploadLimits` names EXACT paths whose non-JSON body may go higher, up to
-  `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB, clamped; `uploadLimitIssues` in `plugins.test.ts`
-  refuses more) plus multipart overhead — checked first, for that path alone (§16).
+  parsing (413 `payload_too_large`). No core route takes a file (§6, uploads). The exceptions:
+  - `/api/upload-content/:id`, the Worker's own upload URL when the R2 key pair is not set. It is
+    capped at the largest upload target's `maxBytes` in `development`, and at
+    `MAX_WORKER_UPLOAD_BYTES` (10 MB) deployed.
+  - A public mount's `bodyLimitBytes` replaces the cap beneath its prefix (§16).
+  - Deprecated, for a plugin that has not moved to `uploadTargets`: beneath a plugin's
+    `uploadPaths` a non-JSON body may be 10 MB + 64 KB, and an exact `uploadLimits` path up to
+    50 MiB (§16).
 - **Contracts (D13)**: zod schemas from `@rocketflare/shared` are used by the server, UI and CLI.
   There is no `hono/client` RPC. Errors are `{ error, statusCode, code?, details? }` everywhere,
   and success bodies are bare.
@@ -585,10 +585,42 @@ project.
   logged (`[email:dev]`, without the link when `APP_ENV=production`), never errors. The magic link is sent inline; other email is `email.send`
   jobs.
 - **Storage (D23)**: the `StorageService` seam over the `FILES` R2 binding. Keys are
-  `tenants/<tenantId>/<scope>/<uuid>-<name>`. Bytes stream through the Worker (no presigned
-  URLs). The `files` table is the immutable index and the only thing the browser can name. Writes
-  go object first, then row, and a failed insert deletes the object.
-- **`/api/files`**: upload with per-scope type/size checks (413/415); tenant-scoped read (another
+  `tenants/<tenantId>/<scope>/<uuid>-<name>`. The `files` table is the immutable index and the only
+  thing the browser can name. Writes go object first, then row, and a failed insert deletes the
+  object. Downloads still stream through the Worker, which is what applies the tenant and
+  visibility checks.
+- **Uploads (`services/uploads/`, `/api/uploads`)**: direct to R2 when the R2 key pair is set
+  (opt-in), through the Worker otherwise; the client cannot tell which. There are three steps:
+  1. `POST /api/uploads { target, name, contentType, size, fields? }` runs every check the target
+     makes BEFORE a byte moves: permission, 415 type, 413 size, 400 `file_empty`, 503
+     `storage_not_configured`, and for documents 503 `conversion_not_configured` and the embeddings
+     503. It records a `pending_uploads` row and answers a `PUT` URL valid for 10 minutes: a
+     presigned R2 URL (SigV4 over the S3 API, `services/uploads/sigv4.ts`) when the key pair is
+     set, else the Worker's own `/api/upload-content/:id?token=`.
+  2. The `PUT` must carry the declared `Content-Type` and `Content-Length` and `If-None-Match: *`.
+     R2 holds them because the URL signs them; the Worker URL holds the same rules itself (token
+     hash, type, length, write-once, expiry). Another type, size or a second write is refused.
+  3. `POST /api/uploads/:id/confirm` claims the row (compare-and-set on `confirmed_at`), `head`s the
+     object and refuses a size or type other than the one declared (400 `upload_mismatch`, object
+     deleted). It then runs the target's `confirm`, whose answer it returns: a `files` row (201), or
+     a document (201, or 200 `deduplicated: true` — dedupe can only be decided here, once the bytes
+     exist).
+
+  The rules around the steps:
+  - Another tenant's or another person's upload id is a 404, as is a second confirm.
+  - Past the URL's expiry plus a 15-minute grace, confirm is 410 `upload_expired`.
+  - A failed confirm un-claims the row, so the nightly `prunePendingUploads` (`0 4 * * *`) still
+    deletes the object of an upload nobody confirmed.
+  - The targets are the core `avatars`, `uploads` and `documents`, plus each plugin's
+    `uploadTargets` (§16), composed by `uploadTargets()`.
+  - Signing needs `R2_ACCOUNT_ID`, `FILES_BUCKET_NAME` (vars) and an R2 API token's
+    `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` (secrets), plus a CORS rule on the bucket. Provision
+    writes the vars and the CORS rule (`docs/DEPLOY.md`).
+  - Without the key pair the bytes pass through the Worker, so a deployed target is capped at
+    `MAX_WORKER_UPLOAD_BYTES` (10 MB; a larger file is 413 with `details.directUploads: false`).
+    `development` takes the target's own `maxBytes`, so local dev needs no R2 credentials.
+- **`/api/files`**: files arrive through the `avatars` / `uploads` targets (avatars allowlist
+  images); tenant-scoped read (another
   tenant's file is 404) with ETag/304; **only allowlisted types render inline, everything else is
   an attachment**. Uploaders can delete their own files, admins any. A document-owned file is 409
   `owned_by_document`.
@@ -600,7 +632,12 @@ project.
   tenant prefix and is idempotent.
 
 **Known gaps:** `avatarUrl` is global but the object is tenant-scoped (initials fallback elsewhere);
-re-uploads leave the old object; no listing endpoint, quotas or presigned URLs; unbranded templates.
+re-uploads leave the old object; no listing endpoint or quotas; unbranded templates. Direct uploads
+are a single `PUT`, so 5 GiB is the ceiling (no multipart upload, no resume). Without the R2 key
+pair a deployed Worker holds each upload in memory, up to 10 MB. Whether R2
+itself enforces the signed `Content-Length` and `If-None-Match` is not tested here (the confirm
+`head` is the backstop for the size and type). A document is deduplicated only after its bytes are
+stored, then deleted again.
 
 ## 7. UI shell
 
@@ -2157,9 +2194,26 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   is an `EMBEDDABLE_MIME_TYPES` type (today PDF) — from its own row, never the request — lets a
   same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6). Any other type
   is refused (`false`) and `DENY` stands. Call it before any 304 early return.
-- **Large uploads (`ServerPlugin.uploadLimits`)**: `{ '/api/<id>/upload': bytes }` — an exact path
-  whose non-JSON body may exceed `uploadPaths`' 10 MB, up to 50 MiB (§3, body limits). The route
-  still mounts its own `bodyLimit` and checks each file; the Worker holds the body in memory.
+- **Upload targets (`ServerPlugin.uploadTargets`)**: `PluginUploadTarget` entries from
+  `@/plugins/api`. Each one has:
+  - an `id` of `<plugin id>.<name>`;
+  - `maxBytes`, at most 5 GiB (one PUT);
+  - optional `contentTypes` (others 415) and a zod `fields` schema (without one, any field is a 400);
+  - optional `prepare(ctx, { uploadId, filename, contentType, size, fields })`, which authorises and
+    may return `{ key?, contentType?, state? }`;
+  - `confirm(ctx, { uploadId, key, filename, contentType, size, state, bucket, read() })` →
+    `{ status?, body }`;
+  - optional `bucket: { binding, name(env) }`, which defaults to `FILES` and `FILES_BUCKET_NAME`.
+
+  The default key is `tenants/<t>/<plugin id>/<uploadId>-<name>`, and a key outside `tenants/<t>/`
+  is refused. The client is `api.upload(target, file, { fields })` (UI) or `upload(...)` (CLI);
+  the plugin never sees the bytes in a request.
+- **Deprecated: `uploadPaths` / `uploadLimits`** — the multipart seam `uploadTargets` replaces,
+  kept so an installed plugin's upload route keeps working until it moves. Beneath an
+  `uploadPaths` prefix (under `/api/<id>/`) a non-JSON body may be 10 MB + 64 KB; an exact
+  `uploadLimits` path, up to 50 MiB (clamped; `uploadLimitIssues` refuses more). A JSON body keeps
+  1 MB on both. The route mounts its own `bodyLimit` and checks each file; the Worker holds it in
+  memory.
 - **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the

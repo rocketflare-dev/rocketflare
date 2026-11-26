@@ -1,46 +1,30 @@
 /**
- * `/api/files`: upload / download / delete over the `StorageService` seam. Objects live in
+ * `/api/files`: download / delete over the `StorageService` seam (an upload is `/api/uploads`,
+ * straight to storage — targets `avatars`, `uploads`, `documents`). Objects live in
  * R2 under a tenant prefix; the `files` row is the index and the ONLY thing the browser can name
  * (`/api/files/:id`). Every query filters by the auth context's `tenantId` — a file uploaded in
  * one organisation is a 404 in another, including avatars (known gap: the person's `avatarUrl`
  * is global, the object is not). Bytes stream through the Worker with `Cache-Control: private`.
  *
- * `avatars` scope: image MIME allowlist, and the caller's `users.avatarUrl` is set to the new URL.
+ * `avatars` target: image MIME allowlist, and the caller's `users.avatarUrl` is set to the new URL.
  * Images and PDFs (`INLINE_MIME_TYPES`) are served `inline`; anything else is an attachment, so a
  * stored `text/html` or SVG can never execute on this origin. A PDF additionally opts into being
  * FRAMED (`c.set('embeddable', true)` → `SAMEORIGIN` + `frame-ancestors 'self'`, see
  * `middleware/security-headers.ts`) so the document viewer can embed it — a separate list from the
- * inline one on purpose, because inline and framable are not the same property. `documents` scope rows are created by `/api/ai/documents/upload`
- * and only deleted with their document (409 `owned_by_document` here).
+ * inline one on purpose, because inline and framable are not the same property. `documents` scope
+ * rows are created by the `documents` upload target and only deleted with their document (409
+ * `owned_by_document` here).
  */
-import {
-  AVATAR_MIME_TYPES,
-  type FileScope,
-  filePath,
-  isAvatarMimeType,
-  isEmbeddableMimeType,
-  isInlineMimeType,
-  MAX_UPLOAD_BYTES,
-  type StoredFile,
-  uploadQuerySchema,
-} from '@rocketflare/shared/files'
+import { filePath, isEmbeddableMimeType, isInlineMimeType } from '@rocketflare/shared/files'
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
-import { documents, type FileRow, files, users } from '../../db/schema'
-import { uploadBodyLimit } from '../middleware/body-limit'
+import { documents, files, users } from '../../db/schema'
 import { can, guardPermission } from '../middleware/permissions'
 import { type AccessScope, accessScopeOf, visibleDocuments } from '../services/access'
 import { recordActivity } from '../services/activity'
-import {
-  createR2Storage,
-  deleteStoredFile,
-  type StorageService,
-  storeUploadedFile,
-} from '../services/storage'
+import { createR2Storage, type StorageService } from '../services/storage'
 import type { AppContext } from '../types'
 import {
-  ApiError,
-  BadRequestError,
   ConflictError,
   ForbiddenError,
   NotFoundError,
@@ -48,7 +32,6 @@ import {
 } from '../utils/core/errors'
 import { uuidParam, withAuthAndDb } from '../utils/routes/route-helpers'
 import { createRouter } from '../utils/routes/router'
-import { validate } from '../utils/routes/validate'
 
 export const filesRouter = createRouter()
 
@@ -83,96 +66,6 @@ function storageFor(c: AppContext): StorageService {
   }
   return createR2Storage(c.env.FILES)
 }
-
-export function toStoredFile(row: FileRow): StoredFile {
-  return {
-    id: row.id,
-    tenantId: row.tenantId,
-    ownerUserId: row.ownerUserId,
-    scope: row.scope,
-    filename: row.filename,
-    contentType: row.contentType,
-    sizeBytes: row.sizeBytes,
-    url: filePath(row.id),
-    createdAt: row.createdAt,
-  }
-}
-
-/** Per-scope acceptance. `uploads` takes anything (served as attachment unless it is an image). */
-function checkContentType(scope: FileScope, contentType: string): void {
-  if (scope === 'avatars' && !isAvatarMimeType(contentType)) {
-    throw new ApiError(
-      415,
-      'Avatars must be a PNG, JPEG, GIF or WebP image',
-      'unsupported_media_type',
-      {
-        allowed: AVATAR_MIME_TYPES,
-      }
-    )
-  }
-}
-
-// ---- POST /api/files?scope= --------------------------------------------------------------
-
-filesRouter.post('/', uploadBodyLimit, validate('query', uploadQuerySchema), async c => {
-  const { db, tenantId, user, defer } = withAuthAndDb(c)
-  guardPermission(c, 'create', 'File')
-  const { scope } = c.req.valid('query')
-  const storage = storageFor(c)
-
-  const form = await c.req.formData().catch(() => null)
-  const file = form?.get('file')
-  if (!(file instanceof File)) {
-    throw new BadRequestError('Expected multipart form data with a `file` field', 'file_required')
-  }
-  if (file.size === 0) throw new BadRequestError('The file is empty', 'file_empty')
-  if (file.size > MAX_UPLOAD_BYTES) {
-    throw new ApiError(
-      413,
-      `File exceeds the ${MAX_UPLOAD_BYTES} byte limit`,
-      'payload_too_large',
-      {
-        maxBytes: MAX_UPLOAD_BYTES,
-        sizeBytes: file.size,
-      }
-    )
-  }
-  const contentType = file.type || 'application/octet-stream'
-  checkContentType(scope, contentType)
-
-  const row = await storeUploadedFile(db, storage, {
-    tenantId,
-    ownerUserId: user.id,
-    scope,
-    file,
-    filename: file.name || 'file',
-    contentType,
-  })
-  if (scope === 'avatars') {
-    try {
-      await db
-        .update(users)
-        .set({ avatarUrl: filePath(row.id) })
-        .where(eq(users.id, user.id))
-    } catch (err) {
-      // Still no orphans: an avatar whose pointer could not be written is rolled back whole.
-      await deleteStoredFile(db, storage, row).catch(() => {})
-      throw err
-    }
-  }
-
-  defer(() =>
-    recordActivity(db, {
-      tenantId,
-      userId: user.id,
-      type: 'file.uploaded',
-      subjectType: 'File',
-      subjectId: row.id,
-      metadata: { scope, contentType, sizeBytes: row.sizeBytes, filename: row.filename },
-    })
-  )
-  return c.json(toStoredFile(row), 201)
-})
 
 // ---- GET /api/files/:id ----------------------------------------------------------------
 

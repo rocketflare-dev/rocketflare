@@ -139,7 +139,7 @@ in both files (one local database).
 | KV | `RATE_LIMIT_KV` | `<APP>_RATE_LIMIT` / `<APP>_RATE_LIMIT_STAGING` | `pnpm --filter @rocketflare/web exec wrangler kv namespace create <name>` → `id` |
 | Queue (Phase 2) | `JOBS_QUEUE` | `<app>-jobs` / `<app>-jobs-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` (name-referenced) |
 | Jobs dead-letter queue | — (no binding; `[[queues.consumers]] dead_letter_queue`) | `<app>-jobs-dlq` / `<app>-jobs-dlq-staging` | `pnpm --filter @rocketflare/web exec wrangler queues create <name>` — must exist before the deploy that names it. Receives a message whose handler threw on every one of `max_retries`; **no consumer is bound** (its name shares the `<app>-jobs` prefix `queue.ts` dispatches on, so one would reprocess it). Inspect it in the dashboard (Queues → the DLQ → Messages) or `… wrangler queues info <name>` |
-| R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>` |
+| R2 (Phase 2) | `FILES` | `<app>-files` / `<app>-files-staging` | `pnpm --filter @rocketflare/web exec wrangler r2 bucket create <name>`; direct uploads (opt-in) also need its S3 name in `FILES_BUCKET_NAME`, a CORS rule and an R2 API token (§ Direct uploads) |
 | Durable Object (Phase 2) | `NOTIFICATIONS_HUB` | class `NotificationsHub` | declared in toml + `[[migrations]] tag = "v1", new_classes` — no create step |
 | Workflow (Phase 3, built) | `AGENT_RUN_WORKFLOW` | `<app>-agent-run` / `<app>-agent-run-staging` | `[[workflows]] name / binding / class_name = "AgentRunWorkflow"` — `wrangler deploy` registers it, no create step; **account-scoped name**. Optional `concurrency = { limit = N }` (Wrangler ≥ 4.127) caps RUNNING instances across every tenant — above it instances queue, and `waiting` (parked) ones do not count; it is a cost backstop, not the per-tenant `AGENT_MAX_ACTIVE_RUNS_PER_TENANT`. Not set by the kit; if you set it, set it in BOTH tomls — a deploy without it removes the limit |
 | Workers AI (Phase 3, built) | `AI` | — | `[ai] binding = "AI"` — no resource; the zero-key floor for chat (`@cf/zai-org/glm-4.7-flash`) and embeddings (`@cf/baai/bge-m3`); **billed per call to this account** (10k free neurons/day), `wrangler dev` proxies to the logged-in account; remove from BOTH tomls for zero-spend |
@@ -203,6 +203,33 @@ the orchestrator around it — phases `tokens` (TTY only: hidden prompts → `ap
 `cloudflare <env>` (this script with `--apply`) · `migrate <env>` · `github <env>` · `urls` ·
 `deploy <env>` · `secrets <env>` · `all` — each idempotent, each ending in one `Verify:` line;
 `SETUP.md` Part 3 has the table.
+
+## Direct uploads
+
+**Opt-in.** Without it every upload goes through the Worker's own `PUT` URL, at most 10 MB a file
+(`MAX_WORKER_UPLOAD_BYTES`; a larger one is 413), and nothing below is needed. With it, the browser
+and the CLI `PUT` files straight to R2 through a URL the Worker presigns, up to each target's own
+limit (CONCEPTS §6). The `FILES` binding cannot presign, so the Worker signs against R2's S3 API
+and needs, per environment:
+
+| What | Where | Written by |
+|---|---|---|
+| `R2_ACCOUNT_ID` — the account id (the S3 endpoint is `<account>.r2.cloudflarestorage.com`) | `[vars]` | `pnpm provision cloudflare <env>` |
+| `FILES_BUCKET_NAME` — the `FILES` bucket's own name (the binding cannot tell the Worker) | `[vars]` | `pnpm provision cloudflare <env>`, from the toml's `bucket_name` |
+| A CORS rule allowing `PUT` from `APP_URL`'s origin with `content-type` and `if-none-match` | the bucket | `pnpm provision cloudflare <env>` (`wrangler r2 bucket cors set … --force`, rewritten whole on each run) |
+| `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` — an R2 API token's S3 key pair | Worker secrets | **you**, then `pnpm provision secrets <env>` |
+
+Create the token in the dashboard: R2 → Manage API tokens → Create API token, permission
+**Object Read & Write**, scoped to this environment's buckets only. Copy the Access Key ID and
+Secret Access Key into `apps/web/.provision.env` (or export them), then run
+`pnpm provision secrets <env>`. Use one token per environment. A plugin bucket an upload target
+names needs the same CORS rule (provision writes it on every `[[r2_buckets]]` of the toml) and
+must be inside the token's scope.
+
+Without the key pair uploads go through the Worker, and `provision secrets` says so. The vars and
+the CORS rule do nothing until the key pair is set. To rotate, create the new token, put both
+secrets, then delete the old token: a URL is valid for 10 minutes, so an upload in flight can
+fail once.
 
 ## Zone, DNS and multiple hosts
 
@@ -346,7 +373,7 @@ feature keys this environment ships at all; blank is fail-closed, and this is th
 unreleased surface dark in production while staging has it; `mcp` there ships the MCP server and its OAuth authorization server — `/oauth/*` and the
 `.well-known` discovery documents, in both tomls' `run_worker_first`,
 `docs/CONCEPTS.md` §19). `OBSERVABILITY_CAPTURE_CONTENT` (`false`), `OBSERVABILITY_SPAN_RETENTION_DAYS` (`14`) (D32). Defaulted in `config.ts` and **not** declared in the tomls until used: the OIDC sign-in vars `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_LABEL` (`Single sign-on`), `OIDC_SCOPES` (`openid email profile`), `AUTH_OIDC_ONLY` (`false`; `true` without an issuer is a config error), `OIDC_TRUST_EMAIL` (`false` — a missing `email_verified` is refused; `true` only for an issuer that controls the email claim, e.g. single-tenant Entra) — add them to BOTH tomls to turn SSO on (`SETUP.md` 2.3b); `OBSERVABILITY_PRESET`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_PROTOCOL`, `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` (`https://cloud.langfuse.com`), `LANGFUSE_TRACING_ENVIRONMENT` (= `APP_ENV`); the MCP server's `MCP_GRANT_IDLE_DAYS` (30), `MCP_GRANT_MAX_DAYS` (90), `MCP_CALL_RETENTION_DAYS` (90), `MCP_CALLS_PER_GRANT_PER_MINUTE` (60), `MCP_CALLS_PER_USER_PER_MINUTE` (120), `MCP_CALLS_PER_TENANT_PER_MINUTE` (600) — to set one, add the key to BOTH files (the parity test compares `[vars]` keys); § Tracing |
-| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `OIDC_CLIENT_SECRET` (optional even with OIDC on — a public client has none); AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `TYPESAFE_API_KEY` (D37: platform TypeSafe/Jev for `ctx.decide`; without it decisions fall back to the chat model), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `DATABASE_URL` — under `neon` THE connection (the pooled Neon URI, put by `pnpm provision secrets|deploy`), under `postgres` only a no-Hyperdrive fallback |
+| Worker secrets | `pnpm --filter @rocketflare/web exec wrangler secret put <NAME> [-c wrangler.staging.toml]`, once per worker; locally `apps/web/.dev.vars` | `OAUTH_ENCRYPTION_KEY` (also encrypts tenant AI keys — rotating it invalidates every `ai_configs` credential), `BOOTSTRAP_ADMIN_EMAILS`, `RESEND_API_KEY`, `GOOGLE_*`, `MICROSOFT_*`, `OIDC_CLIENT_SECRET` (optional even with OIDC on — a public client has none); AI, all optional: `ANTHROPIC_API_KEY` (platform chat), `EMBEDDINGS_API_KEY` (platform OpenAI embeddings when no `AI` binding), `TYPESAFE_API_KEY` (D37: platform TypeSafe/Jev for `ctx.decide`; without it decisions fall back to the chat model), `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` (the langfuse tracing preset), `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`, any other OTLP backend's auth); `R2_ACCESS_KEY_ID` + `R2_SECRET_ACCESS_KEY` (direct uploads, opt-in — without them files go through the Worker, ≤ 10 MB, § Direct uploads); `DATABASE_URL` — under `neon` THE connection (the pooled Neon URI, put by `pnpm provision secrets|deploy`), under `postgres` only a no-Hyperdrive fallback |
 | CI secrets | GitHub Environments `staging` / `production` | `DATABASE_URL` (that branch), `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` |
 | Scripts only | migration environment | `APP_DATABASE_URL` (db-roles, RLS enforce only) |
 | Developer-local only | `apps/web/.drizzle-cube.json` (git-ignored; the analytics plugin's README has the shape) | a **tenant API key** for the drizzle-cube CLI / Claude Code plugin against `/cubejs-api` — it is an ordinary key from Settings → API keys, scopes every query to that tenant, and is revoked there; never deployed, never committed |

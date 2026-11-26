@@ -252,5 +252,11 @@ export type {
   StoredObject,
   StoredObjectMeta,
 } from './types'
+export type {
+  PluginConfirmedUpload,
+  PluginUploadPrepared,
+  PluginUploadPrepareInput,
+  PluginUploadTarget,
+} from './uploads'
 export type { StepCtx, StepOptions, WorkflowCtx } from './workflow'
 export { DuplicateStepNameError, workflowCtx } from './workflow'

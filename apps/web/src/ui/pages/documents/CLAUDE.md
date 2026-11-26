@@ -9,8 +9,9 @@ All three are `guard read Document` and lazy. Hooks are `hooks/useDocuments.ts`,
 - The paginated documents table first, then `URLTabs` (`?tab=text|file`) to add. Paste text posts
   `ingestTextRequestSchema` output (blank source omitted — the server defaults it to `upload`).
   Upload file checks the pick with `validateDocumentUpload` (`DOCUMENT_UPLOAD_ACCEPT` +
-  `MAX_UPLOAD_BYTES`) before any request, then `useUploadDocument()` posts multipart `file`
-  (+ optional `title`/`source`) to `/api/ai/documents/upload`.
+  `MAX_UPLOAD_BYTES`) before any request, then `useUploadDocument()` uploads it straight to storage
+  through the `documents` target (`api.upload`: presign → `PUT` → confirm), with `title`, `source`,
+  `visibility` and `groupIds` as the target's `fields`.
 - Both toast `indexed (n chunks)` / `queued for …` and invalidate `documents`; the list polls
   `DOCUMENT_POLL_MS` while a row is `pending` (there is no document nudge yet).
 - Below `sm` the table stacks (title, then status, when and the actions; `lib/stacked-table.ts`).

@@ -22,6 +22,9 @@ The package is **private**; publishing it is an app decision (docs/DEPLOY.md).
   <key>`, parses every response with the matching `@rocketflare/shared/<module>` schema (errors with the shared
   envelope), throws `CliApiError` with the exit code for the status. Never hand-write a response type
   here; add the schema to `packages/shared` first
+  `upload(target, { name, contentType, bytes }, { fields, schema })` is the direct upload: presign,
+  `PUT` the bytes to the answered URL with ONLY its headers (never the API key — the URL is the
+  credential), then confirm; a refused `PUT` is `CliApiError` `upload_refused`
 - `apps/cli/src/errors.ts` — `CliError { exitCode, hint }`, `NotLoggedInError`, the `EXIT_*` constants.
   Commands throw; they never print errors or call `process.exit()`
 - `apps/cli/src/config.ts` — `~/.rocketflare/config.json` (`ROCKETFLARE_CONFIG_DIR` relocates it; tests use a temp

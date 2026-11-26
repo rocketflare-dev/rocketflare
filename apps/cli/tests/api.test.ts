@@ -140,13 +140,54 @@ describe('raw transfers', () => {
     expect(new Headers(calls[0].init.headers).get('authorization')).toBe('Bearer k')
     await expect(api.getBytes('/missing')).rejects.toMatchObject({ status: 404 })
   })
+})
 
-  it('posts a form without setting a content type of its own', async () => {
-    const { api, calls } = client({ '/upload': () => jsonResponse({ ok: true }) })
-    const form = new FormData()
-    form.set('name', 'a')
-    expect(await api.postForm('/upload', form)).toEqual({ ok: true })
-    expect(calls[0].init.body).toBe(form)
-    expect(new Headers(calls[0].init.headers).has('content-type')).toBe(false)
+describe('upload', () => {
+  const UPLOAD_ID = '00000000-0000-4000-8000-000000000001'
+  const ticket = {
+    uploadId: UPLOAD_ID,
+    method: 'PUT',
+    url: 'https://acct.r2.cloudflarestorage.com/bucket/tenants/t/uploads/x',
+    headers: { 'Content-Type': 'text/plain', 'If-None-Match': '*' },
+    expiresAt: '2030-01-01T00:00:00.000Z',
+  }
+  const file = { name: 'a.txt', contentType: 'text/plain', bytes: new TextEncoder().encode('hi') }
+
+  it('asks for a URL, PUTs the bytes there without the API key, then confirms', async () => {
+    const { fetch, calls } = mockFetch({
+      '/api/uploads': () => jsonResponse(ticket, 201),
+      '/bucket/tenants/t/uploads/x': () => new Response(null, { status: 200 }),
+      [`/api/uploads/${UPLOAD_ID}/confirm`]: () => jsonResponse({ id: 'f' }, 201),
+    })
+    const api = createApiClient({ serverUrl: 'http://test.local', apiKey: 'k', fetch })
+    expect(await api.upload('uploads', file, { fields: { title: 'A' } })).toEqual({ id: 'f' })
+
+    const [presign, put, confirm] = calls
+    expect(JSON.parse(String(presign?.init.body))).toEqual({
+      target: 'uploads',
+      name: 'a.txt',
+      contentType: 'text/plain',
+      size: 2,
+      fields: { title: 'A' },
+    })
+    expect(put?.init.method).toBe('PUT')
+    expect(new Headers(put?.init.headers).get('authorization')).toBeNull()
+    expect(new Headers(put?.init.headers).get('if-none-match')).toBe('*')
+    expect(await new Response(put?.init.body).text()).toBe('hi')
+    expect(confirm?.init.method).toBe('POST')
+    expect(new Headers(confirm?.init.headers).get('authorization')).toBe('Bearer k')
+  })
+
+  it('a PUT the store refuses is upload_refused, and nothing is confirmed', async () => {
+    const { fetch, calls } = mockFetch({
+      '/api/uploads': () => jsonResponse(ticket, 201),
+      '/bucket/tenants/t/uploads/x': () => new Response('<Error/>', { status: 403 }),
+    })
+    const api = createApiClient({ serverUrl: 'http://test.local', apiKey: 'k', fetch })
+    await expect(api.upload('uploads', file)).rejects.toMatchObject({
+      status: 403,
+      code: 'upload_refused',
+    })
+    expect(calls).toHaveLength(2)
   })
 })

@@ -57,7 +57,9 @@ workspace root) or through the root scripts (`pnpm deploy[:staging]`, `pnpm prov
   `OBSERVABILITY_TRACE_URL`, `LANGFUSE_BASE_URL` and `LANGFUSE_TRACING_ENVIRONMENT` default in
   `config.ts` and are added to BOTH files only when used (the parity test compares `[vars]` keys;
   the tomls carry them as a comment). AI secrets: `ANTHROPIC_API_KEY`, `EMBEDDINGS_API_KEY`,
-  `TYPESAFE_API_KEY` (D37, decisions), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`) — all optional
+  `TYPESAFE_API_KEY` (D37, decisions), `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `OTEL_EXPORTER_OTLP_HEADERS` (`k=v,k=v`) — all optional. Upload secrets: `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY`
+  (an R2 API token's key pair, with the `R2_ACCOUNT_ID` / `FILES_BUCKET_NAME` vars both tomls carry)
+  — optional: without them uploads go through the Worker, ≤ 10 MB (`docs/DEPLOY.md` § Direct uploads)
 
 ## Two tomls, one shape (D6)
 

@@ -45,6 +45,7 @@ import type { TabConfig } from '../ui/components/shared'
 import type { NavGuard } from '../ui/hooks/useNavGuard'
 import type { AgentForm } from '../ui/pages/agents/forms'
 import type { QuickLink } from '../ui/pages/home-links'
+import type { PluginUploadTarget } from './api/uploads'
 
 /** One entry of the mount table in `api/index.ts`: prefix, router, optional gate. */
 export type PluginMount = readonly [string, Hono<AppEnv>, MiddlewareHandler?]
@@ -308,20 +309,29 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /** Per-role CASL rules, applied after the core matrix — additive, never a replacement. */
   grants?: Partial<Record<EffectiveRole, RoleGrant>>
   /**
-   * Prefixes where a NON-JSON body (a multipart file) gets the upload-path cap — 10 MB + 64 KB
-   * (`MAX_UPLOAD_PATH_BODY_BYTES`) — instead of the global 1 MB; a JSON body beneath one keeps the
-   * 1 MB cap. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and its route
-   * mounts its own `bodyLimit` at the file size it takes (at most 10 MB plus multipart overhead).
+   * Kinds of file people upload STRAIGHT to storage — never through the Worker. Each is a target
+   * of `POST /api/uploads` (`id` `<plugin id>.<name>`; `tests/config/plugins.test.ts` refuses any
+   * other, a duplicate, and a `maxBytes` that is not a positive integer): the host presigns the
+   * `PUT`, enforces `maxBytes` / `contentTypes`, and calls `prepare` before and `confirm` after the
+   * bytes arrive (`@/plugins/api` `PluginUploadTarget`). Its own bucket needs its binding in BOTH
+   * tomls and in the R2 API token's scope; omitted, it is `FILES` under `tenants/<tenantId>/<id>/`.
+   */
+  uploadTargets?: readonly PluginUploadTarget[]
+  /**
+   * @deprecated — declare an `uploadTargets` entry instead; kept so a plugin's multipart upload
+   * route keeps working until it moves. Prefixes where a NON-JSON body (a multipart file) gets
+   * `MAX_UPLOAD_PATH_BODY_BYTES` (10 MB + 64 KB) instead of the global 1 MB; a JSON body beneath
+   * one keeps the 1 MB cap. Each must be under `/api/<id>/` (`tests/config/plugins.test.ts`), and
+   * its route mounts its own `bodyLimit` at the file size it takes.
    */
   uploadPaths?: readonly string[]
   /**
-   * EXACT paths whose non-JSON body may exceed the upload-path cap: `{ '/api/<id>/upload': bytes }`,
-   * each at most `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and
-   * `tests/config/plugins.test.ts` refuses more), under `/api/<id>/`. Checked before `uploadPaths`
-   * and the 1 MB cap, for that path alone — a sibling path is untouched; a JSON body there keeps
-   * 1 MB. The cap is the transport's (plus 64 KB multipart overhead): the route still mounts its
-   * own `bodyLimit` and checks each file. The Worker holds the body in memory, so ask for what the
-   * largest real file needs, not a round number.
+   * @deprecated — declare an `uploadTargets` entry instead. EXACT paths whose non-JSON body may
+   * exceed the `uploadPaths` cap: `{ '/api/<id>/upload': bytes }`, each at most
+   * `MAX_PLUGIN_UPLOAD_LIMIT_BYTES` (50 MiB; the host clamps and `tests/config/plugins.test.ts`
+   * refuses more), under `/api/<id>/`. Checked first, for that path alone; a JSON body there keeps
+   * 1 MB. The route still mounts its own `bodyLimit` and checks each file; the Worker holds the
+   * body in memory.
    */
   uploadLimits?: Readonly<Record<string, number>>
   /** Plugin tables with no `tenant_id`, unioned into `RLS_EXCLUDED_TABLES` with a reason each. */

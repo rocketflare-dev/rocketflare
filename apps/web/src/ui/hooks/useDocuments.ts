@@ -1,7 +1,7 @@
 /**
  * Knowledge base: documents paginated (`GET /api/ai/documents`), one row (`GET /:id`),
  * text ingest (`POST /ingest` → 201, `indexed` inline for small texts or `pending` until the
- * `document.index` job lands), file upload (`POST /upload`, multipart — text types index like
+ * `document.index` job lands), file upload (`api.upload('documents', …)` — text types index like
  * pasted text, PDF/Office/HTML return `pending` until the `document.convert` job lands), delete
  * (`DELETE /:id` — own rows for everyone, any row for `delete Document`; the uploaded original goes
  * too), retry of a failed row (`POST /:id/retry` — own rows, any row for `manage Document`), and hybrid search (`POST /search`). Search is mutation-style: a query is an action
@@ -189,19 +189,18 @@ export interface UploadDocumentInput extends UploadDocumentFields {
   file: File
 }
 
-/** `POST /api/ai/documents/upload` — multipart `file` + optional `title` / `source`. */
+/**
+ * The `documents` upload target — the file goes straight to storage. `fields` are the rest of
+ * `UploadDocumentFields` (title, source, visibility, groups), validated by the same schema there.
+ */
 export function useUploadDocument() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ file, title, source }: UploadDocumentInput) => {
-      const form = new FormData()
-      form.append('file', file, file.name)
-      if (title) form.append('title', title)
-      if (source) form.append('source', source)
-      return api.upload<IngestDocumentResponse>('/api/ai/documents/upload', form, {
+    mutationFn: ({ file, ...fields }: UploadDocumentInput) =>
+      api.upload<IngestDocumentResponse>('documents', file, {
+        fields,
         schema: ingestDocumentResponseSchema,
-      })
-    },
+      }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.documents.all }),
   })
 }

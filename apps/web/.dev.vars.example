@@ -63,6 +63,11 @@ RERANK_CANDIDATES=
 KNOWLEDGE_TENANT_DAILY_COST_USD=
 
 # --- Optional (feature-gated when absent) -----------------------------------------------
+# Direct uploads: leave these blank locally. Without them a browser upload PUTs to the Worker's
+# own `/api/upload-content/:id`, which writes to the local R2 that `wrangler dev` emulates. Set them only with the FILES binding pointed at the real bucket (`remote = true`), or
+# the PUT lands in R2 and the confirm looks for it in the local bucket.
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
 # Email via Resend. Absent → magic-link URLs are logged to the wrangler dev console.
 RESEND_API_KEY=
 # Comma-separated emails promoted to global admin on their first *verified* login.
