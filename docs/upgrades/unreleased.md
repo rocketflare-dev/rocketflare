@@ -1,113 +1,31 @@
 ---
 version: unreleased
-previous: 0.44.1
+previous: 0.45.0
 date: null
 breaking: false
-migrations: ["chunks.context + context_model; chunks.search_vector regenerated to read context (rewrites chunks)"]
-areas: [api, cli, db, shared, ui, plugins, config, docs]
-touches_surfaces: [example-agent-summarize-text]
+migrations: []
+areas: []
+touches_surfaces: []
 requires_surfaces: []
 manual: false
 ---
 
 ## What changed
 
-Run timelines show model calls; knowledge gains a Promote picker, contextual prefixes and CLI `docs`/`facts`; `plugin check` parses source; a guard and a UI lint steer agents; Home, sign-in and provenance are redesigned, with a new look offered, never applied.
-
-- `services/agents/recording.ts` (new): `recordingChatClient` wraps `ctx.chat.client` so every call writes a `tool.start`/`tool.end` pair marked `kind: 'model'`; `loopEventSink` is the new `ctx.journal.onEvent`.
-- `ToolLoopJournal.onEvent` (new, optional): a `runToolLoop` with a journal and no `onEvent` records its text, tool calls and results through it; a loop with its own `onEvent` is unchanged.
-- `agentToolStartEventDataSchema` / `agentToolEndEventDataSchema` gain `kind: 'model'`; the AG-UI projection, the evals export and the eval transcript skip such rows.
-- Run page: a model-call row (model, duration, tokens), stage headers count model calls apart from tools, the Usage tab gains "Model calls", and a call an earlier invocation left open shows stopped once a `willRetry` error lands.
-- `TimelineGroup`: a stage with no rows renders without a button or chevron (#116).
-- `summarize-text` no longer emits its own `submit_summary` pair around the model call.
-- See `docs/CONCEPTS.md` §9 "Reading runs".
-- Knowledge (#159): `GET /api/knowledge/entities/:id/promote-candidates?q=` (`promoteCandidatesResponseSchema`) feeds a Promote picker on the entity page in place of the raw row-id box.
-- Knowledge (#159): `search_knowledge`'s facts block and `GET /api/knowledge/mentioned` also find a registered type's DOMAIN rows named in the query (`mentionFinderFor`; new optional `EntityTypeRegistration.mentions`).
-- Knowledge (#159): the nav badge's count moved to its own query-key root `['knowledge-review-count']`, nudged only to the reviewers a write touched (`services/knowledge/notify.ts`); `access.changed` invalidates it too.
-- CLI (#150): `docs list|search|ingest|retry` and `facts review|confirm|reject|prefer`.
-- See `docs/CONCEPTS.md` §9 "Knowledge facts" and §11.
-- Contextual prefixes (#148): flag `knowledge-context` (off), job `document.contextualize` (`services/ai/contextualize.ts`, enqueued by `afterTextIndexed`), prompt `knowledge-context`, usage feature `knowledge.context` under the daily knowledge cap, `chunks.context` / `context_model`, `embeddingInput(chunk, context?)`, a re-index of unchanged text keeps contexts, and `POST /api/ai/documents/contextualize` backfills existing documents — the Search page's "Add context" notice (admins only, from the new `/facets` `withoutContext` count). `secondsUntilNextUtcDay` moved from `knowledge/extract.ts` to `ai/usage.ts`. `pnpm eval retrieval --context` measures it. See `docs/CONCEPTS.md` §9 "Contextual prefixes".
-- Plugin checks (#19): `workerExportNames`, `declaresProperty` and `isolationEvidence` in `scripts/lib/plugin-lib.mjs` parse with the TypeScript AST (`typescript6`), so a name in a comment or a string no longer satisfies them; new `unresolvedPluginImports` makes `pnpm plugin check` FAIL on a plugin import that resolves to nothing, each file resolved against its own package's tsconfig (`findProjectTsconfig`, `loadProjectCompilerOptions`). See `docs/CONCEPTS.md` §16.
-- UI lint (new): `scripts/lib/ui-lint.mjs` + `pnpm design:lint` check TSX and CSS for the bans and reflexes in `.claude/rules/ui.md` "Visual quality"; bans exit 1, reflexes are notes; `// ui-allow <rule>: <reason>` silences one finding. See `docs/CONCEPTS.md` §13.
-- Guard (new): `scripts/kit-guard.mjs` (one Claude Code hook for SessionStart, PreToolUse, PostToolUse and Stop; rules in `scripts/lib/kit-guard-rules.mjs`) reviews UI edits, steers edits to kit core towards a seam, refuses generated files, and asks for a `localEdits` entry at Stop. See `docs/CONCEPTS.md` §13.
-- `.rocketflare.json` gains `guard: { enabled }` and `localEdits: [{ path, kind, reason, seamConsidered, capability?, date }]`; `kit:upgrade` shows an entry's reason beside a kit change to its path (`localEditFor` in `scripts/lib/upgrade-lib.mjs`).
-- A new default look, OFFERED, never applied by the upgrade: ember, a tinted shell on one warm rust hue at low chroma (every hued token a literal `oklch(L C 35)`; one hue recolours it), the logo's gold as `--flare`, new tokens `--rail-*`, `--series-1…5`, `--flare`, `--selection-surface`, `--shadow-panel`/`--shadow-popover`, radii in `@theme` (`--radius-control`/`-panel`/`-popover`), self-hosted IBM Plex Sans + JetBrains Mono (`@fontsource-variable/*`); the state colours move clear of a warm primary (error rose-700/-300, light warning yellow-700). `pnpm design:docs --adopt-default-look` takes it when asked. See `docs/CONCEPTS.md` §7.
-- Sign-in is a split screen: `components/LoginArt.tsx` (the rocket drawn from the rail and flare tokens) and `LOGIN_PANEL` in `ui/lib/login-panel.ts` (`art: 'rocket'|'type'`, `tagline`).
-- Home is an operational dashboard laid out from `pages/home-sections.ts` (feature-owned sections; core Team, AI spend, Activity under `pages/home/`), fed by `GET /api/home/summary` (`@rocketflare/shared/home`), with the primitives `RunsChart`, `TrendLine` and `AvatarStack` in `components/shared/`.
-- `GET /api/agents/runs` accepts `until` beside `since` (`agentRunListQuerySchema`), for Home's day filter. The demo seed (`pnpm seed --demo`) spreads runs, failures included, over the last 14 days and refreshes its timestamps on every run.
-- `components/shared/Provenance.tsx` (`Provenance`, `ProvenanceLink`, `ProvenanceQuote`, `sourceFromCard`/`sourceFromCitation`/`sourceFromFact`) is the one "where this came from" treatment in chat, document links (`DocumentLink`), agent outputs, the run timeline and Knowledge facts; plugins import it from `@/plugins/api/ui`.
-- Runs, documents and search read in product words: `GET /api/agents/runs` items and `GET /runs/:id` carry `requestedBy { id, name } | null` (`agentRunListItemSchema`, `agentRunRequesterSchema`), so the runs table shows a name and initials; run status rows are sentences (`statusSentence`); a failed run offers Run again; `cancelled` is a neutral badge; tables stack below `sm` (`ui/lib/stacked-table.ts`); search drops rank numbers and ranking diagnostics, highlights whole words minus stop-words and strips markdown from snippets (`highlightTerms`, `stripMarkdown`, `looksLikeMarkdown` in `ui/lib/highlight.ts`); `documentSourceLabel` reads `text` as "Pasted" and `agent:<key>` as "<Key> agent"; `ui/lib/format.ts` dates omit the current year and `timeAgo` is the short form; `Markdown` takes `spacing="reading"` and scrolls a wide table in its own box.
-- Brand tooling (`scripts/lib/brand.mjs`): `applyHue` turns the palette to one hue keeping lightness; brand.css gains `@theme { --brand-hue }` and may set radius, depth, font and series tokens; the derived-tone warning covers `--rail-active`, `--rail-focus-ring`, `--selection-surface`; `contrastPairs()` gains `SHELL_PAIRS` (`scripts/lib/contrast.mjs`); `/rf-design` asks a style step (density, tone, shape, palette, type, the sign-in image) and writes `docs/design/DESIGN.md`.
-- The rename's `--colour` takes a `#hex`, `oklch()` or hue in degrees and turns every `oklch()` literal to its hue (`applyColour({ tokensCss, indexCss, html }, colour)` in `scripts/lib/rename-lib.mjs`; it no longer needs a `--color-primary: #hex`), and sets `LOGIN_PANEL.tagline` from `docs/design/design.json` `app.tagline`.
-- Agent asks: an ask's notifications are marked read once it is answered, declined, expired or its run settles (`markNotificationsReadByData` in `services/notifications.ts`, called by `resolveInterrupt` / `expireInterrupts`, which take an optional `realtime` and nudge `notification.read`).
-- `GET /api/agents/interrupts?mine=true` (`interruptInboxQuerySchema.mine`) lists only the asks addressed to the reader; the Agents nav badge and "N waiting on you" use it, so an admin or a support visitor is no longer counted as waited on for another person's run.
-- Run page: durations roll into hours and days (`formatDuration` "18h 2m", "3d 4h"); a run that waited for input reads "Ran 12s · Waited 18h 2m" and its Usage tab gains "Waiting for input" (`runWaitMs` in `ui/lib/format.ts`); a stage that closes and opens again (a resumed run) is a new timeline row instead of one spanning the park.
-- `/agents` stacks below `sm` like the runs table (agent, last run, Run; the 30-day figures stay on the agent's page); chat fills the dynamic viewport height (`100dvh`, less the header and padding).
-- `summarize-text` indexes a summary as "Summary: <the text's heading or first sentence>" (`summaryDocumentTitle`, ≤ 80 characters) instead of a timestamp.
-- Home's Team card names a support membership apart ("· 1 support visitor"); `homeTeamSchema` gains `support`.
-- The demo seed writes model rows and tool rows under the model's call ids for its runs, and derives the past runs' timelines from them (`apps/web/scripts/lib/seed-run-events.ts`), so a seeded run's timeline shows the turns its output claims.
-- Guard: the first edit to a kit-core file in a session is PAUSED — refused once with the seam guidance ending "If the edit should still stand after this, make it again; it will go through." — and the retry passes silently (the path is recorded as steered before the refusal), because an allowed edit's context reaches the model only after the edit has landed. Ledgered paths stay silent; generated files are always refused. See `docs/CONCEPTS.md` §13.
-- Guard: the route files the kit ships in `apps/web/src/api/routes/` are steered (rule `kit-routes`, listed by name), pointing at a plugin's `mounts` or an app's own `api/routes/<feature>.ts` plus one mount line in `api/index.ts`; an app's own route file stays open.
-- Guard: the SessionStart text says only a file the guard flags needs a `localEdits` entry, and the pause asks for the entry to be shown in the final message.
-- `pnpm plugin add <id>[@X.Y.Z]` resolves a bare id through the catalogue `pnpm plugin list --available` reads (the published repository, its newest release tag, `--subdir plugins/<id>`) and prints what it resolved to; it failed with "repository '<id>' does not exist" before. See `docs/CONCEPTS.md` §16.
-- `--font-heading` (new `@theme` token in `theme-tokens.css`, default `var(--font-sans)`) is the face of h1–h3 (page and section titles, the sign-in heading, the login panel's name), so a brand.css can set a heading serif alone. See `docs/CONCEPTS.md` §7.
-- Chat with no AI configured keeps an open conversation's history readable and shows the not-configured call to action in place of the composer; with no conversation open it is the pane's empty state as before.
+_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
+lifted VERBATIM into `CHANGELOG.md`, so make it ONE standalone summary sentence of ≤ 40 words —
+then one bullet per change, one line each, and no `###` sub-headings. Rationale belongs in
+`docs/CONCEPTS.md` and is linked, never restated; see `README.md` beside this file._
 
 ## How to apply
 
-1. Take `apps/web/src/api/services/agents/recording.ts` and the `runtime.ts`, `replay.ts`, `agui-projection.ts`, `evals.ts` and `services/ai/agent-loop.ts` hunks as they are.
-2. Take the `packages/shared/src/ai/agents.ts` hunk that adds `kind` to the two tool event schemas.
-3. Take the run-page hunks under `apps/web/src/ui/pages/agents/run/` (`timelineModel.ts`, `TimelineGroup.tsx`, `ToolCallRow.tsx`, `output/RunUsageTab.tsx`).
-4. In each of your own agents and plugins, delete any `ctx.emit({ type: 'tool.start' | 'tool.end' })` pair that only brackets a `ctx.chat.client` call (`callStructuredTool`, `complete`, `stream`, a plugin's `ctx.structured`): the runtime now writes that row, and keeping yours shows the call twice. Keep pairs around a tool handler the agent calls directly.
-5. In each of your own agents whose `runToolLoop` (or a plugin's `ctx.toolLoop`) passes `onEvent` only to emit `tool.start`/`tool.end`/`text` rows, consider deleting that `onEvent`: with `journal: ctx.journal` the runtime writes the same rows.
-6. If code of your own reads `tool.start` events as "tools the agent called", skip those whose `data.kind === 'model'`.
-7. Take `apps/web/src/api/services/knowledge/notify.ts` and the `review.ts`, `extract.ts`, `resolve.ts`, `entities.ts`, `lookup.ts`, `types.ts` and `routes/knowledge.ts` hunks as they are.
-8. Take the `packages/shared/src/ai/knowledge-facts.ts` and `packages/shared/src/realtime.ts` hunks, then the UI hunks in `ui/lib/query-keys.ts`, `ui/hooks/useKnowledge.ts` and `ui/pages/knowledge/EntityPage.tsx`.
-9. If code of your own reads `queryKeys.knowledge.reviewCount`, read `queryKeys.knowledgeReviewCount.all` instead; if code of your own sends `entity.changed { entity: 'knowledge' }` after changing review items, call `nudgeKnowledgeChange` from `services/knowledge/notify.ts` with the affected reviewers, or their badges stop refreshing.
-10. For each of your own entity types with a custom `resolve` and no `labelColumn`, add a `mentions` finder if its rows should appear in the search facts block; a type with a `labelColumn` needs nothing.
-11. Take `apps/cli/src/commands/docs.ts`, `apps/cli/src/commands/facts.ts`, the `apps/cli/src/cli.ts` hunk and `apps/cli/tests/knowledge.test.ts` as they are.
-12. Take `apps/web/src/api/services/ai/contextualize.ts`, `queues/handlers/document-contextualize.ts`, the `chunking.ts`, `ingest.ts`, `usage.ts`, `knowledge/extract.ts`, `prompts.ts`, `queues/jobs.ts` and `routes/ai-documents.ts` hunks, and the `packages/shared` hunks in `permissions.ts` (`CORE_FEATURES`), `features.ts`, `jobs.ts`, `ai/usage.ts` and `ai/embeddings.ts`.
-13. Take the `chunks.ts` schema hunk, then `pnpm db:generate --name kit-knowledge-context` and read the SQL: it must add `context` and `context_model`, drop and re-add `search_vector` with `coalesce(context, '')` first, and recreate `chunks_search_vector_idx` (drizzle-kit leaves the index out — add `CREATE INDEX "chunks_search_vector_idx" ON "chunks" USING gin ("search_vector");` by hand). Rewriting `search_vector` rewrites the whole `chunks` table under a lock: above about 1M chunks, run it in a maintenance window. Then `pnpm db:migrate`.
-14. If you call `embeddingInput` or import `secondsUntilNextUtcDay` from `knowledge/extract` in your own code, the first gained an optional second argument and the second now lives in `services/ai/usage.ts`.
-15. Take the `SearchPage.tsx` (`ContextBackfillNotice`) and `hooks/useDocuments.ts` (`useContextualizeDocuments`, `facetsPollInterval`) hunks; `documentFacetsSchema` gained a required `withoutContext`, so a test fixture or client of your own that builds facets adds `withoutContext: 0`.
-16. To use it: turn on **Contextual search** for a tenant (Admin → Feature flags), point the `knowledge-context` prompt at a cheap model, then open Search as an admin and click **Add context**.
-17. Take the `scripts/lib/plugin-lib.mjs`, `scripts/lib/plugin-lib.d.mts` and `scripts/plugin.mjs` hunks as they are. `pnpm plugin check` can now fail where it passed: run `pnpm install` first (no `node_modules` is a failure), and fix each `Cannot find module` it names — usually a dependency the plugin never declared, or an import of a host path that has moved.
-18. Take `scripts/lib/ui-lint.mjs`, `scripts/lib/ui-lint.d.mts`, `scripts/design-lint.mjs`, `scripts/kit-guard.mjs`, `scripts/lib/kit-guard-lib.mjs`, `scripts/lib/kit-guard-lib.d.mts`, `scripts/lib/kit-guard-rules.mjs`, `scripts/lib/kit-guard-rules.d.mts`, the `scripts/upgrade.mjs` and `scripts/lib/upgrade-lib.{mjs,d.mts}` hunks, `apps/web/tests/config/ui-lint-lib.test.ts` and `apps/web/tests/config/kit-guard-lib.test.ts` as they are.
-19. Add `"design:lint": "node scripts/design-lint.mjs"` to the root `package.json` scripts (`package.json` is `manual`, so the upgrade shows this hunk without applying it).
-20. Register the guard in `.claude/settings.json` by hand (`manual`, so the upgrade only shows the diff): one entry running `node "$CLAUDE_PROJECT_DIR/scripts/kit-guard.mjs"` under `PreToolUse` with matcher `Write|Edit|MultiEdit|NotebookEdit`, under `PostToolUse` with matcher `Write|Edit|MultiEdit`, under `Stop` with no matcher, and as a second command in the existing `SessionStart` entry. Keep every hook already there.
-21. Add `"guard": { "enabled": true }` and `"localEdits": []` to `.rocketflare.json` (never ported, so by hand). Without them the guard still runs, with an empty ledger; `"enabled": false` turns it off.
-22. Take the `.claude/rules/ui.md` "Visual quality" hunk, then run `pnpm design:lint` and fix each ban it names in your own screens, or mark an earned exception with `// ui-allow <rule>: <reason>`.
-23. Optional: for each kit-core file (`scripts/lib/kit-guard-rules.mjs`, tier `steer`) your app already changed before this release, add a `localEdits` entry saying why. The next `pnpm kit:upgrade` then prints that reason beside any kit change to the file; a file with no entry is asked about only when a later session changes it again.
-24. Take `scripts/lib/brand.{mjs,d.mts}`, `scripts/lib/contrast.{mjs,d.mts}`, `scripts/design-docs.mjs`, the `scripts/lib/rename-lib.{mjs,d.mts}` hunks and `apps/web/tests/ui/contrast.test.ts` as they are, and the `.claude/skills/rf-design/` and `.claude/skills/rf-adapt/` hunks.
-25. Keep your look while taking the mechanics: decline the `apps/web/src/shared/theme-tokens.css` hunks and the hunks inside the two `[data-theme]` blocks of `apps/web/src/ui/index.css` and the `theme-color` line of `index.html`, but ADD the new token names to your blocks (`--rail-*`, `--series-1…5`, `--flare`, `--selection-surface`, `--shadow-panel`, `--shadow-popover`, and `--radius-control`/`-panel`/`-popover` in `@theme`) in your own colours: the new shell, Home and sign-in read them, and `contrast.test.ts` now checks them. The kit's values are a starting point — the kit's hue is 35 (ember).
-26. Take the component, page and `index.css` style hunks (`Layout`, `SideNav`, `AuthCard`, `Login`, `LoginArt`, `lib/login-panel.ts`, `pages/Home.tsx`, `pages/home-sections.ts`, `pages/home/`, the `components/shared/` primitives and `Provenance.tsx`, `ChatBubble`, `Markdown`), the `ui/main.tsx` font imports and the `@fontsource-variable/ibm-plex-sans` + `jetbrains-mono` entries in `apps/web/package.json` (`manual`: add them by hand), then `pnpm install`. If you customised `Home.tsx`, keep yours and move its areas into `home-sections.ts` entries when you want them.
-27. Set `LOGIN_PANEL.tagline` in `apps/web/src/ui/lib/login-panel.ts` in your product's words, and choose the panel: keep the rocket (it recolours from your tokens), replace `LoginArt.tsx` with imagery you own, or `art: 'type'`.
-28. Optional — the new look: after the upgrade is applied (so `.rocketflare.json` records this release), run `pnpm design:docs --adopt-default-look`. It reads the kit's default token files at that commit from `.upgrade/kit.git` (or `--from <kit checkout>`), in your names, replaces `theme-tokens.css`, the token blocks of `index.css` and `theme-color` (your own extra tokens are kept), and re-applies `docs/design/brand.css` on top; with no brand.css you get the kit's look as it ships. A brand of one hue is `@theme { --brand-hue: <deg>; }`. Then `pnpm design:docs --contrast` and look at the app. It never runs by itself.
-29. If a script of your own calls `applyColour`, pass `{ tokensCss, indexCss, html }` and read `tokensCss`/`indexCss` back (it was one concatenated `css`).
-30. Take the `packages/shared/src/ai/agents.ts` (`agentRunRequesterSchema`, `agentRunListItemSchema`, `requestedBy` on `agentRunWithEventsSchema`) and `ai/embeddings.ts` (`documentSourceLabel`) hunks, the `routes/agents.ts` hunks for `GET /runs` and `GET /runs/:id`, and the UI hunks under `pages/agents/`, `pages/documents/`, `components/ai/Markdown.tsx`, `components/shared/PaginationControls.tsx`, `ui/lib/format.ts`, `ui/lib/highlight.ts` and the new `ui/lib/stacked-table.ts`. A client of your own that parses the runs list with `agentRunSchema` keeps working; parse with `agentRunListItemSchema` to read the name.
-31. If your own UI matched on `formatDate`/`formatDateTime` output with a year, or on `timeAgo`'s long form ("about 3 hours ago"), update it: the current year is now left out and `timeAgo` reads "3h ago".
-32. If you declined the `theme-tokens.css` hunks (step 25), add `--font-heading: var(--font-sans);` to its `@theme` block by hand; set it to a serif stack there or in `docs/design/brand.css` for serif headings.
+_Numbered, imperative, each step self-contained — no "these", "them" or "the above" reaching
+outside its own step._
 
 ## Conflicts to expect
 
-- `apps/web/src/api/services/agents/examples/summarize-text.ts` → its own `submit_summary` pair removed → take the kit side unless you changed that block; then apply step 4 by hand.
-- `apps/web/tests/ui/run-page.test.tsx` → the precheck stage is no longer a button → take the kit side.
-- `apps/web/src/ui/pages/knowledge/EntityPage.tsx` → `PromotePanel` rewritten as a picker → take the kit side, then reapply your own copy edits.
-- `apps/web/migrations/` → your own migrations since 0.44.1 make the kit's `0035` number differ → never copy the kit's file; generate yours (step 13).
-- `packages/shared/src/permissions.ts` `CORE_FEATURES` → you added a flag of your own → keep both keys.
-- `.claude/settings.json` → the guard's four hook entries → add them by hand beside your own (step 20).
-- `apps/web/src/shared/theme-tokens.css`, `apps/web/src/ui/index.css` token blocks → the new look against your palette → keep yours and add the new token names (step 25), or adopt the look (step 28).
-- `apps/web/src/ui/pages/Home.tsx` → rewritten around `home-sections.ts` → take the kit side for a stock Home; a customised Home keeps yours (step 26).
+_One line each: `path → what changed → what to do`. Or exactly `None.`_
 
 ## Verify
 
-1. `pnpm gate` passes.
-2. `pnpm test api apps/web/tests/api/agent-run-workflow.test.ts` passes, including "a model call that fails closes its row as an error; the retry records its own".
-3. `pnpm test api apps/web/tests/api/knowledge-promote.test.ts apps/web/tests/api/knowledge-review.test.ts` passes, including "finds a row named in the query that never had a staging entity".
-4. `pnpm --filter @rocketflare/cli test` passes, including `knowledge.test.ts`.
-5. Run `summarize-text` locally: the "Summarising" stage expands to a "Model call · <model> answered" row with token counts, and "Checking the input" shows no chevron.
-6. `pnpm test api apps/web/tests/api/knowledge-context.test.ts` passes; with the flag on for a tenant, upload a document, and its `chunks.context` rows fill in and Settings → Usage shows `knowledge.context`.
-7. `pnpm plugin check` passes; add `import 'no-such-module'` to one installed plugin file and it fails naming that file and line.
-8. `pnpm design:lint` exits 0, and `pnpm test config apps/web/tests/config/ui-lint-lib.test.ts apps/web/tests/config/kit-guard-lib.test.ts` passes.
-9. In a Claude Code session, the first edit to `apps/web/src/db/client.ts` is refused once with the seam note and the same edit made again goes through, and an edit to `docs/plugin-api.md` is refused naming `node scripts/plugin-api-doc.mjs`.
-10. `pnpm test ui apps/web/tests/ui/contrast.test.ts` passes, including the `--rail-text on --rail-surface` and `--series-1 on --surface-panel` rows, and `pnpm design:docs --contrast` prints `all … pairs pass` for both themes.
+_Numbered checkable commands and assertions only._

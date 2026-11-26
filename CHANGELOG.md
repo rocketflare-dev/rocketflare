@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.45.0 — 2026-11-26
+
+Run timelines show model calls; knowledge gains a Promote picker, contextual prefixes and CLI `docs`/`facts`; `plugin check` parses source; a guard and a UI lint steer agents; Home, sign-in and provenance are redesigned, with a new look offered, never applied.
+[Porting note](docs/upgrades/0.45.0.md).
+
 ## 0.44.1 — 2026-11-22
 
 `tests/config/kit-manifest.test.ts` passes in a kit checkout without `apps/web/tests/kit-only/`, which is how plugin CI gates a plugin, so plugin repositories pass against the newest kit again.
