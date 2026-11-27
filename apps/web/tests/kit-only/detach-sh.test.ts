@@ -1,6 +1,6 @@
 /** `scripts/detach.sh` run against throwaway clones built with `git fast-import`. */
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -15,15 +15,20 @@ const MANIFEST = `${JSON.stringify(
 // Far more than a pipe buffer of subjects, so `git log` is still writing when a reader stops early.
 const LONG_HISTORY = 3000
 
-function run(cwd: string, command: string, args: string[], input?: string) {
+interface RunOptions {
+  input?: string
+  globalConfig?: string
+}
+
+function run(cwd: string, command: string, args: string[], options: RunOptions = {}) {
   const result = spawnSync(command, args, {
     cwd,
-    input,
+    input: options.input,
     encoding: 'utf8',
     env: {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: cwd,
-      GIT_CONFIG_GLOBAL: '/dev/null',
+      GIT_CONFIG_GLOBAL: options.globalConfig ?? '/dev/null',
       GIT_CONFIG_NOSYSTEM: '1',
     } as unknown as NodeJS.ProcessEnv,
   })
@@ -40,18 +45,29 @@ function data(text: string) {
   return `data ${Buffer.byteLength(text)}\n${text}\n`
 }
 
-function clone(options: { commits: number; firstSubject?: string; origin?: string }) {
+interface CloneOptions {
+  commits: number
+  firstSubject?: string
+  origin?: string
+  files?: Record<string, string>
+}
+
+function clone(options: CloneOptions) {
   const dir = mkdtempSync(join(tmpdir(), 'rf-detach-'))
   git(dir, 'init', '-q', '-b', 'main')
+  const files = { '.rocketflare.json': MANIFEST, ...options.files }
+  const tree = Object.entries(files)
+    .map(([path, text]) => `M 100644 inline ${path}\n${data(text)}`)
+    .join('')
   let stream = ''
   for (let n = 1; n <= options.commits; n++) {
     const subject =
       n === 1 && options.firstSubject ? options.firstSubject : `${n} ${'x'.repeat(120)}`
     stream += `commit refs/heads/main\ncommitter Kit <kit@example.test> ${1700000000 + n} +0000\n`
     stream += data(subject)
-    stream += n === 1 ? `M 100644 inline .rocketflare.json\n${data(MANIFEST)}` : '\n'
+    stream += n === 1 ? tree : '\n'
   }
-  const imported = run(dir, 'git', ['fast-import', '--quiet'], stream)
+  const imported = run(dir, 'git', ['fast-import', '--quiet'], { input: stream })
   if (imported.code !== 0) throw new Error(`git fast-import failed: ${imported.err}`)
   git(dir, 'reset', '-q', '--hard', 'main')
   git(dir, 'remote', 'add', 'origin', options.origin ?? KIT_ORIGIN)
@@ -60,6 +76,15 @@ function clone(options: { commits: number; firstSubject?: string; origin?: strin
 
 function detach(dir: string, ...args: string[]) {
   return run(dir, 'bash', [SCRIPT, ...args])
+}
+
+function globalConfigIgnoring(pattern: string) {
+  const dir = mkdtempSync(join(tmpdir(), 'rf-detach-home-'))
+  const ignore = join(dir, 'gitignore')
+  const config = join(dir, 'gitconfig')
+  writeFileSync(ignore, `${pattern}\n`)
+  writeFileSync(config, `[core]\n\texcludesFile = ${ignore}\n`)
+  return config
 }
 
 describe('scripts/detach.sh', () => {
@@ -79,6 +104,32 @@ describe('scripts/detach.sh', () => {
     expect(manifest.kit.commit).toBe(kitCommit)
     expect(manifest.surfaces[0].source.commit).toBeNull()
     expect(git(dir, 'status', '--porcelain')).toBe('')
+  })
+
+  it('keeps a tracked file the person’s global gitignore matches, and adds no ignored one', () => {
+    const dir = clone({
+      commits: 2,
+      files: {
+        '.claude/settings.json': '{}\n',
+        '.gitignore': 'node_modules\n',
+        'docs/[id] notes.md': 'a path git would read as a pattern\n',
+      },
+    })
+    mkdirSync(join(dir, 'node_modules'))
+    writeFileSync(join(dir, 'node_modules/installed.js'), 'never tracked\n')
+    const globalConfig = globalConfigIgnoring('.claude')
+
+    const result = run(dir, 'bash', [SCRIPT], { globalConfig })
+
+    expect(result.err).toBe('')
+    expect(result.code).toBe(0)
+    expect(git(dir, 'ls-files').split('\n')).toEqual([
+      '.claude/settings.json',
+      '.gitignore',
+      '.rocketflare.json',
+      'docs/[id] notes.md',
+    ])
+    expect(git(dir, 'log', '--format=%s')).toBe('Start from Rocketflare')
   })
 
   it('does nothing to a copy that is already detached', () => {

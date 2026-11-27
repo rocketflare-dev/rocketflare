@@ -24,6 +24,7 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - The Vite build fills `index.html`'s `<title>` from `APP_NAME` and its meta description from `APP_TAGLINE` (the name when there is no tagline), read from `[vars]` in `apps/web/wrangler.toml` (`pageIdentityPlugin` in `apps/web/vite.config.ts`, new `scripts/lib/page-identity.mjs`).
 - `scripts/rename.mjs` writes `design.json` `app.tagline` to `APP_TAGLINE` in both wrangler tomls (`applyTagline` in `scripts/lib/rename-lib.mjs` now takes a toml), no longer to `login-panel.ts`.
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
+- Fix: `scripts/detach.sh` keeps every file the kit tracks. It re-added the tree with `git add -A`, which obeys the person's own global gitignore, so a machine that ignores `.claude` got a first commit with no skills, rules or hooks. It now adds exactly the tracked list, and still adds no ignored file.
 
 ## How to apply
 
@@ -36,6 +37,7 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 7. Check that `apps/web/src/ui/index.html` has a `<title>` element: the build now fails without one.
 8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
 9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
+10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
 
 ## Conflicts to expect
 
