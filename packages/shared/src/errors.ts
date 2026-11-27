@@ -143,6 +143,17 @@ export const ERROR_CODES = {
    * object is deleted; start a new upload.
    */
   uploadMismatch: 'upload_mismatch',
+  /**
+   * 409 on `POST /api/uploads`: an object is already stored at the key the target answered, so no
+   * URL is handed out — an upload never overwrites what is there.
+   */
+  uploadKeyExists: 'upload_key_exists',
+  /**
+   * 500 on `POST /api/uploads`: the target answered a storage key it may not use — outside the
+   * tenant's prefix, or, for a plugin, outside `tenants/<tenantId>/<pluginId>/` or without the
+   * upload id. A bug in the target, never the client's; nothing is recorded.
+   */
+  uploadKeyInvalid: 'upload_key_invalid',
 } as const
 
 export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES]

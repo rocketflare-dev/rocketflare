@@ -160,7 +160,10 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   (`SAMEORIGIN` + `frame-ancestors 'self'` for that response). Never a header of your own.
 - **A file upload is an `uploadTargets` entry** (`PluginUploadTarget`, `<id>.<name>`, ≤ 5 GiB,
   `uploadTargetIssues`), never a route taking the bytes — no body above 1 MB reaches the Worker.
-  `prepare` authorises and checks `fields` before the URL is signed; `confirm` gets the stored
+  Its `permission: { action, subject }` is REQUIRED and the host checks it before `prepare` (as
+  core checks `create File`). `prepare` makes any further check and validates `fields` before the
+  URL is signed; a key it answers must sit under `tenants/<tenantId>/<id>/` and contain the
+  `uploadId` (else 500 `upload_key_invalid`) — omit `key` for the default; `confirm` gets the stored
   object's key, size and type (already checked against the declaration) and `read()`, and answers
   the response. The client is `api.upload('<id>.<name>', file, { fields })`. CONCEPTS §16.
   `uploadPaths` / `uploadLimits` (a multipart route taking the bytes) still work but are

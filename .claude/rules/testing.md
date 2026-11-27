@@ -307,7 +307,8 @@ would otherwise enter the plugin import cycle from the plugin's side and leave a
   the confirm (or the refusal before it); `createUploadRequest` / `putUpload` / `confirmUploadRequest`
   are the steps alone. Assert the row, the object in `stubs(env).files.objects`, and the 413/415
   envelopes (`files.test.ts`, `document-upload.test.ts`; the shared flow — mismatch, expiry,
-  cross-tenant 404, prune — is `uploads.test.ts`). A UI test stubs the three calls with
+  cross-tenant 404, prune, the key rule, write-once — is `uploads.test.ts`; a test plugin target
+  declares its `permission`). A UI test stubs the three calls with
   `uploadRoutes(confirmAnswer)` and reads them back with `uploadCalls` (`tests/ui/helpers/uploads.ts`)
 
 ## What every API test file includes

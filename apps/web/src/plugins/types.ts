@@ -311,10 +311,11 @@ export interface ServerPlugin<S extends SharedPlugin = SharedPlugin> {
   /**
    * Kinds of file people upload STRAIGHT to storage — never through the Worker. Each is a target
    * of `POST /api/uploads` (`id` `<plugin id>.<name>`; `tests/config/plugins.test.ts` refuses any
-   * other, a duplicate, and a `maxBytes` that is not a positive integer): the host presigns the
-   * `PUT`, enforces `maxBytes` / `contentTypes`, and calls `prepare` before and `confirm` after the
-   * bytes arrive (`@/plugins/api` `PluginUploadTarget`). Its own bucket needs its binding in BOTH
-   * tomls and in the R2 API token's scope; omitted, it is `FILES` under `tenants/<tenantId>/<id>/`.
+   * other, a duplicate, and a `maxBytes` that is not a positive integer): the host checks its
+   * required `permission`, presigns the `PUT`, enforces `maxBytes` / `contentTypes` and the key
+   * rule (under `tenants/<tenantId>/<id>/`, naming the upload id), and calls `prepare` before and
+   * `confirm` after the bytes arrive (`@/plugins/api` `PluginUploadTarget`). Its own bucket needs
+   * its binding in BOTH tomls and in the R2 API token's scope; omitted, it is `FILES`.
    */
   uploadTargets?: readonly PluginUploadTarget[]
   /**

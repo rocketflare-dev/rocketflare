@@ -3,7 +3,7 @@ version: unreleased
 previous: 0.45.0
 date: null
 breaking: true
-migrations: ["pending_uploads (new tenant table + RLS policy)"]
+migrations: ["pending_uploads (new tenant table + RLS policy)", "pending_uploads.user_id nullable, ON DELETE SET NULL"]
 areas: [api, cli, db, shared, ui, plugins, config, docs]
 touches_surfaces: []
 requires_surfaces: []
@@ -25,22 +25,33 @@ Uploads move to `/api/uploads` (presign, PUT, confirm): straight to R2 once an R
 - Without the key pair `POST /api/uploads` hands out the Worker's own `/api/upload-content/:id?token=`, which holds the same rules. Deployed, that path takes at most `MAX_WORKER_UPLOAD_BYTES` (10 MB; larger → 413 `details.directUploads: false`); `development` takes the target's own limit.
 - `pnpm provision cloudflare <env>` writes the two vars and a CORS rule (PUT from `APP_URL`) on every `[[r2_buckets]]` bucket; `provision secrets <env>` puts the key pair, and says uploads stay on the Worker when it is missing.
 - Plugin seam: `ServerPlugin.uploadTargets` (`PluginUploadTarget` from `@/plugins/api`, `docs/CONCEPTS.md` §16) is new. `uploadPaths` and `uploadLimits` still work unchanged and are deprecated, so an installed plugin's multipart route keeps working.
+- `PluginUploadTarget.permission: { action, subject }` is required. The host checks it before `prepare` (403), as the core targets check `create File` / `create Document`, so a target with no `prepare` is never open to every member.
+- A plugin upload key must sit under the plugin's own prefix, `tenants/<tenantId>/<pluginId>/`, and name the upload id, in plain path segments. Any other is 500 `upload_key_invalid` and nothing is recorded. A core target's key outside the tenant prefix gets the same code.
+- No upload URL is handed out for a key that already holds an object: 409 `upload_key_exists` (new code), for every target.
+- The Worker's own upload URL is spent once the upload is confirmed (403), and writes with a conditional put (only if absent), so two concurrent `PUT`s cannot both land.
+- Confirm resolves the target and bucket before it claims the row. A target since uninstalled (400 `unknown_upload_target`) or a bucket since unbound (503) leaves the row unclaimed.
+- The prune also deletes the object of a confirmed core upload whose key no `files` row records. A confirmed row is pruned once its claim, too, is past the 15-minute grace.
+- `pending_uploads.user_id` is nullable and `ON DELETE SET NULL` (was cascade). The row outlives a deleted person, can be neither `PUT` nor confirmed, and the prune still deletes its object.
 - UI: `api.upload(target, file, { fields, schema })` replaces `api.upload(url, formData, …)`; `api` no longer sends `FormData`.
 - CLI: `ApiClient.upload(target, { name, contentType, bytes }, { fields, schema })` replaces `postForm`.
+- Docs: the Worker's upload URL is served by any Worker without the R2 key pair, deployed too (up to 10 MB), not in `development` only (`routes/uploads.ts`, `config.ts`).
 - Fix: a document upload now keeps its `visibility` and `groupIds`, which the old form post dropped.
 - Fix: `scripts/detach.sh` detaches a clone with a long history. It exited 141 with no message, because `head -1` closed the pipe on `git log` under `pipefail`; `/rf-start`, `/rf-setup` §0 and `scripts/install.sh` all stopped there.
 
 ## How to apply
 
-1. Run `pnpm db:generate` after porting `apps/web/src/db/schema/pending-uploads.ts` and its export from `schema/index.ts`. Review the SQL (table, RLS policy, `(tenant_id, expires_at)` index), then run `pnpm db:migrate`.
+1. Run `pnpm db:generate` after porting `apps/web/src/db/schema/pending-uploads.ts` and its export from `schema/index.ts`. Review the SQL (table, RLS policy, `(tenant_id, expires_at)` index, `user_id` nullable with `ON DELETE set null`), then run `pnpm db:migrate`. The kit ships this as two migrations, `0036_kit-direct-uploads` and `0037_kit-pending-uploads-keep-on-user-delete`; a copy generating once gets one migration with the same end state.
 2. Add `R2_ACCOUNT_ID = ""` and `FILES_BUCKET_NAME = "<the FILES bucket_name>"` to `[vars]` in BOTH `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`, each with that toml's own bucket name.
 3. Add blank `R2_ACCESS_KEY_ID=` and `R2_SECRET_ACCESS_KEY=` lines to `apps/web/.dev.vars.example`. Local development needs neither.
 4. Optional, for direct uploads in a deployed environment: create an R2 API token (dashboard → R2 → Manage API tokens, Object Read & Write, scoped to that environment's buckets), put its key pair in `apps/web/.provision.env`, then run `pnpm provision cloudflare <env>` and `pnpm provision secrets <env>` (`docs/DEPLOY.md` § Direct uploads). Without the token, uploads go through the Worker at up to 10 MB a file.
 5. Replace every app call of `api.upload(url, formData, options)` with `api.upload('<target>', file, { fields, ...options })`. The core targets are `avatars`, `uploads` and `documents`.
 6. Replace every CLI call of `client.postForm(path, form)` with `client.upload('<target>', { name, contentType, bytes }, { fields, schema })`.
-7. Leave each installed plugin's `uploadPaths` / `uploadLimits` as they are: both still work. A plugin moves to an `uploadTargets` entry in its own release (`id: '<plugin id>.<name>'`, `maxBytes`, `prepare` for the checks, `confirm` for what the route did once the bytes were stored).
+7. Leave each installed plugin's `uploadPaths` / `uploadLimits` as they are: both still work. A plugin moves to an `uploadTargets` entry in its own release (`id: '<plugin id>.<name>'`, `permission`, `maxBytes`, `prepare` for any further checks, `confirm` for what the route did once the bytes were stored).
 8. Replace any call of `apiBodyLimit(overrides, uploadPaths, uploadLimits)` in app code with `apiBodyLimit({ overrides, pluginUploadPaths, uploadLimits })`.
 9. Replace any app test that posted `FormData` to an upload route with `directUpload(env, cookie, target, file, fields)` from `apps/web/tests/helpers/uploads.ts`.
+10. Plugin authors: give every `uploadTargets` entry a `permission: { action, subject }`, the check its upload route made (`ctx.guard(action, subject)`), and drop that guard from `prepare`. The kit chose a required declared permission over a required `prepare`: the host checks it the way core does, so no target can skip it. This breaks the type check of a plugin that declared a target without one; `uploadTargets` is new in this release, so no released plugin has one yet.
+11. Plugin authors: a `prepare` that answers its own `key` must build it under `tenants/<tenantId>/<pluginId>/` with the `uploadId` in it (e.g. `` `tenants/${ctx.tenantId}/<pluginId>/${input.uploadId}-${input.filename}` ``), or omit `key` for that default. Any other key is now refused with 500 `upload_key_invalid`.
+12. A plugin that deletes a confirmed upload's object within 10 minutes of the presign, while its R2 URL lives, owns removing anything written to that key again; the prune covers this for core targets only (`docs/CONCEPTS.md` §6, known gaps).
 
 ## Conflicts to expect
 
@@ -48,11 +59,14 @@ Uploads move to `/api/uploads` (presign, PUT, confirm): straight to R2 once an R
 - `apps/web/src/api/routes/files.ts`, `routes/ai-documents.ts` → the multipart `POST` handlers removed → move an app's custom upload checks into the target's `prepare` in `services/uploads/targets.ts`.
 - `apps/web/src/plugins/types.ts` → `uploadTargets` added beside the deprecated `uploadPaths` / `uploadLimits` → keep all three.
 - `apps/web/src/ui/lib/api-client.ts` → `FormData` branch removed, `upload` re-signed → take the kit's file.
+- `apps/web/src/plugins/api/uploads.ts` → `permission` added to `PluginUploadTarget` → take the kit's file, then add `permission` to each local plugin target.
+- `apps/web/tests/mocks/bindings.ts` → `MemoryR2Bucket.put` honours `onlyIf` "absent" and may answer `null` → take the kit's file, then re-add any local stub methods.
 
 ## Verify
 
 1. `pnpm gate` passes.
-2. `pnpm test api apps/web/tests/api/uploads.test.ts` passes.
-3. `curl -s -X POST https://<staging-host>/api/uploads -H 'Authorization: Bearer <key>' -H 'Content-Type: application/json' -d '{"target":"uploads","name":"a.txt","contentType":"text/plain","size":5}'` answers 201 with a `url`: on `<account>.r2.cloudflarestorage.com` once the R2 key pair is set, else on the app's own `/api/upload-content/`.
-4. Uploading an avatar on staging's Profile page shows the new image.
-5. With the key pair set: `pnpm --filter @rocketflare/web exec wrangler r2 bucket cors list <bucket> -c wrangler.staging.toml` lists a `PUT` rule for the app's origin.
+2. `pnpm test api apps/web/tests/api/uploads.test.ts` passes, including the permission, key-rule, existing-object, spent-URL, concurrent-`PUT`, unclaimed-confirm and deleted-person cases.
+3. `psql "$DATABASE_URL" -c '\d pending_uploads'` shows `user_id` nullable with `ON DELETE SET NULL`.
+4. `curl -s -X POST https://<staging-host>/api/uploads -H 'Authorization: Bearer <key>' -H 'Content-Type: application/json' -d '{"target":"uploads","name":"a.txt","contentType":"text/plain","size":5}'` answers 201 with a `url`: on `<account>.r2.cloudflarestorage.com` once the R2 key pair is set, else on the app's own `/api/upload-content/`.
+5. Uploading an avatar on staging's Profile page shows the new image.
+6. With the key pair set: `pnpm --filter @rocketflare/web exec wrangler r2 bucket cors list <bucket> -c wrangler.staging.toml` lists a `PUT` rule for the app's origin.

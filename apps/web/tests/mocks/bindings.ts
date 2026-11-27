@@ -122,6 +122,14 @@ interface R2Entry {
   uploaded: Date
 }
 
+/** R2's "only if absent": `etagDoesNotMatch: '*'`, or the `If-None-Match: *` header. */
+function onlyIfAbsent(cond: R2Conditional | Headers): boolean {
+  if (cond instanceof Headers)
+    return cond.get('if-none-match') === '*' && [...cond.keys()].length === 1
+  const keys = Object.keys(cond).filter(k => cond[k as keyof R2Conditional] !== undefined)
+  return keys.length === 1 && cond.etagDoesNotMatch === '*'
+}
+
 /** Enough of R2Bucket for `services/storage.ts`: put/get/head/delete/list. */
 export class MemoryR2Bucket {
   readonly objects = new Map<string, R2Entry>()
@@ -147,8 +155,12 @@ export class MemoryR2Bucket {
   async put(
     key: string,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
-    options?: { httpMetadata?: R2HTTPMetadata | Headers; customMetadata?: Record<string, string> }
-  ): Promise<R2Object> {
+    options?: {
+      httpMetadata?: R2HTTPMetadata | Headers
+      customMetadata?: Record<string, string>
+      onlyIf?: R2Conditional | Headers
+    }
+  ): Promise<R2Object | null> {
     const body =
       value === null
         ? new Uint8Array()
@@ -168,6 +180,14 @@ export class MemoryR2Bucket {
       httpMetadata,
       customMetadata: options?.customMetadata,
       uploaded: new Date(),
+    }
+    // Checked at the write itself, after the body is in, as R2 does: two puts racing on "only if
+    // absent" cannot both land. Only that condition is modelled; any other is refused loudly.
+    if (options?.onlyIf) {
+      if (!onlyIfAbsent(options.onlyIf)) {
+        throw new Error('MemoryR2Bucket.put: only `onlyIf` "absent" is modelled')
+      }
+      if (this.objects.has(key)) return null
     }
     this.objects.set(key, entry)
     return this.toObject(key, entry)

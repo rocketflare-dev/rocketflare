@@ -5,27 +5,32 @@
  *                   `PUT` over R2's S3 API with `content-type`, `content-length` and
  *                   `if-none-match: *` SIGNED — another type, another length or a second write to
  *                   the key is refused by the store itself.
- *   confirmUpload   claims the row (compare-and-set on `confirmed_at`, so once), `head`s the object,
- *                   checks it against what was declared, and hands it to the target. A mismatch or
- *                   a target that throws deletes the object and un-claims the row.
+ *   confirmUpload   resolves the row's target and bucket, then claims the row (compare-and-set on
+ *                   `confirmed_at`, so once), `head`s the object, checks it against what was
+ *                   declared, and hands it to the target. A mismatch or a target that throws
+ *                   deletes the object and un-claims the row.
  *   receiveLocal    the fallback when there are no R2 keys: the URL is the Worker's own
- *                   (`PUT /api/upload-content/:id?token=`), which writes through the binding.
- *                   Same headers, same checks, same confirm — the client cannot tell. Deployed,
- *                   it takes at most `MAX_WORKER_UPLOAD_BYTES` (the Worker holds the body).
- *   prunePendingUploads   the nightly sweep: an upload whose URL died unconfirmed loses its object.
+ *                   (`PUT /api/upload-content/:id?token=`), which writes through the binding with a
+ *                   conditional put (only if absent). Same headers, same checks, same confirm — the
+ *                   client cannot tell — and spent once the upload is confirmed. Deployed, it takes
+ *                   at most `MAX_WORKER_UPLOAD_BYTES` (the Worker holds the body).
+ *   prunePendingUploads   the nightly sweep: an upload whose URL died unconfirmed loses its object,
+ *                   and so does a confirmed core upload whose key no `files` row records.
  *
- * Tenancy: the key is built on the server under `tenants/<tenantId>/` (asserted, whatever a
- * plugin's `prepare` answers); confirm finds the row by id AND the caller's tenant AND user, so
- * another tenant's upload id is the same 404 as an unknown one.
+ * Tenancy: the key is built on the server under `tenants/<tenantId>/` (asserted for every target; a
+ * plugin's under its own `tenants/<tenantId>/<pluginId>/`, naming the upload id), and no URL is
+ * handed out for a key that already holds an object. Confirm finds the row by id AND the caller's
+ * tenant AND user, so another tenant's upload id is the same 404 as an unknown one.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import {
+  CORE_UPLOAD_TARGETS,
   type CreateUploadRequest,
   type CreateUploadResponse,
   createUploadRequestSchema,
   UPLOAD_URL_TTL_SECONDS,
 } from '@rocketflare/shared/uploads'
-import { and, eq, isNotNull, isNull, lt } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, lt } from 'drizzle-orm'
 import { r2SigningCredentials } from '../../../config'
 import type { Database } from '../../../db/client'
 import { files, type PendingUploadRow, pendingUploads } from '../../../db/schema'
@@ -101,7 +106,7 @@ export async function createUpload(
   const body = createUploadRequestSchema.parse(request)
   const { db, tenantId, user, cfg } = withAuthAndDb(c)
   const target = lookupTarget(body.target)
-  bucketOf(c, target)
+  const bucket = bucketOf(c, target)
 
   const credentials = r2SigningCredentials(cfg)
   const bucketName = target.bucketName(c)
@@ -135,7 +140,20 @@ export async function createUpload(
     fields: body.fields ?? {},
   })
   if (!prepared.key.startsWith(tenantStoragePrefix(tenantId))) {
-    throw new Error(`uploads: target ${target.id} answered a key outside the tenant's prefix`)
+    throw new ApiError(
+      500,
+      `Upload target ${target.id} answered a storage key outside the tenant's prefix`,
+      ERROR_CODES.uploadKeyInvalid
+    )
+  }
+  // The failed confirm, the expiry and the prune delete this key: never sign one that holds an
+  // object already. (Every key names a fresh upload id, so this is the backstop, not the rule.)
+  if (await bucket.head(prepared.key)) {
+    throw new ApiError(
+      409,
+      'A file is already stored under this upload key; start a new upload',
+      ERROR_CODES.uploadKeyExists
+    )
   }
 
   const expiresAt = new Date(Date.now() + UPLOAD_URL_TTL_SECONDS * 1000)
@@ -196,24 +214,29 @@ export async function confirmUpload(
   uploadId: string
 ): Promise<{ status: 200 | 201; body: unknown }> {
   const { db, tenantId, user, logger } = withAuthAndDb(c)
+  const mine = and(
+    eq(pendingUploads.id, uploadId),
+    eq(pendingUploads.tenantId, tenantId),
+    eq(pendingUploads.userId, user.id),
+    isNull(pendingUploads.confirmedAt)
+  )
+  // Unknown, another tenant's, another person's and already-confirmed are the same answer.
+  const pending = await db.query.pendingUploads.findFirst({ where: mine })
+  if (!pending) throw new NotFoundError('Upload not found')
+  // Everything that can refuse before the target runs is resolved BEFORE the claim: a target since
+  // uninstalled or a bucket since unbound leaves the row unclaimed, for a retry or the prune.
+  const target = lookupTarget(pending.target)
+  const bucket = bucketOf(c, { binding: pending.bucket })
+  const storage = createR2Storage(bucket)
+
   const [row] = await db
     .update(pendingUploads)
     .set({ confirmedAt: new Date() })
-    .where(
-      and(
-        eq(pendingUploads.id, uploadId),
-        eq(pendingUploads.tenantId, tenantId),
-        eq(pendingUploads.userId, user.id),
-        isNull(pendingUploads.confirmedAt)
-      )
-    )
+    .where(mine)
     .returning()
-  // Unknown, another tenant's, another person's and already-confirmed are the same answer.
+  // A concurrent confirm claimed it between the read and here.
   if (!row) throw new NotFoundError('Upload not found')
 
-  const target = lookupTarget(row.target)
-  const bucket = bucketOf(c, { binding: row.bucket })
-  const storage = createR2Storage(bucket)
   const fail = async (err: ApiError): Promise<never> => {
     await storage.delete(row.key).catch(() => {})
     await unclaim(db, row)
@@ -271,11 +294,12 @@ export async function confirmUpload(
 // ---- PUT /api/upload-content/:id (the Worker fallback) -------------------------------------------
 
 /**
- * The Worker's stand-in for R2's presigned `PUT`, offered when the R2 key pair is not set, with the
- * store's rules: the token proves the URL,
- * the URL dies at `expiresAt`, the `Content-Type` and `Content-Length` must be the declared ones,
- * and the key is written once. The body is read whole — it is bounded by the declared size, which
- * the target already capped.
+ * The Worker's stand-in for R2's presigned `PUT`, offered when the R2 key pair is not set (in
+ * `development`, and deployed up to `MAX_WORKER_UPLOAD_BYTES`), with the store's rules: the token
+ * proves the URL, the URL dies at `expiresAt`, the `Content-Type` and `Content-Length` must be the
+ * declared ones, and the key is written once (a conditional put). Stricter than R2 in one way: the
+ * URL is spent once the upload is confirmed. The body is read whole — it is bounded by the declared
+ * size, which the target already capped.
  */
 export async function receiveLocalUpload(c: AppContext, uploadId: string): Promise<void> {
   const db = c.get('db')
@@ -289,6 +313,11 @@ export async function receiveLocalUpload(c: AppContext, uploadId: string): Promi
   if (Date.now() > row.expiresAt.getTime()) {
     throw new ApiError(403, 'This upload URL has expired', ERROR_CODES.uploadExpired)
   }
+  // Spent once confirmed — even if the confirmed object was deleted since, which would let an
+  // "only if absent" write through. A row whose uploader was deleted is spent too.
+  if (row.confirmedAt || !row.userId) {
+    throw new ApiError(403, 'This upload URL has already been used', 'forbidden')
+  }
   const declaredLength = Number(c.req.header('Content-Length'))
   if (
     normaliseContentType(c.req.header('Content-Type')) !== row.contentType ||
@@ -299,23 +328,33 @@ export async function receiveLocalUpload(c: AppContext, uploadId: string): Promi
   if (c.req.header('If-None-Match') !== '*') {
     throw new ApiError(403, 'The request does not match the signed upload', 'forbidden')
   }
-  const storage = createR2Storage(bucketOf(c, { binding: row.bucket }))
-  if (await storage.head(row.key)) {
-    throw new ApiError(412, 'The object already exists', 'precondition_failed')
-  }
+  const bucket = bucketOf(c, { binding: row.bucket })
   const bytes = await c.req.arrayBuffer()
   if (bytes.byteLength !== row.sizeBytes) {
     throw new ApiError(400, 'The body is not the declared length', ERROR_CODES.uploadMismatch)
   }
-  await storage.put(row.key, bytes, { contentType: row.contentType })
+  // ONE conditional write, as `If-None-Match: *` is on R2's own URL: a check-then-write would let
+  // two concurrent PUTs both pass the check. R2 answers `null` when an object is there.
+  const written = await bucket.put(row.key, bytes, {
+    httpMetadata: { contentType: row.contentType },
+    onlyIf: { etagDoesNotMatch: '*' },
+  })
+  if (!written) throw new ApiError(412, 'The object already exists', 'precondition_failed')
 }
 
 // ---- nightly prune --------------------------------------------------------------------------------
 
+const CORE_TARGET_IDS: readonly string[] = CORE_UPLOAD_TARGETS
+
 /**
  * Uploads whose URL and confirm window are both over. An UNCONFIRMED one loses its object (it was
- * never recorded, or its confirm failed); a confirmed one is only forgotten — its object belongs to
- * the target now. One statement across every tenant, from the `(tenant_id, expires_at)` index.
+ * never recorded, or its confirm failed). A CONFIRMED one is forgotten, and for a core target its
+ * object goes too when no `files` row records the key: a core confirm always records one (a
+ * deduplicated document deletes its bytes instead), so an unrecorded key is a file deleted since,
+ * re-written through its still-live R2 URL. A plugin's confirmed object is its own — the kit cannot
+ * tell which of its rows records the key (CONCEPTS §6, known gaps). A confirmed row waits until its
+ * claim is past the grace too, so a confirm still running is never pruned under. One statement
+ * each across every tenant, from the `(tenant_id, expires_at)` index.
  */
 export async function prunePendingUploads(
   db: Database,
@@ -329,11 +368,41 @@ export async function prunePendingUploads(
     .returning({ bucket: pendingUploads.bucket, key: pendingUploads.key })
   const confirmed = await db
     .delete(pendingUploads)
-    .where(and(lt(pendingUploads.expiresAt, cutoff), isNotNull(pendingUploads.confirmedAt)))
-    .returning({ id: pendingUploads.id })
+    .where(
+      and(
+        lt(pendingUploads.expiresAt, cutoff),
+        isNotNull(pendingUploads.confirmedAt),
+        lt(pendingUploads.confirmedAt, cutoff)
+      )
+    )
+    .returning({
+      target: pendingUploads.target,
+      bucket: pendingUploads.bucket,
+      key: pendingUploads.key,
+    })
+
+  const unrecorded: { bucket: string; key: string }[] = []
+  const core = confirmed.filter(row => CORE_TARGET_IDS.includes(row.target))
+  for (let i = 0; i < core.length; i += PURGE_PAGE_SIZE) {
+    const page = core.slice(i, i + PURGE_PAGE_SIZE)
+    // By key alone: a key embeds its tenant's prefix and is unique across `files`.
+    const recorded = await db
+      .select({ key: files.key })
+      .from(files)
+      .where(
+        inArray(
+          files.key,
+          page.map(row => row.key)
+        )
+      )
+    const kept = new Set(recorded.map(row => row.key))
+    unrecorded.push(...page.filter(row => !kept.has(row.key)))
+  }
 
   const byBucket = new Map<string, string[]>()
-  for (const { bucket, key } of stale) byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), key])
+  for (const { bucket, key } of [...stale, ...unrecorded]) {
+    byBucket.set(bucket, [...(byBucket.get(bucket) ?? []), key])
+  }
   for (const [binding, keys] of byBucket) {
     const bucket = (env as unknown as Record<string, R2Bucket | undefined>)[binding]
     if (!bucket) continue
@@ -342,5 +411,5 @@ export async function prunePendingUploads(
       await storage.deleteMany(keys.slice(i, i + PURGE_PAGE_SIZE))
     }
   }
-  return { objects: stale.length, rows: stale.length + confirmed.length }
+  return { objects: stale.length + unrecorded.length, rows: stale.length + confirmed.length }
 }
