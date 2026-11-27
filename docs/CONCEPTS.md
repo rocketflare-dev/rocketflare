@@ -594,13 +594,19 @@ project.
   1. `POST /api/uploads { target, name, contentType, size, fields? }` runs every check the target
      makes BEFORE a byte moves: permission, 415 type, 413 size, 400 `file_empty`, 503
      `storage_not_configured`, and for documents 503 `conversion_not_configured` and the embeddings
-     503. It records a `pending_uploads` row and answers a `PUT` URL valid for 10 minutes: a
+     503. The key must be under the tenant's prefix (a plugin's under its own, naming the upload;
+     500 `upload_key_invalid`), and nothing may be stored there yet (409 `upload_key_exists`). It
+     records a `pending_uploads` row and answers a `PUT` URL valid for 10 minutes: a
      presigned R2 URL (SigV4 over the S3 API, `services/uploads/sigv4.ts`) when the key pair is
      set, else the Worker's own `/api/upload-content/:id?token=`.
   2. The `PUT` must carry the declared `Content-Type` and `Content-Length` and `If-None-Match: *`.
      R2 holds them because the URL signs them; the Worker URL holds the same rules itself (token
-     hash, type, length, write-once, expiry). Another type, size or a second write is refused.
-  3. `POST /api/uploads/:id/confirm` claims the row (compare-and-set on `confirmed_at`), `head`s the
+     hash, type, length, expiry, and write-once as ONE conditional put, so two concurrent `PUT`s
+     cannot both land). Another type, size or a second write is refused. The Worker URL is also
+     spent once the upload is confirmed (403), even if the confirmed file was deleted since.
+  3. `POST /api/uploads/:id/confirm` resolves the row's target and bucket — a target since
+     uninstalled is 400 `unknown_upload_target`, a bucket since unbound 503, both leaving the row
+     unclaimed — then claims the row (compare-and-set on `confirmed_at`), `head`s the
      object and refuses a size or type other than the one declared (400 `upload_mismatch`, object
      deleted). It then runs the target's `confirm`, whose answer it returns: a `files` row (201), or
      a document (201, or 200 `deduplicated: true` — dedupe can only be decided here, once the bytes
@@ -610,7 +616,12 @@ project.
   - Another tenant's or another person's upload id is a 404, as is a second confirm.
   - Past the URL's expiry plus a 15-minute grace, confirm is 410 `upload_expired`.
   - A failed confirm un-claims the row, so the nightly `prunePendingUploads` (`0 4 * * *`) still
-    deletes the object of an upload nobody confirmed.
+    deletes the object of an upload nobody confirmed. For a CONFIRMED core upload (`avatars`,
+    `uploads`, `documents`) it also deletes the object when no `files` row records the key — a
+    file deleted since and written again through its still-live R2 URL. A confirmed row waits until
+    its claim is past the grace too, so a running confirm is never pruned under.
+  - `pending_uploads.user_id` is `set null` when the person is deleted: the row outlives them, can
+    be neither `PUT` nor confirmed, and the prune deletes its object.
   - The targets are the core `avatars`, `uploads` and `documents`, plus each plugin's
     `uploadTargets` (§16), composed by `uploadTargets()`.
   - Signing needs `R2_ACCOUNT_ID`, `FILES_BUCKET_NAME` (vars) and an R2 API token's
@@ -637,7 +648,10 @@ are a single `PUT`, so 5 GiB is the ceiling (no multipart upload, no resume). Wi
 pair a deployed Worker holds each upload in memory, up to 10 MB. Whether R2
 itself enforces the signed `Content-Length` and `If-None-Match` is not tested here (the confirm
 `head` is the backstop for the size and type). A document is deduplicated only after its bytes are
-stored, then deleted again.
+stored, then deleted again. A presigned R2 URL is not spent by the confirm: while it lives (10
+minutes) it can write the key again once the confirmed object is gone. For a core target the prune
+deletes such an object; for a plugin target it does not — the kit cannot tell which of a plugin's
+rows records a key, so a plugin deleting a confirmed object inside that window owns the cleanup.
 
 ## 7. UI shell
 
@@ -2199,14 +2213,19 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   - an `id` of `<plugin id>.<name>`;
   - `maxBytes`, at most 5 GiB (one PUT);
   - optional `contentTypes` (others 415) and a zod `fields` schema (without one, any field is a 400);
-  - optional `prepare(ctx, { uploadId, filename, contentType, size, fields })`, which authorises and
-    may return `{ key?, contentType?, state? }`;
+  - a required `permission: { action, subject }`, which the host checks before anything else (403),
+    as the core targets check `create File` / `create Document`;
+  - optional `prepare(ctx, { uploadId, filename, contentType, size, fields })`, which makes any
+    further check and may return `{ key?, contentType?, state? }`;
   - `confirm(ctx, { uploadId, key, filename, contentType, size, state, bucket, read() })` →
     `{ status?, body }`;
   - optional `bucket: { binding, name(env) }`, which defaults to `FILES` and `FILES_BUCKET_NAME`.
 
-  The default key is `tenants/<t>/<plugin id>/<uploadId>-<name>`, and a key outside `tenants/<t>/`
-  is refused. The client is `api.upload(target, file, { fields })` (UI) or `upload(...)` (CLI);
+  The default key is `tenants/<t>/<plugin id>/<uploadId>-<name>`. A key of the plugin's own must
+  sit under `tenants/<t>/<plugin id>/` and contain the `uploadId`, in plain path segments; any
+  other is refused (500 `upload_key_invalid`, nothing recorded), because a failed confirm, the
+  expiry and the prune delete the recorded key. No URL is handed out for a key that already holds
+  an object (409 `upload_key_exists`). The client is `api.upload(target, file, { fields })` (UI) or `upload(...)` (CLI);
   the plugin never sees the bytes in a request.
 - **Deprecated: `uploadPaths` / `uploadLimits`** — the multipart seam `uploadTargets` replaces,
   kept so an installed plugin's upload route keeps working until it moves. Beneath an

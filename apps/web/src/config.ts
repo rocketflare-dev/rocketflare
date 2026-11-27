@@ -394,8 +394,8 @@ const coreConfigSchema = z.object({
    * Direct-to-storage uploads (`services/uploads`): the account whose R2 S3 API signs the `PUT`
    * URLs, and the S3 name of the `FILES` bucket (the binding cannot tell the Worker its own name).
    * Both are `[vars]`; the key pair is a secret, from an R2 API token scoped to the app's buckets.
-   * Without all four a DEPLOYED Worker answers `POST /api/uploads` with 503
-   * `storage_not_configured`; `development` falls back to a `PUT` on the Worker itself.
+   * Without all four, uploads go through a `PUT` on the Worker itself (`/api/upload-content/:id`)
+   * — in `development` and deployed alike; a deployed Worker takes at most 10 MB a file that way.
    */
   R2_ACCOUNT_ID: optionalString,
   FILES_BUCKET_NAME: optionalString,

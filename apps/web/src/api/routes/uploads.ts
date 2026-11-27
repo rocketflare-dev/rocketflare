@@ -8,8 +8,10 @@
  *                                  404 unknown / another tenant's / already confirmed, 410 expired,
  *                                  400 `upload_missing` / `upload_mismatch`
  *
- * `localUploadRouter` is the `development` stand-in for R2's presigned PUT, mounted outside the
- * authed table (`/api/upload-content/:id?token=`): the token is its credential.
+ * `localUploadRouter` is the Worker's own stand-in for R2's presigned PUT, handed out whenever the
+ * R2 key pair is not set — in `development` and on a deployed Worker without it (up to
+ * `MAX_WORKER_UPLOAD_BYTES`, 10 MB, there). Mounted outside the authed table
+ * (`/api/upload-content/:id?token=`): the token is its credential.
  */
 import { createUploadRequestSchema } from '@rocketflare/shared/uploads'
 import { confirmUpload, createUpload, receiveLocalUpload } from '../services/uploads/service'

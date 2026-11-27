@@ -6,16 +6,20 @@
  *   - presign: the signed R2 URL when the key pair is set (the four signed headers, no payload hash),
  *     the Worker's own URL without it — capped at `MAX_WORKER_UPLOAD_BYTES` once deployed — and
  *     401 without a session;
- *   - the Worker PUT holds the store's rules — token, type, length, expiry, write-once;
+ *   - the Worker PUT holds the store's rules — token, type, length, expiry, write-once (two
+ *     concurrent PUTs write once) — and is spent once the upload is confirmed;
  *   - confirm: a type or size other than the one declared is refused and the object deleted;
  *     another tenant's or another person's upload id is a 404; a second confirm is a 404; an
  *     expired upload is 410; confirming before the PUT is 400 `upload_missing` and can be retried;
- *   - the nightly prune deletes an unconfirmed object and leaves a confirmed one;
- *   - a plugin's target: its key under `tenants/<t>/<id>/`, `prepare` then `confirm`, its
- *     `contentTypes` 415, no `fields` without a schema, a key outside the tenant refused.
+ *     a target or bucket that is gone refuses before the claim, so the row is left unclaimed;
+ *   - the nightly prune deletes an unconfirmed object, a confirmed core object no `files` row
+ *     records, and the object of a person deleted mid-upload; it leaves a recorded one;
+ *   - a plugin's target: its declared permission, its key under `tenants/<t>/<id>/` naming the
+ *     upload, `prepare` then `confirm`, its `contentTypes` 415, no `fields` without a schema; no
+ *     URL for a key that already holds an object.
  */
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, isNotNull } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { prunePendingUploadsTask, SCHEDULED_TASKS } from '@/api/scheduled'
@@ -24,7 +28,7 @@ import {
   prunePendingUploads,
   UPLOAD_CONFIRM_GRACE_SECONDS,
 } from '@/api/services/uploads/service'
-import { pendingUploads } from '@/db/schema'
+import { pendingUploads, users } from '@/db/schema'
 import type { PluginUploadTarget } from '@/plugins/api'
 import type { AnyServerPlugin } from '@/plugins/server'
 import {
@@ -35,7 +39,7 @@ import {
   sessionCookieHeader,
 } from '../helpers/auth'
 import { setupTestDatabase } from '../helpers/db'
-import { json } from '../helpers/request'
+import { json, request } from '../helpers/request'
 import { withServerPlugins } from '../helpers/server-plugins'
 import {
   confirmUploadRequest,
@@ -49,6 +53,7 @@ import { createTestEnv, stubs, type TestEnv } from '../mocks/bindings'
 const confirmed: { key: string; state: Record<string, unknown>; size: number }[] = []
 const receipts: PluginUploadTarget<{ note: string }> = {
   id: 'uptest.receipt',
+  permission: { action: 'create', subject: 'File' },
   maxBytes: 64,
   contentTypes: ['text/plain'],
   fields: z.object({ note: z.string() }),
@@ -62,6 +67,7 @@ const receipts: PluginUploadTarget<{ note: string }> = {
 }
 const plain: PluginUploadTarget = {
   id: 'uptest.plain',
+  permission: { action: 'create', subject: 'File' },
   maxBytes: 64,
   async confirm() {
     return { status: 200, body: { ok: true } }
@@ -69,23 +75,54 @@ const plain: PluginUploadTarget = {
 }
 const big: PluginUploadTarget = {
   id: 'uptest.big',
+  permission: { action: 'create', subject: 'File' },
   maxBytes: 50 * 1024 * 1024,
   async confirm() {
     return { body: {} }
   },
 }
-const escaping: PluginUploadTarget = {
-  id: 'uptest.escape',
+/** A target answering whatever key `keyFor` builds — the key rule's test cases. */
+let keyFor: (tenantId: string, uploadId: string) => string = () => ''
+const keyed: PluginUploadTarget = {
+  id: 'uptest.keyed',
+  permission: { action: 'create', subject: 'File' },
   maxBytes: 64,
-  async prepare() {
-    return { key: 'tenants/someone-else/uptest/x' }
+  async prepare(ctx, input) {
+    return { key: keyFor(ctx.tenantId, input.uploadId) }
   },
   async confirm() {
     return { body: {} }
   },
 }
+/** Something is already stored at the key this target answers when it is presigned. */
+let occupy: TestEnv | null = null
+const occupied: PluginUploadTarget = {
+  id: 'uptest.occupied',
+  permission: { action: 'create', subject: 'File' },
+  maxBytes: 64,
+  async prepare(ctx, input) {
+    const key = `tenants/${ctx.tenantId}/uptest/${input.uploadId}-${input.filename}`
+    await occupy?.FILES?.put(key, 'already here')
+    return { key }
+  },
+  async confirm() {
+    return { body: {} }
+  },
+}
+/** No `prepare`: the declared permission is the only gate — one a member does not hold. */
+const adminsOnly: PluginUploadTarget = {
+  id: 'uptest.admins',
+  permission: { action: 'create', subject: 'Invitation' },
+  maxBytes: 64,
+  async confirm() {
+    return { body: { ok: true } }
+  },
+}
 withServerPlugins([
-  { shared: { id: 'uptest' }, uploadTargets: [receipts, plain, big, escaping] },
+  {
+    shared: { id: 'uptest' },
+    uploadTargets: [receipts, plain, big, keyed, occupied, adminsOnly],
+  },
 ] as unknown as AnyServerPlugin[])
 
 const db = setupTestDatabase()
@@ -107,6 +144,23 @@ const text = (body = 'hello world', name = 'notes.txt') => ({
 
 async function ticket(env: TestEnv, cookie: Record<string, string>, file = text()) {
   return ticketOf(await createUploadRequest(env, cookie, 'uploads', file))
+}
+
+/**
+ * Put THIS tenant's uploads past their confirm window (and any claim past the grace), rather than
+ * pruning at a future `now`: the prune is cross-tenant, and a future `now` would delete other
+ * files' uploads in flight.
+ */
+async function backdate(tenantId: string) {
+  const past = new Date(Date.now() - (UPLOAD_CONFIRM_GRACE_SECONDS + 60) * 1000)
+  await db
+    .update(pendingUploads)
+    .set({ expiresAt: past })
+    .where(eq(pendingUploads.tenantId, tenantId))
+  await db
+    .update(pendingUploads)
+    .set({ confirmedAt: past })
+    .where(and(eq(pendingUploads.tenantId, tenantId), isNotNull(pendingUploads.confirmedAt)))
 }
 
 async function pendingRow(id: string) {
@@ -213,6 +267,54 @@ describe('the local PUT holds the store rules', () => {
     expect(res.status).toBe(403)
     expect(await json(res)).toMatchObject({ code: ERROR_CODES.uploadExpired })
   })
+
+  it('is spent once confirmed, even after the confirmed file is deleted', async () => {
+    const { cookie } = await actor()
+    const env = createTestEnv()
+    const t = await ticket(env, cookie)
+    expect((await putUpload(env, t, 'hello world')).status).toBe(200)
+    const confirmedRes = await confirmUploadRequest(env, cookie, t.uploadId)
+    expect(confirmedRes.status).toBe(201)
+    const { id } = (await json(confirmedRes)) as { id: string }
+    const key = (await pendingRow(t.uploadId))?.key ?? ''
+    // The file is deleted, so its key is free again while the URL is still live.
+    const deleted = await request(
+      `/api/files/${id}`,
+      { method: 'DELETE', headers: cookie },
+      { env }
+    )
+    expect(deleted.status).toBeLessThan(300)
+    expect(stubs(env).files.objects.has(key)).toBe(false)
+
+    expect((await putUpload(env, t, 'HELLO WORLD')).status).toBe(403)
+    expect(stubs(env).files.objects.has(key)).toBe(false)
+  })
+
+  it('two concurrent PUTs to one URL write once', async () => {
+    const { cookie } = await actor()
+    const env = createTestEnv()
+    const t = await ticket(env, cookie)
+    // Hold every write until both requests have reached theirs, so neither can see the other's
+    // object first: only a write that is itself conditional refuses the second.
+    const bucket = stubs(env).files
+    const write = bucket.put.bind(bucket)
+    let arrived = 0
+    let release: () => void = () => {}
+    const bothArrived = new Promise<void>(resolve => {
+      release = resolve
+    })
+    bucket.put = async (...args: Parameters<typeof write>) => {
+      if (++arrived === 2) release()
+      await bothArrived
+      return write(...args)
+    }
+    const statuses = await Promise.all([
+      putUpload(env, t, 'hello world').then(r => r.status),
+      putUpload(env, t, 'HELLO WORLD').then(r => r.status),
+    ])
+    expect(statuses.sort()).toEqual([200, 412])
+    expect(bucket.objects.size).toBe(1)
+  })
 })
 
 describe('POST /api/uploads/:id/confirm', () => {
@@ -285,6 +387,42 @@ describe('POST /api/uploads/:id/confirm', () => {
   })
 })
 
+describe('a confirm that cannot proceed', () => {
+  it('a target or bucket that is gone refuses before the claim, so the row stays confirmable', async () => {
+    const { cookie } = await actor()
+    const env = createTestEnv()
+    const t = await ticket(env, cookie)
+    expect((await putUpload(env, t, 'hello world')).status).toBe(200)
+    const key = (await pendingRow(t.uploadId))?.key ?? ''
+
+    // A plugin since uninstalled: its target id no longer resolves.
+    await db
+      .update(pendingUploads)
+      .set({ target: 'uptest.uninstalled' })
+      .where(eq(pendingUploads.id, t.uploadId))
+    const gone = await confirmUploadRequest(env, cookie, t.uploadId)
+    expect(gone.status).toBe(400)
+    expect(await json(gone)).toMatchObject({ code: ERROR_CODES.unknownUploadTarget })
+    expect((await pendingRow(t.uploadId))?.confirmedAt).toBeNull()
+
+    // A bucket since unbound.
+    await db
+      .update(pendingUploads)
+      .set({ target: 'uploads', bucket: 'UNBOUND_BUCKET' })
+      .where(eq(pendingUploads.id, t.uploadId))
+    expect((await confirmUploadRequest(env, cookie, t.uploadId)).status).toBe(503)
+    expect((await pendingRow(t.uploadId))?.confirmedAt).toBeNull()
+
+    // Put right, the same upload confirms: nothing was left claimed.
+    await db
+      .update(pendingUploads)
+      .set({ bucket: 'FILES' })
+      .where(eq(pendingUploads.id, t.uploadId))
+    expect((await confirmUploadRequest(env, cookie, t.uploadId)).status).toBe(201)
+    expect(stubs(env).files.objects.has(key)).toBe(true)
+  })
+})
+
 describe('the nightly prune', () => {
   it('deletes an unconfirmed upload with its object, and only the row of a confirmed one', async () => {
     const { cookie, tenant } = await actor()
@@ -297,12 +435,7 @@ describe('the nightly prune', () => {
     expect((await confirmUploadRequest(env, cookie, kept.uploadId)).status).toBe(201)
     const keptKey = (await pendingRow(kept.uploadId))?.key ?? ''
 
-    // Backdate THIS file's rows rather than pruning at a future `now`: the prune is cross-tenant,
-    // and a future `now` would delete other files' uploads in flight.
-    await db
-      .update(pendingUploads)
-      .set({ expiresAt: new Date(Date.now() - (UPLOAD_CONFIRM_GRACE_SECONDS + 60) * 1000) })
-      .where(eq(pendingUploads.tenantId, tenant.id))
+    await backdate(tenant.id)
     await prunePendingUploads(db, env, new Date())
 
     expect(stubs(env).files.objects.has(abandonedKey)).toBe(false)
@@ -312,6 +445,44 @@ describe('the nightly prune', () => {
       .from(pendingUploads)
       .where(and(eq(pendingUploads.tenantId, tenant.id)))
     expect(left).toEqual([])
+  })
+
+  it("deletes a confirmed core object no files row records, and keeps a plugin's", async () => {
+    const { cookie, tenant } = await actor()
+    const env = createTestEnv()
+    const t = await ticket(env, cookie)
+    expect((await putUpload(env, t, 'hello world')).status).toBe(200)
+    const confirmedRes = await confirmUploadRequest(env, cookie, t.uploadId)
+    const { id } = (await json(confirmedRes)) as { id: string }
+    const key = (await pendingRow(t.uploadId))?.key ?? ''
+    await request(`/api/files/${id}`, { method: 'DELETE', headers: cookie }, { env })
+    // Written again after the file's deletion, the way a still-live R2 URL would let it be.
+    await env.FILES?.put(key, 'hello world', { httpMetadata: { contentType: 'text/plain' } })
+
+    const pluginRes = await directUpload(env, cookie, 'uptest.receipt', text('a receipt'), {
+      note: 'kept',
+    })
+    const pluginKey = ((await json(pluginRes)) as { key: string }).key
+
+    await backdate(tenant.id)
+    await prunePendingUploads(db, env, new Date())
+    expect(stubs(env).files.objects.has(key)).toBe(false)
+    expect(stubs(env).files.objects.has(pluginKey)).toBe(true)
+  })
+
+  it('deletes the object of a person deleted mid-upload: their row outlives them', async () => {
+    const { cookie, tenant, user } = await actor()
+    const env = createTestEnv()
+    const t = await ticket(env, cookie)
+    expect((await putUpload(env, t, 'hello world')).status).toBe(200)
+    const key = (await pendingRow(t.uploadId))?.key ?? ''
+    await db.delete(users).where(eq(users.id, user.id))
+    expect((await pendingRow(t.uploadId))?.userId).toBeNull()
+
+    await backdate(tenant.id)
+    await prunePendingUploads(db, env, new Date())
+    expect(stubs(env).files.objects.has(key)).toBe(false)
+    expect(await pendingRow(t.uploadId)).toBeUndefined()
   })
 
   it('runs nightly', () => {
@@ -361,16 +532,57 @@ describe("a plugin's upload target", () => {
     expect((await directUpload(env, cookie, 'uptest.plain', text())).status).toBe(200)
   })
 
-  it('a key outside the tenant prefix is refused and nothing is recorded', async () => {
+  it('refuses a member the declared permission, with or without a prepare', async () => {
+    const member = await actor('member')
+    const env = createTestEnv()
+    const refused = await createUploadRequest(env, member.cookie, 'uptest.admins', text())
+    expect(refused.status).toBe(403)
+    expect(await json(refused)).toMatchObject({ statusCode: 403 })
+    const owner = await actor('owner')
+    expect((await directUpload(env, owner.cookie, 'uptest.admins', text())).status).toBe(201)
+  })
+
+  it('a key outside its own prefix, or not naming the upload, is refused and nothing recorded', async () => {
     const { cookie, tenant } = await actor()
     const env = createTestEnv()
-    const res = await createUploadRequest(env, cookie, 'uptest.escape', text())
-    expect(res.status).toBe(500)
+    const cases: [string, (t: string, u: string) => string][] = [
+      ['another tenant', (_t, u) => `tenants/someone-else/uptest/${u}-x`],
+      ["the tenant's prefix, not the plugin's", (t, u) => `tenants/${t}/uploads/${u}-x`],
+      ["another plugin's prefix", (t, u) => `tenants/${t}/uptest-other/${u}-x`],
+      ['no upload id', t => `tenants/${t}/uptest/fixed-name.txt`],
+      ['a `..` segment', (t, u) => `tenants/${t}/uptest/../other/${u}-x`],
+    ]
+    for (const [label, build] of cases) {
+      keyFor = build
+      const res = await createUploadRequest(env, cookie, 'uptest.keyed', text())
+      expect(res.status, label).toBe(500)
+      expect(await json(res), label).toMatchObject({ code: ERROR_CODES.uploadKeyInvalid })
+    }
+    const rows = await db
+      .select()
+      .from(pendingUploads)
+      .where(and(eq(pendingUploads.tenantId, tenant.id), eq(pendingUploads.target, 'uptest.keyed')))
+    expect(rows).toEqual([])
+
+    keyFor = (t, u) => `tenants/${t}/uptest/receipts/${u}.txt`
+    expect((await createUploadRequest(env, cookie, 'uptest.keyed', text())).status).toBe(201)
+  })
+
+  it('no URL for a key that already holds an object, which is left as it was', async () => {
+    const { cookie, tenant } = await actor()
+    const env = createTestEnv()
+    occupy = env
+    const res = await createUploadRequest(env, cookie, 'uptest.occupied', text())
+    occupy = null
+    expect(res.status).toBe(409)
+    expect(await json(res)).toMatchObject({ code: ERROR_CODES.uploadKeyExists })
+    const [object] = [...stubs(env).files.objects.values()]
+    expect(new TextDecoder().decode(object?.body)).toBe('already here')
     const rows = await db
       .select()
       .from(pendingUploads)
       .where(
-        and(eq(pendingUploads.tenantId, tenant.id), eq(pendingUploads.target, 'uptest.escape'))
+        and(eq(pendingUploads.tenantId, tenant.id), eq(pendingUploads.target, 'uptest.occupied'))
       )
     expect(rows).toEqual([])
   })

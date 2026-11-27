@@ -12,6 +12,7 @@ import {
   resolveDocumentUploadType,
   uploadDocumentFieldsSchema,
 } from '@rocketflare/shared/ai/embeddings'
+import { ERROR_CODES } from '@rocketflare/shared/errors'
 import {
   AVATAR_MIME_TYPES,
   type FileScope,
@@ -286,7 +287,25 @@ const CORE_TARGETS: Record<(typeof CORE_UPLOAD_TARGETS)[number], UploadTarget> =
 
 // ---- plugin targets ------------------------------------------------------------------------------
 
-/** A plugin's declaration, adapted: its `RequestCtx`, its schema, its key under the tenant prefix. */
+/**
+ * A plugin key must sit under the plugin's own prefix and name the upload, in plain segments: the
+ * failed confirm, the expiry and the prune all delete the key the row records, so a key that could
+ * name another plugin's object, or an object that predates this upload, is never accepted.
+ */
+export function pluginUploadKeyIssue(
+  key: string,
+  input: { tenantId: string; pluginId: string; uploadId: string }
+): string | null {
+  const prefix = `${tenantStoragePrefix(input.tenantId)}${input.pluginId}/`
+  if (!key.startsWith(prefix)) return `is not under ${prefix}`
+  if (!key.includes(input.uploadId)) return 'does not contain the upload id'
+  if (key.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) {
+    return 'has an empty, `.` or `..` segment'
+  }
+  return null
+}
+
+/** A plugin's declaration, adapted: its permission, its `RequestCtx`, its schema, its key rule. */
 export function adaptPluginUploadTarget(
   pluginId: string,
   declared: PluginUploadTarget
@@ -300,6 +319,7 @@ export function adaptPluginUploadTarget(
       declared.bucket ? declared.bucket.name(c.env) : c.get('config').FILES_BUCKET_NAME,
     maxBytes: declared.maxBytes,
     async prepare(c, input) {
+      guardPermission(c, declared.permission.action, declared.permission.subject)
       const contentType = orOctetStream(input.contentType)
       if (declared.contentTypes && !declared.contentTypes.includes(contentType)) {
         throw new ApiError(
@@ -329,10 +349,23 @@ export function adaptPluginUploadTarget(
             fields,
           })
         : {}
+      const key =
+        prepared.key ??
+        `${tenantStoragePrefix(input.tenantId)}${pluginId}/${input.uploadId}-${input.filename}`
+      const issue = pluginUploadKeyIssue(key, {
+        tenantId: input.tenantId,
+        pluginId,
+        uploadId: input.uploadId,
+      })
+      if (issue) {
+        throw new ApiError(
+          500,
+          `Upload target ${declared.id} answered a storage key that ${issue}`,
+          ERROR_CODES.uploadKeyInvalid
+        )
+      }
       return {
-        key:
-          prepared.key ??
-          `${tenantStoragePrefix(input.tenantId)}${pluginId}/${input.uploadId}-${input.filename}`,
+        key,
         contentType: prepared.contentType ?? contentType,
         state: prepared.state,
       }

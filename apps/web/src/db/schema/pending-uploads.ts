@@ -22,9 +22,11 @@ export const pendingUploads = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     tenantId: tenantRef(tenants),
-    userId: uuid('user_id')
-      .notNull()
-      .references(() => users.id, { onDelete: 'cascade' }),
+    /**
+     * Who may confirm it. `set null` when the person is deleted, never cascade: the row must outlive
+     * them so the prune still deletes the object (a null-user row can be neither PUT nor confirmed).
+     */
+    userId: uuid('user_id').references(() => users.id, { onDelete: 'set null' }),
     target: text('target').notNull(),
     bucket: text('bucket').notNull(),
     key: text('key').notNull().unique(),
