@@ -189,7 +189,7 @@ not suggestions:
 ```
 
 `app.tagline` is one line in their words, shown on the sign-in panel; the rename writes it into
-`apps/web/src/ui/lib/login-panel.ts`. `tenancy.mode` is the kit's `TENANCY_MODE`. `shape` is one of the ids in `shape.md` §1.
+`APP_TAGLINE` in both wrangler tomls, where it stays a setting they can change later. `tenancy.mode` is the kit's `TENANCY_MODE`. `shape` is one of the ids in `shape.md` §1.
 `signup.mode` is `SIGNUP_MODE`, and `sso` is null or the identity provider's name. `licence` is an
 SPDX id, or `all-rights-reserved`. The glossary and the non-functional requirements live in
 `03-glossary.md` and `02-shape.md` only.

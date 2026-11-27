@@ -66,6 +66,43 @@ describe('loadConfig', () => {
     )
   })
 
+  it('leaves the branding unset unless a deployment declares it', () => {
+    const cfg = loadConfig({ ...base, APP_TAGLINE: '  ', LOGIN_PANEL_ART: '', APP_LOGO_URL: '' })
+    expect(cfg.APP_TAGLINE).toBeUndefined()
+    expect(cfg.LOGIN_PANEL_ART).toBeUndefined()
+    expect(cfg.APP_LOGO_URL).toBeUndefined()
+    expect(cfg.APP_FAVICON_URL).toBeUndefined()
+  })
+
+  it('reads the tagline, the panel art and the mark from [vars]', () => {
+    const cfg = loadConfig({
+      ...base,
+      APP_TAGLINE: ' Rooms, guests, done. ',
+      LOGIN_PANEL_ART: 'type',
+      APP_LOGO_URL: 'https://cdn.example.com/mark.svg',
+      APP_FAVICON_URL: '/brand/favicon.svg',
+    })
+    expect(cfg.APP_TAGLINE).toBe('Rooms, guests, done.')
+    expect(cfg.LOGIN_PANEL_ART).toBe('type')
+    expect(cfg.APP_LOGO_URL).toBe('https://cdn.example.com/mark.svg')
+    expect(cfg.APP_FAVICON_URL).toBe('/brand/favicon.svg')
+  })
+
+  it('rejects panel art it does not draw and a mark the page could not load safely', () => {
+    expect(() => loadConfig({ ...base, LOGIN_PANEL_ART: 'photo' })).toThrow(/LOGIN_PANEL_ART/)
+    expect(() => loadConfig({ ...base, APP_TAGLINE: 'two\nlines' })).toThrow(/APP_TAGLINE/)
+    for (const url of [
+      'http://cdn.example.com/mark.svg',
+      'javascript:alert(1)',
+      'data:image/svg+xml,<svg/>',
+      '//evil.example.com/mark.svg',
+      'mark.svg',
+    ]) {
+      expect(() => loadConfig({ ...base, APP_LOGO_URL: url })).toThrow(/APP_LOGO_URL/)
+      expect(() => loadConfig({ ...base, APP_FAVICON_URL: url })).toThrow(/APP_FAVICON_URL/)
+    }
+  })
+
   it('memoises per env object identity', () => {
     const env = { ...base }
     const first = loadConfig(env)

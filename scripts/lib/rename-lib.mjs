@@ -369,19 +369,11 @@ export function designTagline(designJson) {
   return line && !/[\r\n]/.test(line) && line.length <= 160 ? line : null
 }
 
-/**
- * `ui/lib/login-panel.ts` with `LOGIN_PANEL.tagline` set to `tagline`, or null when the file has
- * no `tagline:` string to rewrite (a copy that replaced the panel). Quoted single unless the line
- * holds an apostrophe; `pnpm lint:fix` after the rename settles the rest.
- */
+/** A wrangler toml with `APP_TAGLINE` set to `tagline`, or null when it declares none. */
 export function applyTagline(source, tagline) {
-  const at = source.search(/\bLOGIN_PANEL\b[^=\n]*=/)
-  const re = /(\btagline:\s*)(['"`])((?:\\.|(?!\2)[^\n])*)\2/
-  if (at === -1 || !re.test(source.slice(at))) return null
-  const quoted = tagline.includes("'")
-    ? JSON.stringify(tagline)
-    : `'${tagline.replace(/\\/g, '\\\\')}'`
-  return source.slice(0, at) + source.slice(at).replace(re, (_m, head) => `${head}${quoted}`)
+  const re = /^(APP_TAGLINE[ \t]*=[ \t]*)"(?:[^"\\\n]|\\.)*"/m
+  if (!re.test(source)) return null
+  return source.replace(re, (_m, head) => `${head}${JSON.stringify(tagline)}`)
 }
 
 /** `#2563eb` → `37, 99, 235`. */

@@ -142,6 +142,8 @@ mints a tenant API key `cli:<host>` → `?key=&tenant_id=&tenant_name=`; stored 
 ## Config model
 
 `[vars]` in both tomls, read via `loadConfig(env)`: `APP_ENV` (`development|staging|production`) ·
+`APP_NAME` / `APP_TAGLINE` / `LOGIN_PANEL_ART` (`rocket|type`) / `APP_LOGO_URL` / `APP_FAVICON_URL`
+(branding, served by `GET /api/health`; unset = the bundled fallback, CONCEPTS §7) ·
 `TENANCY_MODE` (`multi|single` — same schema; single auto-joins the one tenant) ·
 `SIGNUP_MODE` (`open|invite_only|approval`; `BOOTSTRAP_ADMIN_EMAILS` seeds the first admin) ·
 `TENANT_SCOPE_MODE` (`off|enforce`, `docs/RLS.md`) · `DATABASE_DRIVER` (`neon|postgres`, D35; missing =

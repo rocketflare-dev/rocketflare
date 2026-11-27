@@ -128,33 +128,38 @@ every change; a failing contrast test names the token and the ratio.
 
 ## (f) Logo and the sign-in panel — report only
 
-**What to check.** `apps/web/src/ui/components/shared/LogoMark.tsx` (inline SVG paths),
-`apps/web/src/ui/public/logo.svg` and `apps/web/src/ui/public/favicon.svg` still carry the kit's
-rocket. The script never touches them.
+These are settings, not code: `[vars]` in `apps/web/wrangler.toml` and `wrangler.staging.toml`
+(`.dev.vars` locally). They can change after the rename, per deployment, without a rebuild, so an
+unsettled name or mark is no reason to postpone the rename.
+
+**What to check.** The app still shows the kit's rocket until `APP_LOGO_URL` and `APP_FAVICON_URL`
+are set. The script never sets them.
 
 Beside them, the sign-in page's right-hand panel:
-- **the image:** `apps/web/src/ui/components/LoginArt.tsx`, the kit's rocket as tonal linework.
-  It takes its colours from the rail and flare tokens, so it already wears the new hue, but it is
-  still the kit's picture;
-- **the tagline:** `LOGIN_PANEL.tagline` in `apps/web/src/ui/lib/login-panel.ts`. The rename set it
-  from `docs/design/design.json` `app.tagline` when the design has one (the report says which);
+- **the image:** `LOGIN_PANEL_ART` — `rocket` is `apps/web/src/ui/components/LoginArt.tsx`, the
+  kit's rocket as tonal linework. It takes its colours from the rail and flare tokens, so it
+  already wears the new hue, but it is still the kit's picture; `type` shows the name and tagline;
+- **the tagline:** `APP_TAGLINE`. The rename set it in both tomls from
+  `docs/design/design.json` `app.tagline` when the design has one (the report says which);
   otherwise it is still the kit's neutral line.
 
 **How to check.**
 ```
-ls -la apps/web/src/ui/public/ apps/web/src/ui/components/shared/LogoMark.tsx
-grep -n "art:\|tagline:" apps/web/src/ui/lib/login-panel.ts
+grep -n "APP_TAGLINE\|LOGIN_PANEL_ART\|APP_LOGO_URL\|APP_FAVICON_URL" apps/web/wrangler.toml apps/web/wrangler.staging.toml
+curl -s http://localhost:3001/api/health
 ```
 Open http://localhost:3000 once the app runs: the mark in the header and the browser tab, then sign
 out to see the sign-in panel.
 
-**What to change.** Replace the `<path>`s in `LogoMark.tsx` (keep the `viewBox` and the
-`className` prop) and the two svgs with the user's mark. A monochrome mark can use
-`fill="currentColor"` with `className="text-primary"` to follow the theme. For the panel, do what
-`docs/design/06-brand.md` recorded, or ask: keep the rocket in their colours, replace the SVG in
-`LoginArt.tsx` with imagery they own (colours from `currentColor` and the `.login-art*` classes,
-so it follows the theme), or set `art: 'type'` in `login-panel.ts` for the name and tagline alone.
-Write the tagline in their words if the rename did not.
+**What to change.** For the logo, put the user's files under `apps/web/src/ui/public/` (for
+example `brand/logo.svg` and `brand/favicon.svg`) and set `APP_LOGO_URL = "/brand/logo.svg"` and
+`APP_FAVICON_URL = "/brand/favicon.svg"` in both tomls, or point them at an `https://` URL. The
+logo is shown as one image in both themes, so it must read on a light and a dark ground. For the
+panel, do what `docs/design/06-brand.md` recorded, or ask: keep the rocket in their colours,
+replace the SVG in `LoginArt.tsx` with imagery they own (colours from `currentColor` and the
+`.login-art*` classes, so it follows the theme), or set `LOGIN_PANEL_ART = "type"` for the name
+and tagline alone. Write `APP_TAGLINE` in their words if the rename did not. Locally the same
+names go in `apps/web/.dev.vars`.
 
 ## (g) Installed plugins — translated on the way in, and again on the way forward
 

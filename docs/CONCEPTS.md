@@ -683,10 +683,26 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
 - **Sign-in page**: a split screen — the form on the left (dev quick-login below it, marked as
   development-only), a rail-toned panel on the right that collapses on a narrow screen. The panel
   shows `components/LoginArt.tsx`, the rocket as tonal linework coloured from the rail and flare
-  tokens, so it follows a new hue until someone replaces it; `LOGIN_PANEL` in
-  `ui/lib/login-panel.ts` (`art: 'rocket'|'type'`, `tagline`) switches to a type-only panel of the
-  app's name and tagline. The tagline is neutral in the kit; the rename sets it from
-  `docs/design/design.json` `app.tagline`.
+  tokens, so it follows a new hue until someone replaces it; `LOGIN_PANEL_ART = "type"` switches to
+  a type-only panel of the app's name and tagline.
+- **Branding is deployment configuration** (`@rocketflare/shared/branding`): the name, the sign-in
+  tagline, the panel art and the mark are `[vars]` — `APP_NAME`, `APP_TAGLINE`, `LOGIN_PANEL_ART`
+  (`rocket|type`), `APP_LOGO_URL`, `APP_FAVICON_URL` — read through `loadConfig` and served by the
+  public `GET /api/health` (`name`, `tagline`, `loginPanelArt`, `logoUrl`, `faviconUrl`), the request
+  the page already makes for the version. One build serves deployments that differ in all five,
+  and changing one is a `[vars]` edit and a deploy, never a code edit. An unset var is absent from
+  the answer and the page falls back to what is bundled: `LOGIN_PANEL` in `ui/lib/login-panel.ts`
+  (art and tagline), `LogoMark`'s inline paths, `public/favicon.svg`. A logo or favicon is an
+  `https://` URL or a root-relative path into the app's own static assets (`/brand/logo.svg` is
+  `src/ui/public/brand/logo.svg`); anything else stops the Worker at `loadConfig`, and the page
+  drops a value the same schema refuses. `LogoMark` renders the configured logo as an `<img>` and
+  returns to the bundled mark if it fails to load; `BrandFavicon` (mounted once in `App`) points
+  `<link rel="icon">` at the configured favicon. The tagline is neutral in the kit; the rename
+  sets `APP_TAGLINE` in both tomls from `docs/design/design.json` `app.tagline`. Known gaps: until
+  `/api/health` answers, the page shows the bundled name, mark and tab icon; `index.html`'s
+  `<title>`, description and `theme-color` stay compiled in; a configured logo is one image for
+  both themes; colours and type remain a build-time brand (`docs/design/brand.css`), because
+  their contrast is checked at build.
 - **Home sections**: Home is an operational dashboard laid out from `pages/home-sections.ts`, a
   registry of `{ id, placement: 'lead'|'main'|'aside', order, guard?, Component }`. A feature owns
   its own section — the chat composer (`lead`), recent agent runs, recent documents — as one entry

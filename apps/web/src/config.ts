@@ -7,6 +7,11 @@
  * `c.env`. Nothing in `src/` reads `process.env` — the source is the env object Cloudflare
  * hands us.
  */
+import {
+  brandAssetUrlSchema,
+  loginPanelArtSchema,
+  taglineSchema,
+} from '@rocketflare/shared/branding'
 import { sharedPlugins } from '@rocketflare/shared/plugins'
 import { z } from 'zod'
 
@@ -27,6 +32,13 @@ const optionalEnum = <const T extends readonly [string, ...string[]]>(values: T)
   z.preprocess(
     value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
     z.enum(values as unknown as [T[number], ...T[number][]]).optional()
+  )
+
+/** A blank-or-absent var of any shape: blank means the deployment did not set it. */
+const blankAsUnset = <T extends z.ZodType>(schema: T) =>
+  z.preprocess(
+    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    schema.optional()
   )
 
 /** `[vars]` arrive as strings; blank means "use the default", never 0. */
@@ -87,6 +99,13 @@ const coreConfigSchema = z.object({
   /** Public origin; derives OAuth redirect URIs, magic-link URLs, CSRF/CORS allow-lists. */
   APP_URL: z.string().url(),
   APP_NAME: z.string().min(1).default('Rocketflare'),
+  /** The one line under the name on the type-only sign-in panel; unset → the bundled line. */
+  APP_TAGLINE: blankAsUnset(taglineSchema),
+  /** What the sign-in panel shows (`rocket` drawing or `type`); unset → the bundled choice. */
+  LOGIN_PANEL_ART: blankAsUnset(loginPanelArtSchema),
+  /** The mark and the tab icon: `https://…` or a root-relative path; unset → the bundled one. */
+  APP_LOGO_URL: blankAsUnset(brandAssetUrlSchema),
+  APP_FAVICON_URL: blankAsUnset(brandAssetUrlSchema),
   /** Overridden at deploy time by CI (`wrangler deploy --var RELEASE_VERSION:<tag>`). */
   RELEASE_VERSION: z.string().min(1).default('dev'),
   /**

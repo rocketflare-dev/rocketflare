@@ -439,11 +439,13 @@ describe('colour (row e)', () => {
 })
 
 describe('the sign-in tagline (row f)', () => {
-  const source = `/** \`tagline\` is the one line. */
-export const LOGIN_PANEL: { art: 'rocket' | 'type'; tagline: string } = {
-  art: 'rocket',
-  tagline: "Your team's work, in one place.",
-}
+  const toml = `name = "inn"
+
+[vars]
+APP_NAME = "Inn"
+# APP_TAGLINE = "a commented example"
+APP_TAGLINE = "Your team's work, in one place."   # the type-only sign-in panel
+LOGIN_PANEL_ART = "rocket"
 `
   it("reads design.json's app.tagline: one trimmed line, or nothing", () => {
     expect(designTagline({ app: { tagline: '  Rooms, guests, done.  ' } })).toBe(
@@ -454,15 +456,18 @@ export const LOGIN_PANEL: { art: 'rocket' | 'type'; tagline: string } = {
     expect(designTagline(null)).toBeNull()
   })
 
-  it('rewrites LOGIN_PANEL.tagline only, quoting for an apostrophe', () => {
-    expect(applyTagline(source, 'Rooms, guests, done.')).toContain(
-      "  tagline: 'Rooms, guests, done.',"
+  it('sets APP_TAGLINE in a toml as a TOML string, leaving its comment and neighbours', () => {
+    expect(applyTagline(toml, 'Rooms, guests, done.')).toBe(
+      toml.replace(`"Your team's work, in one place."`, '"Rooms, guests, done."')
     )
-    expect(applyTagline(source, "The front desk's ledger")).toContain(
-      '  tagline: "The front desk\'s ledger",'
+    expect(applyTagline(toml, 'The "front desk" ledger \\ more')).toContain(
+      'APP_TAGLINE = "The \\"front desk\\" ledger \\\\ more"   # the type-only sign-in panel'
     )
-    expect(applyTagline(source, 'x')).toContain('`tagline` is the one line')
-    expect(applyTagline('export const OTHER = 1\n', 'x')).toBeNull()
+    expect(applyTagline(toml, 'costs $1 & more')).toContain('APP_TAGLINE = "costs $1 & more"')
+  })
+
+  it('answers null for a toml that declares no APP_TAGLINE', () => {
+    expect(applyTagline('[vars]\nAPP_NAME = "Inn"\n# APP_TAGLINE = "x"\n', 'x')).toBeNull()
   })
 })
 

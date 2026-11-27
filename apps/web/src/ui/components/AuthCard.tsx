@@ -4,14 +4,13 @@
  *
  * `split` (the sign-in page): the form on the left on a panel-white ground, and on the right a
  * tinted panel in the rail's tones — the drawing from `LoginArt` alone, or the app's name and tagline
- * when `LOGIN_PANEL.art` is `'type'` (lib/login-panel.ts). Below `lg` the panel folds away and
- * the form takes the screen.
+ * when the deployment's `LOGIN_PANEL_ART` is `type` (`useAppInfo`). Below `lg` the panel folds away
+ * and the form takes the screen.
  */
 import { ShieldCheckIcon } from '@heroicons/react/24/outline'
 import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
-import { LOGIN_PANEL } from '@/ui/lib/login-panel'
 import { LoginArt } from './LoginArt'
 import { LogoMark } from './shared/LogoMark'
 import ThemeToggle from './ThemeToggle'
@@ -69,7 +68,7 @@ export function AuthCard({ children, width = 'md', footer, split = false }: Auth
 
 /** The sign-in page's right-hand panel: the drawing, or the name and tagline set large. */
 function LoginPanel({ name }: { name: string }) {
-  const { art, tagline } = LOGIN_PANEL
+  const { loginPanelArt: art, tagline } = useAppInfo()
   return (
     <aside
       data-testid="login-panel"

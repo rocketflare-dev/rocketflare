@@ -76,9 +76,9 @@
      5. `--font-sans` / `--font-mono` in `@theme`, and the matching `@fontsource-variable/*`
         import in main.tsx (the package must be in apps/web/package.json). `--font-heading`
         (default `var(--font-sans)`) is the face of h1–h3 alone: set it for a heading serif.
-     6. `<meta name="theme-color">` in index.html; the paths in shared/LogoMark.tsx, public/logo.svg
-        + public/favicon.svg; the login art (components/LoginArt.tsx, which takes its colours from
-        the rail and flare tokens) or `LOGIN_PANEL.art = 'type'` in lib/login-panel.ts.
+     6. `<meta name="theme-color">` in index.html; the logo and tab icon (`APP_LOGO_URL` /
+        `APP_FAVICON_URL` in [vars]); the login art (components/LoginArt.tsx, which takes its
+        colours from the rail and flare tokens) or `LOGIN_PANEL_ART = "type"` in [vars].
    Theme NAMES (`rocketflare-light` / `rocketflare-dark`) appear in index.html, ThemeToggle.tsx and tests — a
    single find/replace if you rename them.
 
