@@ -23,7 +23,8 @@ FORCE=0
 [ -f .rocketflare.json ] || { echo "detach: run this from the root of a kit clone" >&2; exit 2; }
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "detach: not a git repository" >&2; exit 2; }
 
-FIRST="$(git log --reverse --format=%s | head -1)"
+# Not `head -1`: it closes the pipe early, and pipefail turns git's SIGPIPE into a silent exit 141.
+FIRST="$(git log --reverse --format=%s | sed -n 1p)"
 if [ "$FIRST" = "Start from Rocketflare" ]; then
   echo "detach: already detached (the first commit is \"Start from Rocketflare\") — nothing to do"
   exit 0

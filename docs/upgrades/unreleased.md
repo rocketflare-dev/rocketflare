@@ -28,6 +28,7 @@ Uploads move to `/api/uploads` (presign, PUT, confirm): straight to R2 once an R
 - UI: `api.upload(target, file, { fields, schema })` replaces `api.upload(url, formData, …)`; `api` no longer sends `FormData`.
 - CLI: `ApiClient.upload(target, { name, contentType, bytes }, { fields, schema })` replaces `postForm`.
 - Fix: a document upload now keeps its `visibility` and `groupIds`, which the old form post dropped.
+- Fix: `scripts/detach.sh` detaches a clone with a long history. It exited 141 with no message, because `head -1` closed the pipe on `git log` under `pipefail`; `/rf-start`, `/rf-setup` §0 and `scripts/install.sh` all stopped there.
 
 ## How to apply
 
