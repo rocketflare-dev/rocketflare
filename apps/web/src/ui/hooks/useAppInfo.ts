@@ -1,8 +1,4 @@
-import {
-  brandAssetUrlSchema,
-  loginPanelArtSchema,
-  taglineSchema,
-} from '@rocketflare/shared/branding'
+import { brandingSchema } from '@rocketflare/shared/branding'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { api } from '@/ui/lib/api-client'
@@ -19,14 +15,16 @@ export const APP_NAME = 'Rocketflare'
  * Tolerant on purpose — a missing `env` shows NO badge rather than a wrong one, a missing
  * `version` shows "dev", and an unusable branding field falls back to the bundled one.
  */
+const branding = brandingSchema.shape
+
 export const appInfoSchema = z
   .object({
     status: z.string().optional(),
     name: z.string().optional(),
-    tagline: taglineSchema.optional().catch(undefined),
-    loginPanelArt: loginPanelArtSchema.optional().catch(undefined),
-    logoUrl: brandAssetUrlSchema.optional().catch(undefined),
-    faviconUrl: brandAssetUrlSchema.optional().catch(undefined),
+    tagline: branding.tagline.catch(undefined),
+    loginPanelArt: branding.loginPanelArt.catch(undefined),
+    logoUrl: branding.logoUrl.catch(undefined),
+    faviconUrl: branding.faviconUrl.catch(undefined),
     version: z.string().default('dev'),
     env: z.unknown().transform((v): AppEnv => (isAppEnv(v) ? v : 'production')),
   })

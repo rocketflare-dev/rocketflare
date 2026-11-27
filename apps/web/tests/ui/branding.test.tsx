@@ -1,6 +1,6 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrandFavicon } from '@/ui/components/BrandFavicon'
 import { queryKeys } from '@/ui/lib/query-keys'
 import Login from '@/ui/pages/Login'
@@ -26,8 +26,9 @@ describe('the sign-in panel follows the deployment', () => {
   it("sets the deployment's name and tagline large when it asks for the type panel", async () => {
     renderSignIn({ name: 'Front Desk', tagline: 'Rooms, guests, done.', loginPanelArt: 'type' })
     await waitFor(() => expect(screen.getByText('Rooms, guests, done.')).toBeInTheDocument())
-    expect(screen.getByTestId('login-panel')).toHaveAttribute('data-art', 'type')
-    expect(screen.getAllByText('Front Desk')).toHaveLength(2)
+    const panel = screen.getByTestId('login-panel')
+    expect(panel).toHaveAttribute('data-art', 'type')
+    expect(within(panel).getByText('Front Desk')).toBeInTheDocument()
   })
 
   it('keeps the bundled drawing when the deployment says nothing', async () => {
@@ -73,8 +74,25 @@ describe('the tab icon follows the deployment', () => {
     link.setAttribute('href', '/favicon.svg')
     document.head.appendChild(link)
   }
+  class FakeImage {
+    onload: (() => void) | null = null
+    onerror: (() => void) | null = null
+    set src(url: string) {
+      queueMicrotask(() => (url.includes('missing') ? this.onerror?.() : this.onload?.()))
+    }
+  }
+  beforeEach(() => vi.stubGlobal('Image', FakeImage))
   afterEach(() => {
     for (const link of icons()) link.remove()
+  })
+
+  it('keeps the bundled icon when the configured one does not load', async () => {
+    bundle()
+    stubFetch({ '/api/health': { ...HEALTH, faviconUrl: '/brand/missing.svg' } })
+    const { queryClient } = renderWithProviders(<BrandFavicon />, { session: null })
+    await waitFor(() => expect(queryClient.getQueryData(queryKeys.appInfo.all)).toBeDefined())
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(icons().map(link => link.getAttribute('href'))).toEqual(['/favicon.svg'])
   })
 
   it("points the page's one icon at the deployment's favicon, whatever its format", async () => {

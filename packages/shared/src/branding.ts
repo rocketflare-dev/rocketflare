@@ -4,7 +4,8 @@ export const LOGIN_PANEL_ARTS = ['rocket', 'type'] as const
 export type LoginPanelArt = (typeof LOGIN_PANEL_ARTS)[number]
 export const loginPanelArtSchema = z.enum(LOGIN_PANEL_ARTS)
 
-export const TAGLINE_MAX_LENGTH = 200
+/** The same limit `designTagline` in `scripts/lib/rename-lib.mjs` holds `app.tagline` to. */
+const TAGLINE_MAX_LENGTH = 160
 
 export const taglineSchema = z
   .string()
@@ -14,7 +15,7 @@ export const taglineSchema = z
   .refine(value => !/[\r\n]/.test(value), 'must be a single line')
 
 /** `https:` or a root-relative path only: the value becomes an `<img src>` and an icon `href`. */
-export function isBrandAssetUrl(value: string): boolean {
+function isBrandAssetUrl(value: string): boolean {
   if (/[\s\\]/.test(value)) return false
   if (value.startsWith('/')) return !value.startsWith('//')
   try {

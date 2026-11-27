@@ -134,8 +134,10 @@ Write `docs/design/06-brand.md`:
 
 Then `docs/design/DESIGN.md` (SKILL.md §5): the same decisions as rules a builder follows, short.
 
-The style reaches the app only at the rename (`rf-adapt` checklist rows (e) and (f)), after
-sign-off. Re-running this step when a real brand guide arrives replaces `brand.css`. After the
+The colours and type reach the app only at the rename (`rf-adapt` checklist row (e)), after
+sign-off. The tagline, the panel choice and the logo are settings (row (f)): the rename sets
+`APP_TAGLINE` once, and a later change to any of them is an edit to `[vars]` in both wrangler
+tomls, never a second rename. Re-running this step when a real brand guide arrives replaces `brand.css`. After the
 rename, `pnpm design:docs --apply-brand` writes it into the two token files, and `pnpm web test:ui`
 confirms it. When a later kit release brings a new default look, `pnpm design:docs
 --adopt-default-look` takes it and re-applies `brand.css` on top; it runs only when asked.

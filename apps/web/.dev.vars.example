@@ -8,7 +8,8 @@
 APP_ENV=development
 # APP_URL follows the UI port: change it together with DEV_UI_PORT below.
 APP_URL=http://localhost:3000
-# Branding, to try a different identity locally (docs/CONCEPTS.md §7). Blank = the toml's value.
+# Branding, to try a different identity locally (docs/CONCEPTS.md §7). Commented out = the toml's
+# value; a blank `KEY=` line unsets it, which shows the bundled fallback.
 # APP_TAGLINE=
 # LOGIN_PANEL_ART=type
 # APP_LOGO_URL=/brand/logo.svg

@@ -190,6 +190,20 @@ function renderTable(rows) {
   return [line(all[0]), rule, ...all.slice(1, -1).map(line), rule, line(all.at(-1))].join('\n')
 }
 
+/** Sets `APP_TAGLINE` in each wrangler toml that declares one; answers the tomls it was set in. */
+function setTagline(tagline, current, edits) {
+  const setIn = []
+  for (const toml of WRANGLER_TOMLS) {
+    if (!existsSync(path.join(REPO_ROOT, toml))) continue
+    const source = current(toml)
+    const withTagline = applyTagline(source, tagline)
+    if (withTagline === null) continue
+    if (withTagline !== source) edits.set(toml, withTagline)
+    setIn.push(toml)
+  }
+  return setIn
+}
+
 function main(argv) {
   const args = parseArgs(argv)
   if ('help' in args) {
@@ -466,15 +480,7 @@ function main(argv) {
       })()
     : null
   const tagline = designTagline(design)
-  const taglineSetIn = []
-  for (const toml of tagline ? WRANGLER_TOMLS : []) {
-    if (!existsSync(path.join(REPO_ROOT, toml))) continue
-    const source = current(toml)
-    const withTagline = applyTagline(source, tagline)
-    if (withTagline === null) continue
-    if (withTagline !== source) edits.set(toml, withTagline)
-    taglineSetIn.push(toml)
-  }
+  const taglineSetIn = tagline ? setTagline(tagline, current, edits) : []
   report.push(
     `    Sign-in panel: ${
       taglineSetIn.length > 0

@@ -228,7 +228,7 @@ export const EXCLUDED_PATHS = Object.freeze([
   'CONTRIBUTING.md',
   'apps/web/public/logo.svg',
   'apps/web/public/favicon.svg',
-  'apps/web/src/ui/public/logo.svg', // the kit's mark — a human replaces it (row f)
+  'apps/web/src/ui/public/logo.svg', // the kit's mark — the bundled fallback (row f)
   'apps/web/src/ui/public/favicon.svg',
   'scripts/rename.mjs', // the tool must keep working after it has run
   'scripts/lib/rename-lib.mjs',

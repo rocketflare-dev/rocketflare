@@ -697,7 +697,8 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   `src/ui/public/brand/logo.svg`); anything else stops the Worker at `loadConfig`, and the page
   drops a value the same schema refuses. `LogoMark` renders the configured logo as an `<img>` and
   returns to the bundled mark if it fails to load; `BrandFavicon` (mounted once in `App`) points
-  `<link rel="icon">` at the configured favicon. The tagline is neutral in the kit; the rename
+  `<link rel="icon">` at the configured favicon once it has loaded as an image, so a wrong URL
+  leaves the bundled icon in place. The tagline is neutral in the kit; the rename
   sets `APP_TAGLINE` in both tomls from `docs/design/design.json` `app.tagline`. Known gaps: until
   `/api/health` answers, the page shows the bundled name, mark and tab icon; `index.html`'s
   `<title>`, description and `theme-color` stay compiled in; a configured logo is one image for

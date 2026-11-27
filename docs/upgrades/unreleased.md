@@ -19,7 +19,7 @@ The sign-in tagline, the panel art, the logo and the favicon become `[vars]` ser
 - Fix: the UI showed the compiled `APP_NAME` constant in `hooks/useAppInfo.ts`, never the `[vars]` `APP_NAME`, because `/api/health` did not send it.
 - A logo or favicon value must be an `https://` URL or a root-relative path (`/brand/logo.svg`); any other value fails `loadConfig`.
 - `LOGIN_PANEL` in `ui/lib/login-panel.ts` is now the fallback only; `AuthCard` reads the art and tagline from `useAppInfo()`.
-- `LogoMark` (same signature) renders the configured logo as an `<img>` and falls back to the bundled mark when it is unset or fails to load. New `components/BrandFavicon.tsx`, mounted once in `App.tsx`.
+- `LogoMark` (same signature) renders the configured logo as an `<img>` and falls back to the bundled mark when it is unset or fails to load. New `components/BrandFavicon.tsx`, mounted once in `App.tsx`, swaps the tab icon once the configured one has loaded.
 - `scripts/rename.mjs` writes `design.json` `app.tagline` to `APP_TAGLINE` in both wrangler tomls (`applyTagline` in `scripts/lib/rename-lib.mjs` now takes a toml), no longer to `login-panel.ts`.
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
 

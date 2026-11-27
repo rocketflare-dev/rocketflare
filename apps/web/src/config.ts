@@ -16,30 +16,19 @@ import { sharedPlugins } from '@rocketflare/shared/plugins'
 import { z } from 'zod'
 
 /** `wrangler dev` passes `KEY=` lines from .dev.vars as empty strings; treat those as unset. */
-const optionalString = z.preprocess(
-  value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-  z.string().min(1).optional()
-)
-
-const optionalSecret = (min: number) =>
-  z.preprocess(
-    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-    z.string().min(min).optional()
-  )
-
-/** A blank-or-absent enum var, for the ones whose ABSENCE means something (auto-detect). */
-const optionalEnum = <const T extends readonly [string, ...string[]]>(values: T) =>
-  z.preprocess(
-    value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
-    z.enum(values as unknown as [T[number], ...T[number][]]).optional()
-  )
-
-/** A blank-or-absent var of any shape: blank means the deployment did not set it. */
 const blankAsUnset = <T extends z.ZodType>(schema: T) =>
   z.preprocess(
     value => (typeof value === 'string' && value.trim() === '' ? undefined : value),
     schema.optional()
   )
+
+const optionalString = blankAsUnset(z.string().min(1))
+
+const optionalSecret = (min: number) => blankAsUnset(z.string().min(min))
+
+/** A blank-or-absent enum var, for the ones whose ABSENCE means something (auto-detect). */
+const optionalEnum = <const T extends readonly [string, ...string[]]>(values: T) =>
+  blankAsUnset(z.enum(values as unknown as [T[number], ...T[number][]]))
 
 /** `[vars]` arrive as strings; blank means "use the default", never 0. */
 const optionalPositiveInt = (fallback: number) =>
