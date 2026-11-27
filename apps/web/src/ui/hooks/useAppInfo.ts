@@ -1,7 +1,9 @@
+import { brandingSchema } from '@rocketflare/shared/branding'
 import { useQuery } from '@tanstack/react-query'
 import { z } from 'zod'
 import { api } from '@/ui/lib/api-client'
 import { type AppEnv, isAppEnv } from '@/ui/lib/environment'
+import { LOGIN_PANEL } from '@/ui/lib/login-panel'
 import { queryKeys } from '@/ui/lib/query-keys'
 
 /** Fallback shown before `/api/health` answers, or if it lacks a `name`. */
@@ -9,14 +11,20 @@ export const APP_NAME = 'Rocketflare'
 
 /**
  * Contract with `GET /api/health` (src/api/routes/health.ts):
- *   `{ status: 'ok', version: RELEASE_VERSION, env: APP_ENV, name?: APP_NAME }`
- * Tolerant on purpose — a missing `env` shows NO badge rather than a wrong one, and a missing
- * `version` shows "dev".
+ *   `{ status: 'ok', version: RELEASE_VERSION, env: APP_ENV, ...Branding }`
+ * Tolerant on purpose — a missing `env` shows NO badge rather than a wrong one, a missing
+ * `version` shows "dev", and an unusable branding field falls back to the bundled one.
  */
+const branding = brandingSchema.shape
+
 export const appInfoSchema = z
   .object({
     status: z.string().optional(),
     name: z.string().optional(),
+    tagline: branding.tagline.catch(undefined),
+    loginPanelArt: branding.loginPanelArt.catch(undefined),
+    logoUrl: branding.logoUrl.catch(undefined),
+    faviconUrl: branding.faviconUrl.catch(undefined),
     version: z.string().default('dev'),
     env: z.unknown().transform((v): AppEnv => (isAppEnv(v) ? v : 'production')),
   })
@@ -41,6 +49,10 @@ export function useAppInfo() {
   const query = useQuery(appInfoQueryOptions())
   return {
     name: query.data?.name ?? APP_NAME,
+    tagline: query.data?.tagline ?? LOGIN_PANEL.tagline,
+    loginPanelArt: query.data?.loginPanelArt ?? LOGIN_PANEL.art,
+    logoUrl: query.data?.logoUrl,
+    faviconUrl: query.data?.faviconUrl,
     version: query.data?.version,
     env: query.data?.env,
     isLoading: query.isLoading,

@@ -1,3 +1,4 @@
+import { brandingSchema } from '@rocketflare/shared/branding'
 import { ERROR_CODES } from '@rocketflare/shared/errors'
 import { describe, expect, it } from 'vitest'
 import { allowedOrigins, DEV_ORIGINS } from '@/api/middleware/cors'
@@ -11,9 +12,33 @@ describe('GET /api/health', () => {
   it('returns ok with version and env', async () => {
     const res = await request('/api/health')
     expect(res.status).toBe(200)
-    expect(await json(res)).toEqual({ status: 'ok', version: 'test', env: 'development' })
+    expect(await json(res)).toEqual({
+      status: 'ok',
+      version: 'test',
+      env: 'development',
+      name: 'Rocketflare Test',
+    })
     expect(res.headers.get('X-Content-Type-Options')).toBe('nosniff')
     expect(res.headers.get('X-Request-Id')).toBeTruthy()
+  })
+
+  it("carries the deployment's branding in the shape the shared contract parses", async () => {
+    const env = createTestEnv({
+      APP_NAME: 'Front Desk',
+      APP_TAGLINE: 'Rooms, guests, done.',
+      LOGIN_PANEL_ART: 'type',
+      APP_LOGO_URL: 'https://cdn.example.com/mark.svg',
+      APP_FAVICON_URL: '/brand/favicon.svg',
+    })
+    const body = await json(await request('/api/health', {}, { env }))
+    expect(body).toMatchObject({
+      name: 'Front Desk',
+      tagline: 'Rooms, guests, done.',
+      loginPanelArt: 'type',
+      logoUrl: 'https://cdn.example.com/mark.svg',
+      faviconUrl: '/brand/favicon.svg',
+    })
+    expect(brandingSchema.safeParse(body).success).toBe(true)
   })
 })
 

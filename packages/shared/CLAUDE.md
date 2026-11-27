@@ -18,6 +18,9 @@ response with the same schema. `pnpm web test:config` covers the pure parts.
 `permissions.ts` actions/subjects/`AppAbility`/packed rules (matrix lives in `apps/web/src/permissions/`) ·
 `api-keys.ts` · `tenant-settings.ts` · `user-settings.ts` · `notifications.ts` · `admin.ts` ·
 `activity.ts` · `errors.ts` envelope + codes · `pagination.ts` ·
+`branding.ts` — `brandingSchema` (the branding half of `GET /api/health`), `LOGIN_PANEL_ARTS`,
+`taglineSchema` (one line, ≤ 160), `brandAssetUrlSchema` (`https:` or root-relative only);
+`config.ts` validates the `[vars]` with the same schemas ·
 `features.ts` — the feature-flag registry (`CORE_FEATURE_FLAGS` — one core flag,
 `knowledge-facts`, default OFF (D43); the demo flag is the `example-feature` PLUGIN — merged with
 each plugin's `SharedPlugin.features` into `FEATURE_FLAGS`, keyed on `FEATURES`/`FeatureName` from

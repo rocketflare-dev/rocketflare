@@ -16,7 +16,8 @@
  *   (c) the docker `container_name`s / volume — renamed, reported
  *   (d) staging names keep `-staging` — the parity test is the proof — reported
  *   (e) `--colour` turns the whole palette to the colour's hue, keeping every lightness — reported
- *   (f) `LogoMark` / `logo.svg` / `favicon.svg` are a human choice — reported
+ *   (f) the logo is a human choice (`APP_LOGO_URL`, `APP_FAVICON_URL`) — reported;
+ *       `APP_TAGLINE` is set from the design
  *
  * First it DELETES what only the kit is — every file under a `kitOnly` glob in `.rocketflare.json`
  * (the kit's own tests, workflows and maintainer scripts) — unwires their vitest project, and drops
@@ -86,7 +87,7 @@ const CLI_CONFIG_TS = 'apps/cli/src/config.ts'
 const INDEX_CSS = 'apps/web/src/ui/index.css'
 const THEME_TOKENS_CSS = 'apps/web/src/shared/theme-tokens.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
-const LOGIN_PANEL_TS = 'apps/web/src/ui/lib/login-panel.ts'
+const WRANGLER_TOMLS = ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
 const DESIGN_JSON = 'docs/design/design.json'
 const MIGRATIONS_DIR = 'apps/web/migrations/'
 const DEV_VARS = 'apps/web/.dev.vars'
@@ -187,6 +188,20 @@ function renderTable(rows) {
     row.map((cell, i) => (i === 0 ? cell.padEnd(widths[i]) : cell.padStart(widths[i]))).join('  ')
   const rule = widths.map(w => '-'.repeat(w)).join('  ')
   return [line(all[0]), rule, ...all.slice(1, -1).map(line), rule, line(all.at(-1))].join('\n')
+}
+
+/** Sets `APP_TAGLINE` in each wrangler toml that declares one; answers the tomls it was set in. */
+function setTagline(tagline, current, edits) {
+  const setIn = []
+  for (const toml of WRANGLER_TOMLS) {
+    if (!existsSync(path.join(REPO_ROOT, toml))) continue
+    const source = current(toml)
+    const withTagline = applyTagline(source, tagline)
+    if (withTagline === null) continue
+    if (withTagline !== source) edits.set(toml, withTagline)
+    setIn.push(toml)
+  }
+  return setIn
 }
 
 function main(argv) {
@@ -451,8 +466,9 @@ function main(argv) {
   }
   // (f) logo, and the sign-in panel beside it
   report.push(
-    '(f) Logo: apps/web/src/ui/components/shared/LogoMark.tsx, apps/web/src/ui/public/logo.svg and ' +
-      'favicon.svg still carry the kit mark — replace the paths in all three yourself (not touched).'
+    '(f) Logo: the app still shows the kit mark. Set APP_LOGO_URL and APP_FAVICON_URL in [vars] ' +
+      'of both tomls (an https:// URL, or a path under apps/web/src/ui/public/ such as ' +
+      '/brand/logo.svg) — no code edit; the bundled mark stays as the fallback (not touched).'
   )
   const design = existsSync(path.join(REPO_ROOT, DESIGN_JSON))
     ? (() => {
@@ -464,18 +480,20 @@ function main(argv) {
       })()
     : null
   const tagline = designTagline(design)
-  const panel = existsSync(path.join(REPO_ROOT, LOGIN_PANEL_TS)) ? current(LOGIN_PANEL_TS) : null
-  const withTagline = tagline && panel !== null ? applyTagline(panel, tagline) : null
-  if (withTagline !== null && withTagline !== panel) edits.set(LOGIN_PANEL_TS, withTagline)
+  const taglineSetIn = tagline ? setTagline(tagline, current, edits) : []
   report.push(
     `    Sign-in panel: ${
-      withTagline !== null
-        ? `the tagline in ${LOGIN_PANEL_TS} is now ${DESIGN_JSON}'s app.tagline ("${tagline}")`
-        : `the tagline in ${LOGIN_PANEL_TS} is still the kit's neutral line${
-            tagline ? ' (no LOGIN_PANEL.tagline to rewrite)' : ` (no app.tagline in ${DESIGN_JSON})`
-          } — write it in the product's words`
+      taglineSetIn.length > 0
+        ? `APP_TAGLINE in ${taglineSetIn.join(' and ')} is now ${DESIGN_JSON}'s app.tagline ` +
+          `("${tagline}")`
+        : `APP_TAGLINE is still the kit's neutral line${
+            tagline
+              ? ' (no APP_TAGLINE in the tomls to set)'
+              : ` (no app.tagline in ${DESIGN_JSON})`
+          } — write it in the product's words, in [vars] of both tomls`
     }. The drawing (components/LoginArt.tsx) is the kit's rocket in your colours: replace it ` +
-      "with your own imagery, or set LOGIN_PANEL.art = 'type' for the name and tagline alone."
+      'with your own imagery, or set LOGIN_PANEL_ART = "type" in [vars] for the name and ' +
+      'tagline alone.'
   )
 
   // (j) licence

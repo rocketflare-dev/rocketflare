@@ -99,6 +99,10 @@ streaming, guards, bundle rules, tests) are `.claude/rules/ui.md`, loaded with t
 - Single-tenant mode (`useTenancyMode()`, D25) hides `OrgSwitcher`, `/select-tenant` (redirects
   home), org create/delete and the slug field, the `new_org` approve branch, and collapses
   `/admin/tenants` to the one detail.
+- `useAppInfo` (`GET /api/health`) also carries the deployment's branding — name, sign-in tagline
+  and panel art, logo and favicon URLs (`[vars]`, CONCEPTS §7) — each falling back to what is
+  bundled; `LogoMark` and `AuthCard` read it, and `BrandFavicon` (mounted once in `App.tsx`,
+  inside `QueryClientProvider`) swaps the tab icon once the configured one has loaded.
 - `EnvironmentBadge` + `useEnvironmentTitle` read `APP_ENV`/`RELEASE_VERSION` from the session;
   staging must look different from production.
 

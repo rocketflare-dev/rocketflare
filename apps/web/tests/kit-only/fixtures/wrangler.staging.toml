@@ -22,6 +22,11 @@ workers_dev = true
 APP_ENV = "staging"                    # development | staging | production
 APP_URL = "https://staging.rocketflare.dev"  # public origin; derives OAuth redirect URIs, magic links, CSRF
 APP_NAME = "Rocketflare"
+# Branding (docs/CONCEPTS.md §7) — per deployment, no rebuild; unset = the bundled fallback:
+APP_TAGLINE = "Your team's work, its knowledge and its agents, in one place."   # one line, shown on the type-only sign-in panel
+LOGIN_PANEL_ART = "rocket"             # rocket | type   (the drawing, or the name and tagline set large)
+#   APP_LOGO_URL = "/brand/logo.svg"        # https:// URL or a path under src/ui/public/; unset = the bundled mark
+#   APP_FAVICON_URL = "/brand/favicon.svg"  # same rule; unset = the bundled favicon.svg
 # Overridden at deploy time by CI: `wrangler deploy --var RELEASE_VERSION:<tag>`
 RELEASE_VERSION = "dev"
 LOG_LEVEL = "info"

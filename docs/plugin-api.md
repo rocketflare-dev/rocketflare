@@ -898,7 +898,7 @@ Components and hooks, for a lazy PAGE. Never for the UI entry.
 - `function LoadingIndicator({ size = 'md', centered = false, fullPage = false, className = '', }: LoadingIndicatorProps)`
   DaisyUI spinner in the primary colour.
 - `function LogoMark({ className = 'w-7 h-7' }: { className?: string })`
-  The Rocketflare mark — a rocket launching from a cloud — inlined so it needs no request and scales with `className`. The fills are the illustration colours, the `--logo-*` tokens…
+  The deployment's `APP_LOGO_URL` when it loads, else the bundled mark.
 - `function MarkdownImageLink({ src, alt }: Pick<ComponentProps<'img'>, 'src' \| 'alt'>)`
 - `function Modal({ open, onClose, title, children, actions, closeButton = true, className = '', }: ModalProps)`
   `<dialog>`-based modal: native focus trap, Escape and backdrop close, `aria-modal` for free. Controlled — the caller owns `open`. Falls back to the `open` attribute where…

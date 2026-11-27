@@ -8,6 +8,12 @@
 APP_ENV=development
 # APP_URL follows the UI port: change it together with DEV_UI_PORT below.
 APP_URL=http://localhost:3000
+# Branding, to try a different identity locally (docs/CONCEPTS.md §7). Commented out = the toml's
+# value; a blank `KEY=` line unsets it, which shows the bundled fallback.
+# APP_TAGLINE=
+# LOGIN_PANEL_ART=type
+# APP_LOGO_URL=/brand/logo.svg
+# APP_FAVICON_URL=/brand/favicon.svg
 # Dev ports (scripts/lib/dev-ports.mjs), for a machine where :3000/:3001 are taken (a Cloudflare
 # Sandbox holds :3000). The shell wins over this file; unset means 3000 (Vite) / 3001 (wrangler).
 # `pnpm dev`, Vite, the bootstrap and the seed read them; `pnpm dev:api` alone reads only the shell.

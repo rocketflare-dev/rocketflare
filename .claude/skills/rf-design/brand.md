@@ -46,12 +46,13 @@ Give your recommendation and its reason each time, as in `SKILL.md`.
    - their own imagery: replace the SVG in `LoginArt.tsx` with theirs, as an inline SVG that takes
      its colours from `currentColor` and the `.login-art*` classes, or an image in
      `apps/web/src/ui/public/`. Only artwork they own; never their logo redrawn by you;
-   - no picture: `LOGIN_PANEL.art = 'type'` in `apps/web/src/ui/lib/login-panel.ts` shows the app's
-     name and tagline large.
+   - no picture: the setting `LOGIN_PANEL_ART = "type"` (`[vars]` in both wrangler tomls) shows
+     the app's name and tagline large.
 
    Either way, ask for the tagline: one line in their words, recorded as `app.tagline` in
-   `design.json`. The rename writes it into `login-panel.ts`. These are code changes, so they
-   happen after sign-off, with the rename.
+   `design.json`. The rename writes it into `APP_TAGLINE` in both tomls. The tagline and the panel
+   choice are settings, changeable per deployment at any time; only their own imagery in
+   `LoginArt.tsx` is a code change, made after sign-off with the rename.
 
 ## What you may take from their brand
 
@@ -61,8 +62,8 @@ Give your recommendation and its reason each time, as in `SKILL.md`.
 - **Take:** the primary colour, an accent if they have one, whether their neutrals lean warm or
   cool, and the feel of their type: geometric, humanist, serif, condensed.
 - **Never take:** their logo or icon artwork, font files, or a commercial font by name. Find a free
-  equivalent for the type feel, and say which one and why it is close. Their real logo goes in by
-  hand later (`rf-adapt` checklist row (f)).
+  equivalent for the type feel, and say which one and why it is close. Their real logo goes in
+  later as a setting, `APP_LOGO_URL` and `APP_FAVICON_URL` (`rf-adapt` checklist row (f)).
 
 Show what you extracted before writing anything: three to five swatches, the font pairing, and
 where each came from ("the button colour on your booking page").
@@ -133,8 +134,10 @@ Write `docs/design/06-brand.md`:
 
 Then `docs/design/DESIGN.md` (SKILL.md §5): the same decisions as rules a builder follows, short.
 
-The style reaches the app only at the rename (`rf-adapt` checklist rows (e) and (f)), after
-sign-off. Re-running this step when a real brand guide arrives replaces `brand.css`. After the
+The colours and type reach the app only at the rename (`rf-adapt` checklist row (e)), after
+sign-off. The tagline, the panel choice and the logo are settings (row (f)): the rename sets
+`APP_TAGLINE` once, and a later change to any of them is an edit to `[vars]` in both wrangler
+tomls, never a second rename. Re-running this step when a real brand guide arrives replaces `brand.css`. After the
 rename, `pnpm design:docs --apply-brand` writes it into the two token files, and `pnpm web test:ui`
 confirms it. When a later kit release brings a new default look, `pnpm design:docs
 --adopt-default-look` takes it and re-applies `brand.css` on top; it runs only when asked.

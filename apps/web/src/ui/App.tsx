@@ -16,6 +16,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, matchRoutes, Navigate, Route, Routes, useLocation } from 'react-router'
 import type { PluginRouteTier } from '@/plugins/types'
 import { uiPlugins } from '@/plugins/ui'
+import { BrandFavicon } from '@/ui/components/BrandFavicon'
 import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
 import { ErrorBoundary } from '@/ui/components/ErrorBoundary'
 import Layout from '@/ui/components/Layout'
@@ -407,6 +408,7 @@ export default function App() {
   return (
     <ErrorBoundary fullPage>
       <QueryClientProvider client={queryClient}>
+        <BrandFavicon />
         <AuthProvider>
           <AbilityProvider>
             <WebSocketProvider>

@@ -3,7 +3,7 @@
  * climbing out of the panel's top edge with its launch cloud cropped off the bottom. Every colour
  * comes from the panel's tokens (`.login-art*` in index.css: the rail tones for the lines and
  * the body, `--flare` for the flame), so a new brand recolours it. Replace it with your own
- * imagery, or set `LOGIN_PANEL.art = 'type'` in lib/login-panel.ts for a type-only panel.
+ * imagery, or set `LOGIN_PANEL_ART = "type"` in `[vars]` for a type-only panel.
  */
 export function LoginArt({ className = '' }: { className?: string }) {
   return (

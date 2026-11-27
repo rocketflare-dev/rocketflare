@@ -1,11 +1,32 @@
+import { useState } from 'react'
+import { useAppInfo } from '@/ui/hooks/useAppInfo'
+
+/** The deployment's `APP_LOGO_URL` when it loads, else the bundled mark. */
+export function LogoMark({ className = 'w-7 h-7' }: { className?: string }) {
+  const { logoUrl } = useAppInfo()
+  const [failedUrl, setFailedUrl] = useState<string>()
+  if (logoUrl && logoUrl !== failedUrl) {
+    return (
+      <img
+        src={logoUrl}
+        alt=""
+        aria-hidden="true"
+        className={`flex-none object-contain ${className}`}
+        onError={() => setFailedUrl(logoUrl)}
+      />
+    )
+  }
+  return <BundledMark className={className} />
+}
+
 /**
  * The Rocketflare mark — a rocket launching from a cloud — inlined so it needs no request and
  * scales with `className`. The fills are the illustration colours, the `--logo-*` tokens in
  * `shared/theme-tokens.css`, fixed on purpose (the mark is multi-coloured, so it does not take
  * `currentColor` like a monochrome glyph would); the same art is `public/logo.svg` and
- * `public/favicon.svg`. Rebrand: replace the paths in all three and the tokens.
+ * `public/favicon.svg`. A deployment replaces it with `APP_LOGO_URL` / `APP_FAVICON_URL`.
  */
-export function LogoMark({ className = 'w-7 h-7' }: { className?: string }) {
+function BundledMark({ className }: { className: string }) {
   return (
     <svg viewBox="0 0 512 512" className={`flex-none ${className}`} role="img" aria-hidden="true">
       {/* Rocket body */}
