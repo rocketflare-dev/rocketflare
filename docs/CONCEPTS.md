@@ -723,9 +723,7 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   both themes (a dark-theme rule on the hook can filter it, not swap it); the logo's styling is
   compiled in, so deployments of one build share it — a per-deployment `APP_LOGO_STYLE` was
   weighed and left out, because a copy has one brand and the setting needs a CSS allowlist that
-  still could not carry a per-theme rule; `pnpm design:docs --adopt-default-look` rebuilds
-  `theme-tokens.css` from the kit's file and keeps only token declarations, so it drops a
-  `[data-brand-logo]` rule without reporting it — re-add the rule from the diff; colours and type
+  still could not carry a per-theme rule; colours and type
   remain a build-time brand (`docs/design/brand.css`), because their contrast is checked at
   build.
 - **Home sections**: Home is an operational dashboard laid out from `pages/home-sections.ts`, a
@@ -765,7 +763,9 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   from the upgrade's mirror `.upgrade/kit.git` at `.rocketflare.json` `kit.commit`, or
   `--from <kit checkout>` — translated into the copy's names: `theme-tokens.css` whole, the
   `[data-theme]` blocks of `index.css` (its styles untouched), `theme-color`; a token of the app's
-  own the defaults lack is kept; then brand.css on top (`adoptDefaultLook`). `/rf-design` also
+  own the defaults lack is kept, and so is everything of the app's in `theme-tokens.css` outside
+  the token blocks (a `[data-brand-logo]` rule, an `@media` block, its `:root` logo colours, each
+  printed as `kept …`); then brand.css on top (`adoptDefaultLook`). `/rf-design` also
   writes `docs/design/DESIGN.md`, the visual system in one page, which `.claude/rules/ui.md` sends
   agents to before they build a screen.
   `--check` exits 1 when the pages are stale. The output is deterministic, and a rebuild deletes only

@@ -7,6 +7,9 @@ export function parseBrand(brandCss: string | null | undefined): {
   overrides: Record<BlockKind, Record<string, string>>
   problems: string[]
 }
+export function topLevelRules(
+  css: string
+): Array<{ prelude: string; start: number; end: number; open: number; body: string | null }>
 export function setDeclaration(body: string, prop: string, value: string): string | null
 export interface BrandResult {
   tokensCss: string
@@ -59,6 +62,8 @@ export function adoptDefaultLook(inputs: {
   indexHtml: string | null
   /** `<file> <block> <prop>` for each of the app's own tokens kept beside the defaults. */
   kept: string[]
+  /** `<file> <prelude>` or `<file> <prelude> <prop>` for each statement of the app's own outside the token blocks carried into the rebuilt theme-tokens.css. */
+  carried: string[]
   missing: string[]
   brand: BrandResult | null
 }

@@ -388,13 +388,111 @@ function lookBlocks({ into, look, mine, kept, missing, file }) {
   return out
 }
 
+const squash = t => withoutComments(t).replace(/\s+/g, ' ').trim()
+
+/**
+ * The top-level statements of a CSS text, in order: a rule or block at-rule (`a { … }`,
+ * `@media … { … }`) as `{ prelude, start, end, open, body }`, or an at-statement (`@import …;`)
+ * with `open: -1, body: null`. `[start, end)` is the whole statement, `open` the index of its `{`.
+ * Nesting, comments and quoted strings are honoured, so a brace inside any of them ends nothing.
+ */
+export function topLevelRules(css) {
+  const out = []
+  let depth = 0
+  let start = -1
+  let open = -1
+  for (let i = 0; i < css.length; i++) {
+    const c = css[i]
+    if (c === '/' && css[i + 1] === '*') {
+      const close = css.indexOf('*/', i + 2)
+      i = (close === -1 ? css.length : close + 2) - 1
+      continue
+    }
+    if (depth === 0 && start === -1) {
+      if (/\s/.test(c)) continue
+      start = i
+    }
+    if (c === '"' || c === "'") {
+      let j = i + 1
+      while (j < css.length && css[j] !== c) j += css[j] === '\\' ? 2 : 1
+      i = j
+    } else if (c === '{') {
+      if (depth === 0) open = i
+      depth++
+    } else if (c === '}' && depth > 0) {
+      depth--
+      if (depth === 0) {
+        const prelude = squash(css.slice(start, open))
+        out.push({ prelude, start, end: i + 1, open, body: css.slice(open + 1, i) })
+        start = -1
+      }
+    } else if (c === ';' && depth === 0) {
+      out.push({ prelude: squash(css.slice(start, i)), start, end: i + 1, open: -1, body: null })
+      start = -1
+    }
+  }
+  return out
+}
+
+/** The top-level statements of `css` that are not one of its token blocks (`tokenBlocks`). */
+function nonTokenRules(css) {
+  const tokenStarts = new Set(tokenBlocks(css).map(b => b.start))
+  return topLevelRules(css).filter(r => !tokenStarts.has(r.open + 1))
+}
+
+const nested = body => /[{}]/.test(withoutComments(body))
+
+/**
+ * The app's own top-level statements in `mine` carried into `into`, which was rebuilt from the
+ * kit's file and so holds only the kit's. A statement `into` lacks is appended whole, after one
+ * comment saying where it came from. A flat rule both have (`:root`, which holds the logo mark's
+ * colours) keeps the app's value of each property and gains the app's extra ones: what sits
+ * outside the token blocks is the app's brand, not the look. A nested one both have becomes the
+ * app's. Each carried item lands in `carried` as `<file> <prelude>` or `<file> <prelude> <prop>`.
+ */
+function carryRules({ into, mine, carried, file }) {
+  let out = into
+  const appended = []
+  for (const own of nonTokenRules(mine)) {
+    const text = mine.slice(own.start, own.end)
+    const theirs = nonTokenRules(out).find(r => r.prelude === own.prelude)
+    if (!theirs) {
+      appended.push(text)
+      carried.push(`${file} ${own.prelude}`)
+      continue
+    }
+    if (squash(out.slice(theirs.start, theirs.end)) === squash(text)) continue
+    if (own.body === null || theirs.body === null || nested(own.body) || nested(theirs.body)) {
+      out = out.slice(0, theirs.start) + text + out.slice(theirs.end)
+      carried.push(`${file} ${own.prelude}`)
+      continue
+    }
+    const kitDecls = declarations(withoutComments(theirs.body))
+    let body = theirs.body
+    const extra = []
+    for (const [prop, value] of Object.entries(declarations(withoutComments(own.body)))) {
+      if (!(prop in kitDecls)) extra.push([prop, value])
+      else if (kitDecls[prop] !== value) body = setDeclaration(body, prop, value) ?? body
+      else continue
+      carried.push(`${file} ${own.prelude} ${prop}`)
+    }
+    if (extra.length)
+      body = `${body.replace(/\s*$/, '')}\n${extra.map(([p, v]) => `  ${p}: ${v};`).join('\n')}\n`
+    out = out.slice(0, theirs.open + 1) + body + out.slice(theirs.end - 1)
+  }
+  if (appended.length)
+    out = `${out.replace(/\s*$/, '')}\n\n/* Kept from this app: its own rules, carried over by \`pnpm design:docs --adopt-default-look\`. */\n${appended.join('\n\n')}\n`
+  return out
+}
+
 /**
  * The kit's default look adopted by an app, with the app's own brand re-applied on top:
  * `pnpm design:docs --adopt-default-look`. `current` is the app's three files as they are,
  * `defaults` the same three from the kit release being adopted, already in the app's names.
  *
- * - `theme-tokens.css` becomes the default file (it holds nothing but the look), keeping any
- *   declaration of the app's own the defaults lack, in its block.
+ * - `theme-tokens.css` becomes the default file, keeping any token declaration of the app's own
+ *   the defaults lack, in its block, and every statement of the app's outside the token blocks
+ *   (a `[data-brand-logo]` rule, its `:root` logo colours) through `carryRules`.
  * - `index.css` keeps everything but its token blocks, which become the defaults' (keeping the
  *   app's extra declarations the same way): the rest of that file is styles, which the upgrade's
  *   own patch ports.
@@ -402,17 +500,23 @@ function lookBlocks({ into, look, mine, kept, missing, file }) {
  * - Then `brandCss` (the app's `docs/design/brand.css`), when there is one, through `applyBrand`,
  *   so a brand of a hue, fonts and a radius lands whole on the new look.
  *
- * Pure. `{ tokensCss, indexCss, indexHtml, kept, missing, brand }`.
+ * Pure. `{ tokensCss, indexCss, indexHtml, kept, carried, missing, brand }`.
  */
 export function adoptDefaultLook({ current, defaults, brandCss = null }) {
   const kept = []
   const missing = []
-  const tokensCss = lookBlocks({
-    into: defaults.tokensCss,
-    look: defaults.tokensCss,
+  const carried = []
+  const tokensCss = carryRules({
+    into: lookBlocks({
+      into: defaults.tokensCss,
+      look: defaults.tokensCss,
+      mine: current.tokensCss,
+      kept,
+      missing,
+      file: 'theme-tokens.css',
+    }),
     mine: current.tokensCss,
-    kept,
-    missing,
+    carried,
     file: 'theme-tokens.css',
   })
   const indexCss = lookBlocks({
@@ -432,6 +536,7 @@ export function adoptDefaultLook({ current, defaults, brandCss = null }) {
     indexCss: brand?.indexCss ?? indexCss,
     indexHtml: brand ? brand.indexHtml : indexHtml,
     kept,
+    carried,
     missing,
     brand,
   }
