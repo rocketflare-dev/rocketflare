@@ -1010,9 +1010,10 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   cron's `sendReminders` reminds ONCE at `remindAfter` (up to an hour late); `onTimeout: 'reject'`
   answers an expired ask as a rejection by nobody (`cancelled`, note `Nobody answered before the
   deadline`) and wakes the run, where the default `expire` cancels it. An ask may name
-  `assignees: { userIds, groupIds }` (visibility groups): they are the ones notified, see it in their inbox, may read
-  the run and answer — the requester then may not; an owner/admin always may. An ask's notifications (the
-  first and the reminder, every recipient's) are marked read the moment it stops being pending —
+  `assignees: { userIds, groupIds }` (visibility groups): they are the ones notified, see it in
+  their inbox, may read the run and answer — the requester then may not; an owner/admin always
+  may. An ask's notifications (the first and the reminder, every recipient's) are marked read
+  the moment it stops being pending —
   answered, declined, expired or settled with its run (`resolveInterrupt` / `expireInterrupts`),
   with a `notification.read` nudge — so the bell never counts a question that is over. "Waiting on
   you" (the Agents nav badge and button) is `GET /interrupts?mine=true`: only the asks ADDRESSED to
