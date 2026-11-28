@@ -100,7 +100,7 @@ env:
 jobs:
   resolve:
     name: Resolve the kit ref and the plugins
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       kit_ref: ${{ steps.kit.outputs.kit_ref }}
@@ -155,7 +155,7 @@ jobs:
   plugin:
     name: matrix ${{ matrix.id }}
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     strategy:
       fail-fast: false # which plugin broke is the whole diagnosis
@@ -285,7 +285,7 @@ jobs:
     name: Summary
     needs: [resolve, plugin]
     if: always() && needs.resolve.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       results: ${{ steps.summary.outputs.results }}

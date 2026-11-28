@@ -39,7 +39,7 @@ concurrency:
 jobs:
   gate:
     name: Gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     # The lookup reads check runs and a commit's pull requests; nothing in this job writes. deploy.yml's
     # `ci` job grants the same three: a called workflow may not ask for more than its caller grants.

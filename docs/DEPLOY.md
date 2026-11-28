@@ -540,6 +540,16 @@ was a separate `verified` job through 0.17.1; one job means one runner to queue 
 sequence. `Gate` holds `contents`, `checks` and `pull-requests: read`, so deploy.yml's `ci` job
 grants those three — a called workflow may not ask for more than its caller grants.
 
+**CI runners (`RF_RUNNER`, unset = `ubuntu-latest`).** Every job in every workflow says
+`runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}`, so a repository with no variable runs on
+GitHub's hosted runners and one with faster runners sets a single repository (or organisation)
+variable: `gh variable set RF_RUNNER -b <runner label>`, e.g. `blacksmith-4vcpu-ubuntu-2604` once
+the Blacksmith app is installed for the repository. Never hard-code a label in a workflow a copy or
+a plugin repository runs: a label no runner answers queues forever. A called workflow
+(`plugin-ci.yml`, `plugin-matrix.yml`, `ci.yml` from `deploy.yml`) reads the CALLER's `vars`, so a
+plugin repository picks its own runners. Unset the variable (`gh variable delete RF_RUNNER`) to go
+back. Checkouts stay `actions/checkout` pinned to a commit, which works on any runner.
+
 ### Deploying through an external deployer (off by default)
 
 Set the repository variable **`DEPLOYER_URL`** (optionally `DEPLOYER_AUDIENCE`) and both jobs take

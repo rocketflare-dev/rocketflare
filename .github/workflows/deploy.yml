@@ -94,7 +94,7 @@ jobs:
   # loudly at the parity check if it was never provisioned — that gate is the point of it.
   guard:
     name: Anything to deploy?
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     outputs:
       deployable: ${{ steps.check.outputs.deployable }}
@@ -131,7 +131,7 @@ jobs:
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 5
     permissions:
       actions: read
@@ -183,7 +183,7 @@ jobs:
         needs.ci.result == 'success' ||
         (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     environment: staging
     # id-token: the deployer path authenticates with a GitHub OIDC token; unused otherwise.
@@ -331,7 +331,7 @@ jobs:
     if: |
       !cancelled() && needs.staging.result == 'success' &&
       vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     permissions:
       contents: write
@@ -386,7 +386,7 @@ jobs:
         github.event_name == 'release' ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     environment: production
     permissions:

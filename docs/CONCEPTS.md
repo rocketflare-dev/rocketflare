@@ -464,6 +464,10 @@ path); no per-PR previews.
   `pnpm gate build` only; anything else — unset, another app, another tree, an API error — runs the
   full gate. Unset, no lookup runs at all. Trust is the app id: anyone with `checks: write` can name
   a check `launch/gate`, only Launch's App can post one under its id.
+- **CI runners are a variable.** Every workflow job runs on `${{ vars.RF_RUNNER || 'ubuntu-latest' }}`:
+  unset, GitHub's hosted runners; set (repository or organisation variable), any runner label —
+  Blacksmith, larger runners, self-hosted. A called workflow reads the caller's `vars`, so a plugin
+  repository calling `plugin-ci.yml` picks its own (docs/DEPLOY.md "CI runners").
 - **`pnpm test` picks its target from the environment** (`scripts/lib/test-plan.mjs`), never by
   probing, and prints it first. **Local** (the default): it starts the compose test Postgres and
   Neon proxy itself (`docker compose … --profile neon up -d --wait`; Docker down is a failure that
