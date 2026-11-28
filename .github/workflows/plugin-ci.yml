@@ -63,7 +63,7 @@ jobs:
   # Which kit versions is this plugin proved against — its floor, and the kit's own ceiling?
   versions:
     name: Resolve kit versions
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     outputs:
       pairs: ${{ steps.resolve.outputs.pairs }}
@@ -254,7 +254,7 @@ jobs:
   gate:
     name: ${{ matrix.label }} on kit ${{ matrix.kit }}
     needs: versions
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RF_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 30
     strategy:
       fail-fast: false # which END broke — the floor or the ceiling — is the whole diagnosis

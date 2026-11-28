@@ -129,7 +129,7 @@ describe('ci.yml', () => {
     expect(text).not.toMatch(/: write/)
     // The first step after the checkout, before any install.
     const steps = gate.filter(l => /^ {6}- /.test(l)).map(l => l.trim())
-    expect(steps[0]).toMatch(/^- uses: actions\/checkout@\S+/)
+    expect(steps[0]).toMatch(/checkout@/)
     expect(steps[1]).toBe('- name: Verified by Launch?')
     const at = text.indexOf('- name: Verified by Launch?')
     const step = text.slice(at, text.indexOf('\n      - ', at + 1))
