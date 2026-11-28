@@ -70,7 +70,13 @@ import {
 import { formatJson } from './lib/json-format.mjs'
 import { MANIFEST_FILE, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import { isVendored, unsupportedForKit } from './lib/plugin-lib.mjs'
-import { applyReplacements, deriveNames, isExcluded } from './lib/rename-lib.mjs'
+import {
+  applyReplacements,
+  deriveNames,
+  isExcluded,
+  KIT_MANIFEST_FILE,
+  renameKitManifest,
+} from './lib/rename-lib.mjs'
 import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-paths.mjs'
 import {
   absentSurfaces,
@@ -653,7 +659,7 @@ function main(argv) {
         patches.push(translated)
       } else if (f.class === 'added' || f.class === 'added-collides') {
         const body = kit.show(to, f.path)
-        const text = f.translate ? applyNames(body, names) : body
+        const text = f.translate ? applyNames(body, names, f.path) : body
         write(path.join('added', f.path), text)
         if (f.class === 'added') addedFiles.push(f.path)
       } else if (
@@ -1019,7 +1025,7 @@ function vendoredDrift({ kit, from, to, fromVersion, names, files, tracked, vend
   const kitText = (ref, rel, translate) => {
     const r = kit.tryShow(ref, rel)
     if (!r.ok) return null
-    return translate ? applyNames(r.out, names) : r.out
+    return translate ? applyNames(r.out, names, rel) : r.out
   }
   const everTracked = rel => git(['log', '--format=%H', '-1', '--', rel]).trim() !== ''
   for (const p of vendoredPlugins) {
@@ -1110,10 +1116,13 @@ function mergeKitChange(f, { kit, from, to, names, workRoot, translate }) {
   if (!base.ok || !theirs.ok) return null
   const dir = path.join(workRoot, 'merge-input', f.path)
   mkdirSync(dir, { recursive: true })
+  // `ours` has the kit-website links an older map rewrote put back first, as the tree itself gets
+  // them (`siteRepairs`), so the starting point never carries a link the apply just repaired.
+  const ours = readFileSync(path.join(REPO_ROOT, f.path), 'utf8')
   const inputs = {
-    ours: readFileSync(path.join(REPO_ROOT, f.path), 'utf8'),
-    base: translate ? applyNames(base.out, names) : base.out,
-    theirs: translate ? applyNames(theirs.out, names) : theirs.out,
+    ours: translate ? kitSiteRepairs(ours, theirs.out, names).text : ours,
+    base: translate ? applyNames(base.out, names, f.path) : base.out,
+    theirs: translate ? applyNames(theirs.out, names, f.path) : theirs.out,
   }
   for (const [k, v] of Object.entries(inputs)) writeFileSync(path.join(dir, k), v)
   const r = spawnSync(
@@ -1138,8 +1147,13 @@ function mergeKitChange(f, { kit, from, to, names, workRoot, translate }) {
   return { text: r.stdout, conflicts: r.status }
 }
 
-/** The token map applied to a whole file — only for files whose body is translated. */
-function applyNames(text, names) {
+/**
+ * The token map applied to a whole file — only for files whose body is translated. `launch.kit.json`
+ * goes through `renameKitManifest`, as the rename sends it: its `kit` block names the kit, not the
+ * app, so it is left byte for byte.
+ */
+function applyNames(text, names, relPath) {
+  if (relPath === KIT_MANIFEST_FILE) return renameKitManifest(text, names).text
   return applyReplacements(text, names).text
 }
 

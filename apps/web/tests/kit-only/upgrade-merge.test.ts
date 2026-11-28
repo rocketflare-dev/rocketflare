@@ -97,8 +97,12 @@ const COPY_ORDER = ["import { a } from './a'", "import { b } from './b'"]
 let tmp = ''
 let kitManifest: Record<string, any> = {}
 
-/** A kit at 0.1.0 and 0.2.0; `extra` adds files to 0.2.0 only. */
-function makeKit(name: string, extra: Record<string, string> = {}) {
+/** A kit at 0.1.0 and 0.2.0; `base` adds files to both, `extra` adds (or changes) them in 0.2.0. */
+function makeKit(
+  name: string,
+  extra: Record<string, string> = {},
+  base: Record<string, string> = {}
+) {
   const kit = path.join(tmp, name)
   mkdirSync(kit)
   git(kit, ['init', '-q', '-b', 'main'])
@@ -106,6 +110,7 @@ function makeKit(name: string, extra: Record<string, string> = {}) {
   writeAt(kit, FILE, source(KIT_ORDER, '1'))
   writeAt(kit, ENV_EXAMPLE, 'APP_NAME=Rocketflare\nLOG_LEVEL=info\n')
   writeAt(kit, 'docs/upgrades/0.1.0.md', note('0.1.0', 'null'))
+  for (const [rel, text] of Object.entries(base)) writeAt(kit, rel, text)
   git(kit, ['add', '-A'])
   git(kit, ['commit', '-q', '-m', '0.1.0'])
   git(kit, ['tag', '0.1.0'])
@@ -120,8 +125,16 @@ function makeKit(name: string, extra: Record<string, string> = {}) {
   return { kit, from }
 }
 
-/** A copy named `acme` at 0.1.0 whose `FILE` reads `value` under its own import order. */
-function makeApp(name: string, kit: { kit: string; from: string }, value = '1') {
+/**
+ * A copy named `acme` at 0.1.0 whose `FILE` reads `value` under its own import order; `files` are
+ * the copy's own versions of further files.
+ */
+function makeApp(
+  name: string,
+  kit: { kit: string; from: string },
+  value = '1',
+  files: Record<string, string> = {}
+) {
   const app = path.join(tmp, name)
   mkdirSync(app)
   for (const f of ['scripts/upgrade.mjs', 'scripts/lib']) {
@@ -147,6 +160,7 @@ function makeApp(name: string, kit: { kit: string; from: string }, value = '1') 
   writeAt(app, ENV_EXAMPLE, 'ACME_ONLY=1\nAPP_NAME=Acme\nLOG_LEVEL=info\n')
   writeAt(app, 'docs/upgrades/0.1.0.md', note('0.1.0', 'null'))
   writeAt(app, '.gitignore', '.upgrade/\n')
+  for (const [rel, text] of Object.entries(files)) writeAt(app, rel, text)
   git(app, ['init', '-q', '-b', 'main'])
   git(app, ['add', '-A'])
   git(app, ['commit', '-q', '-m', 'Start'])
@@ -226,6 +240,54 @@ describe('a patch that no longer applies', () => {
     const done = run(markers, ['--continue'])
     expect(done.status, done.stderr).toBe(0)
     expect(JSON.parse(read(markers, MANIFEST)).kit.version).toBe('0.2.0')
+  })
+})
+
+describe('the starting point for a file that is yours to decide', () => {
+  const LAUNCH = 'launch.kit.json'
+  const README = 'README.md'
+  const launch = (description: string, gate: string) =>
+    `${JSON.stringify(
+      {
+        kit: { id: 'rocketflare', name: 'Rocketflare', description },
+        commands: { gate },
+      },
+      null,
+      2
+    )}\n`
+  const readme = (intro: string, site: string) =>
+    `# Rocketflare\n\n${intro}\n\ncurl -fsSL https://${site}/install.sh | bash\n`
+
+  it("keeps launch.kit.json's kit block the kit's, and the kit-website links the kit's", () => {
+    const kit = makeKit(
+      'kit-manual-names',
+      {
+        [LAUNCH]: launch('The kit, described anew by Rocketflare', 'pnpm gate --all'),
+        [README]: readme('Rocketflare, described anew.', 'rocketflare.dev'),
+      },
+      {
+        [LAUNCH]: launch('A Rocketflare starter', 'pnpm gate'),
+        [README]: readme('Rocketflare, described.', 'rocketflare.dev'),
+      }
+    )
+    // The copy as the rename left it, plus a link an older name map rewrote into its domain.
+    const app = makeApp('manual-names', kit, '1', {
+      [LAUNCH]: launch('A Rocketflare starter', 'pnpm gate'),
+      [README]: readme('Acme, described.', 'acme.example.com'),
+    })
+    expect(run(app, [], true).status).toBe(0)
+    const r = run(app, ['--json'])
+    expect(r.status, r.stderr).toBe(0)
+    const merged = JSON.parse(read(app, `.upgrade/work/0.2.0/merged/${LAUNCH}`))
+    expect(merged.kit).toEqual({
+      id: 'rocketflare',
+      name: 'Rocketflare',
+      description: 'The kit, described anew by Rocketflare',
+    })
+    expect(merged.commands.gate).toBe('pnpm gate --all')
+    const startingPoint = read(app, `.upgrade/work/0.2.0/merged/${README}`)
+    expect(startingPoint).toContain('https://rocketflare.dev/install.sh')
+    expect(startingPoint).not.toContain('acme.example.com/install.sh')
   })
 })
 

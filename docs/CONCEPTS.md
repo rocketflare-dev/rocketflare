@@ -1918,7 +1918,9 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   moved — import order) is merged 3-way with `git merge-file` (base = the old kit file, theirs =
   the new one, both translated); a clean merge is taken and staged, a conflicting one becomes a
   `*.rej`, or conflict markers in place under `--3way`. A `manual` file the kit changed gets the
-  same merge as a starting point under `.upgrade/work/<v>/merged/`, never written into the tree.
+  same merge as a starting point under `.upgrade/work/<v>/merged/`, never written into the tree;
+  its kit-website links are repaired first, as the tree's are, and `launch.kit.json` keeps its
+  `kit` block untranslated, as the rename leaves it.
   **The target release's upgrader plans the jump**: when its `scripts/upgrade.mjs` differs from
   the copy's, the copy's extracts it and `scripts/lib/` from the mirror into `.upgrade/tool/<v>/`
   (translated as the rename translated the copy's) and runs that, pointed back at the checkout by
