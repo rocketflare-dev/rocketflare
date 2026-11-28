@@ -542,3 +542,63 @@ export function makeToolCtx(options: ToolCtxOptions): ToolCtx {
   }
   return toolCtx(agentToolContext)
 }
+
+// ---------------------------------------------------------------- a plugin's own contributions
+
+/**
+ * Does `key` belong to plugin `pluginId` by the namespace rule (§16): the id itself, or the id
+ * followed by `:`, `.` or `/` (`global-search:people`, `inbox.received`, `/api/inbox`'s
+ * `inbox/…`)? A table prefix is a convention the id does not derive (`example-feature` owns
+ * `example_*`), so tables are not judged here.
+ */
+export function isOwnContribution(pluginId: string, key: string): boolean {
+  return key === pluginId || [':', '.', '/'].some(sep => key.startsWith(`${pluginId}${sep}`))
+}
+
+/** A contribution's key: a string is its own key, else its `id`, `key`, `name` or `type`. */
+function contributionKey(item: unknown): string {
+  if (typeof item === 'string') return item
+  if (item && typeof item === 'object') {
+    const o = item as Record<string, unknown>
+    for (const k of ['id', 'key', 'name', 'type'])
+      if (typeof o[k] === 'string') return o[k] as string
+  }
+  throw new Error(`cannot tell whose contribution this is — pass keyOf: ${JSON.stringify(item)}`)
+}
+
+/**
+ * The items of a SHARED list (a registry several plugins write to) that are this plugin's own.
+ * A cross-plugin test asserts only about these — "the providers include mine", never "are exactly
+ * these" — so it passes in any host, whatever other plugins it has installed.
+ */
+export function ownContributions<T>(
+  pluginId: string,
+  items: Iterable<T>,
+  keyOf: (item: T) => string = contributionKey
+): T[] {
+  return [...items].filter(item => isOwnContribution(pluginId, keyOf(item)))
+}
+
+/**
+ * Throws unless this plugin's own contributions to `items` are EXACTLY `expected` (any order) —
+ * a missing one and a stray one of its own both fail, naming the key. Everyone else's entries are
+ * ignored, so the test holds in a host with any set of plugins installed.
+ */
+export function expectOwnContributions<T>(
+  pluginId: string,
+  items: Iterable<T>,
+  expected: readonly string[],
+  keyOf: (item: T) => string = contributionKey
+): void {
+  const own = ownContributions(pluginId, items, keyOf).map(keyOf)
+  const missing = expected.filter(k => !own.includes(k))
+  const extra = own.filter(k => !expected.includes(k))
+  if (missing.length === 0 && extra.length === 0) return
+  throw new Error(
+    [
+      `${pluginId}'s own contributions differ:`,
+      ...missing.map(k => `  missing ${k}`),
+      ...extra.map(k => `  unexpected ${k}`),
+    ].join('\n')
+  )
+}

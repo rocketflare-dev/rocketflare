@@ -156,6 +156,7 @@ const CAPABILITIES = [
   ['Prove tenant isolation', 'request', '@testkit/integration'],
   ['Prove a cron task is dispatched', 'dispatchScheduled', '@testkit/integration'],
   ['Build a fake request context', 'makeRequestCtx', '@testkit/unit'],
+  ['Assert only your own entries in a shared registry', 'expectOwnContributions', '@testkit/unit'],
 ]
 
 // ---- extraction --------------------------------------------------------------------------------

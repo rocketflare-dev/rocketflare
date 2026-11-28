@@ -80,7 +80,7 @@ describe('kit.yml', () => {
       expect.arrayContaining([
         '.github/workflows/kit.yml',
         '.github/workflows/plugin-ci.yml',
-        '.github/workflows/notify-plugins.yml',
+        '.github/workflows/plugin-matrix.yml',
       ])
     )
   })

@@ -36,12 +36,17 @@
  * at the ref the kit pins, and the version being cut must be at or above the `minKit` floor that entry declares. `--skip-plugin-check` is the escape
  * hatch, and it says so loudly.
  *
+ * In the KIT it also dispatches the plugin matrix (`.github/workflows/plugin-matrix.yml`, #180)
+ * against `main` before anything is written, waits for it at the end (`--matrix-wait`, 10 minutes;
+ * 0 = do not wait) and prints `✔` or `⚠ <plugin> fails on main: <step>, <run>` per plugin. It
+ * warns and never blocks; without `gh` (or with `--no-matrix`) it says it did not check.
+ *
  * In the KIT it also WARNS, never fails, when the changes since the previous tag touch the paths
  * a security audit should see first (`AUDIT_CADENCE_GLOBS`, `docs/SECURITY-AUDIT.md` "Cadence").
  *
  * Exit 0 ok · 1 error · 2 usage.
  */
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -64,6 +69,7 @@ import {
   sectionOf,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
+import { jobVerdicts } from './plugin-matrix.mjs'
 import {
   findPluginManifests,
   fragmentCheckOptions,
@@ -86,6 +92,7 @@ const warn = (...lines) => {
 export const USAGE = [
   'usage: node scripts/release.mjs <X.Y.Z> [--plugin <subdir>]... [--date YYYY-MM-DD]',
   '                                [--dry-run] [--skip-plugin-check] [--repo-root <path>]',
+  '                                [--no-matrix] [--matrix-wait <minutes>]',
 ].join('\n')
 
 /** Match `"version": "x"` at the top level of a JSON file (two-space indent, so exactly one). */
@@ -230,6 +237,125 @@ function changedSince(ref, root) {
   } catch {
     return null
   }
+}
+
+// ---------------------------------------------------------------- the plugin matrix (#180)
+
+export const MATRIX_WORKFLOW = 'plugin-matrix.yml'
+export const MATRIX_WAIT_MINUTES = 10
+
+/** `gh` (or `git`) as `{ status, stdout, stderr }`, never a throw: a missing binary is status -1. */
+export function runTool(cmd, args, { cwd } = {}) {
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+  if (r.error) return { status: -1, stdout: '', stderr: r.error.message }
+  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' }
+}
+
+/**
+ * Dispatch the plugin matrix against `main` as GitHub has it — the commit this release is cut
+ * from — before the release is committed, so its ~10 minutes overlap the fold, the release check
+ * and the gate. A warning, never a block: any failure (no `gh`, not logged in, no network, a
+ * dispatch refused) returns `{ skipped }` with the reason, and the release goes on.
+ *
+ * `run` is the tool runner (`runTool` by default), injected so the tests drive it with a script.
+ */
+export function dispatchPluginMatrix({ version, root, run = runTool, now = Date.now }) {
+  const gh = (...a) => run('gh', a, { cwd: root })
+  if (gh('--version').status !== 0) return { skipped: 'gh is not installed' }
+  const remote = run('git', ['ls-remote', 'origin', 'refs/heads/main'], { cwd: root })
+  const sha = remote.status === 0 ? remote.stdout.split(/\s/)[0] : ''
+  if (!/^[0-9a-f]{40}$/.test(sha)) return { skipped: 'cannot read origin/main' }
+  const head = run('git', ['rev-parse', 'HEAD'], { cwd: root }).stdout.trim()
+  const requestId = `release-${version}-${now()}`
+  const dispatched = gh(
+    'workflow',
+    'run',
+    MATRIX_WORKFLOW,
+    '--ref',
+    'main',
+    '-f',
+    `kit_ref=${sha}`,
+    '-f',
+    `request_id=${requestId}`
+  )
+  if (dispatched.status !== 0) {
+    return {
+      skipped: `gh workflow run failed: ${dispatched.stderr.trim().split('\n')[0] || 'no output'}`,
+    }
+  }
+  return { requestId, sha, unpushed: head !== sha }
+}
+
+/** The dispatched run, found by the request id `plugin-matrix.yml` puts in its run name. */
+function findMatrixRun(requestId, gh) {
+  const list = gh(
+    'run',
+    'list',
+    '--workflow',
+    MATRIX_WORKFLOW,
+    '--event',
+    'workflow_dispatch',
+    '--limit',
+    '20',
+    '--json',
+    'databaseId,displayTitle,status,conclusion,url'
+  )
+  if (list.status !== 0) return null
+  try {
+    return JSON.parse(list.stdout).find(r => String(r.displayTitle).includes(requestId)) ?? null
+  } catch {
+    return null
+  }
+}
+
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
+
+/**
+ * Wait (up to `timeoutMs`) for the dispatched run and return the lines to print: `✔` per green
+ * plugin job, `⚠ <plugin> fails on main: <step>, <run>` per red one, or one `⚠` line saying why
+ * there is no verdict (still running, run not found, gh failing) with the URL to watch.
+ */
+export function awaitPluginMatrix(
+  handle,
+  { root, run = runTool, sleep = sleepSync, now = Date.now, timeoutMs, pollMs = 20_000 } = {}
+) {
+  if (handle.skipped) return [`⚠ plugin matrix not checked: ${handle.skipped}`]
+  if (timeoutMs === 0) {
+    return [
+      `… plugin matrix not awaited (--matrix-wait 0): gh run list --workflow ${MATRIX_WORKFLOW}`,
+    ]
+  }
+  const gh = (...a) => run('gh', a, { cwd: root })
+  const deadline = now() + (timeoutMs ?? MATRIX_WAIT_MINUTES * 60_000)
+  let found = null
+  for (;;) {
+    found = findMatrixRun(handle.requestId, gh) ?? found
+    if (found?.status === 'completed' || now() >= deadline) break
+    sleep(pollMs)
+  }
+  if (!found)
+    return [
+      `⚠ plugin matrix: dispatched, but its run was not found (gh run list --workflow ${MATRIX_WORKFLOW})`,
+    ]
+  if (found.status !== 'completed') {
+    return [`⚠ plugin matrix still running: ${found.url} — gh run watch ${found.databaseId}`]
+  }
+  const view = gh('run', 'view', String(found.databaseId), '--json', 'jobs')
+  let jobs = []
+  try {
+    jobs = JSON.parse(view.stdout).jobs ?? []
+  } catch {}
+  return pluginMatrixLines(jobVerdicts(jobs), found.url)
+}
+
+/** The verdict lines for one finished run. */
+export function pluginMatrixLines(verdicts, url) {
+  if (verdicts.length === 0) return [`⚠ plugin matrix ran no plugin job: ${url}`]
+  const red = verdicts.filter(v => !v.ok)
+  if (red.length === 0) {
+    return [`✔ plugin matrix              ${verdicts.map(v => v.plugin).join(', ')} pass on main`]
+  }
+  return red.map(v => `⚠ ${v.plugin} fails on main: ${v.step ?? v.conclusion}, ${v.url ?? url}`)
 }
 
 /** `git ls-remote` as a boolean: does `ref` exist on that remote? The offline-ish fallback. */
@@ -577,12 +703,25 @@ function main(argv) {
   let date = new Date().toISOString().slice(0, 10)
   let dryRun = false
   let skipPluginCheck = false
+  let matrix = true
+  let matrixWait = MATRIX_WAIT_MINUTES
   const pluginDirs = []
   for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--date') date = rest[++i]
     else if (rest[i] === '--dry-run') dryRun = true
     else if (rest[i] === '--skip-plugin-check') skipPluginCheck = true
-    else if (rest[i] === '--plugin') {
+    else if (rest[i] === '--no-matrix') matrix = false
+    else if (rest[i] === '--matrix-wait') {
+      matrixWait = Number(rest[++i])
+      if (!Number.isFinite(matrixWait) || matrixWait < 0) {
+        warn(
+          'error: --matrix-wait needs a number of minutes (0 = dispatch, do not wait)',
+          '',
+          USAGE
+        )
+        return 2
+      }
+    } else if (rest[i] === '--plugin') {
       // REPEATABLE rather than comma-separated, because the value is a PATH: splitting a
       // path-valued option on a comma invents an escaping rule for a character a path may legally
       // contain, and this flag is read by people typing it once per plugin anyway.
@@ -671,6 +810,24 @@ function main(argv) {
       '⚠ --skip-plugin-check: the default plugins were NOT checked against this version. A fresh',
       '  clone installs them, so if one of them does not support it, that breaks on somebody else.'
     )
+  }
+
+  // The plugin matrix against `main`, dispatched NOW so it runs while the release is folded,
+  // checked and gated; its verdict is printed at the end. Kit only, never on a dry run, and a
+  // warning whatever happens (`dispatchPluginMatrix`).
+  const matrixRun =
+    ctx.kind === 'kit' && matrix && !dryRun
+      ? dispatchPluginMatrix({ version, root: repoRoot })
+      : null
+  if (matrixRun?.requestId) {
+    out(
+      `… plugin matrix dispatched against main ${matrixRun.sha.slice(0, 12)} (${matrixRun.requestId})`
+    )
+    if (matrixRun.unpushed) {
+      warn(
+        '  note: HEAD is not origin/main — the matrix proves main as pushed, not your local commits.'
+      )
+    }
   }
 
   // One JOB per plugin being released. In the kit and in a single-plugin repository there is
@@ -870,6 +1027,16 @@ function main(argv) {
         ]
       : [])
   )
+  if (matrixRun) {
+    out('')
+    if (matrixRun.requestId && matrixWait > 0) {
+      out(
+        `waiting up to ${matrixWait} min for the plugin matrix (the files above are written; Ctrl-C is safe) …`
+      )
+    }
+    const lines = awaitPluginMatrix(matrixRun, { root: repoRoot, timeoutMs: matrixWait * 60_000 })
+    for (const line of lines) (line.startsWith('⚠') ? warn : out)(line)
+  }
   return 0
 }
 

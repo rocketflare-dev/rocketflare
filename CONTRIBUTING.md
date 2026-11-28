@@ -175,10 +175,16 @@ adds one step, because rocketflare.dev keeps its own copy of the release list.
    It folds every fragment in `docs/upgrades/unreleased/` and any entries in `unreleased.md` into
    the one note, then deletes the fragments. When it says the summary paragraph has several
    sentences, tighten it in the note and in `CHANGELOG.md` before you commit.
+   It also dispatches the plugin matrix (`plugin-matrix.yml`) against `main` before it writes
+   anything, waits up to 10 minutes at the end, and prints `✔` or `⚠ <plugin> fails on main:
+   <step>, <run>`. A warning, never a block: decide whether to fix the plugin or the kit first.
+   It needs `gh` logged in; without it, it says the matrix was not checked.
 2. `git add docs/upgrades/X.Y.Z.md && git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
    The `git add` matters: `-a` stages only tracked files, and the porting note is a new one.
    The tag has to be annotated because tags are signed. The kit's `deploy.yml` skips deployment,
-   since its tomls hold placeholders, and `notify-plugins.yml` pings the plugin repositories.
+   since its tomls hold placeholders, and the tag runs `plugin-matrix.yml` against itself: every
+   published plugin's latest release, plus all of them together. A red run is the report; its
+   summary names each plugin's failing step and warning count. Nothing opens an issue.
 3. **Update the site's changelog**, which never happens automatically. `rocketflare-www` stores
    the release list as committed data (`src/data/releases.ts`) so it can build without the kit. In a
    checkout next to this one, on a branch (a push to its `main` deploys):

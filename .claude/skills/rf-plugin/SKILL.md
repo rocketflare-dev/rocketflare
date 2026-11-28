@@ -265,6 +265,12 @@ supports, a floor with no ceiling — and **`uses`**, the host symbols it import
 exactly the prediction this replaced. Re-export after any change to what the plugin imports, and
 paste the block it writes into the manifest.
 
+**Test only your own contributions to anything shared.** A test over a registry other plugins also
+write to (providers, tools, nav, events) asserts that the plugin's OWN entries are there —
+`expectOwnContributions('<id>', items, [...])` from `@testkit/unit` — never that the whole list is
+exactly these: the kit's plugin matrix installs every published plugin together, and an exact list
+fails there and in any app with a second plugin.
+
 **Ship a skill with anything a person has to SET UP or OPERATE.** A plugin that needs an app
 registered somewhere, a secret created, a console clicked, or an error decoded should carry an
 agent skill that drives those steps and coaches the human through the ones only they can do. Put it

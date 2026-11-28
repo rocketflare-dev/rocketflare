@@ -73,6 +73,7 @@ name here is a name you can import today.
 | Prove tenant isolation | `request` | `@testkit/integration` |
 | Prove a cron task is dispatched | `dispatchScheduled` | `@testkit/integration` |
 | Build a fake request context | `makeRequestCtx` | `@testkit/unit` |
+| Assert only your own entries in a shared registry | `expectOwnContributions` | `@testkit/unit` |
 
 ## The entries
 
@@ -1392,6 +1393,8 @@ Builders for the context family, for tests that never touch data.
 - `interface BackgroundCtxOptions extends BaseOptions`
   What every background builder accepts beyond the base.
 - `interface CronCtxOptions extends BackgroundCtxOptions`
+- `function expectOwnContributions<T>( pluginId: string, items: Iterable<T>, expected: readonly string[], keyOf: (item: T) => string = contributionKey ): void`
+  Throws unless this plugin's own contributions to `items` are EXACTLY `expected` (any order) — a missing one and a stray one of its own both fail, naming the key. Everyone else's…
 - `type FakeCronCtx = CronCtx & RecordsAgentRuns`
 - `type FakeEmailCtx = EmailCtx & RecordsAgentRuns`
 - `type FakeJobCtx = JobCtx & RecordsAgentRuns`
@@ -1399,6 +1402,8 @@ Builders for the context family, for tests that never touch data.
   What a fake request context carries beyond the real one: the deferred work it collected.
 - `type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }`
   The fake step recorder, so a test can assert the NAMES a run asked for and their order.
+- `function isOwnContribution(pluginId: string, key: string): boolean`
+  Does `key` belong to plugin `pluginId` by the namespace rule (§16): the id itself, or the id followed by `:`, `.` or `/` (`global-search:people`, `inbox.received`, `/api/inbox`'s…
 - `function makeCronCtx(options: CronCtxOptions): FakeCronCtx`
 - `function makeEmailCtx(options: CronCtxOptions): FakeEmailCtx`
   One inbound message's context (`emailHandlers`), through the kit's own `emailCtx` adapter.
@@ -1410,6 +1415,8 @@ Builders for the context family, for tests that never touch data.
   What `ServerPlugin.tools(ctx)` is handed, through the kit's own `toolCtx` adapter.
 - `function makeWorkflowCtx(options: WorkflowCtxOptions): FakeWorkflowCtx`
   A `WorkflowCtx` over a recording step.
+- `function ownContributions<T>( pluginId: string, items: Iterable<T>, keyOf: (item: T) => string = contributionKey ): T[]`
+  The items of a SHARED list (a registry several plugins write to) that are this plugin's own. A cross-plugin test asserts only about these — "the providers include mine", never…
 - `interface RecordedAgentRun`
   One `ctx.startAgentRun` call, as a background builder recorded it.
 - `interface RecordsAgentRuns`
@@ -2206,17 +2213,20 @@ nothing in the comparison that can throw.
 @testkit/integration :: function :: waitOnExecutionContext :: async function waitOnExecutionContext(ctx: TestExecutionContext): Promise<void>
 @testkit/unit :: interface :: BackgroundCtxOptions :: interface BackgroundCtxOptions extends BaseOptions
 @testkit/unit :: interface :: CronCtxOptions :: interface CronCtxOptions extends BackgroundCtxOptions
+@testkit/unit :: function :: expectOwnContributions :: function expectOwnContributions<T>( pluginId: string, items: Iterable<T>, expected: readonly string[], keyOf: (item: T) => string = contributionKey ): void
 @testkit/unit :: type :: FakeCronCtx :: type FakeCronCtx = CronCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeEmailCtx :: type FakeEmailCtx = EmailCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeJobCtx :: type FakeJobCtx = JobCtx & RecordsAgentRuns
 @testkit/unit :: type :: FakeRequestCtx :: type FakeRequestCtx = RequestCtx & { readonly deferred: ReadonlyArray<() => Promise<unknown>> readonly framed: boolean settle(): Promise<void> }
 @testkit/unit :: type :: FakeWorkflowCtx :: type FakeWorkflowCtx = WorkflowCtx & { readonly recorded: ReturnType<typeof createFakeWorkflowStep> }
+@testkit/unit :: function :: isOwnContribution :: function isOwnContribution(pluginId: string, key: string): boolean
 @testkit/unit :: function :: makeCronCtx :: function makeCronCtx(options: CronCtxOptions): FakeCronCtx
 @testkit/unit :: function :: makeEmailCtx :: function makeEmailCtx(options: CronCtxOptions): FakeEmailCtx
 @testkit/unit :: function :: makeJobCtx :: function makeJobCtx(options: BackgroundCtxOptions): FakeJobCtx
 @testkit/unit :: function :: makeRequestCtx :: function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx
 @testkit/unit :: function :: makeToolCtx :: function makeToolCtx(options: ToolCtxOptions): ToolCtx
 @testkit/unit :: function :: makeWorkflowCtx :: function makeWorkflowCtx(options: WorkflowCtxOptions): FakeWorkflowCtx
+@testkit/unit :: function :: ownContributions :: function ownContributions<T>( pluginId: string, items: Iterable<T>, keyOf: (item: T) => string = contributionKey ): T[]
 @testkit/unit :: interface :: RecordedAgentRun :: interface RecordedAgentRun
 @testkit/unit :: interface :: RecordsAgentRuns :: interface RecordsAgentRuns
 @testkit/unit :: interface :: RequestCtxOptions :: interface RequestCtxOptions extends BaseOptions
