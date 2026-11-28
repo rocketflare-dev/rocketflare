@@ -7,7 +7,9 @@
  * not refetch the member list; switching tenant clears the whole client instead (useAuth).
  */
 import type { DeclaredBy } from '@rocketflare/shared/plugins'
-import { type UI_PLUGINS, uiPlugins } from '@/plugins/ui'
+import type { APP_DOMAIN_UIS } from '@/app-ui'
+import type { UI_PLUGINS } from '@/plugins/ui'
+import { uiUnits } from '@/units/ui'
 
 /** Cleaned filters as they appear in a key. Callers pass any plain object (interfaces welcome). */
 export type Filters = Record<string, string | number | boolean>
@@ -250,8 +252,8 @@ const CORE_QUERY_KEYS = {
 } as const
 
 /**
- * Families contributed by installed plugins, merged in. Every root a plugin declares starts
- * with `<id>:` — `tests/config/plugins.test.ts` is the check — so a plugin can no more collide with
+ * Families contributed by installed plugins and the app's domains, merged in. Every root a unit
+ * declares starts with `<id>:` — `tests/config/plugins.test.ts` is the check — so a plugin can no more collide with
  * a core family, or with another plugin's, than two plugins can share a table name.
  *
  * The cast is the price of merging objects core cannot know the shape of: at runtime this is
@@ -259,15 +261,36 @@ const CORE_QUERY_KEYS = {
  * is exactly what a plugin's own hooks need to see when they read `queryKeys`.
  */
 type DeclaredQueryKeys = UnionToIntersection<
-  NonNullable<DeclaredBy<(typeof UI_PLUGINS)[number], 'queryKeys'>>
+  NonNullable<
+    DeclaredBy<(typeof UI_PLUGINS)[number] | (typeof APP_DOMAIN_UIS)[number], 'queryKeys'>
+  >
 >
 /** No plugins (or none with families) → `unknown`, which intersects away instead of erasing. */
 type PluginQueryKeys = [DeclaredQueryKeys] extends [never] ? unknown : DeclaredQueryKeys
 
-export const queryKeys = {
-  ...CORE_QUERY_KEYS,
-  ...(Object.assign({}, ...uiPlugins.map(p => p.queryKeys ?? {})) as Record<string, unknown>),
-} as typeof CORE_QUERY_KEYS & PluginQueryKeys
+/**
+ * The units' families, merged on first read rather than at import. A unit's UI entry imports the
+ * UI wiring, which reaches this module through the auth hook, so a module-scope read here could run
+ * while the unit list is still evaluating (`units/lazy-list.ts` has the same reason).
+ */
+let unitKeys: Record<string, unknown> | null = null
+const unitQueryKeys = (): Record<string, unknown> => {
+  unitKeys ??= Object.assign({}, ...uiUnits.map(p => p.queryKeys ?? {})) as Record<string, unknown>
+  return unitKeys
+}
+
+export const queryKeys = new Proxy({ ...CORE_QUERY_KEYS } as Record<string, unknown>, {
+  get: (core, key) =>
+    typeof key === 'string' && !Object.hasOwn(core, key)
+      ? unitQueryKeys()[key]
+      : Reflect.get(core, key),
+  has: (core, key) => Reflect.has(core, key) || Reflect.has(unitQueryKeys(), key),
+  ownKeys: core => [...new Set([...Reflect.ownKeys(core), ...Reflect.ownKeys(unitQueryKeys())])],
+  getOwnPropertyDescriptor: (core, key) =>
+    Reflect.getOwnPropertyDescriptor(core, key) ??
+    Reflect.getOwnPropertyDescriptor(unitQueryKeys(), key),
+  set: () => false,
+}) as typeof CORE_QUERY_KEYS & PluginQueryKeys
 
 /** Drop undefined/empty filters so `{ q: '' }` and `{}` share one cache entry. */
 export function cleanFilters(filters: object): Filters {

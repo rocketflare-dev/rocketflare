@@ -9,11 +9,11 @@
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import type { ReactElement } from 'react'
 import type { AnyUiPlugin } from '@/plugins/types'
-import { uiPlugins } from '@/plugins/ui'
 import { PageHeader, type TabConfig, URLTabs } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useNavGuard } from '@/ui/hooks/useNavGuard'
 import { usePermissions } from '@/ui/hooks/usePermissions'
+import { uiUnits } from '@/units/ui'
 import AgentModelsSettings from './AgentModels'
 import AiSettings from './AI'
 import ApiKeys from './ApiKeys'
@@ -39,7 +39,7 @@ const CONTENT: Record<CoreSettingsTabId, () => ReactElement> = {
 
 /** `plugins` defaults to the installed ones; a test hands in fixtures instead of mocking the barrel. */
 export default function SettingsLayout({
-  plugins = uiPlugins,
+  plugins = uiUnits,
 }: {
   plugins?: readonly AnyUiPlugin[]
 } = {}) {

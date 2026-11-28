@@ -75,7 +75,8 @@ export function apiTestFiles(dir: string): string[] {
 
 /**
  * Where one kind of test lives: the kit's `tests/<kind>`, then every installed plugin's
- * `src/plugins/<id>/tests/<kind>` (D31 — a plugin's tests move with it). `vitest.config.ts` routes
+ * `src/plugins/<id>/tests/<kind>` (D31 — a plugin's tests move with it), then every app domain's
+ * `tests/<id>/<kind>`. `vitest.config.ts` routes
  * files from these directories and `tests/config/isolation-contract.test.ts` checks the same
  * ones, so a plugin's api test cannot escape the contract. `abs` is absolute, `rel` relative to
  * `webRoot` (`apps/web`).
@@ -98,5 +99,27 @@ export function testDirs(
       abs: path.join(pluginsDir, id, 'tests', kind),
       rel: `src/plugins/${id}/tests/${kind}`,
     })),
+    ...appDomainIds(webRoot).map(id => ({
+      abs: path.join(webRoot, 'tests', id, kind),
+      rel: `tests/${id}/${kind}`,
+    })),
   ]
+}
+
+/**
+ * The app's own domains, as `src/app.ts` imports them (`./<id>`) — read with a pattern rather than
+ * the boundary check's parser, because this runs inside `vitest.config.ts`. A domain's tests live
+ * in `tests/<id>/{api,ui,config}` and join the existing projects.
+ */
+export function appDomainIds(webRoot: string): string[] {
+  const file = path.join(webRoot, 'src/app.ts')
+  if (!fs.existsSync(file)) return []
+  const ids: string[] = []
+  for (const m of fs
+    .readFileSync(file, 'utf8')
+    .matchAll(/from\s+['"]\.\/([a-z][a-z0-9-]*)(?:\/index)?['"]/g)) {
+    const id = m[1]
+    if (id && id !== 'plugins' && !ids.includes(id)) ids.push(id)
+  }
+  return ids
 }

@@ -161,6 +161,7 @@ import {
 import { applyReplacements, deriveNames, isBinary, isLicenceFile } from './lib/rename-lib.mjs'
 import { containedPath, writePathProblem } from './lib/repo-paths.mjs'
 import { missingFrom, readLedger, usesOf } from './lib/surface.mjs'
+import { incomingPluginFindings, unitFindings } from './lib/units.mjs'
 import {
   compareVersions,
   countLines,
@@ -923,6 +924,11 @@ function cmdAdd(args, host) {
   // clash is often the intended change) and is surfaced as a HUMAN step, which is where the
   // taxonomy makes a decision unmissable.
   problems.push(...imagesBindingProblems(m, installedManifests(host)))
+  // The app's own domains share every namespace with plugins: an id or a table a domain already
+  // holds is refused here, before anything is copied (docs/CONCEPTS.md §17).
+  for (const f of incomingPluginFindings(REPO_ROOT, m, { kitManifest: host.manifest })) {
+    problems.push(`${f.problem} — ${f.fix}`)
+  }
   const clashes = dependencyClashes(m, {
     packageJsons: packageJsonsFor(m),
     installed: installedDependencyDeclarations(host),
@@ -2882,6 +2888,17 @@ function cmdCheck(args, host) {
         `hyphen-separated segment of its plugin's id ('${clash.id}' → ` +
         `'${clash.id.split('-')[0]}_*'), and two plugins cannot share a host with one name ` +
         "between them: a single DROP TABLE takes the other plugin's data",
+    })
+  }
+  // **Units: plugins and the app's own domains together** (docs/CONCEPTS.md §17) — ids, edges,
+  // table namespaces and the import walk, the same findings `tests/config/units.test.ts` fails on.
+  // A `warn` (another unit's table used directly) never changes the exit code.
+  for (const f of unitFindings(REPO_ROOT, { manifest: host.manifest })) {
+    add(f.severity, `${f.unit}:unit-${f.kind}:${f.file}:${f.line ?? 0}`, {
+      file: f.file,
+      line: f.line,
+      problem: f.problem,
+      fix: f.fix,
     })
   }
   // **Events (D42).** The name rule itself is a manifest problem (above); what needs every manifest

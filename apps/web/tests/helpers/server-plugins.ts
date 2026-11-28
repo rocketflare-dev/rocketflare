@@ -20,6 +20,7 @@ import { afterAll, beforeAll } from 'vitest'
 import { visibilityResources } from '@/api/services/access'
 import { eventSubscribers } from '@/api/services/events/subscribers'
 import { knowledgeEntityTypes } from '@/api/services/knowledge/registry'
+import { APP_DOMAINS } from '@/app'
 import { type AnyServerPlugin, serverPlugins } from '@/plugins/server'
 
 export function withServerPlugins(
@@ -27,16 +28,23 @@ export function withServerPlugins(
   options: { replace?: boolean } = {}
 ): void {
   const plugins = serverPlugins as AnyServerPlugin[]
+  // `replace` swaps the whole unit set, so the app's own domains step aside too.
+  const domains = APP_DOMAINS as unknown as unknown[]
   let installed: AnyServerPlugin[] = []
+  let appDomains: unknown[] = []
   beforeAll(() => {
     knowledgeEntityTypes()
     visibilityResources()
     eventSubscribers()
     installed = [...plugins]
-    if (options.replace) plugins.splice(0, plugins.length, ...fixtures)
-    else plugins.push(...fixtures)
+    appDomains = [...domains]
+    if (options.replace) {
+      plugins.splice(0, plugins.length, ...fixtures)
+      domains.splice(0, domains.length)
+    } else plugins.push(...fixtures)
   })
   afterAll(() => {
     plugins.splice(0, plugins.length, ...installed)
+    domains.splice(0, domains.length, ...appDomains)
   })
 }

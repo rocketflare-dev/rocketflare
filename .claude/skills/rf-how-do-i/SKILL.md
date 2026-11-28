@@ -42,18 +42,20 @@ instead of planning a slice. Builders who skip this step build what already exis
 **Done when** they have agreed that no published plugin does the job (or have installed the one
 that does).
 
-**Then: app, or plugin?** Ask it before the interview, because it changes where every file lands (D31, `docs/CONCEPTS.md`
-§16). A **plugin** is a separate git repository copied into this app — never npm — that contributes
-contracts, schema, routes, jobs, agents, UI and CLI commands through six barrels it is the only
-thing allowed to write a line into — importing the kit only through the declared entries
-(`docs/plugin-api.md`) and receiving everything else as injected context. Written as a plugin, a feature is one tree you can lift out,
-version and install somewhere else; written into core, it is diffused across twenty files nobody
-can separate again.
+**Then: domain, plugin, or core?** Ask it before the interview, because it changes where every
+file lands (`docs/CONCEPTS.md` §20 and §16). An **app domain** is this app's own concept — its
+leads, its leave requests — written in place under `apps/web/src/<id>/` with `defineDomain` and one
+hand-written line in `src/app.ts` (and its twins). A **plugin** is a capability another app could
+install: a separate git repository copied in — never npm — through six barrels, importing the kit
+only through the declared entries (`docs/plugin-api.md`) and receiving everything else as injected
+context. Both use the same slots and namespaces, and one boundary check covers both.
 
-**Default to the plugin.** Core is still right when the change is to the kit's OWN tables
-(`tenants`, `users`, `tenant_users`, `documents`…), to auth or tenancy, or to a cross-cutting
-middleware — the things a plugin composes ON TOP of and must not redefine. Everything else — a
-resource with its own table, its own screens, its own jobs — is a plugin.
+**Default to the domain for this app's own concepts; a plugin when it is reusable across apps.**
+Core is still right when the change is to the kit's OWN tables (`tenants`, `users`,
+`tenant_users`, `documents`…), to auth or tenancy, or to a cross-cutting middleware — the things a
+unit composes ON TOP of and must not redefine. A domain that needs another domain imports its
+`public.ts` and lists it in `dependsOn`, or handles its event; `example-hr/` and `example-sales/`
+show both.
 
 Two things to say out loud when the answer is "plugin", because they surprise people:
 
@@ -68,7 +70,7 @@ Everything the plugin keys carries its id: tables prefixed from it (`example-fea
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
 CUSTOM events `<id>.` — **never `kit.`**, which is the kit's own namespace.
 
-**Done when** they have said app or plugin, and you have said which of the two reasons decided it.
+**Done when** they have said domain, plugin or core, and you have said which reason decided it.
 
 ## 1. Turn the idea into a slice
 

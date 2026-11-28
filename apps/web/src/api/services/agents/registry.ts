@@ -18,7 +18,7 @@ import type { AgentArtifact, AgentArtifactInput } from '@rocketflare/shared/ai/a
 import type { AgentInterruptSpec, AgentSteeringNote } from '@rocketflare/shared/ai/interrupts'
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import type { Tracer } from '../../observability/tracer'
 import type { Logger } from '../../utils/core/logger'
 import {
@@ -309,7 +309,7 @@ const CORE_AGENTS = {
  */
 export const AGENTS = {
   ...CORE_AGENTS,
-  ...(Object.assign({}, ...serverPlugins.map(p => p.agents ?? {})) as Record<
+  ...(Object.assign({}, ...serverUnits.map(p => p.agents ?? {})) as Record<
     string,
     AnyAgentDefinition
   >),

@@ -8,7 +8,7 @@
  */
 import type { AppConfig } from '../../../config'
 import type { Database } from '../../../db/client'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { evaluateSsoPolicyForAll, type SsoDecision } from '../../auth/sso-policy'
 import type { Logger } from '../../utils/core/logger'
 
@@ -18,5 +18,5 @@ export function ssoDecisionFor(
   emails: readonly (string | null | undefined)[],
   logger?: Pick<Logger, 'warn' | 'error'>
 ): Promise<SsoDecision> {
-  return evaluateSsoPolicyForAll(serverPlugins, db, cfg, emails, logger)
+  return evaluateSsoPolicyForAll(serverUnits, db, cfg, emails, logger)
 }

@@ -146,6 +146,45 @@
       "registries": ["apps/cli/src/cli.ts"]
     },
     {
+      "id": "example-hr",
+      "kind": "example",
+      "label": "The example HR app domain (leave requests, an approval event, an HR-only knowledge source)",
+      "anchor": "apps/web/src/example-hr/index.ts",
+      "paths": [
+        "apps/web/src/example-hr/**",
+        "packages/shared/src/example-hr/**",
+        "apps/web/tests/example-hr/**"
+      ],
+      "registries": [
+        "apps/web/src/app.ts",
+        "apps/web/src/app-ui.ts",
+        "apps/web/src/app-schema.ts",
+        "packages/shared/src/app.ts"
+      ]
+    },
+    {
+      "id": "example-sales",
+      "kind": "example",
+      "label": "The example sales app domain (leads, a public.ts call into HR, a two-domain agent run)",
+      "anchor": "apps/web/src/example-sales/index.ts",
+      "paths": [
+        "apps/web/src/example-sales/**",
+        "packages/shared/src/example-sales/**",
+        "apps/cli/src/example-sales/**",
+        "apps/web/tests/example-sales/**"
+      ],
+      "registries": [
+        "apps/web/src/app.ts",
+        "apps/web/src/app-ui.ts",
+        "apps/web/src/app-schema.ts",
+        "packages/shared/src/app.ts",
+        "apps/cli/src/app.ts"
+      ],
+      "requires": {
+        "surfaces": ["example-hr"]
+      }
+    },
+    {
       "id": "feature-chat",
       "kind": "optional-feature",
       "label": "Streamed chat (conversations, SSE, the chat page)",

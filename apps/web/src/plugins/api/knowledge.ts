@@ -251,8 +251,8 @@ function sourceNamespace(source: string): string {
  */
 async function requireInstalledNamespace(source: string): Promise<void> {
   const id = sourceNamespace(source)
-  const { serverPlugins } = await import('../server')
-  if (!serverPlugins.some(p => p.shared.id === id)) {
+  const { serverUnits } = await import('../../units/server')
+  if (!serverUnits.some(p => p.shared.id === id)) {
     throw new BadRequestError(
       `"${source}" is not namespaced with an installed plugin's id`,
       'invalid_source'

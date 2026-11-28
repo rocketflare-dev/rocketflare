@@ -19,6 +19,7 @@ setup in `SETUP.md`; Cloudflare topology in `docs/DEPLOY.md`; RLS in `docs/RLS.m
 |  |  | 17 | [Connectors](#17-connectors) |
 |  |  | 18 | [Security testing](#18-security-testing) |
 |  |  | 19 | [MCP server](#19-mcp-server) |
+|  |  | 20 | [App domains](#20-app-domains) |
 
 **Layout (D26).** A pnpm workspace: `apps/web` (the Worker — Hono API + React UI, §§1–10),
 `apps/cli` (§11), `packages/shared` (zod contracts, §12), and `apps/evals` (developer-run eval
@@ -2122,9 +2123,11 @@ opens with "What you want to do", the name to import for each job), `docs/plugin
   in this app. Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
   `pnpm provision cloudflare <env>`.
 - **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
-  `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys
+  `api` included — nor `core`, `kit` or `app`, nor the id of one of the app's domains, §20) and
+  namespaces jobs (`<id>.x`), query keys
   (`<id>:`), `/api/<id>`, CLI commands and CUSTOM events. Never `kit.`. Table prefixes are a human
-  convention; **two plugins declaring the same table is a `plugin check` failure**.
+  convention; **two plugins declaring the same table is a `plugin check` failure**, and so is a
+  plugin table inside an app domain's namespace (§20).
 - **Record**: a `kind: 'plugin'` surface (`source: {repo, subdir, version, commit}`). In the kit or
   with `--local` it goes in the git-ignored `.rocketflare.local.json`. A kit diff never touches
   plugin-owned files. A vendored plugin (`example-feature`) upgrades with the kit: `kit:upgrade`
@@ -2900,3 +2903,65 @@ made on its `/mcp/t/<slug>` (the client reconnects); calls the SDK refuses befor
 arguments, an unknown tool) are not in the call log; ChatGPT cannot connect to local `wrangler dev`
 (chatgpt.com answers workerd's metadata fetch with 403; deployed Workers are not refused); no
 resources, prompts, approval tools or agents.
+
+---
+
+## 20. App domains
+
+**A domain holds this app's own concepts; a plugin is a capability another app could install.**
+Both are UNITS: an id, a tree, the same slots (`ServerPlugin` minus the plugin-only ones), the same
+namespaces, read by every registry through one list (`units/server.ts`, `units/ui.ts`,
+`@rocketflare/shared/units` — plugins first, then domains). A domain is simpler than a plugin: no
+manifest, no barrel line, no `pnpm plugin`; it is written in place and listed by hand.
+
+- **Layout**: `apps/web/src/<id>/` — `index.ts` (`defineDomain` from `@/plugins/api`), `server/`,
+  `ui/` (`defineDomainUi`), `db/schema.ts`, and at most one `public.ts`; contracts in
+  `packages/shared/src/<id>/index.ts` (a `SharedDomain`, the `SharedPlugin` shape); CLI commands in
+  `apps/cli/src/<id>/`; tests in `apps/web/tests/<id>/{api,ui,config}`, which join the existing
+  vitest projects. Five app-owned lists wire them, one line per domain: `apps/web/src/app.ts`
+  (server), `app-ui.ts`, `app-schema.ts` (tables, re-exported by `db/schema/index.ts`),
+  `packages/shared/src/app.ts`, `apps/cli/src/app.ts` — split because the UI bundle, the shared
+  package and the schema may not import the server half.
+- **`defineDomain({ id, shared, dependsOn?, tablePrefix?, tables?, …slots })`**: `dependsOn` lists
+  the other domains this one reads from or writes through — a declared data flow; `tablePrefix`
+  (default: the id's first segment + `_`) or an exact `tables` list is its table namespace. All
+  three are read from SOURCE by the boundary check, so they are literals. A domain may not declare
+  `loginMethods`, `ssoPolicy`, `publicSites`, `apiPrefixes`, `agentTools`, `uploadPaths` or
+  `uploadLimits` — identity and public hosts are plugin capabilities, and a new `/api` prefix needs a
+  manifest to provision. A domain's cron must be an expression both tomls already trigger.
+- **Ids**: `^[a-z][a-z0-9-]*$`; `core`, `kit` and `app` are reserved for every unit, and a domain
+  may not take the name of a kit module in a unit root (`api`, `ui`, `units`, …). A plugin and a
+  domain never share an id.
+- **Couplings, one rule each**: something HAPPENED → an event (`<id>.x`, handled by the other
+  domain, no import); a synchronous read or command → the other domain's `public.ts`, which takes
+  the CALLER's context so the owner's rules apply, and only along a `dependsOn` edge; an agent
+  needing both → one run, `ctx.tools` already holds every unit's tools for the requester. Calls
+  through `public.ts` are not gated by grants yet.
+- **The boundary check** (`scripts/lib/units.mjs`, run by `tests/config/units.test.ts` and
+  `pnpm plugin check`; `plugin add` runs its id/table half before copying anything) fails: a domain
+  importing the kit outside the declared entries, another domain's internals, or a domain not in
+  its `dependsOn`; a `dependsOn` cycle, self-edge, unknown id or plugin target; a plugin importing a
+  domain; kit core importing a domain except through the lists; a domain table outside its
+  namespace; one table name defined by two units; any unit's table inside a domain's namespace —
+  except between two of the kit's examples, which share `example_` on purpose (an example is
+  copied or deleted, never extended in place). It WARNS (never fails) on direct use of another
+  unit's table objects, pointing at the owner's public functions. The config test also checks, on
+  the evaluated lists, that every job type, event, agent and prompt key, mount and query-key root
+  carries the unit's id and that no two units claim one.
+- **Examples**: `example-hr` (leave requests, an approval event, an HR-only knowledge source, the
+  `example_hr_availability` tool) and `example-sales` (leads, assignment refused through
+  `example-hr/public.ts` while the owner is on leave, the approval event releasing leads, a
+  model-free qualify agent using both domains' tools). Flags default off; `pnpm seed` turns them on
+  and `--demo` adds rows. `kind: "example"` surfaces in `.rocketflare.json`: they reach FRESH copies
+  only.
+- **Upgrades** (§13): the five lists are `skipped-app-owned` — a kit change to one never lands, and
+  `kit:upgrade` creates each, empty, only where it is missing. A `kind: "example"` surface a later
+  release adds is classified absent, reported "available, not applied", and recorded absent in the
+  copy's manifest at the stamp.
+
+**Known gaps:** no per-domain grants, roles or budgets — a domain's CASL grants are tenant roles,
+and "HR only" is `scope.bypass` (admin-level) until domain grants land; `public.ts` exports are not
+read for shape (a module-state export is caught only in review); the table-use warning sees table
+OBJECTS imported across units, not raw SQL naming another unit's table; a domain's own migration
+is generated with the kit's (`pnpm db:generate`), so removing a domain leaves a drop migration to
+write by hand.

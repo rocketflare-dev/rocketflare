@@ -10,9 +10,9 @@ host ever names a plugin.
 
 | Barrel | Exports | Read by |
 |---|---|---|
-| `packages/shared/src/plugins/index.ts` | `SHARED_PLUGINS` / `sharedPlugins` | the five composers (`ai/agents.ts`, `jobs.ts`, `permissions.ts`, `features.ts`, `realtime.ts`), `config.ts`, `prompts.ts` |
-| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | each registry it feeds (grep `serverPlugins`) — never `db/schema/rls.ts` (a cycle) |
-| `ui.ts` | `UI_PLUGINS` / `uiPlugins` | `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `Home.tsx`, `lib/query-keys.ts`, `agents/forms/index.ts` |
+| `packages/shared/src/plugins/index.ts` | `SHARED_PLUGINS` / `sharedPlugins` | `packages/shared/src/units.ts` (`SHARED_UNITS`: plugins, then the app's domains), which the five composers, `config.ts` and `prompts.ts` read |
+| `server.ts` | `SERVER_PLUGINS` / `serverPlugins` | `src/units/server.ts` (`serverUnits`), which every registry iterates (grep `serverUnits`) — never `db/schema/rls.ts` (a cycle) |
+| `ui.ts` | `UI_PLUGINS` / `uiPlugins` | `src/units/ui.ts` (`uiUnits`), read by `App.tsx`, `SideNav.tsx`, `SettingsLayout.tsx`, `Home.tsx`, `lib/query-keys.ts`, `agents/forms/index.ts` |
 | `schema.ts` | one `export *` per plugin | `db/schema/index.ts` (a duplicated name is TS2308) |
 | `worker-exports.ts` | one `export *` per plugin | `src/worker.ts`, the only place Cloudflare resolves a `class_name` from |
 | `apps/cli/src/plugins/index.ts` | `CLI_PLUGINS` / `cliPlugins` | `cli.ts` |
@@ -23,6 +23,15 @@ host ever names a plugin.
   the widened list in a loop (`serverPlugins`) — an EMPTY tuple indexes to `never`.
 - `ServerPlugin<S>` / `UiPlugin<S>` are generic over the plugin's `SharedPlugin`: `jobHandlers`,
   `agents`, `prompts`, `agentForms` must cover exactly the keys it declared. Only the merge is cast.
+
+## Plugin or app domain?
+
+A **plugin** is a capability another app could install; this app's own concepts go in an **app
+domain** instead (`apps/web/src/<id>/`, `defineDomain`, one hand-written line in `src/app.ts` and its
+twins — `docs/CONCEPTS.md` §20). Both are units: same slots, same namespaces, and one boundary check
+(`scripts/lib/units.mjs`) — a plugin never imports a domain, never shares a domain's id, and never
+defines a table in a domain's namespace. The registries iterate `serverUnits` / `uiUnits`, so a
+new registry reads those, never the plugin barrel.
 
 ## Boundaries — what a plugin imports, and what it may never do
 

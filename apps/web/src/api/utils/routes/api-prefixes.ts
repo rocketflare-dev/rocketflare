@@ -20,7 +20,7 @@
  * `run_worker_first` in BOTH tomls by hand: the parity test reads this list, so a forgotten one
  * fails the gate rather than silently serving the app shell.
  */
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 
 const CORE_API_PREFIXES = [
   '/api',
@@ -81,7 +81,7 @@ export function assertNoReservedPluginPaths(plugins: readonly PluginPaths[]): vo
 
 export const API_PREFIXES: readonly string[] = [
   ...CORE_API_PREFIXES,
-  ...serverPlugins.flatMap(p => p.apiPrefixes ?? []),
+  ...serverUnits.flatMap(p => p.apiPrefixes ?? []),
 ]
 
 export function isApiPath(pathname: string): boolean {
@@ -107,5 +107,5 @@ export function workerFirstPatterns(
 
 export const WORKER_FIRST_PATTERNS: string[] = workerFirstPatterns(
   API_PREFIXES,
-  serverPlugins.some(p => p.publicSites)
+  serverUnits.some(p => p.publicSites)
 )

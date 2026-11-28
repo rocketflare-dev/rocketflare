@@ -74,6 +74,9 @@ export function pluginIdProblem(id) {
   // `plugins/api/**` is the host's plugin API (surface.mjs reserves it too): a plugin there would
   // install into the directory every plugin imports its context from.
   if (id === 'api') return `'api' is the host's plugin API directory (apps/web/src/plugins/api)`
+  // Every unit's reserved ids (`RESERVED_UNIT_IDS` in `@rocketflare/shared/plugins`): the kit, its
+  // event namespace, and the app's own lists of its domains.
+  if (['core', 'kit', 'app'].includes(id)) return `'${id}' is a reserved unit id (core, kit, app)`
   return null
 }
 
@@ -3575,11 +3578,13 @@ const EGRESS_QUESTION =
  */
 export function egressProblems(report, declarations = [], builders = []) {
   const out = []
-  const fileOf = (unit, tool) =>
+  const fileOf = (unit, tool, kind) =>
     declarations.find(d => d.pluginId === unit && d.tools.some(t => t.name === tool))?.file ??
     (unit === 'core'
       ? 'apps/web/src/api/services/agents/tools/index.ts'
-      : `apps/web/src/plugins/${unit}/`)
+      : kind === 'domain'
+        ? `apps/web/src/${unit}/`
+        : `apps/web/src/plugins/${unit}/`)
   const fix =
     `set \`egress: true\` or \`egress: false\` on it, answering "${EGRESS_QUESTION}" from what ` +
     'its handler does — fetch, email, a webhook or a publish is true; reading or writing this ' +
@@ -3599,7 +3604,12 @@ export function egressProblems(report, declarations = [], builders = []) {
     if (!seen.has(t.unit)) seen.set(t.unit, new Set())
     seen.get(t.unit).add(t.tool)
     if (t.egress === undefined)
-      warn(t.unit, t.tool, fileOf(t.unit, t.tool), 'read from the value tools(ctx) returned')
+      warn(
+        t.unit,
+        t.tool,
+        fileOf(t.unit, t.tool, t.kind),
+        'read from the value tools(ctx) returned'
+      )
   }
   const unreadable = new Set((report?.unreadable ?? []).map(u => u.unit))
   const why = unit =>

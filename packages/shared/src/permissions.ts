@@ -7,8 +7,9 @@
 import type { MongoAbility, RawRuleOf } from '@casl/ability'
 import type { PackRule } from '@casl/ability/extra'
 import { z } from 'zod'
-import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from './plugins'
+import type { DeclaredBy } from './plugins'
 import { type MembershipRole, membershipRoleSchema } from './tenants'
+import { type SHARED_UNITS, sharedUnits } from './units'
 
 export const ACTIONS = ['manage', 'create', 'read', 'update', 'delete', 'access'] as const
 export type Actions = (typeof ACTIONS)[number]
@@ -98,7 +99,7 @@ export const CORE_FEATURES = [
 /** Distributive: `keyof (A | B)` is the keys A and B SHARE, which is never for two plugins' flags. */
 type KeysOfEach<T> = T extends unknown ? keyof T : never
 type PluginFeatureKey = Extract<
-  KeysOfEach<NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'features'>>>,
+  KeysOfEach<NonNullable<DeclaredBy<(typeof SHARED_UNITS)[number], 'features'>>>,
   string
 >
 
@@ -112,13 +113,13 @@ type PluginFeatureKey = Extract<
  */
 export const FEATURES = [
   ...CORE_FEATURES,
-  ...(sharedPlugins.flatMap(p => Object.keys(p.features ?? {})) as PluginFeatureKey[]),
+  ...(sharedUnits.flatMap(p => Object.keys(p.features ?? {})) as PluginFeatureKey[]),
 ] as const
 export type FeatureName = (typeof FEATURES)[number]
 
 /** Subjects an installed plugin adds — its own nouns, granted by `ServerPlugin.grants`. */
 export type PluginSubject = NonNullable<
-  DeclaredBy<(typeof SHARED_PLUGINS)[number], 'subjects'>
+  DeclaredBy<(typeof SHARED_UNITS)[number], 'subjects'>
 >[number]
 
 export type Subjects = CoreSubject | PluginSubject | FeatureSubject

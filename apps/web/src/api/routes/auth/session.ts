@@ -8,7 +8,7 @@ import { selectTenantRequestSchema } from '@rocketflare/shared/auth'
 import { and, eq } from 'drizzle-orm'
 import { hasOidc, isOidcOnly } from '../../../config'
 import { tenantUsers } from '../../../db/schema'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { clearSessionCookie } from '../../auth/cookies'
 import { pluginLoginMethods } from '../../auth/plugin-login-methods'
 import { configuredProviders, oidcEndSessionUrl } from '../../auth/providers'
@@ -37,7 +37,7 @@ sessionRouter.get('/methods', c => {
     methods.oidcOnly = isOidcOnly(cfg)
   }
   // Only when a plugin contributes one; shown under `oidcOnly` too — they are SSO as well.
-  const pluginMethods = pluginLoginMethods(serverPlugins, cfg, c.get('logger'))
+  const pluginMethods = pluginLoginMethods(serverUnits, cfg, c.get('logger'))
   if (pluginMethods.length > 0) methods.pluginMethods = pluginMethods
   return c.json(methods)
 })

@@ -96,6 +96,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: interface :: AgentSummary :: -
 @/plugins/api :: interface :: AgentTraceContext :: -
 @/plugins/api :: class :: AiNotConfiguredError :: -
+@/plugins/api :: type :: AnyServerDomain :: -
 @/plugins/api :: type :: AnyServerPlugin :: -
 @/plugins/api :: function :: anyTermTsquery :: -
 @/plugins/api :: type :: AnyUiPlugin :: -
@@ -127,6 +128,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: interface :: Decision :: -
 @/plugins/api :: const :: DEFAULT_RESOLVE_MIN_SCORE :: -
 @/plugins/api :: function :: defaultEntityResolver :: -
+@/plugins/api :: function :: defineDomain :: -
 @/plugins/api :: function :: defineTool :: -
 @/plugins/api :: function :: deleteIngestedDocument :: -
 @/plugins/api :: interface :: DeliveredEvent :: -
@@ -138,6 +140,9 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: member :: DetachedCtx.features :: -
 @/plugins/api :: member :: DetachedCtx.scope :: -
 @/plugins/api :: member :: DetachedCtx.groups :: -
+@/plugins/api :: interface :: DomainDefinition :: -
+@/plugins/api :: function :: domainIdProblem :: -
+@/plugins/api :: type :: DomainServerSlots :: -
 @/plugins/api :: class :: DuplicateStepNameError :: -
 @/plugins/api :: function :: durableObject :: -
 @/plugins/api :: const :: EMAIL_CATCH_ALL :: -
@@ -345,6 +350,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: member :: SeedCtx.demoId :: -
 @/plugins/api :: member :: SeedCtx.log :: -
 @/plugins/api :: member :: SeedCtx.setFeature :: -
+@/plugins/api :: interface :: ServerDomain :: -
 @/plugins/api :: interface :: ServerPlugin :: -
 @/plugins/api :: member :: ServerPlugin.shared :: -
 @/plugins/api :: member :: ServerPlugin.requires :: -
@@ -374,6 +380,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: member :: ServerPlugin.visibilityResources :: -
 @/plugins/api :: member :: ServerPlugin.hooks :: -
 @/plugins/api :: member :: ServerPlugin.extensions :: -
+@/plugins/api :: type :: ServerUnit :: -
 @/plugins/api :: class :: ServiceUnavailableError :: -
 @/plugins/api :: interface :: SetResourceGroupsInput :: -
 @/plugins/api :: function :: sharedWithMyGroups :: -
@@ -462,6 +469,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api :: member :: UiPlugin.agentForms :: -
 @/plugins/api :: member :: UiPlugin.extensions :: -
 @/plugins/api :: class :: UnauthorizedError :: -
+@/plugins/api :: type :: UnitKind :: -
 @/plugins/api :: function :: usageFeatureIssue :: -
 @/plugins/api :: type :: User :: -
 @/plugins/api :: function :: validate :: -
@@ -479,7 +487,10 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api/peers :: type :: AllTables :: -
 @/plugins/api/peers :: function :: extensions :: -
 @/plugins/api/peers :: function :: extensionSources :: -
+@/plugins/api/ui-wiring :: type :: AnyUiDomain :: -
 @/plugins/api/ui-wiring :: type :: AnyUiPlugin :: -
+@/plugins/api/ui-wiring :: function :: defineDomainUi :: -
+@/plugins/api/ui-wiring :: interface :: DomainUiDefinition :: -
 @/plugins/api/ui-wiring :: const :: featureGuard :: -
 @/plugins/api/ui-wiring :: const :: isGuardList :: -
 @/plugins/api/ui-wiring :: type :: NavConfig :: -
@@ -502,6 +513,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api/ui-wiring :: interface :: PluginSettingsTab :: -
 @/plugins/api/ui-wiring :: interface :: QuickLink :: -
 @/plugins/api/ui-wiring :: interface :: TabConfig :: -
+@/plugins/api/ui-wiring :: interface :: UiDomain :: -
 @/plugins/api/ui-wiring :: interface :: UiPlugin :: -
 @/plugins/api/ui-wiring :: member :: UiPlugin.shared :: -
 @/plugins/api/ui-wiring :: member :: UiPlugin.routes :: -
@@ -513,6 +525,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api/ui-wiring :: member :: UiPlugin.queryKeys :: -
 @/plugins/api/ui-wiring :: member :: UiPlugin.agentForms :: -
 @/plugins/api/ui-wiring :: member :: UiPlugin.extensions :: -
+@/plugins/api/ui-wiring :: type :: UiUnit :: -
 @/plugins/api/ui-wiring :: function :: useNavGuard :: -
 @/plugins/api/ui :: function :: AccessBadge :: -
 @/plugins/api/ui :: function :: AccessPicker :: -
@@ -591,8 +604,13 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/api/ui :: const :: useToastStore :: -
 @/plugins/api/ui :: function :: VisibilityModal :: -
 @/plugins/api/ui :: interface :: VisibilityModalProps :: -
+@/plugins/types :: type :: AnyServerDomain :: -
 @/plugins/types :: type :: AnyServerPlugin :: -
+@/plugins/types :: type :: AnyUiDomain :: -
 @/plugins/types :: type :: AnyUiPlugin :: -
+@/plugins/types :: interface :: DomainDefinition :: -
+@/plugins/types :: type :: DomainServerSlots :: -
+@/plugins/types :: interface :: DomainUiDefinition :: -
 @/plugins/types :: interface :: PluginHeaderItem :: -
 @/plugins/types :: type :: PluginHeaderPlacement :: -
 @/plugins/types :: interface :: PluginHomeCard :: -
@@ -615,6 +633,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/types :: interface :: PublicSiteCsp :: -
 @/plugins/types :: interface :: PublicSiteFormPath :: -
 @/plugins/types :: interface :: PublicSitesDeclaration :: -
+@/plugins/types :: interface :: ServerDomain :: -
 @/plugins/types :: interface :: ServerPlugin :: -
 @/plugins/types :: member :: ServerPlugin.shared :: -
 @/plugins/types :: member :: ServerPlugin.requires :: -
@@ -644,6 +663,8 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/types :: member :: ServerPlugin.visibilityResources :: -
 @/plugins/types :: member :: ServerPlugin.hooks :: -
 @/plugins/types :: member :: ServerPlugin.extensions :: -
+@/plugins/types :: type :: ServerUnit :: -
+@/plugins/types :: interface :: UiDomain :: -
 @/plugins/types :: interface :: UiPlugin :: -
 @/plugins/types :: member :: UiPlugin.shared :: -
 @/plugins/types :: member :: UiPlugin.routes :: -
@@ -655,6 +676,8 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @/plugins/types :: member :: UiPlugin.queryKeys :: -
 @/plugins/types :: member :: UiPlugin.agentForms :: -
 @/plugins/types :: member :: UiPlugin.extensions :: -
+@/plugins/types :: type :: UiUnit :: -
+@/plugins/types :: type :: UnitKind :: -
 @/db/schema/kit :: const :: activityEvents :: -
 @/db/schema/kit :: const :: groupMembers :: -
 @/db/schema/kit :: const :: groups :: -
@@ -703,7 +726,9 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @rocketflare/shared/plugins/api :: type :: PromptKeyOf :: -
 @rocketflare/shared/plugins/api :: type :: RealtimeEvent :: -
 @rocketflare/shared/plugins/api :: type :: RealtimeEventType :: -
+@rocketflare/shared/plugins/api :: const :: RESERVED_UNIT_IDS :: -
 @rocketflare/shared/plugins/api :: type :: ResourceVisibility :: -
+@rocketflare/shared/plugins/api :: type :: SharedDomain :: -
 @rocketflare/shared/plugins/api :: interface :: SharedPlugin :: -
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.id :: -
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.label :: -
@@ -718,6 +743,7 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @rocketflare/shared/plugins/api :: member :: SharedPlugin.events :: -
 @rocketflare/shared/plugins/api :: type :: SubjectOf :: -
 @rocketflare/shared/plugins/api :: type :: Subjects :: -
+@rocketflare/shared/plugins/api :: type :: UnitKind :: -
 '../api' (apps/cli/src/plugins/api.ts) :: type :: ActionWrapper :: -
 '../api' (apps/cli/src/plugins/api.ts) :: type :: AnyCliPlugin :: -
 '../api' (apps/cli/src/plugins/api.ts) :: interface :: ApiClient :: -
@@ -795,6 +821,8 @@ moved (#182). The fourth field was a signature and is always `-` now.
 @testkit/integration :: interface :: RequestOptions :: -
 @testkit/integration :: type :: RouteTable :: -
 @testkit/integration :: function :: rulesFor :: -
+@testkit/integration :: function :: runAgent :: -
+@testkit/integration :: interface :: RunAgentOptions :: -
 @testkit/integration :: const :: SCHEDULED_TASKS :: -
 @testkit/integration :: interface :: ScheduledTask :: -
 @testkit/integration :: function :: scriptPlatformChat :: -

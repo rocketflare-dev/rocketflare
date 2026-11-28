@@ -151,6 +151,7 @@ export type FileClass =
   | 'skipped-plugin-owned'
   | 'skipped-locally-deleted'
   | 'skipped-kit-only'
+  | 'skipped-app-owned'
   | 'migration-derived'
   | 'manual-toml'
   | 'manual-env'
@@ -158,6 +159,16 @@ export type FileClass =
   | 'binary'
   | 'verbatim'
 export const CLASSES: readonly FileClass[]
+
+/** The app's unit lists: never ported, created empty where missing. */
+export const APP_OWNED_PATHS: readonly string[]
+export const EMPTY_APP_LISTS: Readonly<Record<string, string>>
+export function missingAppLists(exists: (path: string) => boolean): Array<{ path: string; text: string }>
+/** Example surfaces in the target manifest that the copy's manifest has never recorded. */
+export function arrivingExamples(
+  localManifest: Pick<Manifest, 'surfaces'> | null | undefined,
+  targetManifest: Pick<Manifest, 'surfaces'> | null | undefined
+): Manifest['surfaces']
 
 export type Change = 'added' | 'modified' | 'deleted' | 'binary'
 export interface ClassifyContext {

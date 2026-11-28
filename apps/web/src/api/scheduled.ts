@@ -21,7 +21,7 @@ import {
   pluginEvents,
   userSessions,
 } from '../db/schema'
-import { serverPlugins } from '../plugins/server'
+import { serverUnits } from '../units/server'
 import { pruneMagicLinkTokens } from './auth/magic-link'
 import { claimReminder, notifyApprovers } from './services/agents/hitl'
 import { getAgent, isAgentKey } from './services/agents/registry'
@@ -323,7 +323,7 @@ export const SCHEDULED_TASKS: Record<string, ScheduledTask[]> = Object.entries(
   (registry, [cron, tasks]) => Object.assign(registry, { [cron]: [...tasks] }),
   {}
 )
-for (const plugin of serverPlugins) {
+for (const plugin of serverUnits) {
   for (const [cron, tasks] of Object.entries(plugin.scheduledTasks ?? {})) {
     SCHEDULED_TASKS[cron] = [...(SCHEDULED_TASKS[cron] ?? []), ...tasks]
   }

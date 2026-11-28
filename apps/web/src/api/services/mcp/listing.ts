@@ -8,7 +8,7 @@ import type { McpSettings, McpToolListing } from '@rocketflare/shared/mcp'
 import { and, count, eq, gte } from 'drizzle-orm'
 import type { Database } from '../../../db/client'
 import { mcpToolCalls } from '../../../db/schema'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { buildAgentTools, CORE_TOOL_NAMES, pluginTools } from '../agents/tools'
 import type { AgentToolContext } from '../agents/tools/search-knowledge'
 import { mcpToolProfile, mcpUnavailableReason } from '../agents/tools/surfaces'
@@ -21,10 +21,10 @@ const DAY_MS = 24 * 60 * 60 * 1000
 async function pluginOfTool(ctx: AgentToolContext): Promise<Map<string, string>> {
   const owners = new Map<string, string>()
   const built = await Promise.allSettled(
-    serverPlugins.map(async p => (await pluginTools(p, ctx)) ?? [])
+    serverUnits.map(async p => (await pluginTools(p, ctx)) ?? [])
   )
   built.forEach((result, i) => {
-    const id = serverPlugins[i]?.shared.id
+    const id = serverUnits[i]?.shared.id
     if (result.status !== 'fulfilled' || !id) return
     // First come, and never a core name — the same rule the tool builder admits by, so a plugin
     // shadowing a name is not credited with the tool that actually answers to it.

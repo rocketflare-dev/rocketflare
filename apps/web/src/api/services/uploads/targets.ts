@@ -25,7 +25,7 @@ import { eq } from 'drizzle-orm'
 import type { ZodType } from 'zod'
 import { users } from '../../../db/schema'
 import type { PluginUploadTarget } from '../../../plugins/api/uploads'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { guardPermission } from '../../middleware/permissions'
 import type { AppContext } from '../../types'
 import { ApiError, ServiceUnavailableError, ValidationError } from '../../utils/core/errors'
@@ -389,7 +389,7 @@ export function adaptPluginUploadTarget(
 /** Every target id, core first — for the 400 `unknown_upload_target` details and the config test. */
 export function uploadTargets(): Map<string, UploadTarget> {
   const out = new Map<string, UploadTarget>(Object.entries(CORE_TARGETS))
-  for (const plugin of serverPlugins) {
+  for (const plugin of serverUnits) {
     for (const declared of plugin.uploadTargets ?? []) {
       out.set(declared.id, adaptPluginUploadTarget(plugin.shared.id, declared))
     }

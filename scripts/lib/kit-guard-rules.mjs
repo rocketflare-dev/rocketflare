@@ -86,6 +86,23 @@ export const GUARD_RULES = [
     ],
     why: 'Made to be replaced: the examples, Home, the theme tokens, the logo, the design docs.',
   },
+  {
+    id: 'app-domains',
+    tier: 'open',
+    paths: [
+      'apps/web/src/app.ts',
+      'apps/web/src/app-ui.ts',
+      'apps/web/src/app-schema.ts',
+      'packages/shared/src/app.ts',
+      'apps/cli/src/app.ts',
+      'apps/web/src/example-hr/**',
+      'apps/web/src/example-sales/**',
+      'packages/shared/src/example-hr/**',
+      'packages/shared/src/example-sales/**',
+      'apps/cli/src/example-sales/**',
+    ],
+    why: "The app's own: its lists of its domains (docs/CONCEPTS.md §20) and the two example domains. A domain of the app's own is open wherever it lives.",
+  },
 
   // ------------------------------------------------------------------ steer
   {

@@ -133,7 +133,12 @@ export const RULE_IDS = Object.keys(UI_RULES)
 /** The token file, where raw colours are the point. */
 export const TOKEN_FILES = ['apps/web/src/shared/theme-tokens.css']
 
-const UI_DIRS = [/^apps\/web\/src\/ui\//, /^apps\/web\/src\/plugins\/[^/]+\/ui\//]
+// The kit's UI, each plugin's `ui/`, and each app domain's `apps/web/src/<id>/ui/`.
+const UI_DIRS = [
+  /^apps\/web\/src\/ui\//,
+  /^apps\/web\/src\/plugins\/[^/]+\/ui\//,
+  /^apps\/web\/src\/[a-z][a-z0-9-]*\/ui\//,
+]
 const UI_EXT = /\.(tsx|ts|jsx|css)$/
 
 /** `true` for a repository-relative path the UI lint reads. */

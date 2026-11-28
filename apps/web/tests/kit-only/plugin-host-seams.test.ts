@@ -424,12 +424,14 @@ function makeHost({ settings = false }: { settings?: boolean } = {}): string {
   write(root, '.gitignore', '.rocketflare.local.json\n.upgrade/\nnode_modules/\n')
   write(root, 'node_modules/.bin/biome', '#!/bin/sh\nexit 0\n')
   chmodSync(path.join(root, 'node_modules/.bin/biome'), 0o755)
-  // `plugin check` parses with typescript6 and fails a host with no node_modules: a copy always
+  // `plugin check` parses (typescript6, oxc-parser) and fails a host with no node_modules: a copy always
   // has both, so the throwaway host borrows the kit's parser.
-  symlinkSync(
-    realpathSync(path.join(REPO_ROOT, 'node_modules/typescript6')),
-    path.join(root, 'node_modules/typescript6')
-  )
+  for (const parser of ['typescript6', 'oxc-parser']) {
+    symlinkSync(
+      realpathSync(path.join(REPO_ROOT, 'node_modules', parser)),
+      path.join(root, 'node_modules', parser)
+    )
+  }
   git(root, ['init', '-q'])
   git(root, ['add', '-A'])
   git(root, ['commit', '-qm', 'host'])

@@ -15,12 +15,11 @@ import {
   type EventNameOf,
   type EventPayloadOf,
   eventNameProblem,
-  type SHARED_PLUGINS,
-  sharedPlugins,
 } from '@rocketflare/shared/plugins'
+import { type SHARED_UNITS, sharedUnits } from '@rocketflare/shared/units'
 import type { ZodTypeAny } from 'zod'
 
-type InstalledShared = (typeof SHARED_PLUGINS)[number]
+type InstalledShared = (typeof SHARED_UNITS)[number]
 
 /** Every event name an installed plugin declares. `never` while none does. */
 export type EventName = EventNameOf<InstalledShared>
@@ -41,7 +40,7 @@ let definitions: ReadonlyMap<string, EventDefinition> | null = null
 export function eventDefinitions(): ReadonlyMap<string, EventDefinition> {
   if (definitions) return definitions
   const table = new Map<string, EventDefinition>()
-  for (const plugin of sharedPlugins) {
+  for (const plugin of sharedUnits) {
     for (const [name, schema] of Object.entries(plugin.events ?? {})) {
       if (eventNameProblem(plugin.id, name) !== null || table.has(name)) continue
       table.set(name, { name, source: plugin.id, schema })

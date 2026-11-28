@@ -16,7 +16,7 @@ import {
   type Role,
   type Subjects,
 } from '@rocketflare/shared/permissions'
-import { serverPlugins } from '../plugins/server'
+import { serverUnits } from '../units/server'
 
 type Can = AbilityBuilder<AppAbility>['can']
 type Cannot = AbilityBuilder<AppAbility>['cannot']
@@ -152,7 +152,7 @@ export function buildAbility(ctx: AbilityContext): AppAbility {
     // A plugin's rules run AFTER core's, over its OWN subjects. Additive only: CASL has
     // no way to take a rule back except `cannot`, and a plugin that revoked a core grant would
     // change what every role may do by being installed.
-    for (const plugin of serverPlugins) plugin.grants?.[effective]?.(can, cannot, ctx)
+    for (const plugin of serverUnits) plugin.grants?.[effective]?.(can, cannot, ctx)
   }
   applyFeatureFlags(can, ctx.features)
   return build()

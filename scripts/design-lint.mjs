@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * `pnpm design:lint [path…] [--json]` — the UI lint (`lib/ui-lint.mjs`) over the UI tree:
- * `apps/web/src/ui/**` and every plugin's `apps/web/src/plugins/<id>/ui/**`, or only the paths
+ * `apps/web/src/ui/**`, every plugin's `apps/web/src/plugins/<id>/ui/**` and every app domain's
+ * `apps/web/src/<id>/ui/**`, or only the paths
  * given. Bans are failures (exit 1); reflexes print as notes and never fail.
  *
  * The rules and their reasons are `.claude/rules/ui.md` "Visual quality". Silence one finding with
@@ -13,7 +14,8 @@ import { fileURLToPath } from 'node:url'
 import { formatFinding, isUiPath, lintSource, splitFindings } from './lib/ui-lint.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const DEFAULT_DIRS = ['apps/web/src/ui', 'apps/web/src/plugins']
+// Everything under src, filtered by `isUiPath`: the kit's UI, the plugins' and the app domains'.
+const DEFAULT_DIRS = ['apps/web/src']
 
 function walk(dir, out) {
   if (!existsSync(dir)) return out

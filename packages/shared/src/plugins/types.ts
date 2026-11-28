@@ -40,6 +40,23 @@ export function isPluginId(value: string): boolean {
   return PLUGIN_ID_RE.test(value) && !value.includes('rocketflare')
 }
 
+/**
+ * Ids no unit — plugin or app domain — may take. `core` names the kit itself where a unit id is
+ * expected (chat's budget line, the inventory), `kit` is the reserved event namespace (`kit.`),
+ * and `app` is the app's own unit lists (`src/app.ts` in each package).
+ */
+export const RESERVED_UNIT_IDS = ['core', 'kit', 'app'] as const
+
+/** What a unit is: an installed plugin, or one of the app's own domains (`src/app.ts`). */
+export type UnitKind = 'plugin' | 'domain'
+
+/**
+ * The shared half of an app domain: the same shape as a plugin's, so every composer reads the two
+ * as one list (`units.ts`). A domain is where an app's own concepts live; a plugin is a capability
+ * another app could install. Their contracts look the same on purpose.
+ */
+export type SharedDomain = SharedPlugin
+
 /** `<id>:` — the prefix every query-key root and demo-seed id a plugin owns must carry. */
 export function pluginNamespace(id: string): string {
   return `${id}:`

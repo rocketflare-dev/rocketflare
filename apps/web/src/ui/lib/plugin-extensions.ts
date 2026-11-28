@@ -5,13 +5,13 @@
  * narrows them with its own schema and refuses what does not parse; the host never learns what an
  * entry means.
  */
-import { uiPlugins } from '@/plugins/ui'
+import { uiUnits } from '@/units/ui'
 
 export function uiExtensions(key: string): readonly unknown[] {
-  return uiPlugins.flatMap(p => p.extensions?.[key] ?? [])
+  return uiUnits.flatMap(p => p.extensions?.[key] ?? [])
 }
 
 /** Which plugins contributed under a key — for the error message when one of them does not parse. */
 export function uiExtensionSources(key: string): readonly string[] {
-  return uiPlugins.filter(p => (p.extensions?.[key]?.length ?? 0) > 0).map(p => p.shared.id)
+  return uiUnits.filter(p => (p.extensions?.[key]?.length ?? 0) > 0).map(p => p.shared.id)
 }

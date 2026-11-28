@@ -15,7 +15,6 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, matchRoutes, Navigate, Route, Routes, useLocation } from 'react-router'
 import type { PluginRouteTier } from '@/plugins/types'
-import { uiPlugins } from '@/plugins/ui'
 import { BrandFavicon } from '@/ui/components/BrandFavicon'
 import { ConnectionBanner } from '@/ui/components/ConnectionBanner'
 import { ErrorBoundary } from '@/ui/components/ErrorBoundary'
@@ -41,6 +40,7 @@ import { queryClient } from '@/ui/lib/queryClient'
 import Home from '@/ui/pages/Home'
 import Login from '@/ui/pages/Login'
 import NotFound from '@/ui/pages/NotFound'
+import { uiUnits } from '@/units/ui'
 
 // Public / no-tenant pages
 const MagicLinkSent = lazy(() => import('@/ui/pages/MagicLinkSent'))
@@ -96,7 +96,7 @@ const ReactQueryDevtools =
  * `tests/config/plugins.test.ts` — so a plugin's pages never reach the main bundle.
  */
 function pluginRoutes(tier: PluginRouteTier) {
-  return uiPlugins
+  return uiUnits
     .flatMap(p => p.routes)
     .filter(r => (r.tier ?? 'shell') === tier)
     .map(r => {
@@ -127,7 +127,7 @@ function pluginRoutes(tier: PluginRouteTier) {
  * `Layout` renders (`shell` and `workspace`) with the router's own ranking, so a shell route that
  * out-ranks a dynamic workspace path stays a shell route.
  */
-const SHELL_PLUGIN_ROUTES = uiPlugins
+const SHELL_PLUGIN_ROUTES = uiUnits
   .flatMap(p => p.routes)
   .filter(r => r.tier === undefined || r.tier === 'shell' || r.tier === 'workspace')
   .map(r => ({ path: r.path, tier: r.tier ?? 'shell' }))
@@ -160,10 +160,10 @@ function ShellRoutes() {
     <Layout
       workspace={workspace}
       headerStart={<OrgSwitcher />}
-      headerCenter={<PluginHeaderSlot plugins={uiPlugins} placement="center" />}
+      headerCenter={<PluginHeaderSlot plugins={uiUnits} placement="center" />}
       headerEnd={
         <>
-          <PluginHeaderSlot plugins={uiPlugins} placement="end" />
+          <PluginHeaderSlot plugins={uiUnits} placement="end" />
           <WebSocketStatus />
           <NotificationsBell />
           <UserMenu />

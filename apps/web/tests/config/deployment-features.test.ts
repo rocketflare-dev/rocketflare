@@ -4,8 +4,11 @@ import { deploymentFeatures } from '@/permissions/features'
 
 vi.mock('@/plugins/server', () => ({
   serverPlugins: [
-    { deploymentFeatures: (cfg: AppConfig) => (cfg.APP_NAME === 'on' ? ['plugin-flag'] : []) },
-    {},
+    {
+      shared: { id: 'fixture-a' },
+      deploymentFeatures: (cfg: AppConfig) => (cfg.APP_NAME === 'on' ? ['plugin-flag'] : []),
+    },
+    { shared: { id: 'fixture-b' } },
   ],
 }))
 

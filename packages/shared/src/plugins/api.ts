@@ -56,8 +56,10 @@ export type {
   JobTypeOf,
   JobVariant,
   PromptKeyOf,
+  SharedDomain,
   SharedPlugin,
   SubjectOf,
+  UnitKind,
 } from './types'
 export {
   EVENT_NAME_RE,
@@ -65,4 +67,5 @@ export {
   isPluginId,
   PLUGIN_ID_RE,
   pluginNamespace,
+  RESERVED_UNIT_IDS,
 } from './types'

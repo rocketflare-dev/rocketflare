@@ -15,7 +15,6 @@
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
 import { type ComponentType, useMemo } from 'react'
 import type { AnyUiPlugin } from '@/plugins/types'
-import { uiPlugins } from '@/plugins/ui'
 import {
   CORE_NAVIGATION,
   composeNav,
@@ -25,6 +24,7 @@ import {
 } from '@/ui/components/SideNav'
 import { CORE_QUICK_LINKS } from '@/ui/pages/home-links'
 import { CORE_SETTINGS_TABS, SETTINGS_PAGE_GUARD, settingsTabPath } from '@/ui/pages/settings/tabs'
+import { uiUnits } from '@/units/ui'
 import { type NavGuard, useNavGuard } from './useNavGuard'
 import { usePermissions } from './usePermissions'
 
@@ -147,7 +147,7 @@ export function useNavigationEntries(): NavigationEntry[] {
   const { can } = usePermissions()
   return useMemo(
     () =>
-      navigationEntries(uiPlugins, {
+      navigationEntries(uiUnits, {
         canAccess,
         can: (action, subject) => can(action as Actions, subject as Subjects),
       }),

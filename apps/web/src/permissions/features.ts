@@ -45,8 +45,8 @@ export function hasFeature(features: readonly string[], name: FeatureName): bool
  * only with a second plugin installed, which is why `tests/config/plugins.test.ts` pins it.
  */
 export async function deploymentFeatures(cfg: AppConfig): Promise<readonly string[]> {
-  const { serverPlugins } = await import('../plugins/server')
-  return [...cfg.FEATURES_ENABLED, ...serverPlugins.flatMap(p => p.deploymentFeatures?.(cfg) ?? [])]
+  const { serverUnits } = await import('../units/server')
+  return [...cfg.FEATURES_ENABLED, ...serverUnits.flatMap(p => p.deploymentFeatures?.(cfg) ?? [])]
 }
 
 /** Who the flags are being resolved for. Either id may be absent (a session with no membership). */

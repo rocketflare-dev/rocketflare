@@ -29,7 +29,7 @@
  */
 import { z } from 'zod'
 import { type CORE_FEATURES, FEATURES, type FeatureName } from './permissions'
-import { sharedPlugins } from './plugins'
+import { sharedUnits } from './units'
 
 /** Platform state of a flag. `off` and `rollout` at 0% are the same OUTCOME, not the same intent. */
 export const FEATURE_FLAG_STATES = ['off', 'on', 'rollout'] as const
@@ -138,7 +138,7 @@ export const CORE_FEATURE_FLAGS = {
  */
 export const FEATURE_FLAGS = {
   ...CORE_FEATURE_FLAGS,
-  ...(Object.assign({}, ...sharedPlugins.map(p => p.features ?? {})) as Record<
+  ...(Object.assign({}, ...sharedUnits.map(p => p.features ?? {})) as Record<
     string,
     FeatureDefinition
   >),
