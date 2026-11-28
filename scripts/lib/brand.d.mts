@@ -67,3 +67,40 @@ export function adoptDefaultLook(inputs: {
   missing: string[]
   brand: BrandResult | null
 }
+export interface AddedToken {
+  file: 'theme-tokens.css' | 'index.css'
+  kind: BlockKind
+  prop: string
+  value: string
+  /** The app token the value was derived from, or null (a fixed hue, a turned shadow). */
+  from: string | null
+  /** Its lightness was moved to pass a contrast pair. */
+  adjusted: boolean
+}
+export function addMissingTokens(inputs: { current: LookFiles; defaults: LookFiles }): {
+  tokensCss: string
+  indexCss: string
+  added: AddedToken[]
+  skipped: string[]
+  missing: string[]
+  /** Pairs no added value could pass; when set, write nothing. */
+  failing: string[]
+}
+export function fontsourcePackage(family: string): string
+export interface FontLoad {
+  family: string
+  tokens: string[]
+  pkg: string
+  version: string | null
+  imported: boolean
+  declared: boolean
+  loaded: boolean
+}
+export function fontLoading(inputs: {
+  tokensCss: string
+  indexCss?: string
+  mainTsx?: string
+  packageJson?: string
+  indexHtml?: string
+  kit?: { mainTsx?: string; packageJson?: string }
+}): FontLoad[]

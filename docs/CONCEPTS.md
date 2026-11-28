@@ -765,7 +765,25 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   `[data-theme]` blocks of `index.css` (its styles untouched), `theme-color`; a token of the app's
   own the defaults lack is kept, and so is everything of the app's in `theme-tokens.css` outside
   the token blocks (a `[data-brand-logo]` rule, an `@media` block, its `:root` logo colours, each
-  printed as `kept …`); then brand.css on top (`adoptDefaultLook`). `/rf-design` also
+  printed as `kept …`); then brand.css on top (`adoptDefaultLook`). An app keeping its OWN look
+  runs `--add-missing-tokens` instead (same `--from` / `--kit-ref`): it writes each token the
+  release's look defines and the app's blocks lack, into the block the kit keeps it in, and
+  changes no token the app has (`addMissingTokens`). Each value is derived from the app's
+  palette: a token the kit holds equal to one of the app's (`--rail-active` is the primary,
+  `--radius-control` is `--radius-field`) takes the app's value; a colour keeps the kit's
+  lightness, chroma and hue offset from its nearest colour the app also has; `--flare` keeps its
+  own hue; a shadow is turned to the app's hue; a face in `--font-sans`/`--font-mono` is left
+  out. Each added colour's lightness is then nudged until every `contrastPairs()` pair it is in
+  passes, each printed as `added …`; a pair that cannot pass (against a token of the app's that
+  already fails) means exit 1 and nothing written. `--adopt-default-look`, `--add-missing-tokens`
+  and `--apply-brand` then warn about each face `@theme` names that nothing loads — not imported
+  in `ui/main.tsx` or not in `apps/web/package.json`, and no `@font-face` or stylesheet link for
+  it — with the import and the `pnpm --filter ./apps/web add <pkg>@<version>` to run, the version
+  read from the kit's own `package.json` (`fontLoading`); they never write either file. The script
+  works on `--root <dir>`, else the checkout it sits in, so a newer kit's script runs on a copy
+  whose own is older as `node <kit>/scripts/design-docs.mjs --root <copy> --from <kit> …`; run
+  from inside another checkout without `--root` it exits 2 naming the flag, and a `--from` that
+  is the checkout being worked on is refused. `/rf-design` also
   writes `docs/design/DESIGN.md`, the visual system in one page, which `.claude/rules/ui.md` sends
   agents to before they build a screen.
   `--check` exits 1 when the pages are stale. The output is deterministic, and a rebuild deletes only
@@ -792,8 +810,11 @@ and a brand font is linked from Google Fonts whenever it is not a known system f
 checking that Google serves it. A hue turn keeps lightness, not WCAG luminance: the light
 `--color-primary` on `--surface-active` falls just under 4.5:1 for hues near 165–210 (cyan), which
 the contrast gate catches and a brand.css nudge fixes. `--adopt-default-look` never ports the new
-look's font imports (`main.tsx`, `package.json`) or components — those arrive with the upgrade's
-patch — and in a brand.css a new font family still needs its package added by hand.
+look's components (they arrive with the upgrade's patch) and never writes a font import or
+dependency: it names them, and a family outside `@fontsource` gets a guessed package name.
+`--add-missing-tokens` derives a value by its nearest colour, so a token with no near relative in
+the app's palette can land somewhere the eye would not pick; the contrast floors hold, the taste
+is the app's to tune.
 
 ## 8. Analytics
 

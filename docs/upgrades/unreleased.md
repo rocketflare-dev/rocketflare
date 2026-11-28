@@ -25,6 +25,9 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - `scripts/rename.mjs` writes `design.json` `app.tagline` to `APP_TAGLINE` in both wrangler tomls (`applyTagline` in `scripts/lib/rename-lib.mjs` now takes a toml), no longer to `login-panel.ts`.
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
 - Fix: `pnpm design:docs --adopt-default-look` keeps an app's own statements in `apps/web/src/shared/theme-tokens.css` outside the token blocks: a standalone rule such as `[data-brand-logo] { … }`, a per-theme or `@media` rule, and its changed or extra `:root` values (the logo mark's colours). It rebuilt the file from the kit's and dropped them without a word; each one now prints a `kept …` line. `adoptDefaultLook` (`scripts/lib/brand.mjs`) returns them as `carried`; `topLevelRules` is new.
+- New: `pnpm design:docs --add-missing-tokens` keeps an app's own look across a release whose look added tokens. It writes each token the kit release's look defines and the app's token files lack, derived from the app's own palette (a token the kit holds equal to one of the app's takes the app's value; a colour keeps the kit's offset from its nearest app colour), nudges each added value's lightness until every contrast pair passes, prints an `added …` line per token, and changes no token the app has. It reads the same defaults as `--adopt-default-look` (`--from`, `--kit-ref`) and exits 1, writing nothing, when a pair cannot pass against a token of the app's that already fails. `addMissingTokens` in `scripts/lib/brand.mjs`; `docs/CONCEPTS.md` §7.
+- Fix: `--adopt-default-look` (and `--add-missing-tokens`, `--apply-brand`) now warn when `@theme` names a face the app does not load, with the `main.tsx` import and the `pnpm --filter ./apps/web add <package>@<version>` to run. Adopting the look named IBM Plex Sans in `@theme` while the app still loaded another face, so the app rendered in the system fallback without a word. `fontLoading` in `scripts/lib/brand.mjs`.
+- Fix: `scripts/design-docs.mjs` run from inside another checkout without `--root` now exits 2 and names the `--root` to pass, and `--from` naming the checkout being worked on is refused; both were silent no-ops. A newer kit's script runs on a copy as `node <kit>/scripts/design-docs.mjs --root <copy> --from <kit> …`.
 - Fix: `scripts/detach.sh` keeps every file the kit tracks. It re-added the tree with `git add -A`, which obeys the person's own global gitignore, so a machine that ignores `.claude` got a first commit with no skills, rules or hooks. It now adds exactly the tracked list, and still adds no ignored file.
 
 ## How to apply
@@ -39,6 +42,8 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
 9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
 10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+11. Take `scripts/design-docs.mjs`, `scripts/lib/brand.{mjs,d.mts}` as they are.
+12. Optional, for an app that kept its own look when it crossed 0.45.0 (that note's step 25): after this upgrade is applied, run `pnpm design:docs --add-missing-tokens` to write any token of the look the app's blocks still lack, in place of adding them by hand, then `pnpm design:docs --contrast` and look at the app. Tune any added value in place: the command never changes a token the app already has.
 
 ## Conflicts to expect
 
@@ -55,4 +60,5 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 4. `curl -s http://localhost:3001/api/health` shows `name`, `tagline` and `loginPanelArt` with the values from `apps/web/.dev.vars` or the toml.
 5. After `pnpm web build:ui`, `apps/web/dist/ui/index.html` has `APP_NAME` from `apps/web/wrangler.toml` in `<title>` and `APP_TAGLINE` in `<meta name="description">`.
 6. `pnpm test config apps/web/tests/config/ui-shell-identity.test.ts` passes.
-7. `pnpm gate` passes.
+7. After step 12, running `pnpm design:docs --add-missing-tokens` again prints `Nothing to add`, and `pnpm design:docs --contrast` passes.
+8. `pnpm gate` passes.

@@ -11,6 +11,9 @@
  *   pnpm design:docs --apply-brand    write brand.css into theme-tokens.css, index.css, index.html
  *   pnpm design:docs --adopt-default-look [--from <kit checkout>] [--kit-ref <ref>]
  *                                     take the kit's default look, then brand.css on top
+ *   pnpm design:docs --add-missing-tokens [--from <kit checkout>] [--kit-ref <ref>]
+ *                                     keep this app's look: add the tokens the kit's look has
+ *                                     and this app lacks, derived from its own palette
  *
  * `--adopt-default-look` runs only when asked: an upgrade never restyles an app. The defaults are
  * the three token files of the kit release this copy records (`.rocketflare.json` `kit.commit`,
@@ -19,23 +22,39 @@
  * `--kit-ref` reads another ref from that mirror; `--from <dir>` reads a kit checkout instead
  * (offline). Either way they are translated into this app's names with the rename's own token
  * map, and `docs/design/brand.css` is then re-applied on top (`adoptDefaultLook`, brand.mjs).
+ * `--add-missing-tokens` reads the same defaults and changes no token the app has
+ * (`addMissingTokens`). It, `--adopt-default-look` and `--apply-brand` then name each face
+ * `@theme` uses that nothing loads, with the import and dependency to add (`fontLoading`).
  *
- * `--root <dir>` points it at another checkout (the tests use a temporary one).
+ * `--root <dir>` is the checkout it works on; without it, the checkout this script is in. A
+ * newer kit's script runs on a copy as `node <kit>/scripts/design-docs.mjs --root <copy> …`
+ * (`--from <kit>` to read that kit's look): the way a fix here reaches a copy whose own script
+ * is older. Run from inside another checkout without `--root`, it refuses rather than quietly
+ * working on its own.
  * The rendering is `scripts/lib/design-docs-lib.mjs`; the contrast rules are
  * `scripts/lib/contrast.mjs`, shared with `apps/web/tests/ui/contrast.test.ts`.
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { adoptDefaultLook, applyBrand } from './lib/brand.mjs'
+import { addMissingTokens, adoptDefaultLook, applyBrand, fontLoading } from './lib/brand.mjs'
 import { checkTheme } from './lib/contrast.mjs'
 import { designTokens, GENERATOR_META, planPages } from './lib/design-docs-lib.mjs'
 import { mirror } from './lib/git-lib.mjs'
 import { applyReplacements, deriveNames } from './lib/rename-lib.mjs'
 
 const USAGE = `Usage: node scripts/design-docs.mjs [--open | --check | --contrast | --apply-brand |
-                                     --adopt-default-look [--from <dir>] [--kit-ref <ref>]] [--root <dir>]
+                                     --adopt-default-look | --add-missing-tokens
+                                     [--from <dir>] [--kit-ref <ref>]] [--root <dir>]
 
   (no flag)       build docs/design/html/ from docs/design/*.md and print its index.html
   --open          build, then open index.html in the default browser
@@ -47,15 +66,25 @@ const USAGE = `Usage: node scripts/design-docs.mjs [--open | --check | --contras
                   .rocketflare.json kit.commit, from .upgrade/kit.git), then re-apply brand.css
     --from <dir>    read the defaults from a kit checkout instead of the upgrade mirror
     --kit-ref <ref> read the defaults at another ref of the upgrade mirror
-  --root <dir>    the checkout to work in (default: this one)`
+  --add-missing-tokens
+                  keep the app's look: write each token the kit release's look defines and the
+                  app's files lack, derived from the app's own palette and held to the contrast
+                  floors; changes no token the app has (takes --from / --kit-ref too)
+  --root <dir>    the checkout to work on (default: the one this script is in); a newer kit's
+                  script runs on a copy with --root <copy> --from <that kit>`
 
 const TOKENS_CSS = 'apps/web/src/shared/theme-tokens.css'
 const INDEX_CSS = 'apps/web/src/ui/index.css'
 const INDEX_HTML = 'apps/web/src/ui/index.html'
 const LOGO = 'apps/web/src/ui/public/logo.svg'
+const MAIN_TSX = 'apps/web/src/ui/main.tsx'
+const WEB_PACKAGE = 'apps/web/package.json'
 const DESIGN = 'docs/design'
 const BRAND = 'docs/design/brand.css'
 const OUT = 'docs/design/html'
+
+/** The modes that read the kit release's default look. */
+const DEFAULTS_MODES = ['adopt-default-look', 'add-missing-tokens']
 
 function parseArgs(argv) {
   const opts = { mode: 'build', open: false, root: null, from: null, kitRef: null }
@@ -66,14 +95,17 @@ function parseArgs(argv) {
     else if (a === '--contrast') opts.mode = 'contrast'
     else if (a === '--apply-brand') opts.mode = 'apply-brand'
     else if (a === '--adopt-default-look') opts.mode = 'adopt-default-look'
+    else if (a === '--add-missing-tokens') opts.mode = 'add-missing-tokens'
     else if (a === '--from') opts.from = argv[++i]
     else if (a === '--kit-ref') opts.kitRef = argv[++i]
     else if (a === '--root') opts.root = argv[++i]
     else if (a === '--help' || a === '-h') opts.mode = 'help'
     else throw new Error(`unknown argument: ${a}\n\n${USAGE}`)
   }
-  if ((opts.from || opts.kitRef) && opts.mode !== 'adopt-default-look')
-    throw new Error(`--from and --kit-ref go with --adopt-default-look\n\n${USAGE}`)
+  if ((opts.from || opts.kitRef) && !DEFAULTS_MODES.includes(opts.mode))
+    throw new Error(
+      `--from and --kit-ref go with --adopt-default-look or --add-missing-tokens\n\n${USAGE}`
+    )
   if (opts.from && opts.kitRef) throw new Error('--from and --kit-ref: one source, not both')
   return opts
 }
@@ -247,6 +279,7 @@ function applyBrandFiles(root) {
     `Applied ${r.applied.length} propert${r.applied.length === 1 ? 'y' : 'ies'}. ` +
       'Check them: `pnpm web test:ui` (tests/ui/contrast.test.ts).'
   )
+  reportFonts(root)
   return 0
 }
 
@@ -262,13 +295,20 @@ function readDefaults(root, { from, kitRef }) {
   let source
   if (from) {
     const dir = path.resolve(from)
+    if (existsSync(dir) && realpathSync(dir) === realpathSync(root))
+      throw new Error(
+        `--from ${from} is the checkout being worked on, so there is nothing to take from it. ` +
+          "Run the kit checkout's script on this app instead: " +
+          `node <kit>/scripts/design-docs.mjs --root ${root} --from <kit> …`
+      )
     readFile = rel => readFileSync(path.join(dir, rel), 'utf8')
     source = dir
   } else {
     if (!manifest) throw new Error('no .rocketflare.json: pass --from <a kit checkout>')
     if (!manifest.app)
       throw new Error(
-        'this is the kit: its token files ARE the default look. Use --apply-brand for brand.css.'
+        `this is the kit (${root}): its token files ARE the default look. Use --apply-brand ` +
+          'for brand.css; to work on a copy, pass --root <copy>.'
       )
     const dir = path.join(root, '.upgrade', 'kit.git')
     if (!existsSync(dir))
@@ -298,11 +338,51 @@ function readDefaults(root, { from, kitRef }) {
     }
     files[key] = names ? applyReplacements(text, names).text : text
   }
-  return { files, source }
+  // The kit's own font loading, to name the exact package and version its faces need.
+  const optional = rel => {
+    try {
+      return readFile(rel)
+    } catch {
+      return ''
+    }
+  }
+  const kitFonts = { mainTsx: optional(MAIN_TSX), packageJson: optional(WEB_PACKAGE) }
+  return { files, source, kitFonts }
+}
+
+/**
+ * Warns about each face the app's `@theme` names that nothing loads, with the line to add to
+ * `main.tsx` and the dependency to add to `apps/web/package.json`. Writes neither: a dependency
+ * needs `pnpm install`, and `main.tsx` is the app's. Returns how many it named.
+ */
+function reportFonts(root, kitFonts = {}) {
+  const fonts = fontLoading({
+    tokensCss: read(root, TOKENS_CSS),
+    indexCss: read(root, INDEX_CSS),
+    indexHtml: readIfExists(root, INDEX_HTML) ?? '',
+    mainTsx: readIfExists(root, MAIN_TSX) ?? '',
+    packageJson: readIfExists(root, WEB_PACKAGE) ?? '',
+    kit: kitFonts,
+  })
+  let named = 0
+  for (const f of fonts) {
+    if (f.loaded || (f.imported && f.declared)) continue
+    named++
+    console.error(
+      `warning: ${f.tokens.join(', ')} name "${f.family}", which this app does not load: it ` +
+        'renders in the fallback face. To load it:'
+    )
+    if (!f.imported) console.error(`  add to ${MAIN_TSX}:  import '${f.pkg}'`)
+    if (!f.declared) {
+      const spec = f.version ? `${f.pkg}@${f.version}` : f.pkg
+      console.error(`  add to ${WEB_PACKAGE}:  pnpm --filter ./apps/web add ${spec}`)
+    }
+  }
+  return named
 }
 
 function adoptDefaultLookFiles(root, opts) {
-  const { files: defaults, source } = readDefaults(root, opts)
+  const { files: defaults, source, kitFonts } = readDefaults(root, opts)
   const brandCss = readIfExists(root, BRAND)
   const r = adoptDefaultLook({
     current: {
@@ -337,21 +417,98 @@ function adoptDefaultLookFiles(root, opts) {
         : ` (no ${BRAND}: the kit's look as it ships).`) +
       ' Check it: `pnpm design:docs --contrast`, then `pnpm web test:ui` and a look at the app.'
   )
+  reportFonts(root, kitFonts)
   return 0
+}
+
+function addMissingTokensFiles(root, opts) {
+  const { files: defaults, source, kitFonts } = readDefaults(root, opts)
+  const r = addMissingTokens({
+    current: { tokensCss: read(root, TOKENS_CSS), indexCss: read(root, INDEX_CSS) },
+    defaults,
+  })
+  for (const s of r.skipped) console.log(`skipped ${s}`)
+  for (const m of r.missing) console.error(`warning: ${m}`)
+  if (r.failing.length) {
+    console.error(
+      `Wrote nothing: ${r.failing.length} contrast pair(s) no added value could pass, against ` +
+        "this app's own tokens:"
+    )
+    for (const f of r.failing) console.error(`  ${f}`)
+    console.error(
+      'Fix those tokens of yours first (`pnpm design:docs --contrast` lists every failing pair), ' +
+        'then run this again.'
+    )
+    return 1
+  }
+  if (!r.added.length) {
+    console.log(`Nothing to add: this app has every token of the look from ${source}.`)
+    reportFonts(root, kitFonts)
+    return 0
+  }
+  for (const a of r.added)
+    console.log(
+      `added ${a.file} ${a.kind === 'theme' ? '@theme' : a.kind} ${a.prop}: ${a.value}` +
+        (a.from ? ` (from your ${a.from})` : '') +
+        (a.adjusted ? ' (lightness moved to pass contrast)' : '')
+    )
+  for (const [rel, content] of [
+    [TOKENS_CSS, r.tokensCss],
+    [INDEX_CSS, r.indexCss],
+  ]) {
+    if (content === read(root, rel)) continue
+    writeFileSync(path.join(root, rel), content)
+    console.log(`wrote ${rel}`)
+  }
+  console.log(
+    `Added ${r.added.length} token${r.added.length === 1 ? '' : 's'} of the look from ${source}, ` +
+      'derived from your palette; no token you had changed. Check them: `pnpm design:docs ' +
+      '--contrast`, then a look at the app, and tune any in place.'
+  )
+  reportFonts(root, kitFonts)
+  return 0
+}
+
+/** The nearest directory at or above `dir` holding a `.rocketflare.json`, real path, or null. */
+function checkoutAbove(dir) {
+  let at = realpathSync(dir)
+  for (;;) {
+    if (existsSync(path.join(at, '.rocketflare.json'))) return at
+    const up = path.dirname(at)
+    if (up === at) return null
+    at = up
+  }
 }
 
 function main(argv) {
   const opts = parseArgs(argv)
-  const root = path.resolve(
-    opts.root ?? path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-  )
   if (opts.mode === 'help') {
     console.log(USAGE)
     return 0
   }
+  const own = realpathSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..'))
+  const root = opts.root ? path.resolve(opts.root) : own
+  if (!opts.root) {
+    // Run as `node <another checkout>/scripts/design-docs.mjs` from inside an app, it would work
+    // on that other checkout and leave this one as it was: say so instead.
+    const here = checkoutAbove(process.cwd())
+    if (here && here !== own)
+      throw new Error(
+        `this is the script of ${own}, run from inside ${here}: without --root it works on ` +
+          `${own}, not on ${here}. Pass --root ${here}` +
+          (DEFAULTS_MODES.includes(opts.mode) ? ` (and --from ${own} to read its look)` : '') +
+          '.'
+      )
+  }
+  if (DEFAULTS_MODES.includes(opts.mode) && !opts.from && !opts.kitRef && root !== own)
+    console.log(
+      `note: the defaults come from ${root}'s own record (its kit mirror at its kit commit), ` +
+        `not from ${own}; pass --from ${own} to read this script's checkout instead.`
+    )
   if (opts.mode === 'contrast') return contrast(root)
   if (opts.mode === 'apply-brand') return applyBrandFiles(root)
   if (opts.mode === 'adopt-default-look') return adoptDefaultLookFiles(root, opts)
+  if (opts.mode === 'add-missing-tokens') return addMissingTokensFiles(root, opts)
   return build(root, { check: opts.mode === 'check', open: opts.open })
 }
 
