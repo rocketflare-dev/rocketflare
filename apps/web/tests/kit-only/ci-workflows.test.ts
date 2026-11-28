@@ -129,7 +129,7 @@ describe('ci.yml', () => {
     expect(text).not.toMatch(/: write/)
     // The first step after the checkout, before any install.
     const steps = gate.filter(l => /^ {6}- /.test(l)).map(l => l.trim())
-    expect(steps[0]).toMatch(/^- uses: actions\/checkout@\S+/)
+    expect(steps[0]).toMatch(/^- uses: (?:actions|useblacksmith)\/checkout@\S+/)
     expect(steps[1]).toBe('- name: Verified by Launch?')
     const at = text.indexOf('- name: Verified by Launch?')
     const step = text.slice(at, text.indexOf('\n      - ', at + 1))
@@ -180,7 +180,7 @@ describe('deploy.yml', () => {
     expect(gated.join('\n')).toMatch(/permissions:\n\s+actions: read/)
     // The parent has to be in the clone for the version-only rule to diff against it.
     expect(gated.join('\n')).toMatch(
-      /actions\/checkout@[^\n]+\n\s+with:\n(?:\s+[\w-]+: [^\n]*\n)*\s+fetch-depth: 2/
+      /(?:actions|useblacksmith)\/checkout@[^\n]+\n\s+with:\n(?:\s+[\w-]+: [^\n]*\n)*\s+fetch-depth: 2/
     )
     expect(commands(gated)).toEqual(['node scripts/release-check.mjs --gated "$GITHUB_SHA"'])
   })
