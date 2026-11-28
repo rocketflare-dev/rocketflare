@@ -22,6 +22,7 @@
  *     content is translated, and their absence makes `git apply --3way` fail loudly rather than
  *     silently merge against the wrong preimage.
  */
+import { tokenBlocks } from './brand.mjs'
 import { applyReplacements, isExcluded } from './rename-lib.mjs'
 
 // ---------------------------------------------------------------- globs
@@ -129,6 +130,25 @@ export function upgraderHandoff({ local, target }) {
   // The script names the constant, never its value: that identifier is what marks one that
   // reads the hand-over.
   return /\bUPGRADE_ROOT_ENV\b/.test(target) ? 'delegate' : 'too-old'
+}
+
+/**
+ * The first release whose upgrader hands the run over (`UPGRADE_ROOT_ENV`). A copy below it plans
+ * every jump with its OWN old upgrader — no 3-way merge, the old name map, the vendored plugin
+ * skipped — and no code from the target release ever runs there, so the target can only TELL it,
+ * through the porting note the old upgrader copies into its plan (`docs/CONCEPTS.md` §13).
+ * `HANDOVER_STOP` is the release such a copy is told to stop at first.
+ */
+export const HANDOVER_VERSION = '0.44.0'
+export const HANDOVER_STOP = '0.44.1'
+
+/**
+ * True when an upgrader script cannot hand a run over — it predates `HANDOVER_VERSION`. Read over
+ * the COPY's `scripts/upgrade.mjs` after an apply: a patch to it that rejected leaves the copy on
+ * an upgrader that will plan every later jump itself, so the run says so instead of staying quiet.
+ */
+export function upgraderLeftBehind(scriptText) {
+  return typeof scriptText === 'string' && !/\bUPGRADE_ROOT_ENV\b/.test(scriptText)
 }
 
 /** The vitest project (`apps/web/vitest.config.ts`) that runs them — kit only, like its files. */
@@ -1103,4 +1123,124 @@ export function defaultPluginProblems(entries, version, resolve, { kitRepo = nul
     }
   }
   return problems
+}
+
+// ---------------------------------------------------------------- repairs of older upgrades
+
+/**
+ * A link to a page of the kit's website (`rocketflare.dev/<path>`) with nothing before it that
+ * makes it an app address — the rule `KIT.sitePattern` uses, plus the page path.
+ */
+const KIT_SITE_LINK = /(?<![\w.@-])rocketflare\.dev\/[\w/.#-]*/g
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * The kit-website links an older name map rewrote into the app's domain, put back.
+ *
+ * Until `KIT.sitePattern`, the rename and every upgrade translated `rocketflare.dev/plugins`,
+ * `/install.sh` and `/security/…` like an app address, so a copy's plugin catalogue URL, its
+ * installer line and its link to the kit's security page named pages of the app's OWN domain that
+ * do not exist. The current map keeps them, but nothing re-translates a file the kit has not
+ * changed since, so the upgrade repairs it: for each such link in the KIT's version of the same
+ * file (`kitText`, untranslated), its mistranslated form (`<domain>/<path>` with no subdomain or
+ * `@` before it) is put back in the copy's text. Only links the kit's own file carries are
+ * touched, so an app page of the same path in another file is left alone; a bare mention of the
+ * site, with no path, is never touched — it reads the same as the app's own apex.
+ *
+ * Pure: `{ text, repaired: [{ from, to, count }] }`, `text` identical when nothing changed.
+ */
+export function kitSiteRepairs(copyText, kitText, names) {
+  const repaired = []
+  if (!names?.domain || typeof copyText !== 'string' || typeof kitText !== 'string') {
+    return { text: copyText, repaired }
+  }
+  const links = [...new Set(kitText.match(KIT_SITE_LINK) ?? [])].sort((a, b) => b.length - a.length)
+  let text = copyText
+  for (const link of links) {
+    const wrong = names.domain + link.slice('rocketflare.dev'.length)
+    if (wrong === link) continue
+    let count = 0
+    text = text.replace(new RegExp(`(?<![\\w.@-])${escapeRe(wrong)}(?![\\w-])`, 'g'), () => {
+      count += 1
+      return link
+    })
+    if (count > 0) repaired.push({ from: wrong, to: link, count })
+  }
+  return { text: repaired.length > 0 ? text : copyText, repaired }
+}
+
+/**
+ * The files that carry the app's LOOK (`docs/CONCEPTS.md` §7), and the part of each that is the
+ * look: `theme-tokens.css` whole, the token blocks of `index.css`, the `theme-color` of
+ * `index.html`, the font imports of `main.tsx`. A copy that changed any of it has a look of its
+ * own, which an upgrade must never restyle hunk by hunk — the 0.45.0 note said to decline the new
+ * look, and the hunks that merged cleanly landed anyway: half a palette, and a font import whose
+ * package was never added. The look changes only through `pnpm design:docs --adopt-default-look`.
+ */
+export const LOOK_FILES = Object.freeze([
+  'apps/web/src/shared/theme-tokens.css',
+  'apps/web/src/ui/index.css',
+  'apps/web/src/ui/index.html',
+  'apps/web/src/ui/main.tsx',
+])
+
+/** The look part of one of `LOOK_FILES`, normalised; null for any other path or no text. */
+export function lookOf(relPath, text) {
+  if (typeof text !== 'string') return null
+  const tidy = t => t.replace(/[ \t]+$/gm, '').trim()
+  switch (relPath) {
+    case 'apps/web/src/shared/theme-tokens.css':
+      return tidy(text)
+    case 'apps/web/src/ui/index.css':
+      return tokenBlocks(text)
+        .map(b => `${b.kind} ${b.name ?? ''}{${tidy(text.slice(b.start, b.end))}}`)
+        .join('\n')
+    case 'apps/web/src/ui/index.html':
+      return /<meta name="theme-color" content="([^"]*)"/.exec(text)?.[1] ?? ''
+    case 'apps/web/src/ui/main.tsx':
+      return (text.match(/^import\s+['"]@fontsource[^'"]*['"]/gm) ?? []).join('\n')
+    default:
+      return null
+  }
+}
+
+/**
+ * The look files whose look part differs between the copy (`local`) and the kit release it is
+ * upgrading from (`base`, translated into the app's names), each a `{ path: text | null }` map.
+ * Empty means the copy still wears the kit's look, and its look files port like any other. A
+ * file missing on either side says nothing either way.
+ */
+export function lookDivergence({ local, base }) {
+  return LOOK_FILES.filter(p => {
+    const mine = lookOf(p, local?.[p] ?? null)
+    const kit = lookOf(p, base?.[p] ?? null)
+    return mine !== null && kit !== null && mine !== kit
+  })
+}
+
+/** Why a look file is `manual` in a copy with a look of its own. */
+export function lookManualReason(diverged) {
+  const files = diverged.map(p => p.split('/').pop()).join(', ')
+  return (
+    `this app has its own look (${files} differ from the kit's): take only the hunks outside the ` +
+    'look — the theme tokens, the `[data-theme]` blocks, `theme-color` and the font imports stay ' +
+    "yours; `pnpm design:docs --adopt-default-look` is the one way to take the kit's look"
+  )
+}
+
+/**
+ * The kit release a VENDORED plugin's file really is in this copy: the newest of `candidates`
+ * (`[{ ref, text }]`, newest first, each already translated) whose text is byte-identical to the
+ * copy's, or null when none is (local edits, or a name map that has moved since).
+ *
+ * The vendored plugin (`example-feature`) is ported like core since 0.44.0, but an upgrader older
+ * than that skipped it as plugin-owned. A copy that crossed releases with one is stamped at a later
+ * version while the plugin's files are still at the version it was made from, and an upgrade that
+ * ports only its own hop's diff never brings them forward. Finding the real base turns that drift
+ * back into an ordinary patch: base = that release, theirs = the target.
+ */
+export function matchingRelease(localText, candidates) {
+  if (typeof localText !== 'string') return null
+  for (const c of candidates ?? []) if (c.text === localText) return c.ref
+  return null
 }

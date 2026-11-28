@@ -1888,6 +1888,23 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   before anything is written, a plan run included: one that is not a plain path inside the
   repository (`scripts/lib/repo-paths.mjs`), is under `.git/`, or reaches an added file through a
   symlink stops the run.
+- **What the upgrade repairs and protects.** A copy below 0.44.0 runs its OWN upgrader, so no
+  code from the target ever runs there: the only channel to it is the porting notes, which its
+  upgrader copies into the plan and its `/rf-upgrade` reads before applying. So the kit tells it
+  in a note: stop, upgrade to **0.44.1** first (`HANDOVER_STOP`), then continue — from there the
+  target's upgrader plans every jump. That second jump repairs what an old upgrader left: the
+  **vendored plugin** is brought to the target's version (each file compared with the kit's own
+  releases, translated, and ported from the one it really is — `matchingRelease`; an addition or
+  deletion the old upgrader skipped is planned too), and **kit-website links** the old name map
+  rewrote into the app's domain are put back (`kitSiteRepairs`; the map now keeps the apex
+  `rocketflare.dev` and its pages, `KIT.sitePattern`, while `app.`/`staging.`/`noreply@`/
+  `security@` still move). A copy whose **look** differs from the kit's at its recorded version
+  (`LOOK_FILES`: `theme-tokens.css`, the token blocks of `index.css`, `theme-color`, the font
+  imports of `main.tsx`) gets those files as `manual` — the look changes only through
+  `pnpm design:docs --adopt-default-look`. Every file the apply writes goes through the copy's own
+  Biome (`scripts/lib/biome-run.mjs`, shared with `pnpm plugin`), since a translated name moves
+  line lengths and import order. After an apply, a copy whose `scripts/upgrade.mjs` still cannot
+  hand over is warned, because its next upgrade would plan without every fix since.
 - **A copy starts with a design**:
   - `/rf-start` is the one entry point the website's prompt names. It runs, in order:
     1. `scripts/detach.sh`, which records the kit commit in `.rocketflare.json` and replaces the
@@ -1974,7 +1991,13 @@ because Launch's scaffold runs the rename and nothing is left to rename after it
 `launch.kit.json` as a `manual` diff translated through the token map, so a hunk touching its `kit`
 block reads as renamed (keep the kit's id and name); a copy that predates the contract gets
 `kit.id` only by following that release's porting note; `plugins.add` cannot express an entry
-without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today. The guard is
+without a `subdir` (`--subdir` refuses an empty value), which no default plugin has today. A copy
+below 0.44.0 cannot be stopped by code, only told by a note: an agent or person that skips the
+notes and applies a far jump with the old upgrader still gets the old result (repaired on the next
+upgrade, from 0.44.1 on); a vendored-plugin file with local edits matches no release and is only
+named in a warning; a mistranslated bare mention of the site (no page path) is not repaired; the
+look check compares only the look files, so a look built elsewhere (a component's own colours)
+still takes the kit's hunks. The guard is
 Claude Code only (an editor, a terminal or another agent never sees it, and no gate step checks the
 ledger); an edit made through Bash is seen only at `Stop`, through `git status`, so it is never
 paused; the pause costs one refused tool call per steer path per session, and an agent that retries

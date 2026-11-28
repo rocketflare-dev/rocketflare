@@ -4,7 +4,7 @@ previous: 0.46.0
 date: null
 breaking: false
 migrations: []
-areas: [api, cli, db, shared, ui, plugins, config, docs]
+areas: [api, cli, db, shared, ui, plugins, config, docs, scripts]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -37,25 +37,34 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - `pnpm plugin check` warns when a plugin's server source reads a form body (`parseBody()` / `formData()`) and the plugin declares no `uploadTargets`, `uploadPaths`, `uploadLimits` or public-mount `bodyLimitBytes`. Such a route gets the 1 MB body cap, so any larger file is a 413 whatever the route's own `bodyLimit` says (`docs/CONCEPTS.md` §16).
 - `pnpm db:generate` refuses a new migration in which a generated column's expression reads a column that the same file only adds further down (Postgres: 42703 `column … does not exist`). The check is static, so it also runs where the scratch check is skipped. `--check` now runs it over every migration. A 42703 from the scratch check says to move the `ADD COLUMN` first.
 - Docs: `docs/upgrades/0.45.0.md` step 13 says to check the statement order of the `kit-knowledge-context` migration and to move the two `ADD COLUMN`s above the `search_vector` regeneration.
+- `kit:upgrade` brings a vendored plugin (`example-feature`) to the target's version: each of its files is compared with the kit's own releases and ported from the one it really is (`matchingRelease` in `scripts/lib/upgrade-lib.mjs`), and a plugin file the kit added or deleted since is planned too. An upgrader older than 0.44.0 skipped the plugin, and later jumps ported only their own diff onto it. See `docs/CONCEPTS.md` §13.
+- The name map keeps the kit's website: the apex `rocketflare.dev` and its pages (`/plugins`, `/install.sh`, `/security/…`) are never translated (`KIT.sitePattern` in `scripts/lib/rename-lib.mjs`); `app.`, `staging.`, `noreply@` and `security@` addresses still move. `kit:upgrade` puts back such a link an older map rewrote into the app's domain, in any tracked file whose kit version carries it (`kitSiteRepairs`), and prints a `repaired` line per file.
+- A copy whose look differs from the kit's at its recorded version gets `theme-tokens.css`, `index.css`, `index.html` and `ui/main.tsx` as `manual` (`LOOK_FILES`, `lookDivergence`), so clean hunks no longer restyle it by halves; a copy on the kit's look takes them as before.
+- `kit:upgrade --apply` runs the copy's Biome (`check --write`) over every file it wrote, as `pnpm plugin` does (`scripts/lib/biome-run.mjs`, new, shared by both), because a longer app name pushes translated imports past 100 columns or re-sorts them.
+- A handed-over `kit:upgrade` prints `1/6 kit` once; after an apply it warns when the copy's own `scripts/upgrade.mjs` still cannot hand over (`upgraderLeftBehind`).
+- `/rf-upgrade` says which `.rocketflare.json` keys an upgrade edits by hand (the ones a note's step names) and which never (`kit`, `history`).
 
 ## How to apply
 
-1. Add `APP_TAGLINE = "<the app's one-line tagline>"` and `LOGIN_PANEL_ART = "<rocket or type>"` to `[vars]` in BOTH `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`, copying the two values from `LOGIN_PANEL` in the app's `apps/web/src/ui/lib/login-panel.ts`.
-2. Check that `APP_NAME` in `[vars]` of both tomls is the name the UI should show: the UI now shows that value, where it previously showed the `APP_NAME` constant in `apps/web/src/ui/hooks/useAppInfo.ts`.
-3. `apps/web/src/ui/components/shared/LogoMark.tsx` is a `manual` path, so the upgrade does not replace it. To use the logo setting, port the kit's `LogoMark` wrapper (it reads `logoUrl` from `useAppInfo()` and renders an `<img data-brand-logo>` with an `onError` fallback) around the app's own inline mark; an app that keeps its inline mark and sets no `APP_LOGO_URL` needs no change.
-4. Optional: to serve the logo as a setting, put the files under `apps/web/src/ui/public/` and set `APP_LOGO_URL` and `APP_FAVICON_URL` in `[vars]` of both tomls to their root-relative paths, or to `https://` URLs.
-5. Optional: to style a configured logo (round a JPEG's corners, add a ring, filter it in the dark theme), add a rule such as `[data-brand-logo] { border-radius: 22%; }` to `apps/web/src/shared/theme-tokens.css`, and `[data-theme$="-dark"] [data-brand-logo] { … }` for a dark-theme difference; the rule needs the `data-brand-logo` attribute on the `<img>` in the app's `LogoMark.tsx`. `pnpm design:docs --adopt-default-look` keeps it (it prints `kept theme-tokens.css [data-brand-logo]`).
-6. Replace any app import of `LOGIN_PANEL` that decides what a page shows with `useAppInfo()`'s `loginPanelArt` and `tagline`.
-7. Check that `apps/web/src/ui/index.html` has a `<title>` element: the build now fails without one.
-8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
-9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
-10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
-11. If you ported 0.46.0 by hand and rewrote a plugin's UI or CLI call that posted `FormData` to the plugin's own `uploadPaths` route, you may restore the original call. In the UI, use `api.postForm(url, formData, options)`, or leave `api.upload(url, formData, options)` as it was before 0.46.0. In the CLI, use `client.postForm(path, form, { schema })`. Both are deprecated: the lasting fix is an `uploadTargets` entry in the plugin's own release (0.46.0 step 7).
-12. Run `pnpm plugin check`. For each `upload-body-cap` warning, decide whether the route takes files above 1 MB. If it does, declare its prefix in the plugin's `uploadPaths` (`'/api/<id>/…'`, up to 10 MB) or its exact path in `uploadLimits` (up to 50 MiB), or move it to `uploadTargets`. A small text-only form needs neither.
-13. Take `scripts/design-docs.mjs`, `scripts/lib/brand.{mjs,d.mts}` as they are.
-14. Optional, for an app that kept its own look when it crossed 0.45.0 (that note's step 25): after this upgrade is applied, run `pnpm design:docs --add-missing-tokens` to write any token of the look the app's blocks still lack, in place of adding them by hand, then `pnpm design:docs --contrast` and look at the app. Tune any added value in place: the command never changes a token the app already has.
-15. If `apps/web/vite.config.ts` lost its `'/mcp': proxyTo(),` line after an earlier `pnpm plugin upgrade analytics` (it sits in `server.proxy`, after `'/ws'`), put the line back. The other kit proxy entries, `'/oauth'` and the `'^/\\.well-known/…'` entry, should be there too: compare that block with the kit's `apps/web/vite.config.ts`.
-16. If an app's `.dev.vars` carries a `DATABASE_URL` port that something else now holds, `pnpm dev:db:up` stops and names the holder: free the port, or pick another with `pnpm dev:db:up --port <n>`.
+1. **A copy on a kit older than 0.44.0 stops here.** Its `.rocketflare.json` `kit.version` is below 0.44.0, or `grep -c UPGRADE_ROOT_ENV scripts/upgrade.mjs` prints 0: its own upgrader is planning this jump, with no 3-way merge, an older name map and the vendored plugin skipped, and nothing in this release can change that. Discard an apply it already made (`git reset --hard`, then delete each `*.rej` it left), run `pnpm kit:upgrade --to 0.44.1 --apply`, finish and commit that release by its own note, then run `pnpm kit:upgrade` again for this one: from 0.44.1 on, the target's upgrader plans the jump and repairs what the old one left.
+2. Add `APP_TAGLINE = "<the app's one-line tagline>"` and `LOGIN_PANEL_ART = "<rocket or type>"` to `[vars]` in BOTH `apps/web/wrangler.toml` and `apps/web/wrangler.staging.toml`, copying the two values from `LOGIN_PANEL` in the app's `apps/web/src/ui/lib/login-panel.ts`.
+3. Check that `APP_NAME` in `[vars]` of both tomls is the name the UI should show: the UI now shows that value, where it previously showed the `APP_NAME` constant in `apps/web/src/ui/hooks/useAppInfo.ts`.
+4. `apps/web/src/ui/components/shared/LogoMark.tsx` is a `manual` path, so the upgrade does not replace it. To use the logo setting, port the kit's `LogoMark` wrapper (it reads `logoUrl` from `useAppInfo()` and renders an `<img data-brand-logo>` with an `onError` fallback) around the app's own inline mark; an app that keeps its inline mark and sets no `APP_LOGO_URL` needs no change.
+5. Optional: to serve the logo as a setting, put the files under `apps/web/src/ui/public/` and set `APP_LOGO_URL` and `APP_FAVICON_URL` in `[vars]` of both tomls to their root-relative paths, or to `https://` URLs.
+6. Optional: to style a configured logo (round a JPEG's corners, add a ring, filter it in the dark theme), add a rule such as `[data-brand-logo] { border-radius: 22%; }` to `apps/web/src/shared/theme-tokens.css`, and `[data-theme$="-dark"] [data-brand-logo] { … }` for a dark-theme difference; the rule needs the `data-brand-logo` attribute on the `<img>` in the app's `LogoMark.tsx`. `pnpm design:docs --adopt-default-look` keeps it (it prints `kept theme-tokens.css [data-brand-logo]`).
+7. Replace any app import of `LOGIN_PANEL` that decides what a page shows with `useAppInfo()`'s `loginPanelArt` and `tagline`.
+8. Check that `apps/web/src/ui/index.html` has a `<title>` element: the build now fails without one.
+9. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
+10. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
+11. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+12. If you ported 0.46.0 by hand and rewrote a plugin's UI or CLI call that posted `FormData` to the plugin's own `uploadPaths` route, you may restore the original call. In the UI, use `api.postForm(url, formData, options)`, or leave `api.upload(url, formData, options)` as it was before 0.46.0. In the CLI, use `client.postForm(path, form, { schema })`. Both are deprecated: the lasting fix is an `uploadTargets` entry in the plugin's own release (0.46.0 step 7).
+13. Run `pnpm plugin check`. For each `upload-body-cap` warning, decide whether the route takes files above 1 MB. If it does, declare its prefix in the plugin's `uploadPaths` (`'/api/<id>/…'`, up to 10 MB) or its exact path in `uploadLimits` (up to 50 MiB), or move it to `uploadTargets`. A small text-only form needs neither.
+14. Take `scripts/design-docs.mjs`, `scripts/lib/brand.{mjs,d.mts}` as they are.
+15. Optional, for an app that kept its own look when it crossed 0.45.0 (that note's step 25): after this upgrade is applied, run `pnpm design:docs --add-missing-tokens` to write any token of the look the app's blocks still lack, in place of adding them by hand, then `pnpm design:docs --contrast` and look at the app. Tune any added value in place: the command never changes a token the app already has.
+16. If `apps/web/vite.config.ts` lost its `'/mcp': proxyTo(),` line after an earlier `pnpm plugin upgrade analytics` (it sits in `server.proxy`, after `'/ws'`), put the line back. The other kit proxy entries, `'/oauth'` and the `'^/\\.well-known/…'` entry, should be there too: compare that block with the kit's `apps/web/vite.config.ts`.
+17. If an app's `.dev.vars` carries a `DATABASE_URL` port that something else now holds, `pnpm dev:db:up` stops and names the holder: free the port, or pick another with `pnpm dev:db:up --port <n>`.
+18. If `pnpm lint` fails on warnings in files this upgrade did not change (`noExplicitAny`, `noForEach`, `noArrayIndexKey`), the copy crossed 0.39.0, whose root `package.json` `lint` script gained `--error-on-warnings`: fix each one, or mark an earned exception with a `// biome-ignore <rule>: <reason>` line. A Biome format or import-order error in a file the upgrade wrote is fixed by `pnpm lint:fix`.
+19. If the commented `dead_letter_queue` line in `apps/web/wrangler.staging.toml` names `<app>-jobs-staging-dlq`, change it to `<app>-jobs-dlq-staging`, the name `pnpm provision cloudflare staging` creates and `tests/config/wrangler-parity.test.ts` requires.
 
 ## Conflicts to expect
 
@@ -78,6 +87,7 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 7. `pnpm test ui apps/web/tests/ui/api-client.test.ts` passes, including the `postForm (deprecated)` cases.
 8. `pnpm --filter @rocketflare/cli test` passes, including `postForm (deprecated)`.
 9. `pnpm test config apps/web/tests/config/migration-check.test.ts` passes.
-10. After step 14, running `pnpm design:docs --add-missing-tokens` again prints `Nothing to add`, and `pnpm design:docs --contrast` passes.
+10. After step 15, running `pnpm design:docs --add-missing-tokens` again prints `Nothing to add`, and `pnpm design:docs --contrast` passes.
 11. `pnpm dev:db:up --port <a free port>` starts the database on that port and writes it to `apps/web/.dev.vars`.
-12. `pnpm gate` passes.
+12. `grep -rn "<the app's domain>/plugins" scripts .claude docs SETUP.md` prints nothing, and `apps/web/src/plugins/example-feature/index.ts` matches the kit's at this release in the app's names.
+13. `pnpm gate` passes.

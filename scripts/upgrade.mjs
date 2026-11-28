@@ -57,6 +57,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BIOME_FILE_RE, formatWritten } from './lib/biome-run.mjs'
 import {
   collectChanges,
   collectRenames,
@@ -74,10 +75,16 @@ import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-pat
 import {
   absentSurfaces,
   classifyPath,
+  compareVersions,
   countLines,
   kitOnlyGlobs,
+  kitSiteRepairs,
+  LOOK_FILES,
   localEditFor,
+  lookDivergence,
+  lookManualReason,
   matchesAny,
+  matchingRelease,
   NOTES_SUBDIR,
   notePath,
   noteReportLines,
@@ -89,6 +96,7 @@ import {
   UPGRADE_ROOT_ENV,
   UPGRADER_FILES,
   upgraderHandoff,
+  upgraderLeftBehind,
 } from './lib/upgrade-lib.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -350,9 +358,14 @@ function main(argv) {
     cwd: REPO_ROOT,
     warn,
   })
-  out(`✔ 1/6 kit       mirror ${WORK_DIR}/kit.git ready (${manifest.kit.repo})`)
-  if (!gitQuiet(['check-ignore', '-q', WORK_DIR]).ok) {
-    warn(`note: add \`${WORK_DIR}/\` to .gitignore — it is a cache, not part of your app`)
+  // A handed-over run (`handOver`) was started by the copy's own upgrader, which has already said
+  // both of these: saying them again printed `1/6 kit` twice.
+  const delegated = Boolean(process.env[UPGRADE_DELEGATED_ENV])
+  if (!delegated) {
+    out(`✔ 1/6 kit       mirror ${WORK_DIR}/kit.git ready (${manifest.kit.repo})`)
+    if (!gitQuiet(['check-ignore', '-q', WORK_DIR]).ok) {
+      warn(`note: add \`${WORK_DIR}/\` to .gitignore — it is a cache, not part of your app`)
+    }
   }
 
   // refs
@@ -391,7 +404,7 @@ function main(argv) {
 
   // The TARGET release's upgrader plans this jump, not this copy's: a fix to the upgrader released
   // inside the range otherwise never applies to the one jump that crosses it (#178).
-  if (!process.env[UPGRADE_DELEGATED_ENV]) {
+  if (!delegated) {
     const handed = handOver(kit, to, names, argv)
     if (handed !== null) return handed
   }
@@ -511,6 +524,61 @@ function main(argv) {
     if (edit) f.localEdit = edit
   }
 
+  const warnings = []
+  // A VENDORED plugin's files brought to the target, not only moved by this hop. An upgrader older
+  // than the hand-over skipped them as plugin-owned, so a copy can be stamped at a later release
+  // while they are still at the release it was made from — and this hop's diff, applied to them,
+  // neither lands nor brings the skipped range with it. Each file is compared with the kit's own
+  // releases (translated) to find the one it really is, and ported from there (`f.base`).
+  const drifted = vendoredDrift({
+    kit,
+    from,
+    to,
+    fromVersion,
+    names,
+    files,
+    tracked,
+    vendoredPlugins,
+  })
+  for (const d of drifted.files) {
+    const existing = files.find(f => f.path === d.path)
+    if (existing) Object.assign(existing, d)
+    else files.push(d)
+  }
+  warnings.push(...drifted.warnings)
+
+  // The look (`LOOK_FILES`): a copy that changed it keeps it. Its look files are `manual` this time
+  // — the patch would land every hunk that merged cleanly and restyle the app by halves — and the
+  // look changes only through `pnpm design:docs --adopt-default-look`. A copy still on the kit's
+  // look takes them like any other file.
+  const lookDiverged = lookDivergence({
+    local: Object.fromEntries(
+      LOOK_FILES.map(p => [
+        p,
+        localSet.has(p) ? readFileSync(path.join(REPO_ROOT, p), 'utf8') : null,
+      ])
+    ),
+    base: Object.fromEntries(
+      LOOK_FILES.map(p => {
+        const r = kit.tryShow(from, p)
+        return [p, r.ok ? applyNames(r.out, names) : null]
+      })
+    ),
+  })
+  if (lookDiverged.length > 0) {
+    for (const f of files) {
+      if (!LOOK_FILES.includes(f.path) || (f.class !== 'modified' && f.class !== 'added-collides'))
+        continue
+      f.class = 'manual'
+      f.reason = lookManualReason(lookDiverged)
+      f.look = true
+    }
+  }
+
+  // Kit-website links an older name map rewrote into the app's domain (`kitSiteRepairs`): found in
+  // every tracked file whose kit version links the site, whether or not this release changed it.
+  const repairs = siteRepairs({ kit, to, names, localSet })
+
   // Every path this release names, before anything is written — a plan run included, because its
   // artifacts are written under the same paths. An added file also must not land through a symlink.
   const unsafePaths = files.flatMap(f => {
@@ -539,12 +607,11 @@ function main(argv) {
 
   const patches = []
   const addedFiles = []
-  const warnings = []
   if (!args.dryRun) {
     artifacts.reset()
     for (const f of files) {
       if (f.class === 'modified' || f.class === 'verbatim') {
-        const raw = kit.run(['diff', '--no-renames', from, to, '--', f.path])
+        const raw = kit.run(['diff', '--no-renames', f.base ?? from, to, '--', f.path])
         const blocks = splitDiff(raw)
         if (blocks.length === 0) continue
         let translated
@@ -586,7 +653,7 @@ function main(argv) {
         if (f.change === 'modified' && f.class !== 'binary' && localSet.has(f.path)) {
           const merged = mergeKitChange(f, {
             kit,
-            from,
+            from: f.base ?? from,
             to,
             names,
             workRoot,
@@ -646,9 +713,13 @@ function main(argv) {
       surface: f.surface,
       touchesPluginRegistry: f.touchesPluginRegistry,
       ...(f.localEdit ? { localEdit: f.localEdit } : {}),
+      ...(f.base ? { base: f.base } : {}),
+      ...(f.look ? { look: true } : {}),
       ...(f.merge ? { merge: f.merge } : {}),
     })),
     renames,
+    repairs: repairs.map(r => ({ path: r.path, repaired: r.repaired })),
+    look: { diverged: lookDiverged },
     counts: byClass,
     warnings,
     workDir,
@@ -677,6 +748,8 @@ function main(argv) {
   const removed = []
   const keptDeletes = []
   if (args.apply && !args.dryRun) {
+    // Before the patch: a hunk whose context carries a kit link now matches the repaired line.
+    for (const r of repairs) writeFileSync(path.join(REPO_ROOT, r.path), r.text)
     for (const rel of addedFiles) {
       const abs = containedPath(REPO_ROOT, rel)
       mkdirSync(path.dirname(abs), { recursive: true })
@@ -721,7 +794,14 @@ function main(argv) {
           // sorted the imports differently from the kit's at the old version (#178). A 3-way merge
           // of the two kit versions into the copy's file resolves most of those outright.
           const merged = existsSync(path.join(REPO_ROOT, f.path))
-            ? mergeKitChange(f, { kit, from, to, names, workRoot, translate: f.translate })
+            ? mergeKitChange(f, {
+                kit,
+                from: f.base ?? from,
+                to,
+                names,
+                workRoot,
+                translate: f.translate,
+              })
             : null
           if (merged && merged.conflicts === 0) {
             writeFileSync(path.join(REPO_ROOT, f.path), merged.text)
@@ -739,6 +819,20 @@ function main(argv) {
       }
     }
     toStage.push(...addedFiles)
+    // A repaired file is staged with the rest, unless its patch left work in it.
+    for (const r of repairs) {
+      if (!rejectedFiles.includes(r.path) && !conflictedFiles.includes(r.path)) toStage.push(r.path)
+    }
+    // Translated kit files are formatted for the kit's names, not this app's: a longer name pushes
+    // an import past 100 columns or re-sorts it, and the gate's first step fails on a file this run
+    // wrote. The same Biome pass `pnpm plugin` runs over what it writes.
+    const formatted = formatWritten(
+      REPO_ROOT,
+      [...new Set(toStage)].filter(
+        p => BIOME_FILE_RE.test(p) && existsSync(path.join(REPO_ROOT, p))
+      ),
+      { warn }
+    )
     // `--apply-deletes`: after the patch, before the stamp. `git rm` — never a plain unlink — so a
     // file with local edits (possible only under --force) is refused and kept, not lost.
     if (args.applyDeletes) {
@@ -770,6 +864,10 @@ function main(argv) {
           ? `; ${outstanding} file(s) with rejects or conflicts left unstaged until you resolve them`
           : '')
     )
+    if (formatted) out(`  formatted   ${formatted}`)
+    for (const r of repairs) {
+      out(`  repaired    ${r.path} — ${r.repaired.map(x => `${x.from} → ${x.to}`).join(', ')}`)
+    }
     for (const m of mergedFiles)
       out(`  merged      ${m} — the patch did not apply; a 3-way merge did`)
     for (const c of conflictedFiles) {
@@ -778,6 +876,17 @@ function main(argv) {
     for (const k of keptDeletes) {
       warn(
         `warning: ${k} — the kit deleted it, but \`git rm\` refused (local edits?); left in place`
+      )
+    }
+    // The hand-over only works if the copy's OWN upgrader can hand over: one left behind (its patch
+    // rejected, or never ported) plans every later jump itself, with every fix since missing.
+    const ownScript = path.join(REPO_ROOT, UPGRADER_FILES.script)
+    if (existsSync(ownScript) && upgraderLeftBehind(readFileSync(ownScript, 'utf8'))) {
+      warn(
+        `WARNING: this copy's ${UPGRADER_FILES.script} still predates the hand-over, so the next`,
+        "`pnpm kit:upgrade` will plan with it, not with the target release's. Take the kit's file",
+        `(\`git --git-dir ${WORK_DIR}/kit.git show ${plan.to.ref}:${UPGRADER_FILES.script} > ${UPGRADER_FILES.script}\`)`,
+        'and resolve its reject before you commit this upgrade.'
       )
     }
     if (outstanding > 0) {
@@ -863,6 +972,103 @@ function handOver(kit, to, names, argv) {
   return r.status ?? 1
 }
 
+/**
+ * The vendored plugins' files whose real base is not `from` (`matchingRelease`), each as a file
+ * entry this run ports from that base to `to`: `{ files, warnings }`. Files `from` explains (the
+ * copy's text is the kit's at `from`) are left to the hop's own diff.
+ *
+ * - present here and at `to`, but not the kit's at `from`: the newest older release whose text it
+ *   is becomes `base`, and the file is `modified` from there; none at all is a local edit, left to
+ *   the hop and named in a warning;
+ * - at `to` but never in this copy's history: an addition the old upgrader skipped → `added`
+ *   (a file this copy once tracked and deleted stays deleted);
+ * - here, gone at `to`, and a release's own file: a deletion it skipped → `deleted`.
+ */
+function vendoredDrift({ kit, from, to, fromVersion, names, files, tracked, vendoredPlugins }) {
+  const out = { files: [], warnings: [] }
+  if (vendoredPlugins.length === 0) return out
+  const hop = new Map(files.map(f => [f.path, f]))
+  const atTo = kit.listFiles(to)
+  const older = kit.releaseTags().filter(t => fromVersion && compareVersions(t, fromVersion) < 0)
+  const kitText = (ref, rel, translate) => {
+    const r = kit.tryShow(ref, rel)
+    if (!r.ok) return null
+    return translate ? applyNames(r.out, names) : r.out
+  }
+  const everTracked = rel => git(['log', '--format=%H', '-1', '--', rel]).trim() !== ''
+  for (const p of vendoredPlugins) {
+    const owns = rel => matchesAny(rel, p.paths ?? [])
+    const target = atTo.filter(owns)
+    const local = tracked.filter(owns)
+    for (const rel of target) {
+      const translate = !isExcluded(rel)
+      const entry = { path: rel, surface: p.id, translate }
+      if (!local.includes(rel)) {
+        if (hop.has(rel) || everTracked(rel)) continue
+        out.files.push({
+          ...entry,
+          change: 'added',
+          class: 'added',
+          reason: `vendored plugin ${p.id}: the kit added it in a release an older upgrader skipped`,
+        })
+        continue
+      }
+      const mine = readFileSync(path.join(REPO_ROOT, rel), 'utf8')
+      if (mine === kitText(to, rel, translate) || mine === kitText(from, rel, translate)) continue
+      const base = matchingRelease(
+        mine,
+        older.map(ref => ({ ref, text: kitText(ref, rel, translate) })).filter(c => c.text !== null)
+      )
+      if (!base) {
+        out.warnings.push(
+          `${rel}: vendored plugin ${p.id} — matches no kit release (local edits?); compare it with the kit's at ${to}`
+        )
+        continue
+      }
+      out.files.push({
+        ...entry,
+        change: 'modified',
+        class: 'modified',
+        base,
+        reason: `vendored plugin ${p.id}: still the kit's ${base} (an older upgrader skipped it); ported from there`,
+      })
+    }
+    for (const rel of local) {
+      if (target.includes(rel) || hop.has(rel)) continue
+      if (!older.some(ref => kit.tryShow(ref, rel).ok)) continue
+      out.files.push({
+        path: rel,
+        surface: p.id,
+        translate: false,
+        change: 'deleted',
+        class: 'deleted',
+        reason: `vendored plugin ${p.id}: the kit removed it in a release an older upgrader skipped`,
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * Every tracked, translated file in which a kit-website link was mistranslated into the app's
+ * domain, with its repaired text: `[{ path, text, repaired }]` (`kitSiteRepairs`). The kit's
+ * version at `to` says which links the file carries.
+ */
+function siteRepairs({ kit, to, names, localSet }) {
+  const hits = kit.quiet(['grep', '-l', '-I', '-F', 'rocketflare.dev/', to]).out
+  const out = []
+  for (const line of hits.split('\n')) {
+    const rel = line.startsWith(`${to}:`) ? line.slice(to.length + 1) : ''
+    if (!rel || !localSet.has(rel) || isExcluded(rel)) continue
+    const abs = path.join(REPO_ROOT, rel)
+    if (!existsSync(abs)) continue
+    const mine = readFileSync(abs, 'utf8')
+    const r = kitSiteRepairs(mine, kit.show(to, rel), names)
+    if (r.repaired.length > 0) out.push({ path: rel, text: r.text, repaired: r.repaired })
+  }
+  return out
+}
+
 /** A line `git merge-file` writes around a conflict. */
 const CONFLICT_MARKER = /^(<{7}|>{7}) /m
 
@@ -933,6 +1139,26 @@ function report(plan, notes, applicable, { dryRun, applied, applyDeletes, remove
       `Skipped ${pluginOwned.length} file(s) owned by installed plugin(s) (${ids.join(', ')}). ` +
         `Upgrade those with \`pnpm plugin upgrade <id>\`, after this.`
     )
+  }
+  const drifted = plan.files.filter(f => f.base || /older upgrader/.test(f.reason ?? ''))
+  if (drifted.length > 0) {
+    lines.push(
+      '',
+      'vendored-drift — vendored plugin files an older upgrader skipped, brought to the target',
+      '(a changed file is ported from the kit release it still is):'
+    )
+    for (const f of drifted)
+      lines.push(`  ${f.path} — ${f.class}${f.base ? ` from ${f.base}` : ''}`)
+  }
+  // After an apply the `repaired` lines above have said it.
+  if (plan.repairs?.length > 0 && !applied) {
+    lines.push(
+      '',
+      `kit-website links an older name map rewrote into ${plan.names.domain} — put back with --apply:`
+    )
+    for (const r of plan.repairs) {
+      lines.push(`  ${r.path} — ${r.repaired.map(x => `${x.from} → ${x.to}`).join(', ')}`)
+    }
   }
   const registryTouches = plan.files.filter(f => f.touchesPluginRegistry?.length > 0)
   if (registryTouches.length > 0) {
