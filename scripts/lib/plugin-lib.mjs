@@ -1652,6 +1652,17 @@ export function surfaceDirectories(surface) {
     .filter(p => p !== '' && !p.includes('*'))
 }
 
+/**
+ * The directories of a surface that hold the source the host compiles: the plugin's trees under
+ * `apps/web`, `packages/shared` and `apps/cli`. Never `docs/plugins/<id>/` (an example there is
+ * code a reader copies elsewhere, its imports relative to where it will land) or a skill
+ * directory, which no workspace package typechecks.
+ */
+export function pluginCodeDirectories(surface) {
+  const code = pluginRoots(surface.id).filter(root => !root.startsWith('docs/'))
+  return surfaceDirectories(surface).filter(d => code.some(root => `${d}/`.startsWith(root)))
+}
+
 /** Where a plugin's manifest copy lands in a host. */
 export function pluginAnchor(manifest) {
   return manifest.anchor ?? `apps/web/src/plugins/${manifest.id}/plugin.json`

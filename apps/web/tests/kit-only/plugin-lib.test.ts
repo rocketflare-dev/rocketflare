@@ -70,6 +70,7 @@ import {
   partialCoreEdits,
   pinDeclaredRanges,
   planSteps,
+  pluginCodeDirectories,
   pluginIdProblem,
   pluginManifestProblems,
   pluginMigrationTag,
@@ -923,6 +924,26 @@ describe('the surface an install records', () => {
     expect(surfaceDirectories(surface)).toEqual([
       'apps/web/src/plugins/orders',
       'docs/plugins/orders',
+    ])
+  })
+
+  it('checks the imports of the trees the host compiles, never an example under docs/', () => {
+    const surface = {
+      id: 'orders',
+      paths: [
+        'apps/web/src/plugins/orders/**',
+        'packages/shared/src/plugins/orders/**',
+        'apps/cli/src/plugins/orders/**',
+        'docs/plugins/orders/**',
+        '.claude/skills/orders-admin/**',
+        // A longer id sharing the prefix is another plugin's tree.
+        'apps/web/src/plugins/orders-extra/**',
+      ],
+    } as Surface
+    expect(pluginCodeDirectories(surface)).toEqual([
+      'apps/web/src/plugins/orders',
+      'packages/shared/src/plugins/orders',
+      'apps/cli/src/plugins/orders',
     ])
   })
 

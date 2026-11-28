@@ -318,6 +318,7 @@ export function buildPluginSurface(
   }
 ): Surface
 export function surfaceDirectories(surface: Surface): string[]
+export function pluginCodeDirectories(surface: Surface): string[]
 export function pluginAnchor(manifest: { id: string; anchor?: string }): string
 export function manifestPathProblems(
   manifest: object | null | undefined,
