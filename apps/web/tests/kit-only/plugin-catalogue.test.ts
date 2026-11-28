@@ -265,6 +265,37 @@ function makeRepo(tree: Record<string, string>, tags: string[]) {
   return root
 }
 
+/** A later commit in `root` with `tree` written over it, tagged with each of `tags`. */
+function release(root: string, tree: Record<string, string>, tags: string[]) {
+  for (const [rel, text] of Object.entries(tree)) write(root, rel, text)
+  git(root, ['add', '-A'])
+  git(root, ['commit', '-qm', tags.join(' ')])
+  for (const t of tags) git(root, ['tag', '-a', '-m', t, t])
+}
+
+/**
+ * Per-plugin tags (#181) after the last lockstep one: `orders` released on its own at 3.2.0, a
+ * new `refunds` that only ever had its own tag, and `invoices` still at the lockstep 3.1.0.
+ */
+function mixedRepo() {
+  const root = makeRepo(MONOREPO, ['3.1.0'])
+  release(
+    root,
+    { [`plugins/orders/${PLUGIN_MANIFEST_FILE}`]: manifest('orders', { version: '3.2.0' }) },
+    ['orders-v3.2.0']
+  )
+  release(
+    root,
+    {
+      [`plugins/refunds/${PLUGIN_MANIFEST_FILE}`]: manifest('refunds', { version: '1.0.0' }),
+      // Changed on main but not released: invoices stays at what 3.1.0 holds.
+      [`plugins/invoices/${PLUGIN_MANIFEST_FILE}`]: manifest('invoices', { version: '9.9.9' }),
+    },
+    ['refunds-v1.0.0']
+  )
+  return root
+}
+
 const run = (host: string, args: string[], sources: { repo: string; commercial?: boolean }[]) => {
   try {
     const out = execFileSync('node', [path.join(host, 'scripts/plugin.mjs'), ...args], {
@@ -317,6 +348,38 @@ describe('plugin list --available', () => {
     ])
   })
 
+  it('reads each plugin at its newest release when per-plugin tags sit beside lockstep ones', () => {
+    const host = makeHost()
+    const open = mixedRepo()
+    const r = run(host, ['list', '--available'], [{ repo: open }])
+    expect(r.status, r.err).toBe(0)
+    expect(r.out).toContain(`Plugins (${open}, each at its newest release)`)
+    expect(r.out).toMatch(/^ {2}orders +3\.2\.0 /m)
+    expect(r.out).toMatch(/^ {2}invoices +3\.1\.0 /m)
+    expect(r.out).toMatch(/^ {2}refunds +1\.0\.0 /m)
+
+    const json = JSON.parse(run(host, ['list', '--available', '--json'], [{ repo: open }]).out)
+    const tags = Object.fromEntries(
+      json.catalogues[0].plugins.map((p: { id: string; tag: string }) => [p.id, p.tag])
+    )
+    expect(tags).toEqual({
+      bare: '3.1.0',
+      invoices: '3.1.0',
+      orders: 'orders-v3.2.0',
+      refunds: 'refunds-v1.0.0',
+    })
+  })
+
+  it('reads a repository that has only per-plugin tags', () => {
+    const host = makeHost()
+    const open = makeRepo(MONOREPO, ['orders-v1.0.0'])
+    const r = run(host, ['list', '--available', '--json'], [{ repo: open }])
+    expect(r.status, r.err).toBe(0)
+    expect(
+      JSON.parse(r.out).catalogues[0].plugins.map((p: { id: string; tag: string }) => p.tag)
+    ).toEqual(['orders-v1.0.0'])
+  })
+
   it('says nothing at all about a commercial repository it cannot read', () => {
     const host = makeHost()
     const open = makeRepo(MONOREPO, ['3.1.0'])
@@ -363,6 +426,18 @@ describe('plugin add <bare id>', () => {
     expect(r.out).toContain(`orders → ${open}@3.1.0 --subdir plugins/orders`)
     const pinned = run(host, ['add', 'orders@3.0.0'], [{ repo: open }])
     expect(pinned.out).toContain(`orders@3.0.0 → ${open}@3.0.0 --subdir plugins/orders`)
+  })
+
+  it('resolves an id to its own <id>-vX.Y.Z release, else the lockstep tag (#181)', () => {
+    const host = makeHost()
+    const open = mixedRepo()
+    const add = (spec: string) => run(host, ['add', spec], [{ repo: open }]).out
+    expect(add('orders')).toContain(`orders → ${open}@orders-v3.2.0 --subdir plugins/orders`)
+    expect(add('refunds')).toContain(`refunds → ${open}@refunds-v1.0.0 --subdir plugins/refunds`)
+    expect(add('invoices')).toContain(`invoices → ${open}@3.1.0 --subdir plugins/invoices`)
+    // A typed version: the plugin's own tag when it has one, else the lockstep tag as typed.
+    expect(add('orders@3.2.0')).toContain(`→ ${open}@orders-v3.2.0 --subdir plugins/orders`)
+    expect(add('orders@3.1.0')).toContain(`→ ${open}@3.1.0 --subdir plugins/orders`)
   })
 
   it('finds a commercial id in its own repository, and refuses an id in neither', () => {

@@ -35,7 +35,16 @@ export interface Mirror {
   /** Every `X.Y.Z` release tag, newest first. */
   releaseTags(): string[]
   latestTag(): string | null
+  /** Newest release of plugin `id`: its own `<id>-vX.Y.Z` tag or a lockstep `X.Y.Z` (#181). */
+  latestTagFor(id: string | null, options?: { manifest?: string | null }): string | null
+  /** A typed bare `X.Y.Z` as `<id>-vX.Y.Z` when that tag exists; any other ref unchanged. */
+  releaseRef<T extends string | null | undefined>(id: string | null, ref: T): T
 }
+/** A release tag in either form: `X.Y.Z` (lockstep, id null) or `<id>-vX.Y.Z`; else null. */
+export function parseReleaseTag(tag: string): { id: string | null; version: string } | null
+export function pluginReleaseTag(id: string, version: string): string
+/** The tags that can release `id`, newest first, its own tag first on a tie. */
+export function releaseCandidates(tags: readonly string[], id?: string | null): string[]
 export function mirror(dir: string): Mirror
 export function ensureMirror(
   repo: string,
@@ -96,3 +105,11 @@ export interface Writer {
   reset(): void
 }
 export function makeWriter(root: string): Writer
+/** The newest lockstep tag, and each plugin whose own tag is at least as new, by id. */
+export function newestReleases(
+  tags: readonly string[],
+  options?: { inLockstep?: (id: string) => boolean }
+): {
+  lockstep: string | null
+  own: Map<string, string>
+}

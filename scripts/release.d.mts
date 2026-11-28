@@ -45,7 +45,7 @@ export function releaseContext(
  * What `resolveDefaultPlugin` asks of a mirror. A test injects a stub with just these three, which
  * is why the parameter is narrowed rather than typed as the whole `Mirror`.
  */
-export type MirrorReader = Pick<Mirror, 'resolves' | 'latestTag' | 'tryShow'>
+export type MirrorReader = Pick<Mirror, 'resolves' | 'releaseRef' | 'latestTagFor' | 'tryShow'>
 
 export function resolveDefaultPlugin(
   entry: DefaultPluginEntry,

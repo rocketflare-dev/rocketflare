@@ -12,12 +12,16 @@ export interface PublishedPlugin {
   version: string | null
   subdir: string
   requires: string[]
+  /** The release tag it is installed from (#181): its own `<id>-vX.Y.Z` or the lockstep `X.Y.Z`. */
+  ref?: string
 }
 export interface MatrixEntry {
   id: string
   version: string | null
   /** `id=subdir` pairs, space separated, in install order. */
   installs: string
+  /** `id=ref` pairs for the plugins with a ref of their own; the rest install at `plugins_ref`. */
+  refs: string
 }
 export interface MatrixResult {
   id: string
@@ -37,8 +41,25 @@ export function matrixEntries(
   plugins: readonly PublishedPlugin[],
   options?: { only?: readonly string[]; fullHouse?: boolean }
 ): MatrixEntry[]
+export function pluginsFromTree(
+  files: readonly string[],
+  read: (file: string) => string
+): PublishedPlugin[]
 export function readPlugins(root: string): PublishedPlugin[]
+export function parseReleaseTag(tag: string): { id: string | null; version: string } | null
+export function lsRemoteTags(lsRemote: string): string[]
+export function newestReleases(
+  tags: readonly string[],
+  options?: { inLockstep?: (id: string) => boolean }
+): {
+  lockstep: string | null
+  own: Map<string, string>
+}
 export function newestTag(lsRemote: string): string | null
+export function latestPlugins(
+  tags: readonly string[],
+  readAt: (tag: string) => PublishedPlugin[]
+): { lockstep: string | null; plugins: PublishedPlugin[] }
 export function parseFailures(log: string): { gateSteps: string[]; tests: string[] }
 export function countWarnings(checkJson: string | null, id: string): number | null
 export function failingStep(steps: StepsContext | null | undefined, gateSteps?: readonly string[]): string | null

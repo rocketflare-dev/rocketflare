@@ -94,8 +94,9 @@ signature, read the entry file (`docs/plugin-api.md` lists them).
 What can be installed, read live: `pnpm plugin list --available [--json]` mirrors each published
 repository (`PLUGIN_CATALOGUES` in `scripts/lib/plugin-lib.mjs` — the first-party
 `rocketflare-dev/rocketflare-plugins`, then `rocketflare-dev/rocketflare-commercial-plugins`)
-through the same `.upgrade/plugins/` mirror `add` uses, ALWAYS fetching, and reads it at its newest
-`X.Y.Z` tag. Every `rocketflare-plugin.json` up to three directories deep is one plugin (never one
+through the same `.upgrade/plugins/` mirror `add` uses, ALWAYS fetching, and reads every plugin
+of its newest lockstep `X.Y.Z` tag, then each plugin whose own `<id>-vX.Y.Z` tag is at least as
+new (or that the lockstep tag does not hold) at that tag instead (CONCEPTS §16). Every `rocketflare-plugin.json` up to three directories deep is one plugin (never one
 inside another). Its line is id, version, `installed` (or `installed <older version>`) and a
 description: the manifest's own `"description"` when it has one, else the opening `>` blockquote of
 the `README.md` beside it (else that README's first sentence), else its `label`. The kit holds no

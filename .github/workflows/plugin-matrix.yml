@@ -209,6 +209,7 @@ jobs:
         working-directory: kit
         env:
           INSTALLS: ${{ matrix.installs }}
+          REFS: ${{ matrix.refs }}
         run: |
           set -euo pipefail
           # db:generate runs `dotenv -e .dev.vars`; a throwaway local database URL, nothing secret.
@@ -217,8 +218,11 @@ jobs:
           for pair in $INSTALLS; do
             id="${pair%%=*}"
             subdir="${pair#*=}"
-            echo "::group::plugin add $id ($PLUGINS_REPO@$PLUGINS_REF, $subdir)"
-            pnpm plugin add "$PLUGINS_REPO@$PLUGINS_REF" --subdir "$subdir" --apply "${dirty[@]}"
+            # Each plugin at its own latest release (#181): its `id=ref` in REFS, else PLUGINS_REF.
+            ref="$PLUGINS_REF"
+            for r in $REFS; do if [ "${r%%=*}" = "$id" ]; then ref="${r#*=}"; fi; done
+            echo "::group::plugin add $id ($PLUGINS_REPO@$ref, $subdir)"
+            pnpm plugin add "$PLUGINS_REPO@$ref" --subdir "$subdir" --apply "${dirty[@]}"
             dirty=(--allow-dirty)
             pnpm db:generate --name "plugin-$id-matrix"
             echo "::endgroup::"

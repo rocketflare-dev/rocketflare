@@ -15,12 +15,16 @@ import {
   failingStep,
   installOrder,
   jobVerdicts,
+  latestPlugins,
   type MatrixResult,
   matrixEntries,
   missingResults,
+  newestReleases,
   newestTag,
   type PublishedPlugin,
   parseFailures,
+  parseReleaseTag,
+  pluginsFromTree,
   readPlugins,
   STEP_NAMES,
   summaryTable,
@@ -65,11 +69,13 @@ describe('installOrder / matrixEntries', () => {
         id: 'm365',
         version: '3.14.0',
         installs: 'connectors=plugins/connectors m365=plugins/m365',
+        refs: '',
       },
       {
         id: FULL_HOUSE,
         version: '3 plugins',
         installs: 'analytics=plugins/analytics connectors=plugins/connectors m365=plugins/m365',
+        refs: '',
       },
     ])
     expect(matrixEntries(PLUGINS, { fullHouse: false }).map(e => e.id)).toEqual([
@@ -107,6 +113,81 @@ describe('readPlugins / newestTag', () => {
     )
     expect(newestTag(lsRemote)).toBe('3.14.0')
     expect(newestTag('')).toBeNull()
+  })
+})
+
+describe('per-plugin tags (#181)', () => {
+  const TAGS = ['3.13.0', '3.14.0', 'analytics-v3.15.0', 'analytics-v3.14.1', 'guide-v3.14.0']
+  const at = (tag: string, version: string, ids = ['analytics', 'connectors', 'guide']) =>
+    ids.map(id => ({ ...plugin(id), version, tag }))
+
+  it('reads both tag forms and nothing else', () => {
+    expect(parseReleaseTag('3.14.0')).toEqual({ id: null, version: '3.14.0' })
+    expect(parseReleaseTag('global-search-v3.15.0')).toEqual({
+      id: 'global-search',
+      version: '3.15.0',
+    })
+    for (const t of ['v3.14.0', 'analytics@3.15.0', 'analytics-3.15.0', 'main', '3.14'])
+      expect(parseReleaseTag(t)).toBeNull()
+  })
+
+  it("takes each plugin's own tag when it is at least as new as the lockstep one", () => {
+    const { lockstep, own } = newestReleases(TAGS)
+    expect(lockstep).toBe('3.14.0')
+    // guide's own 3.14.0 ties the lockstep 3.14.0 and wins the tie.
+    expect([...own]).toEqual([
+      ['analytics', 'analytics-v3.15.0'],
+      ['guide', 'guide-v3.14.0'],
+    ])
+    // An older own tag loses to the lockstep tag that holds the plugin…
+    expect(newestReleases(['3.14.0', 'sso-v1.0.0']).own.size).toBe(0)
+    // …and is the plugin's release when the lockstep tag does not hold it.
+    expect([...newestReleases(['3.14.0', 'sso-v1.0.0'], { inLockstep: () => false }).own]).toEqual([
+      ['sso', 'sso-v1.0.0'],
+    ])
+  })
+
+  it('resolves every plugin to its latest release, with the ref it installs from', () => {
+    const readAt = (tag: string) =>
+      tag === '3.14.0'
+        ? at(tag, '3.14.0')
+        : tag.startsWith('analytics-')
+          ? at(tag, '3.15.0', ['analytics', 'connectors'])
+          : tag.startsWith('guide-')
+            ? at(tag, '3.14.0')
+            : at(tag, '1.0.0', ['analytics', 'connectors', 'guide', 'sso'])
+    const { lockstep, plugins } = latestPlugins([...TAGS, 'sso-v1.0.0'], readAt)
+    expect(lockstep).toBe('3.14.0')
+    expect(plugins.map(p => [p.id, p.version, p.ref])).toEqual([
+      ['analytics', '3.15.0', 'analytics-v3.15.0'],
+      ['connectors', '3.14.0', '3.14.0'],
+      ['guide', '3.14.0', 'guide-v3.14.0'],
+      ['sso', '1.0.0', 'sso-v1.0.0'],
+    ])
+    const [entry] = matrixEntries(plugins, { only: ['analytics'], fullHouse: false })
+    expect(entry.refs).toBe('analytics=analytics-v3.15.0')
+    // Lockstep only: every plugin at the one tag, exactly as before.
+    expect(latestPlugins(['3.13.0', '3.14.0'], readAt).plugins.map(p => p.ref)).toEqual([
+      '3.14.0',
+      '3.14.0',
+      '3.14.0',
+    ])
+  })
+
+  it('reads a tree from a file list as readPlugins reads a checkout', () => {
+    const tree: Record<string, string> = {
+      'plugins/a/rocketflare-plugin.json': JSON.stringify({ id: 'a', version: '1.0.0' }),
+      'plugins/a/node_modules/x/rocketflare-plugin.json': JSON.stringify({ id: 'x' }),
+      '.github/rocketflare-plugin.json': JSON.stringify({ id: 'hidden' }),
+    }
+    expect(pluginsFromTree(Object.keys(tree), f => tree[f])).toEqual([
+      { id: 'a', version: '1.0.0', subdir: 'plugins/a', requires: [] },
+    ])
+  })
+
+  it('the workflow installs each plugin at its own ref, else plugins_ref', () => {
+    expect(WORKFLOW).toMatch(/REFS: \$\{\{ matrix\.refs \}\}/)
+    expect(WORKFLOW).toContain('pnpm plugin add "$PLUGINS_REPO@$ref"')
   })
 })
 
