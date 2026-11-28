@@ -315,6 +315,8 @@ function adoptDefaultLookFiles(root, opts) {
   })
   for (const m of r.missing) console.error(`warning: ${m}`)
   for (const k of r.kept) console.log(`kept ${k} (yours; the default look has no such token)`)
+  for (const c of r.carried)
+    console.log(`kept ${c} (yours; carried over from your theme-tokens.css)`)
   for (const p of r.brand?.problems ?? []) console.error(`warning: brand.css: ${p}`)
   for (const u of r.brand?.unknown ?? [])
     console.error(`warning: brand.css: ${u} is not a token of the default look; ignored`)
