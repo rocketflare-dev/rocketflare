@@ -2,7 +2,9 @@
  * `pnpm db:generate` — `drizzle-kit generate`, then a scratch check: when it wrote a migration,
  * every migration is applied to a throwaway database on the local dev Postgres, which is dropped
  * afterwards. A migration Postgres refuses is reported in plain words while it is still unapplied
- * and editable (drizzle-kit can order a composite FOREIGN KEY before the UNIQUE it needs).
+ * and editable (drizzle-kit can order a composite FOREIGN KEY before the UNIQUE it needs). Before
+ * it, a static read refuses a generated column whose expression reads a column the same migration
+ * adds only later — the one order fault it can see without a database, so it also runs on Neon.
  *
  *   pnpm db:generate [drizzle-kit generate flags…]   # e.g. --name kit-mcp-server, --custom
  *   pnpm db:generate --check                          # only the scratch check, after a hand fix
@@ -14,12 +16,13 @@
  */
 import { spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
-import { readdirSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import postgres from 'postgres'
 import { APP_ROLE } from '../src/db/schema/rls'
 import {
   describeMigrationFailure,
+  generatedColumnOrderIssues,
   newMigrationFiles,
   scratchCheckRefusal,
   scratchDatabaseName,
@@ -82,8 +85,29 @@ async function scratchCheck(added: string[]): Promise<number> {
   }
 }
 
+/**
+ * The static half, before any database: a generated column reading a column the same migration
+ * adds further down (Postgres: 42703). Runs where the scratch check is skipped, too.
+ */
+function orderCheck(files: readonly string[]): number {
+  let failed = 0
+  for (const file of files) {
+    const sql = readFileSync(path.join(MIGRATIONS, file), 'utf8')
+    for (const issue of generatedColumnOrderIssues(sql)) {
+      failed++
+      console.error(
+        `✖ migrations/${file}: statement ${issue.usedAt} regenerates "${issue.table}"."${issue.generated}" ` +
+          `from "${issue.column}", which statement ${issue.addedAt} only adds — Postgres refuses ` +
+          `it (column does not exist). Move the ADD COLUMN "${issue.column}" above it, then run ` +
+          '`pnpm db:generate --check`.'
+      )
+    }
+  }
+  return failed > 0 ? 1 : 0
+}
+
 async function main(argv: string[]): Promise<number> {
-  if (argv.includes('--check')) return scratchCheck([])
+  if (argv.includes('--check')) return orderCheck(listMigrations()) || scratchCheck([])
   const before = listMigrations()
   const generate = spawnSync('drizzle-kit', ['generate', ...argv], {
     cwd: WEB_DIR,
@@ -93,7 +117,7 @@ async function main(argv: string[]): Promise<number> {
   if (generate.status !== 0) return generate.status ?? 1
   const added = newMigrationFiles(before, listMigrations())
   if (added.length === 0) return 0
-  return scratchCheck(added)
+  return orderCheck(added) || scratchCheck(added)
 }
 
 main(process.argv.slice(2)).then(

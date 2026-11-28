@@ -53,9 +53,11 @@ import {
   ensureMirror,
   makeGit,
   makeWriter,
+  mirror,
   mirrorDirFor,
   notesBetween,
   PLUGIN_MIRROR_ROOT,
+  repoReachable,
 } from './lib/git-lib.mjs'
 import { hostKitVersion, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
@@ -78,6 +80,7 @@ import {
   classifyPluginFile,
   claudeHookProblems,
   coreEditsByFile,
+  coreLineOwner,
   declaredTools,
   declaresProperty,
   declaresPublicSites,
@@ -133,7 +136,7 @@ import {
   reservedMountPaths,
   resolveSubdir,
   restoreWorkerFirst,
-  revertCoreEdits,
+  revertCoreEditsKeeping,
   SKILLS_ROOT,
   setClaudeHooks,
   settleReprovision,
@@ -147,6 +150,7 @@ import {
   undeclaredManifestEvents,
   undeclaredSkillDirs,
   unresolvedPluginImports,
+  uploadBodyProblems,
   withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
@@ -362,6 +366,40 @@ function installedManifests(host, exceptId) {
       return []
     }
   })
+}
+
+/**
+ * The kit's own copy of `file` at the release this host records, in the host's names — read from
+ * the mirror `kit:upgrade` keeps (`.upgrade/kit.git`), never fetched. Null in the kit repository
+ * (its checkout is the kit, plugins and all) or when the mirror or the release is not there.
+ */
+function kitFileText(host, file) {
+  if (host.isKit) return null
+  const dir = path.join(REPO_ROOT, '.upgrade', 'kit.git')
+  if (!existsSync(dir)) return null
+  const kit = mirror(dir)
+  const ref = [host.manifest.kit?.commit, host.manifest.kit?.version].find(
+    r => typeof r === 'string' && r !== '' && kit.resolves(r)
+  )
+  if (!ref) return null
+  const shown = kit.tryShow(ref, file)
+  if (!shown.ok) return null
+  return host.names ? applyReplacements(shown.out, host.names).text : shown.out
+}
+
+/**
+ * Revert core edits a plugin no longer declares, keeping every line the host still owns: the
+ * kit's release carries it (a line the kit adopted after a plugin first wrote it), the kit reserves
+ * its path, or another installed plugin declares it. Returns the lines kept.
+ */
+function revertCoreEditsInFile(host, file, edits, others) {
+  const owner = coreLineOwner(file, {
+    kitText: kitFileText(host, file),
+    otherEdits: others.flatMap(o => o.coreEdits ?? []),
+  })
+  const r = revertCoreEditsKeeping(readFileSync(abs(file), 'utf8'), edits, owner)
+  writeFileSync(abs(file), r.text)
+  return r.kept
 }
 
 const wranglerTomls = () =>
@@ -1185,11 +1223,26 @@ function cmdUpgrade(args, host) {
   if (args.continue) args.apply = true
   else if (args.apply) requireClean(args)
 
-  const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
-    fetch: args.fetch,
-    cwd: REPO_ROOT,
-    warn,
-  })
+  // An app records its OWN in-tree plugins too, often with a repo that does not exist or that
+  // this machine cannot read. Said once, before any clone, rather than after two failed clones
+  // and git's own error text — which never mention that the plugin lives only here.
+  const unreachable = () =>
+    stop(
+      3,
+      `error: ${id} has no reachable source (repo ${source.repo ?? 'not recorded'}).`,
+      `If it is your own plugin, it lives only in this app: edit it in place under ${surface.anchor ? path.dirname(surface.anchor) : `apps/web/src/plugins/${id}`}/.`,
+      'If it is published, check the repo URL recorded for it and your access, then re-run.'
+    )
+  const mirrorDir = source.repo ? pluginMirrorDir(source.repo) : null
+  if (!mirrorDir) unreachable()
+  if (!existsSync(mirrorDir) && args.fetch && !repoReachable(source.repo, REPO_ROOT)) unreachable()
+  let m
+  try {
+    m = ensureMirror(source.repo, mirrorDir, { fetch: args.fetch, cwd: REPO_ROOT, warn })
+  } catch (err) {
+    if (err?.exitCode === 3) unreachable()
+    throw err
+  }
   const subdir = (source.subdir ?? '').replace(/^\/|\/$/g, '')
   const relative = subdir === '' ? null : subdir
   const from = args.from ?? source.commit
@@ -1655,6 +1708,7 @@ function cmdUpgrade(args, host) {
   // were introduced to remove. Idempotent, so a line already present is not written twice.
   const coreEditWarnings = []
   const coreEditFiles = []
+  const coreEditKept = []
   if (targetManifest) {
     const wanted = coreEditsByFile(targetManifest)
     // An edit the new release no longer declares is REVERTED, or the host keeps a line pointing at
@@ -1663,7 +1717,9 @@ function cmdUpgrade(args, host) {
       const keep = wanted.get(file) ?? []
       const dropped = edits.filter(e => !keep.some(k => coreEditKey(k) === coreEditKey(e)))
       if (dropped.length === 0 || !existsSync(abs(file))) continue
-      writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), dropped))
+      for (const line of revertCoreEditsInFile(host, file, dropped, others)) {
+        coreEditKept.push(`${file}: ${line}`)
+      }
       coreEditFiles.push(file)
     }
     for (const [file, edits] of wanted) {
@@ -1737,6 +1793,7 @@ function cmdUpgrade(args, host) {
       (newSeeds.length > 0 ? `, ${newSeeds.length} host file(s) seeded` : ''),
     ...(settings.changed ? [`✔ Claude Code hooks replaced in ${CLAUDE_SETTINGS_FILE}`] : []),
     ...(coreEditFiles.length > 0 ? [`✔ core edit(s) applied to ${coreEditFiles.join(', ')}`] : []),
+    ...coreEditKept.map(k => `  kept (the kit or another plugin owns it): ${k}`),
     ...coreEditWarnings.map(w => `  warning: ${w}`),
     ...(prunedPatterns.size > 0
       ? [
@@ -2037,9 +2094,12 @@ function cmdRemove(args, host) {
   // The exact inverse of what `add` wrote, so uninstalling does not strand an alias pointing at
   // a directory that has just been deleted.
   const removedEdits = coreEditsByFile(anchorManifest)
+  const keptEdits = []
   for (const [file, edits] of removedEdits) {
     if (!existsSync(abs(file))) continue
-    writeFileSync(abs(file), revertCoreEdits(readFileSync(abs(file), 'utf8'), edits))
+    for (const line of revertCoreEditsInFile(host, file, edits, remaining)) {
+      keptEdits.push(`${file}: ${line}`)
+    }
   }
   writeWranglerTomls(routed)
   writeClaudeSettings(settings)
@@ -2051,6 +2111,7 @@ function cmdRemove(args, host) {
     ...(removedEdits.size > 0
       ? [`✔ core edit(s) reverted in ${[...removedEdits.keys()].join(', ')}`]
       : []),
+    ...keptEdits.map(k => `  kept (the kit or another plugin owns it): ${k}`),
     ...(restoreRouting ? ['✔ run_worker_first and not_found_handling restored in both tomls'] : []),
     ...(settings.changed
       ? [`✔ ${settings.removed.length} Claude Code hook(s) removed from ${CLAUDE_SETTINGS_FILE}`]
@@ -2722,6 +2783,16 @@ function cmdCheck(args, host) {
     for (const { file, text } of sources) {
       const tools = declaredTools(text, constants)
       if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+    }
+    // **A multipart route under the 1 MB cap.** Server sources only: the UI half reads no request.
+    const serverSources = sources.filter(s => !/\/ui\//.test(s.file.slice(tree.length)))
+    for (const p of uploadBodyProblems(manifest.id, serverSources)) {
+      add(p.severity, `${p.pluginId}:${p.kind}`, {
+        file: p.file,
+        line: p.line,
+        problem: p.problem,
+        fix: p.fix,
+      })
     }
   }
   for (const p of toolProblems(toolDeclarations)) {

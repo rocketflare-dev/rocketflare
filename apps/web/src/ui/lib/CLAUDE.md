@@ -5,7 +5,9 @@ The rules every UI edit follows (cache-only server data, realtime roots, SSE via
 
 - `api-client.ts` — `ApiError`, `parseErrorBody` (reuse it for any non-JSON transport),
   `setUnauthorizedHandler` / `notifyUnauthorized` (the global 401 path, coalesced), `api.upload`
-  for a direct upload (presign → `PUT` to storage, `credentials: 'omit'` → confirm). `queryClient.ts` routes `QueryCache` and `MutationCache` 401s into it.
+  for a direct upload (presign → `PUT` to storage, `credentials: 'omit'` → confirm), and the DEPRECATED `api.postForm(url, formData)` (also
+  `api.upload(url, formData)`, an overload) for a plugin's own `uploadPaths` route — `request()`
+  drops the JSON `Content-Type` for a `FormData` body. `queryClient.ts` routes `QueryCache` and `MutationCache` 401s into it.
 - `query-keys.ts` — `queryKeys` = `CORE_QUERY_KEYS` spread with every plugin's families, plus
   `cleanFilters` / `toSearchParams`. The family roots are what `REALTIME_INVALIDATIONS` names;
   `agentRuns.all` is `['agent-run']` because that is the nudge's `entity`.

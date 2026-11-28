@@ -61,7 +61,7 @@ host ever names a plugin.
   dependencies are declared in `plugin.json`; `pnpm provision cloudflare <env>` writes BOTH tomls
   (`.claude/rules/cloudflare.md`). A line it needs in any other core file (`vite.config.ts`'s dev
   proxy or an alias) is a declared `coreEdits` entry — anchored on text, applied by `plugin add`,
-  reverted by `remove` — never a hand edit. A DO / Workflow class is re-exported (nothing else) from
+  reverted by `remove` (except a line the kit itself also carries) — never a hand edit. A DO / Workflow class is re-exported (nothing else) from
   `src/plugins/<id>/worker-exports.ts` and named in `workerExports`.
 - **It never renames anything across releases** — expand/contract only; drizzle-kit's rename prompt
   has no non-interactive answer, so a rename stops an unattended install dead.
@@ -167,7 +167,10 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   object's key, size and type (already checked against the declaration) and `read()`, and answers
   the response. The client is `api.upload('<id>.<name>', file, { fields })`. CONCEPTS §16.
   `uploadPaths` / `uploadLimits` (a multipart route taking the bytes) still work but are
-  DEPRECATED: never add one; move an existing one to `uploadTargets`.
+  DEPRECATED: never add one; move an existing one to `uploadTargets`. **A multipart route with
+  neither keeps the 1 MB body cap** — a larger file is a 413 before the route's own `bodyLimit`
+  runs (`pnpm plugin check` warns: `upload-body-cap`). Until it moves, its client is the
+  deprecated `api.postForm(url, formData, { schema })` (UI) / `postForm(path, form)` (CLI).
 - **Storage is `ctx.storage()`** (keyed `tenants/<tenantId>/<id>/…`, so `tenant.purge` removes it),
   never `env.FILES` with a hand-built prefix.
 - **Knowledge goes through `ingestDocument` / `ingestDocumentFile`**, never a `documents` insert:

@@ -500,7 +500,9 @@ path); no per-PR previews.
   enums, `vector(1024)` (a new dimension means a new table). `migrate.ts` creates the `vector`
   extension first. Detail: `.claude/rules/database.md`.
 - **Local port is chosen** (`scripts/dev-db.mjs`): each checkout gets its own compose project and
-  port, written back to `DATABASE_URL`, so two copies never share a database.
+  port, written back to `DATABASE_URL`, so two copies never share a database. A chosen port
+  (`--port`, `DEV_DB_PORT`, or a non-default `.dev.vars` port) is kept or refused with its holder
+  named, never moved; "held" means any running container publishes it or a bind/connect test fails.
 - **Or an existing database** (`pnpm bootstrap --db-url <url>`): for a machine with no Docker (a
   coding sandbox on a Neon branch). The URL goes into `DATABASE_URL` and nothing is started; a
   `*.neon.tech` URL also sets `DATABASE_DRIVER=neon` there (HTTPS + WebSocket only, which is what a
@@ -630,6 +632,10 @@ project.
   - Without the key pair the bytes pass through the Worker, so a deployed target is capped at
     `MAX_WORKER_UPLOAD_BYTES` (10 MB; a larger file is 413 with `details.directUploads: false`).
     `development` takes the target's own `maxBytes`, so local dev needs no R2 credentials.
+  - **A route that takes the bytes itself gets the 1 MB cap.** A plugin's own multipart route
+    (`parseBody()` / `formData()`) is held to the host's 1 MB body limit unless the plugin declares
+    the deprecated `uploadPaths` / `uploadLimits` for it (§16). Without them a file above 1 MB is a
+    413, whatever the route's own `bodyLimit` says. `pnpm plugin check` warns about such a route.
 - **`/api/files`**: files arrive through the `avatars` / `uploads` targets (avatars allowlist
   images); tenant-scoped read (another
   tenant's file is 404) with ETag/304; **only allowlisted types render inline, everything else is
@@ -723,9 +729,7 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   both themes (a dark-theme rule on the hook can filter it, not swap it); the logo's styling is
   compiled in, so deployments of one build share it — a per-deployment `APP_LOGO_STYLE` was
   weighed and left out, because a copy has one brand and the setting needs a CSS allowlist that
-  still could not carry a per-theme rule; `pnpm design:docs --adopt-default-look` rebuilds
-  `theme-tokens.css` from the kit's file and keeps only token declarations, so it drops a
-  `[data-brand-logo]` rule without reporting it — re-add the rule from the diff; colours and type
+  still could not carry a per-theme rule; colours and type
   remain a build-time brand (`docs/design/brand.css`), because their contrast is checked at
   build.
 - **Home sections**: Home is an operational dashboard laid out from `pages/home-sections.ts`, a
@@ -765,7 +769,27 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   from the upgrade's mirror `.upgrade/kit.git` at `.rocketflare.json` `kit.commit`, or
   `--from <kit checkout>` — translated into the copy's names: `theme-tokens.css` whole, the
   `[data-theme]` blocks of `index.css` (its styles untouched), `theme-color`; a token of the app's
-  own the defaults lack is kept; then brand.css on top (`adoptDefaultLook`). `/rf-design` also
+  own the defaults lack is kept, and so is everything of the app's in `theme-tokens.css` outside
+  the token blocks (a `[data-brand-logo]` rule, an `@media` block, its `:root` logo colours, each
+  printed as `kept …`); then brand.css on top (`adoptDefaultLook`). An app keeping its OWN look
+  runs `--add-missing-tokens` instead (same `--from` / `--kit-ref`): it writes each token the
+  release's look defines and the app's blocks lack, into the block the kit keeps it in, and
+  changes no token the app has (`addMissingTokens`). Each value is derived from the app's
+  palette: a token the kit holds equal to one of the app's (`--rail-active` is the primary,
+  `--radius-control` is `--radius-field`) takes the app's value; a colour keeps the kit's
+  lightness, chroma and hue offset from its nearest colour the app also has; `--flare` keeps its
+  own hue; a shadow is turned to the app's hue; a face in `--font-sans`/`--font-mono` is left
+  out. Each added colour's lightness is then nudged until every `contrastPairs()` pair it is in
+  passes, each printed as `added …`; a pair that cannot pass (against a token of the app's that
+  already fails) means exit 1 and nothing written. `--adopt-default-look`, `--add-missing-tokens`
+  and `--apply-brand` then warn about each face `@theme` names that nothing loads — not imported
+  in `ui/main.tsx` or not in `apps/web/package.json`, and no `@font-face` or stylesheet link for
+  it — with the import and the `pnpm --filter ./apps/web add <pkg>@<version>` to run, the version
+  read from the kit's own `package.json` (`fontLoading`); they never write either file. The script
+  works on `--root <dir>`, else the checkout it sits in, so a newer kit's script runs on a copy
+  whose own is older as `node <kit>/scripts/design-docs.mjs --root <copy> --from <kit> …`; run
+  from inside another checkout without `--root` it exits 2 naming the flag, and a `--from` that
+  is the checkout being worked on is refused. `/rf-design` also
   writes `docs/design/DESIGN.md`, the visual system in one page, which `.claude/rules/ui.md` sends
   agents to before they build a screen.
   `--check` exits 1 when the pages are stale. The output is deterministic, and a rebuild deletes only
@@ -792,8 +816,11 @@ and a brand font is linked from Google Fonts whenever it is not a known system f
 checking that Google serves it. A hue turn keeps lightness, not WCAG luminance: the light
 `--color-primary` on `--surface-active` falls just under 4.5:1 for hues near 165–210 (cyan), which
 the contrast gate catches and a brand.css nudge fixes. `--adopt-default-look` never ports the new
-look's font imports (`main.tsx`, `package.json`) or components — those arrive with the upgrade's
-patch — and in a brand.css a new font family still needs its package added by hand.
+look's components (they arrive with the upgrade's patch) and never writes a font import or
+dependency: it names them, and a family outside `@fontsource` gets a guessed package name.
+`--add-missing-tokens` derives a value by its nearest colour, so a token with no near relative in
+the app's palette can land somewhere the eye would not pick; the contrast floors hold, the taste
+is the app's to tune.
 
 ## 8. Analytics
 
@@ -2058,7 +2085,13 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   wrapped onto several lines still counts as present and is reverted whole, so an upgrade never
   writes it twice. `upgrade` also drops from `run_worker_first` the API prefixes the release no
   longer declares and no other plugin needs (`pruneWorkerFirst`; one entry of a kit-owned path
-  stays). Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
+  stays). The same rule holds for core edits: a line `upgrade` or `remove` reverts stays (one copy)
+  when the host still owns it — the kit's own copy of the file at the host's release carries it
+  (read from the `.upgrade/kit.git` mirror `kit:upgrade` keeps), it is a vite proxy entry for a
+  path the kit reserves (`/mcp`, `/oauth`, the discovery documents), or another installed plugin
+  declares it (`revertCoreEditsKeeping`). A plugin whose recorded `repo` cannot be reached (an
+  app's own in-tree plugin) makes `upgrade` stop with exit 3 before any clone, saying it lives only
+  in this app. Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
   `pnpm provision cloudflare <env>`.
 - **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
   `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys
@@ -2296,7 +2329,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `uploadPaths` prefix (under `/api/<id>/`) a non-JSON body may be 10 MB + 64 KB; an exact
   `uploadLimits` path, up to 50 MiB (clamped; `uploadLimitIssues` refuses more). A JSON body keeps
   1 MB on both. The route mounts its own `bodyLimit` and checks each file; the Worker holds it in
-  memory.
+  memory. **A multipart route declared in neither keeps the 1 MB cap**: the host's body limit runs
+  before the route's own `bodyLimit`, so a larger file is a 413 `payload_too_large` the route never
+  sees. `pnpm plugin check` warns when a plugin's server source reads `parseBody()` or `formData()`
+  and the plugin declares no `uploadTargets`, `uploadPaths`, `uploadLimits` or public-mount
+  `bodyLimitBytes` (a warning, because a small text-only form is fine at 1 MB). The client for
+  such a route is the deprecated `api.postForm(url, formData, { schema })` from `@/plugins/api/ui`
+  (`api.upload(url, formData)`, the 0.45 call, is a deprecated overload of it), and `postForm(path,
+  form, { schema })` on the CLI's `ApiClient`: the same cookie or API key, CSRF marker and error
+  envelope as every other call. They stay until a release that only removes deprecated API.
 - **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the

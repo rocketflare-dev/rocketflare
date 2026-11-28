@@ -118,7 +118,9 @@ is `// ui-allow <rule>: <reason>` on the line above; an allow with no reason is 
   no cookie, then confirm, whose answer `schema` parses. Never post a file to the Worker. Check
   type/size with `@rocketflare/shared/files` first (`validateAvatarFile`) so 413/415 are a
   backstop. `<img src={user.avatarUrl}>` needs an `onError` fallback to initials —
-  the object is tenant-scoped, the URL is not
+  the object is tenant-scoped, the URL is not. `api.postForm(url, formData)` (and the 0.45
+  overload `api.upload(url, formData)`) is DEPRECATED, kept only for a plugin's own `uploadPaths`
+  route; never write a new call
 - **A third-party provider with its own TanStack Query** escapes the global `onError`: give it a
   `QueryClient` mapping 401 → `notifyUnauthorized`, and pass `credentials` + `X-Requested-With`
 

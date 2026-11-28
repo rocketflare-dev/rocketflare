@@ -33,6 +33,8 @@ import {
   parseNvmrc,
   parseWhoami,
   planDefaultPlugins,
+  planDevDbPort,
+  publishedHostPorts,
   readDevVars,
   toggleAiBlock,
   upsertDevVar,
@@ -336,6 +338,79 @@ describe('chooseDevDbPort', () => {
 
   it('returns null when the whole range is taken, rather than a colliding port', () => {
     expect(chooseDevDbPort({ preferred: 5432, isAvailable: () => false })).toBeNull()
+  })
+})
+
+/**
+ * The rehearsal that found this: `.dev.vars` carried :5682, which is outside the 5432–5451 scan,
+ * so it read as "taken"; the database then moved, silently, onto :5432 — another project's
+ * container, published on an address the bind test did not see.
+ */
+describe('planDevDbPort', () => {
+  const free = () => null
+  const heldBy = (taken: Record<number, string>) => (p: number) => taken[p] ?? null
+
+  it('keeps a chosen port outside the scan range when it is free', () => {
+    expect(planDevDbPort({ preferred: 5682, pinned: true, holderOf: free })).toEqual({
+      port: 5682,
+      moved: false,
+    })
+  })
+
+  it('refuses a chosen port somebody else holds, naming them, instead of moving', () => {
+    const plan = planDevDbPort({
+      preferred: 5682,
+      pinned: true,
+      holderOf: heldBy({ 5682: 'container other-db' }),
+    })
+    expect(plan).toEqual({ error: expect.stringContaining('port 5682') })
+    expect('error' in plan && plan.error).toMatch(/container other-db/)
+    expect('error' in plan && plan.error).toMatch(/--port/)
+  })
+
+  it('honours or refuses a requested port, whatever .dev.vars says', () => {
+    expect(planDevDbPort({ requested: 6100, preferred: 5432, holderOf: free })).toEqual({
+      port: 6100,
+      moved: false,
+    })
+    const taken = planDevDbPort({
+      requested: 6100,
+      holderOf: heldBy({ 6100: 'another process' }),
+    })
+    expect('error' in taken && taken.error).toMatch(/6100 is taken by another process/)
+    expect('error' in planDevDbPort({ requested: 5433, holderOf: free })).toBe(true)
+    expect('error' in planDevDbPort({ requested: 70000, holderOf: free })).toBe(true)
+  })
+
+  it('moves an unpinned default port, past every port another container serves, and says why', () => {
+    const plan = planDevDbPort({
+      preferred: 5432,
+      holderOf: heldBy({ 5432: 'container a', 5434: 'container b' }),
+    })
+    expect(plan).toEqual({ port: 5435, moved: true, reason: ':5432 is taken by container a' })
+  })
+
+  it('errors when the whole range is held', () => {
+    expect(planDevDbPort({ preferred: null, holderOf: () => 'x' })).toEqual({
+      error: expect.stringMatching(/no free port/),
+    })
+  })
+})
+
+describe('publishedHostPorts', () => {
+  it('reads every published host port with its container, ranges included', () => {
+    const ps = [
+      'other-db	0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp',
+      'loopback-db	127.0.0.1:5682->5432/tcp',
+      'web	0.0.0.0:6000-6001->6000-6001/tcp',
+      'unpublished	5432/tcp',
+      '',
+    ].join('\n')
+    const ports = publishedHostPorts(ps)
+    expect(ports.get(5432)).toBe('other-db')
+    expect(ports.get(5682)).toBe('loopback-db')
+    expect(ports.get(6001)).toBe('web')
+    expect([...ports.keys()].sort()).toEqual([5432, 5682, 6000, 6001])
   })
 })
 

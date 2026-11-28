@@ -20,6 +20,7 @@ import {
   applyHue,
   brandHue,
   hueOf,
+  topLevelRules,
 } from '../../../../scripts/lib/brand.mjs'
 import {
   checkTheme,
@@ -224,6 +225,95 @@ describe('adoptDefaultLook', () => {
       `content="${r.brand?.indexHtml?.match(/content="([^"]+)"/)?.[1]}"`
     )
     expect(failures(r)).toEqual([])
+  })
+})
+
+describe("adoptDefaultLook keeps the app's rules outside the token blocks (#213)", () => {
+  const defaults = () => {
+    const names = deriveNames('acme', 'Acme')
+    const k = kit()
+    return {
+      tokensCss: applyReplacements(k.tokensCss, names).text,
+      indexCss: applyReplacements(k.indexCss, names).text,
+      indexHtml: applyReplacements(k.indexHtml, names).text,
+    }
+  }
+  const LOGO_RULE = '[data-brand-logo] {\n  border-radius: 22%;\n}'
+  const DARK_LOGO = '[data-theme$="-dark"] [data-brand-logo] {\n  filter: invert(1);\n}'
+  const MEDIA =
+    '@media (prefers-reduced-motion: reduce) {\n  [data-brand-logo] { transition: none; }\n}'
+  const withRules = () => {
+    const old = oldCopy()
+    return {
+      ...old,
+      tokensCss: `${old.tokensCss
+        .replace(/--logo-body: [^;]+;/, '--logo-body: #112233;')
+        .replace(
+          /(:root \{)/,
+          '$1\n  --logo-own: #445566;'
+        )}\n${LOGO_RULE}\n\n${DARK_LOGO}\n\n${MEDIA}\n`,
+    }
+  }
+
+  it('carries a standalone rule, a per-theme rule and an @media block, and reports each', () => {
+    const r = adoptDefaultLook({ current: withRules(), defaults: defaults() })
+    expect(r.tokensCss).toContain(LOGO_RULE)
+    expect(r.tokensCss).toContain(DARK_LOGO)
+    expect(r.tokensCss).toContain(MEDIA)
+    expect(r.carried).toEqual(
+      expect.arrayContaining([
+        'theme-tokens.css [data-brand-logo]',
+        'theme-tokens.css [data-theme$="-dark"] [data-brand-logo]',
+        'theme-tokens.css @media (prefers-reduced-motion: reduce)',
+      ])
+    )
+    expect(failures(r)).toEqual([])
+  })
+
+  it("keeps the app's :root values and adds its own, still one :root block", () => {
+    const r = adoptDefaultLook({ current: withRules(), defaults: defaults() })
+    const roots = topLevelRules(r.tokensCss).filter(x => x.prelude === ':root')
+    expect(roots).toHaveLength(1)
+    expect(roots[0].body).toContain('--logo-body: #112233;')
+    expect(roots[0].body).toContain('--logo-own: #445566;')
+    expect(roots[0].body).toMatch(/--logo-gold: [^;]+;/)
+    expect(r.carried).toEqual(
+      expect.arrayContaining([
+        'theme-tokens.css :root --logo-body',
+        'theme-tokens.css :root --logo-own',
+      ])
+    )
+  })
+
+  it('carries nothing, and changes nothing, for an app with no rules of its own', () => {
+    const r = adoptDefaultLook({ current: oldCopy(), defaults: defaults() })
+    expect(r.carried).toEqual([])
+    expect(r.tokensCss).not.toContain('Kept from this app: its own rules')
+  })
+
+  it('running it twice gives the same file', () => {
+    const once = adoptDefaultLook({ current: withRules(), defaults: defaults() })
+    const twice = adoptDefaultLook({
+      current: { ...withRules(), tokensCss: once.tokensCss },
+      defaults: defaults(),
+    })
+    expect(twice.tokensCss).toBe(once.tokensCss)
+  })
+})
+
+describe('topLevelRules', () => {
+  it('ends a rule at its own brace, not one inside a comment, a string or a nested block', () => {
+    const css = [
+      '@import "x.css";',
+      '/* } a comment { */',
+      'a::after { content: "}"; }',
+      '@media (min-width: 1px) { b { color: red; } }',
+    ].join('\n')
+    expect(topLevelRules(css).map(r => r.prelude)).toEqual([
+      '@import "x.css"',
+      'a::after',
+      '@media (min-width: 1px)',
+    ])
   })
 })
 

@@ -162,6 +162,21 @@ to bottom — a step never depends on a sentence elsewhere in the note, so do ex
 and do not go hunting for a referent. `## Conflicts to expect` is `path → what changed → what to
 do`, and `## Verify` is what you run at the end.
 
+**Crossing 0.45.0 with a look of their own** (its note's step 25: keep your token values, add the
+new token names). Do not write the ~17 tokens per theme by hand. Once the release that carries
+`--add-missing-tokens` is applied, run `pnpm design:docs --add-missing-tokens`: it writes every
+token of the look their blocks lack, derived from their palette and held to the contrast floors,
+changes none they have, and prints an `added …` line per token — show them those lines. Before
+that release is applied, their own `scripts/design-docs.mjs` is the older one; run the kit's
+script on the copy instead, from a checkout of the kit at that release (the upgrade's mirror gives
+one: `git clone -q --branch <version> .upgrade/kit.git <tmp>/kit`), then
+`node <tmp>/kit/scripts/design-docs.mjs --root . --from <tmp>/kit --add-missing-tokens`. Never
+run it without `--root`: it would work on the kit checkout, and refuses to. Exit 1 means a
+pair failing against a token of theirs already (`pnpm design:docs --contrast` lists them): ask
+before you change one. If they took the default look instead (`--adopt-default-look`), act on
+each `warning: … does not load` line it prints: add the `main.tsx` import and run the
+`pnpm --filter ./apps/web add …` it names, or the app renders in the fallback face.
+
 Then the manual rows the report lists. `porting.md` beside this file has the per-area detail:
 migrations, the wrangler tomls, `.dev.vars.example`, `package.json`, registries. **Read it before
 touching any of them** — each has a way to get it wrong that is silent.

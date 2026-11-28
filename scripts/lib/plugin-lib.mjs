@@ -372,13 +372,36 @@ export function partialCoreEdits(text, edits) {
 
 /** The exact inverse of `applyCoreEdits`: a round trip returns the original bytes. */
 export function revertCoreEdits(text, edits) {
+  return revertCoreEditsKeeping(text, edits).text
+}
+
+/**
+ * `revertCoreEdits`, except for the lines `hostOwns` claims: a line the host's own kit release
+ * carries (or another installed plugin still declares) keeps ONE copy, and only a duplicate
+ * goes. Analytics 3.11 declared `'/mcp': proxyTo(),` in the vite proxy table; kit 0.41.0 took the
+ * line over, and an upgrade that dropped the edit deleted the kit's line with it, so the dev
+ * server lost its `/mcp` proxy without a word. `pruneWorkerFirst` is the same rule for the tomls.
+ * Returns the text and the lines kept.
+ */
+export function revertCoreEditsKeeping(text, edits, hostOwns = () => false) {
   let next = text
+  const kept = []
   for (const edit of edits) {
     for (const line of edit.lines) {
+      if (hostOwns(line)) {
+        if (!findEditLine(next.split('\n'), line)) continue
+        let seen = 0
+        next = next
+          .split('\n')
+          .filter(existing => existing.trim() !== line.trim() || ++seen === 1)
+          .join('\n')
+        kept.push(line.trim())
+        continue
+      }
       const lines = next.split('\n')
-      const kept = lines.filter(existing => existing.trim() !== line.trim())
-      if (kept.length !== lines.length) {
-        next = kept.join('\n')
+      const rest = lines.filter(existing => existing.trim() !== line.trim())
+      if (rest.length !== lines.length) {
+        next = rest.join('\n')
         continue
       }
       // Not there as one line: the host's formatter may have wrapped it (#178).
@@ -386,7 +409,35 @@ export function revertCoreEdits(text, edits) {
       if (span) next = [...lines.slice(0, span.start), ...lines.slice(span.end)].join('\n')
     }
   }
-  return next
+  return { text: next, kept }
+}
+
+/**
+ * A line of a core file the KIT owns whatever its release: an entry in the vite dev-proxy table
+ * for a path core reserves (`isReservedPluginPath` — the MCP server, its authorization server, the
+ * OAuth discovery documents). The fallback for `revertCoreEditsKeeping` when the kit's own copy of
+ * the file cannot be read (no `.upgrade/kit.git` mirror, or the kit repository itself).
+ */
+export function kitOwnsCoreLine(file, line) {
+  if (!/(^|\/)vite\.config\.[cm]?[jt]s$/.test(String(file))) return false
+  const m = /^\s*(['"])(.+?)\1\s*:\s*proxyTo\(/.exec(String(line))
+  if (!m) return false
+  const key = m[2]
+  return isReservedPluginPath(key) || key.startsWith('^/\\.well-known/')
+}
+
+/**
+ * Who still owns a core-edit line once a plugin stops declaring it: the kit's own copy of the file
+ * (`kitText`, at the host's kit release, null when unreadable), a path the kit reserves, or another
+ * installed plugin's declared edits (`otherEdits`). The predicate `revertCoreEditsKeeping` takes.
+ */
+export function coreLineOwner(file, { kitText = null, otherEdits = [] } = {}) {
+  const kitLines = typeof kitText === 'string' ? kitText.split('\n') : null
+  const others = otherEdits.filter(e => e.file === file).flatMap(e => e.lines)
+  return line =>
+    kitOwnsCoreLine(file, line) ||
+    (kitLines !== null && findEditLine(kitLines, line) !== null) ||
+    others.some(o => editKey(o.trim()) === editKey(line.trim()))
 }
 
 /**
@@ -3454,6 +3505,69 @@ export function declaredTools(source, constants = new Map()) {
     out.push({ name, title: text_('title'), description: text_('description') })
   }
   return out
+}
+
+/** The request-body readers that take a form: Hono's `c.req.parseBody()`, `Request.formData()`. */
+const FORM_BODY_READERS = new Set(['parseBody', 'formData'])
+/** What lifts the host's 1 MB body cap for a plugin: the upload seams and a public body limit. */
+const BODY_CAP_DECLARATIONS = ['uploadTargets', 'uploadPaths', 'uploadLimits', 'bodyLimitBytes']
+
+/**
+ * A plugin route that reads a form body while the plugin declares nothing that lifts the host's
+ * 1 MB body cap (`apiBodyLimit`): no `uploadTargets`, no deprecated `uploadPaths` / `uploadLimits`,
+ * no public mount `bodyLimitBytes`. Such a route answers 413 for any file above 1 MB, whatever its
+ * own `bodyLimit` allows — and nothing says so until somebody uploads a large file.
+ *
+ * A `warn`, never a `fail`: a small urlencoded form is a fine use of `parseBody`. Parsed (the
+ * TypeScript AST), so a comment or a string naming either reader is not a read, and a comment
+ * naming `uploadPaths` is not a declaration. One finding per plugin, at the first read.
+ *
+ * @param {string} pluginId
+ * @param {readonly { file: string, text: string }[]} sources the plugin's non-test sources
+ */
+export function uploadBodyProblems(pluginId, sources) {
+  const ts = typescript()
+  if (sources.some(s => BODY_CAP_DECLARATIONS.some(name => declaresProperty(s.text, name)))) {
+    return []
+  }
+  for (const { file, text } of sources) {
+    const sf = ts.createSourceFile(file, String(text), ts.ScriptTarget.Latest, true)
+    let at = null
+    const walk = node => {
+      if (at) return
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        FORM_BODY_READERS.has(node.expression.name.text)
+      ) {
+        at = node
+        return
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(sf)
+    if (!at) continue
+    const reader = at.expression.name.text
+    return [
+      {
+        severity: 'warn',
+        pluginId,
+        file,
+        line: sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1,
+        kind: 'upload-body-cap',
+        problem:
+          `reads a form body (\`${reader}()\`) but declares no uploadTargets, uploadPaths or ` +
+          'uploadLimits, so the host caps that request at 1 MB: a larger file is a 413 whatever ' +
+          "the route's own bodyLimit allows",
+        fix:
+          'move the upload to an `uploadTargets` entry (docs/CONCEPTS.md §16). For a route that ' +
+          "must keep taking the bytes until then, declare its prefix in the deprecated `uploadPaths` (`'/api/" +
+          `${pluginId}/upload'\`, 10 MB) or its exact path in \`uploadLimits\` (up to 50 MiB). ` +
+          'A small text-only form needs neither: ignore this warning',
+      },
+    ]
+  }
+  return []
 }
 
 /**

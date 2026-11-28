@@ -45,6 +45,19 @@ export interface CoreEdit {
 }
 export function applyCoreEdits(text: string, edits: CoreEdit[]): string
 export function revertCoreEdits(text: string, edits: CoreEdit[]): string
+/** `revertCoreEdits`, keeping one copy of every line `hostOwns` claims; returns those it kept. */
+export function revertCoreEditsKeeping(
+  text: string,
+  edits: CoreEdit[],
+  hostOwns?: (line: string) => boolean
+): { text: string; kept: string[] }
+/** True for a vite dev-proxy entry on a path the kit reserves (`/mcp`, `/oauth`, discovery). */
+export function kitOwnsCoreLine(file: string, line: string): boolean
+/** The `hostOwns` predicate: the kit's copy of the file, a reserved path, or another plugin's edit. */
+export function coreLineOwner(
+  file: string,
+  options?: { kitText?: string | null; otherEdits?: CoreEdit[] }
+): (line: string) => boolean
 export function partialCoreEdits(text: string, edits: CoreEdit[]): string[]
 /** Where a declared core-edit line sits, as itself or as the lines a formatter wrapped it into. */
 export function findEditLine(lines: string[], line: string): { start: number; end: number } | null
@@ -519,6 +532,20 @@ export interface ToolProblem {
 export function toolProblems(
   declarations: readonly { pluginId: string; file: string; tools: readonly DeclaredTool[] }[]
 ): ToolProblem[]
+export interface UploadBodyProblem {
+  severity: 'warn'
+  pluginId: string
+  file: string
+  line: number
+  kind: 'upload-body-cap'
+  problem: string
+  fix: string
+}
+/** A route reading a form body in a plugin that declares nothing lifting the 1 MB body cap. */
+export function uploadBodyProblems(
+  pluginId: string,
+  sources: readonly { file: string; text: string }[]
+): UploadBodyProblem[]
 
 export function resolveSubdir(input: {
   flag?: string | null

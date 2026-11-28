@@ -43,6 +43,23 @@ export interface ChooseDevDbPortOptions {
   skip?: number[]
 }
 export function chooseDevDbPort(options: ChooseDevDbPortOptions): number | null
+/** Host port → container name, from `docker ps --format '{{.Names}}\t{{.Ports}}'`. */
+export function publishedHostPorts(psText: string): Map<number, string>
+export interface PlanDevDbPortOptions {
+  /** `--port` / `DEV_DB_PORT`: kept or refused, never moved. */
+  requested?: number | null
+  /** The port `.dev.vars` carries. */
+  preferred?: number | null
+  /** The preferred port was chosen (not the example's default): kept or refused, never moved. */
+  pinned?: boolean
+  /** null when the port is ours or free, else who holds it. */
+  holderOf: (port: number) => string | null
+  start?: number
+  count?: number
+  skip?: number[]
+}
+export type DevDbPortPlan = { port: number; moved: boolean; reason?: string } | { error: string }
+export function planDevDbPort(options: PlanDevDbPortOptions): DevDbPortPlan
 export function databaseUrlPort(url: string): number | null
 export function withDatabaseUrlPort(url: string, port: number): string
 export function upsertDevVar(text: string, key: string, value: string): string
