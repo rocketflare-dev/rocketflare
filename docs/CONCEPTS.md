@@ -908,8 +908,11 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   flag on, every permission, no database) and reads `egress` off the values, so an `as Tool` cast
   hides nothing; a tool without it is a WARNING in the gate (`tests/config/tool-egress.test.ts`)
   and in `pnpm plugin check` (`<unit>:egress:<tool>`, which the plugin matrix counts), never a
-  failure. A builder that queries the database is unreadable there, and `plugin check` reads its
-  `defineTool({ … })` calls statically instead. **Long threads are compacted**: a
+  failure. A builder that queries the database is unreadable there, and one gated on something the
+  stub lacks (a connection, a configured secret) returns fewer tools than it defines, so
+  `plugin check` also reads every `defineTool({ … })` call statically and warns for each defined
+  tool the values did not show without an `egress:` key; a plugin with a builder that showed no
+  tool either way is `<id>:egress-unverifiable`, never zero. **Long threads are compacted**: a
   character-budget window (`CHAT_HISTORY_MAX_CHARS`), with the dropped prefix folded into
   `conversations.summary` by the `chat.compact` job (compare-and-set). Document cards come from
   `kit.document` events produced by a pure mapper, so nothing about a card is stored. The admin
@@ -1604,8 +1607,9 @@ stream cursor; a cancelled CHAT turn emits nothing rather than AG-UI 1.0's `RUN_
 `cancelled` outcome (the client closed the socket — agent runs do emit it); no token-level streaming for runs (would need a per-run DO); char-based history budget
 not derived from the model; sliding window defeats prompt caching on long threads;
 `Tool.egress` is optional and only warned about — nothing yet refuses a tool without it or checks a
-tool set's `readsContent` + unapproved `egress` combination, and a builder that returns `[]` under
-the stub context (rather than querying) is not seen by the value check; `enqueueRun`
+tool set's `readsContent` + unapproved `egress` combination, and a gated builder whose tools are
+not `defineTool({ … })` calls is seen only as far as the stub context gets it (none returned is
+`egress-unverifiable`; some returned hides the rest); `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
 lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
 contextual prefixes: contexts are
