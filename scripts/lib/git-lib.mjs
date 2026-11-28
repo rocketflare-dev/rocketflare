@@ -204,6 +204,12 @@ export function mirror(dir) {
      */
     isAncestor: (ancestor, descendant) =>
       quiet(['merge-base', '--is-ancestor', ancestor, descendant]).ok,
+    /** Every `X.Y.Z` release tag, newest first. */
+    releaseTags: () =>
+      quiet(['tag', '--list', '--sort=-v:refname'])
+        .out.trim()
+        .split('\n')
+        .filter(t => /^\d+\.\d+\.\d+$/.test(t)),
     /** Newest `X.Y.Z` tag, or null. */
     latestTag: () =>
       quiet(['tag', '--list', '--sort=-v:refname'])

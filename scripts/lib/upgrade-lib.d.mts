@@ -338,3 +338,33 @@ export function defaultPluginProblems(
   resolve: (entry: DefaultPluginEntry) => ResolvedDefaultPlugin | null,
   options?: { kitRepo?: string | null }
 ): string[]
+
+/** The first release whose upgrader hands a run over; a copy below it is told to stop at `HANDOVER_STOP`. */
+export const HANDOVER_VERSION: string
+export const HANDOVER_STOP: string
+/** True when an upgrader script predates the hand-over (it never names `UPGRADE_ROOT_ENV`). */
+export function upgraderLeftBehind(scriptText: string | null | undefined): boolean
+
+export interface SiteRepair {
+  from: string
+  to: string
+  count: number
+}
+/** Kit-website links an older name map rewrote into the app's domain, put back from `kitText`. */
+export function kitSiteRepairs(
+  copyText: string,
+  kitText: string,
+  names: Pick<Names, 'domain'> | null
+): { text: string; repaired: SiteRepair[] }
+
+export const LOOK_FILES: readonly string[]
+export function lookOf(relPath: string, text: string | null | undefined): string | null
+export function lookDivergence(files: {
+  local: Record<string, string | null | undefined>
+  base: Record<string, string | null | undefined>
+}): string[]
+export function lookManualReason(diverged: readonly string[]): string
+export function matchingRelease(
+  localText: string | null | undefined,
+  candidates: readonly { ref: string; text: string }[]
+): string | null

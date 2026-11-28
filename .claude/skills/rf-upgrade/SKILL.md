@@ -50,6 +50,14 @@ pnpm kit:upgrade --adopt <commit-or-tag>
 
 No trailer either? Ask which kit version they copied and use that tag. Do not guess.
 
+**A copy below 0.44.0 goes to 0.44.1 first.** Before 0.44.0 the copy's own upgrader plans every
+jump, with no 3-way merge, an older name map and the vendored plugin skipped, and nothing from the
+target release can change that. If `kit.version` is older than 0.44.0 (or
+`grep -c UPGRADE_ROOT_ENV scripts/upgrade.mjs` prints 0), run
+`pnpm kit:upgrade --to 0.44.1 --apply`, finish and commit that release as usual, and only then
+plan the later ones. From 0.44.1 on, the target's upgrader takes over, and the next jump repairs
+what the old one left (the vendored plugin, the kit's website links).
+
 ## 2. Plan
 
 ```
@@ -58,7 +66,7 @@ pnpm kit:upgrade $ARGUMENTS
 
 Expect six `✔ n/6` lines and a report. A line `upgrader <version>'s, not this copy's` after
 `1/6` is normal: the target release's own upgrader (extracted into `.upgrade/tool/`) is planning
-the jump, so every upgrader fix up to that release applies, and the `✔ n/6` lines repeat once.
+the jump, so every upgrader fix up to that release applies, and it carries on from `2/6`.
 `note: …predates the hand-over` means the target's upgrader is older than the hand-over (before
 0.44.0): this copy's plans it, and an upgrader bug fixed in between can still show in the plan.
 Read `.upgrade/work/<version>/plan.md` — it embeds every
@@ -85,6 +93,26 @@ route around:
   it is why their line differs, and usually decides whether theirs or the kit's wins. For a
   `kind: "fix"` entry, check whether this release carries the same fix (the note, the kit's
   hunk): if it does, take the kit side and **delete the entry**; if it does not, keep both.
+
+Four more things can appear, and each is the upgrader doing its job:
+
+- **a vendored-plugin file with `base: <version>`** in `plan.json` (reason "still the kit's
+  <version>") — an older upgrader skipped it, so it is ported from the release it really is to the
+  target, and a plugin file the kit added or deleted since is planned the same way;
+- **`repaired <path> — <domain>/<page> → rocketflare.dev/<page>`** after `--apply` — a link to the
+  kit's website (plugin catalogue, installer, security page) that an older name map rewrote into
+  this app's domain, put back;
+- **`formatted`** after `--apply` — the copy's Biome over what the run wrote, because the app's
+  names change line lengths and import order;
+- **a look file as `manual`** (`theme-tokens.css`, `index.css`, `index.html`, `main.tsx`, reason
+  "this app has its own look") — the copy's look differs from the kit's, so nothing restyles it hunk
+  by hunk. Take the non-look hunks of each by hand (styles, imports other than fonts) and leave its
+  tokens, `[data-theme]` blocks, `theme-color` and font imports alone; the kit's look is adopted
+  only by `pnpm design:docs --adopt-default-look`, and only if the user asks.
+
+A `WARNING: this copy's scripts/upgrade.mjs still predates the hand-over` after `--apply` means
+its patch did not land: take the kit's file as the warning says before committing, or every later
+upgrade plans without the hand-over.
 
 And one hard stop: **exit 6 — an installed plugin does not support the target kit version.** Its
 `requires.kit` range excludes it, and nothing is written. (A **vendored** plugin — `source.repo` is
@@ -210,7 +238,12 @@ after an upgrade are: **run it** (`pnpm dev`), **upgrade the plugins** (step 6, 
   against a kit version its author never tested it on.
 - **Never squash the releases into one commit.** The per-release commit is what makes the next
   upgrade legible.
-- Do not edit `.rocketflare.json` by hand. The script writes it, last — on a clean apply, or on
-  `--continue` once the rejects are resolved. The one exception is `localEdits`: drop a `fix` entry the
-  release made redundant, and update the reason of any entry whose hunk you re-decided.
+- **Never edit `kit` or `history` in `.rocketflare.json` by hand.** The script writes them, last —
+  on a clean apply, or on `--continue` once the rejects are resolved — and they are what the next
+  upgrade starts from (a version is changed by hand only through `--adopt`). The rest of the file
+  is this app's own configuration, which `kit:upgrade` never ports, so edit it by hand exactly when
+  a porting note's step says to: `surfaces` (a new surface, or new paths on one), `manual`,
+  `neverPort`, `kitOnlyScripts`, `guard`, `defaultPlugins`. And `localEdits`: drop a `fix` entry the
+  release made redundant, and update the reason of any entry whose hunk you re-decided. Keep it
+  valid JSON (`pnpm lint:fix` formats it) and stage it with the upgrade.
 - `rm -rf .upgrade` is always safe — it is a cache.
