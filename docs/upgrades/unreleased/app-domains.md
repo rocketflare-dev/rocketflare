@@ -18,6 +18,7 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 - Plugin ids `core`, `kit` and `app` are reserved; a plugin may not share a domain's id or define a table in a domain's namespace.
 - `kit:upgrade` never ports the app lists (`skipped-app-owned`), creates each empty where missing, and reports a new `kind: "example"` surface as "available, not applied", recording it absent.
 - `@testkit/integration` exports `runAgent` (claim and execute one run in-process); `pnpm design:lint` and the guard's UI check read each domain's `ui/`; domain tests in `apps/web/tests/<id>/` join the vitest projects.
+- The tool egress check (`tools/egress.ts`, `pnpm plugin check`) reads app domains' tools too, and names `apps/web/src/<id>/` for one without an answer.
 - `example-hr` and `example-sales` are new example surfaces, for fresh copies only.
 
 ## How to apply

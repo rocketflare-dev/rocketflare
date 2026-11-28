@@ -37,6 +37,9 @@ export function availabilityTool(ctx: ToolCtx): Tool<AvailabilityInput> {
       'Say which of the given people are on approved leave on a day (default today). Call it ' +
       'before assigning work to someone or promising when they will reply.',
     schema: availabilityInputSchema,
+    // Reads this organisation's own leave rows; nothing leaves. It returns user ids only, no text.
+    egress: false,
+    readsContent: false,
     mcp: { title: 'Who is on leave', annotations: { openWorldHint: false } },
     async handler(input) {
       const on = input.on ?? today()

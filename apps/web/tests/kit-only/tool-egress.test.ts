@@ -19,8 +19,11 @@ import {
   stringConstants,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 
-/** The plugins the kit itself ships. CI also installs published plugins, which answer on their own schedule. */
-const KIT_PLUGINS = new Set(['example-feature'])
+/**
+ * The plugins and example domains the kit itself ships. CI also installs published plugins, which
+ * answer on their own schedule.
+ */
+const KIT_PLUGINS = new Set(['example-feature', 'example-hr', 'example-sales'])
 
 describe("the kit's own tools", () => {
   it('every one answers egress and readsContent', async () => {

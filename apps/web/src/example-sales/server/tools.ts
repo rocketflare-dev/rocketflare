@@ -37,6 +37,9 @@ export function leadsTool(ctx: ToolCtx): Tool<LeadsInput> {
       'Read sales leads in this workspace: one by id, or the newest few, with their company, ' +
       'notes, status, score and owner.',
     schema: leadsInputSchema,
+    // Reads this organisation's own leads; nothing leaves.
+    egress: false,
+    readsContent: true,
     mcp: { title: 'Sales leads', annotations: { openWorldHint: false } },
     async handler(input) {
       if (input.leadId) {

@@ -24,7 +24,7 @@ import { FEATURE_KEYS } from '@rocketflare/shared/features'
 import { loadConfig } from '../../../../config'
 import type { Database } from '../../../../db/client'
 import type { AnyServerPlugin } from '../../../../plugins/server'
-import { serverPlugins } from '../../../../plugins/server'
+import { serverUnits } from '../../../../units/server'
 import type { Tool } from '../../ai/agent-loop'
 import type { AiEnv } from '../../ai/types'
 import { buildAgentTools, pluginTools } from './index'
@@ -114,12 +114,17 @@ export function stubToolContext(): AgentToolContext {
   }
 }
 
-/** One unit per installed plugin, read through the same `tools` / `agentTools` the host calls. */
+/**
+ * One unit per installed plugin and per app domain (plugins first), read through the same `tools`
+ * / `agentTools` the host calls. A unit without a `kind` is a plugin.
+ */
 export function pluginToolUnits(
-  plugins: readonly Pick<AnyServerPlugin, 'shared' | 'tools' | 'agentTools'>[] = serverPlugins
+  plugins: readonly (Pick<AnyServerPlugin, 'shared' | 'tools' | 'agentTools'> & {
+    kind?: string
+  })[] = serverUnits
 ): ToolUnit[] {
   return plugins.map(p => ({
-    kind: 'plugin',
+    kind: p.kind ?? 'plugin',
     id: p.shared.id,
     builder: Boolean(p.tools ?? p.agentTools),
     tools: ctx => pluginTools(p, ctx),
@@ -149,7 +154,7 @@ export function coreToolUnit(others: readonly ToolUnit[]): ToolUnit {
   }
 }
 
-/** Every unit installed here: the kit's own list, then each plugin. */
+/** Every unit here: the kit's own list, then each plugin, then each app domain. */
 export function installedToolUnits(): ToolUnit[] {
   const plugins = pluginToolUnits()
   return [coreToolUnit(plugins), ...plugins]
