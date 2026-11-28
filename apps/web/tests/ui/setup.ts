@@ -17,6 +17,7 @@ window.scrollTo = () => {}
 // explains: a static import here would load them before a test file's `vi.mock` exists.
 afterEach(async () => {
   cleanup()
+  await (await import('./helpers/renderWithProviders')).settleTestQueryClients()
   localStorage.clear()
   sessionStorage.clear()
   const [{ queryClient }, { useToastStore }, { useWebSocketStore }] = await Promise.all([

@@ -32,6 +32,24 @@ interface ProviderOptions extends Omit<RenderOptions, 'wrapper'> {
   session?: SessionResponse | null
 }
 
+/** Every client a render used since the last `settleTestQueryClients()`. */
+const liveClients = new Set<QueryClient>()
+
+/**
+ * Settle every client a test rendered with, while the file's environment still exists (the ui
+ * setup's `afterEach` calls this). A stubbed `/auth/session` still answers asynchronously, and React
+ * Query hands each cache change to react-dom on a `setTimeout`: a file whose last test ends right
+ * after its render let that land after teardown ("window is not defined" from react-dom). Cancelling
+ * makes the late answer a no-op, and one macrotask flushes the notifications already queued.
+ */
+export async function settleTestQueryClients() {
+  const clients = [...liveClients]
+  liveClients.clear()
+  await Promise.all(clients.map(c => c.cancelQueries()))
+  for (const c of clients) c.clear()
+  await new Promise(resolve => setTimeout(resolve, 0))
+}
+
 /** A fresh client with retries off so failing queries settle immediately. */
 export function createTestQueryClient() {
   return new QueryClient({
@@ -43,6 +61,7 @@ export function renderWithProviders(
   ui: ReactElement,
   { route = '/', queryClient = createTestQueryClient(), session, ...options }: ProviderOptions = {}
 ) {
+  liveClients.add(queryClient)
   if (session !== undefined) {
     stubSessionFetch(session)
     if (session) queryClient.setQueryData(queryKeys.auth.session, session)

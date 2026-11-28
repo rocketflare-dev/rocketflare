@@ -222,6 +222,16 @@ describe('the workflow', () => {
     expect(WORKFLOW).toMatch(/run-name: >-\n.*inputs\.request_id/)
   })
 
+  it("proves the pushed tag only on the kit's own push, never a calling repository's tag", () => {
+    const pushGuards = WORKFLOW.split('\n').filter(l => l.includes("github.event_name == 'push'"))
+    expect(pushGuards.length).toBeGreaterThan(0)
+    for (const line of pushGuards) {
+      expect(line).toContain(
+        "github.repository == 'rocketflare-dev/rocketflare' && github.event_name == 'push'"
+      )
+    }
+  })
+
   it('reports through the run alone: it never writes an issue', () => {
     expect(WORKFLOW).not.toMatch(/issues:\s*write|gh issue|gh api .*issues/)
     expect(WORKFLOW).toMatch(/^permissions:\n\s+contents: read\n/m)

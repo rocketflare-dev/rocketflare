@@ -13,7 +13,7 @@ The kit now proves the latest release of every published plugin against each kit
 
 - New `@testkit/unit` exports: `isOwnContribution(id, key)`, `ownContributions(id, items, keyOf?)` and `expectOwnContributions(id, items, expectedKeys, keyOf?)`. The last throws unless the plugin's own namespaced entries (`<id>`, `<id>:…`, `<id>.…`, `<id>/…`) in a shared list are exactly the expected keys, and ignores every other plugin's (`docs/CONCEPTS.md` §16).
 - `apps/web/src/plugins/CLAUDE.md` and `/rf-plugin` §6: a plugin's test over a shared registry asserts only the plugin's own entries.
-- Kit repository only, removed by the rename: `.github/workflows/plugin-matrix.yml` and `scripts/plugin-matrix.mjs` replace `notify-plugins.yml`, and `pnpm kit:release` dispatches the matrix against `main` and prints `✔` or `⚠ <plugin> fails on main: <step>, <run>` without blocking.
+- Kit repository only, removed by the rename: `.github/workflows/plugin-matrix.yml` and `scripts/plugin-matrix.mjs` replace `notify-plugins.yml`, and `pnpm kit:release` dispatches the matrix against `main` and prints `✔` or `⚠ <plugin> fails on main: <step>, <run>` without blocking. A plugin repository calls the same workflow on its own release tag; only the kit's own tag push is proved as the kit ref, so a caller's tag never is.
 
 ## How to apply
 
