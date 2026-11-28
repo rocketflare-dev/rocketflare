@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseEnv } from 'dotenv'
+import { applyCheckoutDatabase } from '../../../scripts/lib/test-db.mjs'
 import {
   baselinesFrom,
   compareScores,
@@ -94,6 +95,8 @@ function run(opts) {
   }
   // A real environment variable (CI's secret) wins over both files.
   for (const [k, v] of Object.entries(process.env)) if (v) env[k] = v
+  // This checkout's own test database, the one `pnpm test` uses (scripts/lib/test-db.mjs).
+  applyCheckoutDatabase(env)
   env.NODE_ENV = 'test'
   if (opts.model) env.EVAL_MODEL = opts.model
   if (opts.judgeModel) env.EVAL_JUDGE_MODEL = opts.judgeModel

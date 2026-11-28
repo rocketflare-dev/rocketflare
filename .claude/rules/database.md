@@ -246,7 +246,8 @@ DDL never hits a pooled backend.
 Never hand-edit an applied migration or `apps/web/migrations/meta/`. Custom SQL (an extension, a fact table)
 is a generated file edited before it is applied, journal intact.
 
-Tests migrate a throwaway database on 5433 from `apps/web/tests/setup.ts` — never Neon (the
+Tests migrate a throwaway database on 5433 — this checkout's own, `<.env.test db>_<hash>`, created
+on first use — from `apps/web/tests/setup.ts` — never Neon (the
 conformance pass under `neon` goes through the local proxy on :4433, still that database). The
 one exception is `pnpm test` with `TEST_DATABASE_BRANCH` set: a throwaway Neon GATE branch a
 sandbox orchestrator names and binds to the URL (`docs/CONCEPTS.md` §4, "Ephemeral test database").

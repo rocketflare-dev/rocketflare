@@ -11,7 +11,7 @@ paths:
 # Testing Patterns
 
 Vitest in `apps/web` (all commands below are root scripts that delegate there, or run inside
-`apps/web`), nine projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` + `api-fixtures` (Node, **real Postgres** on 5433),
+`apps/web`), nine projects (`apps/web/vitest.config.ts`): `api` + `api-isolated` + `api-fixtures` (Node, **real Postgres** on 5433, a database per checkout),
 `driver` (D35: `tests/driver/**` — the CONFORMANCE suite for the driver seam, through
 `openDatabase`, against the real database, run under both drivers; `tests/driver/CLAUDE.md`),
 `ui` + `ui-isolated` (jsdom + Testing Library), `config` (Node, no database: wrangler parity, env schema, pure
@@ -104,8 +104,13 @@ behaviour rather than the attack.
 
 ## Database discipline
 
-- `apps/web/tests/setup.ts` (globalSetup, memoised on `globalThis` because two projects share it): roles →
-  migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`.
+- **Each checkout has its own test database** on the shared :5433 server:
+  `<.env.test's database>_<8 hex of SHA-256(realpath of the checkout)>`, chosen in
+  `vitest.config.ts` (`scripts/lib/test-db.mjs`) and created by global setup on first use, so a
+  worktree's run never truncates another checkout's tables. Never hard-code `rocketflare_test` in
+  a test: read `DATABASE_URL`. `pnpm test:db:prune` drops the databases of removed checkouts
+- `apps/web/tests/setup.ts` (globalSetup, memoised on `globalThis` because two projects share it):
+  this checkout's database (created if new) → roles → migrate → grants → **truncate once** → seed one user/tenant/API key exposed via `provide()`/`inject()`.
   A failure there (no `.env.test` loaded, a migration Postgres refuses) is printed as itself by
   `tests/helpers/startup-error.ts`, not as Vite's `code.charCodeAt is not a function`
 - Tests never truncate per file. Create what you need with unique data and let it stay; the schema

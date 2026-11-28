@@ -109,7 +109,7 @@ The repo's **non-negotiables** are listed in `CLAUDE.md`; the ones contributors 
 ### <a name="running-tests"></a> Running tests
 
 Tests run under Node against the real Hono app and a **real Postgres** on port 5433
-(`pnpm test:db:up`), never a mock database. `apps/web/vitest.config.ts` defines four projects:
+(`pnpm test:db:up`; a database per checkout, so worktrees never share one), never a mock database. `apps/web/vitest.config.ts` defines four projects:
 
 | Project | Needs a database | Covers |
 |---|---|---|

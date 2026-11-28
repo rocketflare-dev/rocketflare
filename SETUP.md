@@ -321,7 +321,9 @@ scripts, `ROCKETFLARE_API_KEY` + `ROCKETFLARE_URL` in the environment replace th
 ```bash
 pnpm test             # starts Postgres on :5433 + the Neon proxy on :4433 (apps/web/docker-compose.test.yml),
                       # then every package: web api + api-isolated + api-fixtures + driver (real DB), ui (jsdom), config (no DB);
-                      # cli — and the driver project again under the neon driver (the seam's conformance pass)
+                      # cli — and the driver project again under the neon driver (the seam's conformance pass).
+                      # Each checkout (worktree, copy) gets its own database there, created on first run;
+                      # `pnpm test:db:prune` drops those of removed checkouts (docs/CONCEPTS.md §4)
 # No Docker (a coding sandbox's gate): the same command against a throwaway Neon GATE branch —
 # DATABASE_URL + TEST_DATABASE_BRANCH=gate-<short>-<n> + TEST_DATABASE_ENDPOINT=ep-… (docs/CONCEPTS.md
 # §4) — runs the whole suite under neon. It refuses any other remote database.

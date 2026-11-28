@@ -39,6 +39,7 @@ export const FULL_GATE_TRIGGERS = Object.freeze([
   'scripts/test.mjs',
   'scripts/lib/gate-*',
   'scripts/lib/test-plan.*',
+  'scripts/lib/test-db.*',
 ])
 
 /**

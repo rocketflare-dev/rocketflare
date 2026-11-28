@@ -5,8 +5,18 @@
  * never run against anything but a localhost database under NODE_ENV=test (or an opted-in Neon
  * gate branch).
  */
+
+import { readFileSync } from 'node:fs'
 import { sql } from 'drizzle-orm'
 import { closeAllDatabases, type Database, getScriptDatabase, rows } from '@/db/client'
+import {
+  checkoutComment,
+  checkoutDatabaseName,
+  checkoutPath,
+  ENV_TEST_FILE,
+  envTestDatabaseName,
+} from '../../../../scripts/lib/test-db.mjs'
+import { openScriptSql, waitForDatabase } from '../../scripts/lib/sql'
 import { runMigrations } from '../../scripts/migrate'
 import { rememberRealDatabase } from '../kit/real-db'
 import { checkTestDatabaseEnv } from './db-safety'
@@ -36,6 +46,51 @@ export function safetyCheck(): void {
  */
 export function setupTestDatabase(): Database {
   return rememberRealDatabase(getScriptDatabase(testDatabaseUrl(), process.env))
+}
+
+/**
+ * Create the local test database `DATABASE_URL` names when it does not exist yet — this checkout's
+ * own (`scripts/lib/test-db.mjs`, which `vitest.config.ts` pointed the URL at), so the first run in
+ * a new worktree needs no step of its own. Over TCP whatever the suite driver: the database is
+ * local, and the Neon proxy can only reach a database that already exists. A database made for
+ * this checkout is labelled with its path, which is what `pnpm test:db:prune` reads. Two runs
+ * racing to create it are both fine: the loser sees `duplicate_database`. Never on a remote
+ * target: a gate branch is the database.
+ */
+export async function ensureTestDatabase(): Promise<void> {
+  safetyCheck()
+  if (process.env.TEST_DATABASE_EPHEMERAL === '1') return
+  const target = new URL(process.env.DATABASE_URL as string)
+  const name = decodeURIComponent(target.pathname.slice(1))
+  const admin = new URL(target)
+  admin.pathname = '/postgres'
+  const tcp = { DATABASE_DRIVER: 'postgres' }
+  await waitForDatabase(admin.toString(), tcp, 15)
+  const sql = openScriptSql(admin.toString(), tcp)
+  try {
+    const found = await sql.query('SELECT 1 FROM pg_database WHERE datname = $1', [name])
+    if (found.length > 0) return
+    const ident = `"${name.replaceAll('"', '""')}"`
+    try {
+      await sql.query(`CREATE DATABASE ${ident}`)
+    } catch (error) {
+      // 42P04 duplicate_database; 23505 when two CREATEs race on pg_database's unique index.
+      const code = (error as { code?: unknown }).code
+      if (code === '42P04' || code === '23505') return
+      throw error
+    }
+    let base: string | null = null
+    try {
+      base = envTestDatabaseName(readFileSync(ENV_TEST_FILE, 'utf8'))
+    } catch {}
+    const realPath = checkoutPath()
+    if (base && name === checkoutDatabaseName(base, realPath)) {
+      const comment = checkoutComment(realPath).replaceAll("'", "''")
+      await sql.query(`COMMENT ON DATABASE ${ident} IS '${comment}'`)
+    }
+  } finally {
+    await sql.end()
+  }
 }
 
 /** Same code path as `pnpm db:migrate` — `CREATE EXTENSION vector` then drizzle migrate. */

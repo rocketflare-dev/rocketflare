@@ -475,6 +475,22 @@ path); no per-PR previews.
   names both fixes, never a skip), then every package, the web suite under `postgres`, and the
   `driver` project under `neon`. `pnpm test <suite…> [file…]` (`api|ui|config|driver`, the
   `pnpm web test:*` aliases) is the inner loop: `postgres`, no compose management.
+- **One test database per checkout** (`scripts/lib/test-db.mjs`). Every checkout on a machine —
+  the main one, each worktree, each copy — reaches the same test Postgres on :5433, and global
+  setup truncates every table, so a shared database meant one checkout's truncate landing in
+  another's run (lock queues, `deadlock detected`) and one branch's tables failing another's
+  `rls-coverage`. The suite's database is `.env.test`'s (`rocketflare_test`, renamed with the app)
+  plus 8 hex of SHA-256 over the checkout's real path — `rocketflare_test_1a2b3c4d`, independent
+  of the cwd and of the Node version. `apps/web/vitest.config.ts` (and `pnpm eval`) rewrite
+  `DATABASE_URL` / `APP_DATABASE_URL` to it before anything connects; global setup creates it on
+  first use over TCP (`ensureTestDatabase`, `tests/helpers/db.ts`), labels it
+  `COMMENT ON DATABASE … 'rocketflare-test-checkout:<path>'`, then runs role → migrate → grants as
+  before (the role is cluster-wide, the grants per database; the Neon proxy reaches whichever
+  database the client names). Only a local URL naming exactly `.env.test`'s database is rewritten:
+  a remote target, or a `DATABASE_URL` someone pointed at another database, is used as given. A
+  removed worktree leaves its database behind: `pnpm test:db:prune [--dry-run]` lists every
+  labelled database and drops those whose path is gone, never one without the label. CI is one
+  checkout, so one database, as before. Two runs in the SAME checkout still share one.
 - **Remote target — an ephemeral test database** (`pnpm test` with `TEST_DATABASE_BRANCH` set): the
   whole gate's tests where there is no Docker and only 443 out — a coding sandbox, whose
   orchestrator (Launch) creates a throwaway Neon branch per gate attempt and passes its owner
@@ -538,7 +554,7 @@ database is on :5433 and the proxy on :4433 unless a copy moves them in
 `apps/web/docker-compose.test.yml` (`pnpm test` reads the published ports there, refuses a
 `.env.test` that connects elsewhere, and reuses another checkout's servers only on those ports;
 the security sandbox listens where `.env.test` connects); two checkouts on the same ports share
-one server, a database each (each app has its own Compose project,
+one server, a database each (above; each app has its own Compose project,
 `<slug>-test`, so switching checkouts no longer recreates the other's container). `--db-url` with a loopback URL (a native
 Postgres) still looks like this checkout's Docker database to preflight and `dev:db:*`, and a
 re-run of the bootstrap without the flag checks for Docker again. The remote target is proven in
