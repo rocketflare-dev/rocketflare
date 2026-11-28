@@ -1814,7 +1814,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   workflows (`kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`); its maintainer scripts
   (`release.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
   project files (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, the pending porting notes
-  `docs/upgrades/unreleased.md`). `scripts/rename.mjs` deletes them when a
+  `docs/upgrades/unreleased.md` and the fragments in `docs/upgrades/unreleased/`). `scripts/rename.mjs` deletes them when a
   copy is born, and with them every package.json script (`kit:release`) and `.claude/settings.json`
   hook that names one (`stripKitOnlyWiring`, `stripKitOnlyHooks`); it also writes the app its own
   `SECURITY.md`, drops `retiredSurfaces` and records the scripts it removed as `kitOnlyScripts`,
@@ -1853,9 +1853,13 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   `.rocketflare.json` `kit.version`; the upgrade never ports the root version or `CHANGELOG.md`
   (`manual` / `neverPort`), so the two numbers never meet again.
 - **Porting notes** (kit repository only): one `docs/upgrades/X.Y.Z.md` per release (frontmatter +
-  four headings), with `unreleased.md` accumulating. `kit.yml` fails a PR touching
-  `apps/**`/`packages/**` without an entry, and the tag gate refuses a release without one.
-  `pnpm kit:release` writes everything. An app writes none: `kit:upgrade` reads the notes from the
+  four headings). A pending change is a fragment, `docs/upgrades/unreleased/<slug>.md` (one per
+  PR, so parallel PRs never conflict; `unreleased.md` still accumulates entries too). `kit.yml`
+  fails a PR touching `apps/**`/`packages/**` without a fragment or an entry, and refuses a
+  malformed fragment; the tag gate refuses a release without its note or with a fragment left
+  over. `pnpm kit:release` writes everything: it folds the fragments and `unreleased.md` into one
+  note (`mergeNotes`: frontmatter unioned, `order: first` first, steps renumbered), then deletes
+  the fragments. An app writes none: `kit:upgrade` reads the notes from the
   kit's mirror, not from the copy's `docs/upgrades/`, and the copy releases by bumping its root
   version and tagging.
 - **`scripts/upgrade.mjs`**: a blobless mirror in `.upgrade/`. It classifies paths, drops absent
@@ -1908,7 +1912,7 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   silence.
 - **The kit reminds its own maintainers too** (kit repository only — both scripts and their hook
   entries are `kitOnly`, so a copy never runs them): two `PreToolUse` hooks on `git commit` —
-  `changelog-nudge.mjs` (source changed, no `unreleased.md` entry) and `release-site-nudge.mjs`
+  `changelog-nudge.mjs` (source changed, no fragment or `unreleased.md` entry) and `release-site-nudge.mjs`
   (root `package.json` version changed → update rocketflare.dev after tagging). Both answer with
   `hookSpecificOutput.additionalContext`, because a `PreToolUse` hook's plain stdout reaches only
   the debug log.

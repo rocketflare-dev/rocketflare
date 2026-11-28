@@ -747,6 +747,135 @@ export function noteProblems(
   return problems
 }
 
+// ---------------------------------------------------------------- porting-note fragments
+
+/**
+ * A pending change's porting note, one file per pull request: `<notesDir>/unreleased/<slug>.md`
+ * (kit and plugin repositories only — `kitOnly`, so a copy never has the directory).
+ *
+ * One shared `unreleased.md` meant every two open pull requests conflicted on it. A fragment is
+ * that file's shape cut down to ONE change: the same four headings, and only the frontmatter
+ * fields that describe a change — the release fills `version`, `previous` and `date` when
+ * `pnpm kit:release` folds every fragment (and a non-empty `unreleased.md`) into `X.Y.Z.md`.
+ * Steps are written unnumbered; the release numbers them. `order: first` (or `last`, or an
+ * integer, lower first) moves a fragment's steps ahead of the rest.
+ */
+export const FRAGMENTS_SUBDIR = 'unreleased'
+export const FRAGMENT_README = 'README.md'
+/** A fragment's filename: a short kebab-case slug, the branch topic usually. */
+export const FRAGMENT_NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
+/** The frontmatter a fragment may carry. Everything else is the release's to write. */
+export const FRAGMENT_KEYS = Object.freeze([
+  'breaking',
+  'migrations',
+  'areas',
+  'touches_surfaces',
+  'requires_surfaces',
+  'manual',
+  'order',
+])
+
+/** `docs/upgrades` → `docs/upgrades/unreleased`. */
+export function fragmentsDir(notesDir = 'docs/upgrades') {
+  return `${notesDir.replace(/\/+$/, '')}/${FRAGMENTS_SUBDIR}`
+}
+
+/** Is `relPath` a fragment of the notes in `notesDir`? Its README is not one. */
+export function isFragmentPath(relPath, notesDir = 'docs/upgrades') {
+  const prefix = `${fragmentsDir(notesDir)}/`
+  if (!relPath.startsWith(prefix)) return false
+  const name = relPath.slice(prefix.length)
+  return !name.includes('/') && name.endsWith('.md') && name !== FRAGMENT_README
+}
+
+/**
+ * Does a list of changed paths carry a porting note for `notesDir`: the legacy `unreleased.md`, or
+ * any fragment? The pre-commit nudge asks exactly this; the CI gate (`unreleasedVerdict` in
+ * `release-check.mjs`) asks it too and also checks the fragment still exists and is well formed.
+ */
+export function recordsPortingNote(changed, notesDir = 'docs/upgrades') {
+  return (changed ?? []).some(
+    f => f === `${notesDir.replace(/\/+$/, '')}/unreleased.md` || isFragmentPath(f, notesDir)
+  )
+}
+
+/**
+ * A fragment's `order` as a sort rank: absent is 0, `first` -Infinity, `last` +Infinity, an
+ * integer itself. `null` means the value is not one of those.
+ */
+export function fragmentRank(order) {
+  if (order === undefined || order === null) return 0
+  if (order === 'first') return Number.NEGATIVE_INFINITY
+  if (order === 'last') return Number.POSITIVE_INFINITY
+  if (/^-?\d+$/.test(String(order))) return Number(order)
+  return null
+}
+
+/** The `## ` headings of a body, in order. */
+const headingsOf = body => body.split('\n').filter(l => /^## /.test(l))
+
+/** The text under `heading`, up to the next `## `, trimmed; null when the heading is absent. */
+export function sectionOf(body, heading) {
+  const lines = body.split('\n')
+  const at = lines.indexOf(heading)
+  if (at === -1) return null
+  const end = lines.findIndex((l, i) => i > at && /^## /.test(l))
+  return lines
+    .slice(at + 1, end === -1 ? undefined : end)
+    .join('\n')
+    .trim()
+}
+
+/**
+ * Everything wrong with one fragment, as sentences — `noteProblems` (the note schema, so a
+ * fragment's lists, booleans, migrations and surfaces obey exactly the rules a note's do) plus
+ * what is particular to a fragment: no release fields, a valid `order`, exactly the four headings,
+ * and a summary, steps and checks to fold in.
+ */
+export function fragmentProblems(text, options = {}) {
+  const { file = 'the fragment' } = options
+  const say = message => `${file}: ${message}`
+  const parsed = parseNote(text)
+  if (!parsed) return [say('no YAML frontmatter')]
+  const problems = []
+  const name = file.split('/').pop()
+  if (name.endsWith('.md') && !FRAGMENT_NAME_RE.test(name)) {
+    problems.push(say(`'${name}' is not a short kebab-case name, e.g. unreleased-fragments.md`))
+  }
+  for (const key of Object.keys(parsed.data)) {
+    if (['version', 'previous', 'date'].includes(key)) {
+      problems.push(say(`carries '${key}' — a fragment has none; the release fills it`))
+    } else if (!FRAGMENT_KEYS.includes(key)) {
+      problems.push(say(`'${key}' is not a fragment field (${FRAGMENT_KEYS.join(', ')})`))
+    }
+  }
+  if (fragmentRank(parsed.data.order) === null) {
+    problems.push(say(`order is '${parsed.data.order}', expected first, last or an integer`))
+  }
+  problems.push(...noteProblems(text, { ...options, file, version: null }))
+  const { body } = parsed
+  for (const heading of headingsOf(body)) {
+    if (!NOTE_HEADINGS.includes(heading)) {
+      problems.push(say(`'${heading}' is not one of the four headings a note has`))
+    } else if (headingsOf(body).filter(h => h === heading).length > 1) {
+      problems.push(say(`'${heading}' appears more than once`))
+    }
+  }
+  const changed = sectionOf(body, '## What changed')
+  if (changed !== null) {
+    if (changed === '' || /^_Nothing yet\./.test(changed)) {
+      problems.push(say("'## What changed' is empty — open it with one summary sentence"))
+    }
+    if (changed.split('\n').some(l => /^###+\s/.test(l))) {
+      problems.push(say("'## What changed' has a sub-heading — one bullet per change instead"))
+    }
+  }
+  for (const heading of ['## How to apply', '## Conflicts to expect', '## Verify']) {
+    if (sectionOf(body, heading) === '') problems.push(say(`'${heading}' is empty`))
+  }
+  return [...new Set(problems)]
+}
+
 /** `-1 | 0 | 1`, comparing `X.Y.Z` numerically. */
 export function compareVersions(a, b) {
   const pa = a.split('.').map(Number)

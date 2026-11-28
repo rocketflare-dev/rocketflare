@@ -248,9 +248,9 @@ Cutting a plugin release: there is **no `pnpm plugin:release`**. In the plugin's
 repository can keep a thin shim that delegates to a kit checkout rather than its own drifting copy;
 without the flag the root is the git toplevel of the working directory. It does NOT stamp the
 in-tree anchor — `pnpm plugin add` writes that from the source manifest, so a plugin's version
-exists in one place. It folds `docs/upgrades/unreleased.md` into
-`docs/upgrades/X.Y.Z.md` and prepends the `CHANGELOG.md` section — the same four headings and
-`previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
+exists in one place. It folds the fragments in `docs/upgrades/unreleased/` (one per pull
+request, never copied into a host) and `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`
+and prepends the `CHANGELOG.md` section — the same four headings and `previous` chain `pnpm plugin upgrade` walks, which is what makes the release portable at all.
 
 What the plugin's code may and may not do — namespacing, the declared import entries, the
 module-evaluation trap, each `ServerPlugin` / `UiPlugin` slot, the isolation test it owns — is

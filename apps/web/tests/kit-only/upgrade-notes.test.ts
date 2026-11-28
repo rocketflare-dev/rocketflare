@@ -13,6 +13,7 @@ import root from '../../../../package.json'
 import type { Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
   compareVersions,
+  fragmentProblems,
   NOTE_HEADINGS,
   NOTE_LINES_GUIDE,
   noteLengthWarning,
@@ -20,6 +21,7 @@ import {
   parseNote,
   VERSION_RE,
 } from '../../../../scripts/lib/upgrade-lib.mjs'
+import { fragmentCheckOptions, listFragments } from '../../../../scripts/release-check.mjs'
 
 // A JSON import widens every literal to `string`; the manifest's shape is the lib's contract.
 const manifest = rawManifest as unknown as Manifest
@@ -109,6 +111,26 @@ describe('unreleased.md', () => {
     // `unreleased.md` has `version: unreleased` and `date: null` by design, so a caller passes
     // `version: null` and those two checks are skipped rather than failed.
     expect(noteProblems(text, { file: 'unreleased.md', version: null })).toEqual([])
+  })
+})
+
+/**
+ * The pending fragments (`docs/upgrades/unreleased/<slug>.md`), each judged by the function
+ * `release-check --unreleased` and `pnpm kit:release` also call. The directory always holds its
+ * README, so `kitOnly` names a tracked path even between releases.
+ */
+describe('unreleased/ fragments', () => {
+  const fragments = listFragments('docs/upgrades', { root: REPO_ROOT })
+
+  it('the directory exists and keeps its README', () => {
+    expect(readdirSync(path.join(UPGRADES, 'unreleased'))).toContain('README.md')
+  })
+
+  it('every pending fragment is well formed', () => {
+    const options = fragmentCheckOptions(REPO_ROOT)
+    expect(fragments.flatMap(f => fragmentProblems(f.text, { ...options, file: f.file }))).toEqual(
+      []
+    )
   })
 })
 

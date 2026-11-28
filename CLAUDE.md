@@ -25,8 +25,8 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
 > recreates a surface whose anchor file is gone. **In the kit repository only** (`.rocketflare.json`
-> `app` is null): a behaviour change needs an entry in `docs/upgrades/unreleased.md` in the same
-> commit — `kit.yml` fails without one — and `pnpm kit:release <version>` cuts the release. **In an
+> `app` is null): a behaviour change adds a porting-note fragment, `docs/upgrades/unreleased/<slug>.md`,
+> in the same commit — `kit.yml` fails without one — and `pnpm kit:release <version>` cuts the release. **In an
 > app** neither exists (the rename removes them): never write a kit porting note; release by bumping
 > the root `package.json` version and tagging it, and keep your own `CHANGELOG.md`.
 
@@ -123,7 +123,7 @@ scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrad
 .rocketflare.json  kit version + commit, the app's names, the replaceable-surface manifest
 launch.kit.json    the Launch kit contract (D36): how Launch scaffolds, gates, ships and upgrades a
                    copy — kept by every copy; `node scripts/kit-check.mjs` checks it (CONCEPTS §13)
-docs/upgrades/     one porting note per kit release (+ unreleased.md, kit repo only) — CHANGELOG.md is the index
+docs/upgrades/     one porting note per kit release (+ unreleased/ fragments and unreleased.md, kit repo only) — CHANGELOG.md is the index
 .claude/skills/    the rf-* skills named at the top: SKILL.md + any reference/checklist files; rf-agent-docs
                    ships check.mjs, rf-security tools/ (runner, guard hook)
 ```
@@ -203,7 +203,7 @@ Generated files are refused: run the command named. UI work passes `pnpm design:
 - **No `process.env` / Node-only APIs in `apps/web/src/`** (`pg`, `ws`, `node:fs`…); `build:api` catches it
 - **Release = root version**: git tag == root `package.json` `version` (ships web + cli)
 - **Docs in sync**: a behaviour change updates CONCEPTS / SETUP / DEPLOY / rules in the same PR;
-  **in the kit repository** it also adds an entry to `docs/upgrades/unreleased.md` — copies absorb
+  **in the kit repository** it also adds a fragment, `docs/upgrades/unreleased/<slug>.md` — copies absorb
   changes by reading those notes, so a change with no note never reaches them (`kit.yml` and the
   tag gate enforce it). An app writes no porting note
 - **A plugin composes, it never redefines** (D31): it namespaces everything with its id (tables

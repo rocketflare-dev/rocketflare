@@ -83,10 +83,13 @@ The repo's **non-negotiables** are listed in `CLAUDE.md`; the ones contributors 
 
 - **The gate is green**: `pnpm gate` before every commit (it starts the test database itself).
   `typecheck` regenerates `apps/web/worker-configuration.d.ts` — commit it if it changed.
-- **A behaviour change adds an entry to `docs/upgrades/unreleased.md`.** People are running copies
-  of this kit that were detached and renamed; they absorb your change by running `/rf-upgrade`,
-  which is guided by those notes. A change with no note never reaches them. `docs/upgrades/README.md`
-  has the shape, and CI fails a pull request that touches `apps/**` or `packages/**` without one.
+- **A behaviour change adds a porting-note fragment, `docs/upgrades/unreleased/<slug>.md`.** People
+  are running copies of this kit that were detached and renamed; they absorb your change by running
+  `/rf-upgrade`, which is guided by those notes. A change with no note never reaches them. One file
+  per pull request, so parallel pull requests never conflict over it: `docs/upgrades/README.md`
+  has the shape (steps unnumbered; `order: first` for a step that must come first), and CI fails a
+  pull request that touches `apps/**` or `packages/**` without one. An entry in the single
+  `docs/upgrades/unreleased.md` is still accepted, but a new change writes a fragment.
 - **Never rewrite released history.** Every copy pins a kit commit in its `.rocketflare.json`; a
   force-push over a released tag orphans each one of them, permanently. Releases are cut with
   `pnpm kit:release <version>` and the tag gate refuses one without its porting note.
@@ -169,6 +172,9 @@ adds one step, because rocketflare.dev keeps its own copy of the release list.
    warns that the changes touch auth, tenancy/RLS, the identity or plugin seams or AI tool binding,
    run a diff-scoped `standard` audit first (`/rf-security standard <previous>..HEAD`,
    [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md) "Cadence"); it is a warning, never a failure.
+   It folds every fragment in `docs/upgrades/unreleased/` and any entries in `unreleased.md` into
+   the one note, then deletes the fragments. When it says the summary paragraph has several
+   sentences, tighten it in the note and in `CHANGELOG.md` before you commit.
 2. `git add docs/upgrades/X.Y.Z.md && git commit -am "Release X.Y.Z" && git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z`.
    The `git add` matters: `-a` stages only tracked files, and the porting note is a new one.
    The tag has to be annotated because tags are signed. The kit's `deploy.yml` skips deployment,

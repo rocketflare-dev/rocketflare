@@ -1,7 +1,8 @@
 # Release notes, written for an agent
 
-One file per kit release, `X.Y.Z.md`, plus — in the kit repository only — `unreleased.md`, which accumulates entries between
-releases (it is `kitOnly`: an app never has one, and writes no porting note). `CHANGELOG.md` at the repository root is the human index; these are the porting
+One file per kit release, `X.Y.Z.md`, plus — in the kit repository only — the pending changes: one
+fragment per pull request under `unreleased/`, and the older single `unreleased.md`, which still
+works (both are `kitOnly`: an app never has them, and writes no porting note). `CHANGELOG.md` at the repository root is the human index; these are the porting
 instructions, and `scripts/upgrade.mjs` reads their frontmatter.
 
 They exist because a copy of the kit is detached and renamed, so it can never merge from upstream.
@@ -49,9 +50,38 @@ enforces every rule above.
 
 ## Writing one (kit repository only)
 
-Add to `unreleased.md` in the same pull request as the change — `.claude/rules/code-quality.md`
-lists it in the "Docs in sync" table, CI fails a PR that touches `apps/**` or `packages/**` without
-one, and `pnpm kit:release <version>` folds it into `X.Y.Z.md` at release time.
+Add a **fragment**, `unreleased/<slug>.md` (a short kebab-case name, the branch topic), in the same
+pull request as the change. Every pull request writes its own file, so two open ones never conflict
+over the note. `.claude/rules/code-quality.md` lists it in the "Docs in sync" table, CI fails a PR
+that touches `apps/**` or `packages/**` without one, and `pnpm kit:release <version>` folds every
+fragment into `X.Y.Z.md` at release time and deletes them. An entry in the single `unreleased.md`
+is still accepted and folded in too, but a new change writes a fragment.
+
+A fragment is a note cut down to one change (`unreleased/README.md` has an example):
+
+- **Frontmatter**: only `breaking`, `migrations`, `areas`, `touches_surfaces`, `requires_surfaces`
+  and `manual`, with the same rules as a note's. No `version`, `previous` or `date`: the release
+  fills them. Optionally `order: first` (or `last`, or an integer, lower first) to put its steps
+  ahead of every other part. A step every copy must take before anything else is `order: first`.
+- **Body**: the same four headings in the same order, and nothing else. Steps in "How to apply" and
+  "Verify" are written **unnumbered** (`- `), because the release numbers them; a number a step
+  does carry is ignored.
+- `release-check --unreleased` (CI) checks every fragment a pull request adds or edits, and refuses
+  a malformed one by name (`fragmentProblems` in `scripts/lib/upgrade-lib.mjs`).
+
+How the release folds them (`mergeNotes` in `scripts/release.mjs`):
+
+- **Order**, the same in every section: `order: first`, then integers low to high, then parts with
+  no `order` (the legacy `unreleased.md` ahead of fragments), then `order: last`; fragments of the
+  same rank by filename.
+- **Frontmatter**: `breaking` and `manual` are true if any part's is; the lists are unioned and
+  de-duplicated.
+- **What changed**: every part's summary sentence becomes paragraph 1, then every part's bullets.
+  With several parts that paragraph is several sentences, and `kit:release` says so: tighten it in
+  the note and in `CHANGELOG.md` before committing the release.
+- **How to apply** and **Verify** are numbered from 1. "`pnpm gate` passes." is written once, as
+  the last Verify step, however many parts carry it. **Conflicts to expect** concatenates, and is
+  `None.` only when every part says none.
 
 **A note is instructions, not an essay.** An agent ports a release by following it top to bottom.
 Rationale lives in `docs/CONCEPTS.md` — the decision record — and is LINKED from here, never
@@ -67,8 +97,8 @@ Exactly the four headings above, exact text, in that order, and then:
   so it must be ONE standalone summary sentence of **≤ 40 words** that reads correctly with no other
   context around it — that is why changelog entries used to run a paragraph long. Then one bullet
   per change, one line each.
-- **`## How to apply`** — numbered, imperative, and **each step self-contained**: no pronoun may
-  refer outside its own step, so "these", "them" and "the above" are banned. Write it for someone
+- **`## How to apply`** — numbered (unnumbered `- ` items in a fragment), imperative, and **each
+  step self-contained**: no pronoun may refer outside its own step, so "these", "them" and "the above" are banned. Write it for someone
   who does not have your diff in front of them, months later, reading one step at a time. Name the
   registry entries a new file has to be added to, say which of the kit's own conventions the change
   depends on, and be explicit about anything the patch cannot carry: a new binding in both wrangler
@@ -76,4 +106,5 @@ Exactly the four headings above, exact text, in that order, and then:
   it is about.
 - **`## Conflicts to expect`** — one line each, `path → what changed → what to do`. Or `None.`,
   optionally followed by one short clause saying why there are none.
-- **`## Verify`** — numbered checkable commands and assertions, and nothing else.
+- **`## Verify`** — numbered (in a fragment, unnumbered) checkable commands and assertions, and
+  nothing else.

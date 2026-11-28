@@ -105,6 +105,22 @@ describe('never-port, kit-only and manual lists in the kit', () => {
     }
   })
 
+  it('keeps the pending porting notes out of every copy — fragments as well as unreleased.md', () => {
+    // A copy reads only released `X.Y.Z.md` notes: the rename deletes what `kitOnly` names and
+    // `kit:upgrade` never ports it, so a fragment written in the kit can never land in an app.
+    const launch = JSON.parse(readFileSync(path.join(REPO_ROOT, 'launch.kit.json'), 'utf8'))
+    for (const pending of ['docs/upgrades/unreleased.md', 'docs/upgrades/unreleased/x-y.md']) {
+      expect(matchesAny(pending, kitOnlyGlobs(committed)), pending).toBe(true)
+      expect(matchesAny(pending, launch.scaffold.kitOnly), pending).toBe(true)
+      expect(
+        classifyPath(pending, { manifest, change: 'added' }).class,
+        `${pending} is never ported`
+      ).toBe('skipped-kit-only')
+    }
+    // Released notes are not caught by it.
+    expect(matchesAny('docs/upgrades/0.46.0.md', kitOnlyGlobs(committed))).toBe(false)
+  })
+
   it('declares the kit-only floor, so a copy made today inherits the whole list', () => {
     // The rename keeps `.rocketflare.json` verbatim, so a copy's list is the one written here.
     for (const glob of KIT_ONLY_PATHS) expect(committed.kitOnly ?? []).toContain(glob)

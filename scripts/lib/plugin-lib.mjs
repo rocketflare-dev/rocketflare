@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 import { KIT } from './rename-lib.mjs'
 import { repoPathProblem } from './repo-paths.mjs'
 import { missingFrom } from './surface.mjs'
-import { compareVersions, isVendored } from './upgrade-lib.mjs'
+import { compareVersions, fragmentsDir, isVendored } from './upgrade-lib.mjs'
 
 const require = createRequire(import.meta.url)
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -980,6 +980,11 @@ export function classifyPluginFile(relPath, id, { skills = [], hostFiles = [] } 
       role: 'fragment',
       reason: 'a data fragment — the HOST generates every migration (`pnpm db:generate`)',
     }
+  }
+  // A pending porting-note FRAGMENT is the plugin repository's own release machinery, folded into
+  // a released note by its next release; a host only ever reads released notes.
+  if (relPath.startsWith(`${fragmentsDir('docs/upgrades')}/`)) {
+    return { role: 'repo-only', reason: 'a pending note fragment, folded in by the next release' }
   }
   if (relPath.startsWith('docs/upgrades/')) {
     return { role: 'note', target: `docs/plugins/${id}/upgrades/${relPath.split('/').pop()}` }

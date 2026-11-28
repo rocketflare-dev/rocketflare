@@ -261,6 +261,26 @@ export interface NoteCheckOptions {
 export const NOTE_LINES_GUIDE: number
 export function noteLengthWarning(text: string, file?: string): string | null
 export function noteProblems(text: string, options?: NoteCheckOptions): string[]
+
+/** Porting-note fragments: `<notesDir>/unreleased/<slug>.md`, one per pull request. */
+export const FRAGMENTS_SUBDIR: 'unreleased'
+export const FRAGMENT_README: 'README.md'
+export const FRAGMENT_NAME_RE: RegExp
+/** The frontmatter a fragment may carry; the release writes `version`, `previous` and `date`. */
+export const FRAGMENT_KEYS: readonly string[]
+export function fragmentsDir(notesDir?: string): string
+export function isFragmentPath(relPath: string, notesDir?: string): boolean
+/** Do these changed paths carry a porting note: `unreleased.md` or any fragment? */
+export function recordsPortingNote(changed: readonly string[] | undefined, notesDir?: string): boolean
+/** `order` as a sort rank (absent 0, `first` -Infinity, `last` +Infinity); null when invalid. */
+export function fragmentRank(order: unknown): number | null
+/** The text under one `## ` heading, trimmed; null when the heading is absent. */
+export function sectionOf(body: string, heading: string): string | null
+/** Everything wrong with one fragment: the note schema plus the fragment's own rules. */
+export function fragmentProblems(
+  text: string,
+  options?: Omit<NoteCheckOptions, 'version' | 'expectPrevious'>
+): string[]
 export function compareVersions(a: string, b: string): -1 | 0 | 1
 export const VERSION_RE: RegExp
 

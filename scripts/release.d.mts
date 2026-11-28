@@ -64,3 +64,27 @@ export const AUDIT_CADENCE_GLOBS: readonly string[]
 export function auditCadencePaths(changed: readonly string[] | null | undefined, globs?: readonly string[]): string[]
 /** The warning lines `pnpm kit:release` prints for those paths; [] when there are none. */
 export function auditCadenceWarning(paths: readonly string[], previous: string): string[]
+
+/** One list item of a note section: its first line (marker dropped) and its continuation lines. */
+export interface NoteItem {
+  first: string
+  rest: string[]
+}
+/** A section's list items; a step's own number, if it has one, is ignored. */
+export function listItems(content: string | null | undefined): NoteItem[]
+/** One pending part of a release: a fragment, or the legacy `unreleased.md` (`legacy: true`). */
+export interface NotePart {
+  /** The filename: fragments are folded in filename order after their `order`. */
+  name: string
+  text: string
+  legacy?: boolean
+}
+/**
+ * Fold the pending parts into one porting note: frontmatter unioned and ORed, sections
+ * concatenated (`order` first, then the legacy file, then fragments by filename), How to apply and
+ * Verify renumbered, a single trailing "`pnpm gate` passes.".
+ */
+export function mergeNotes(
+  parts: readonly NotePart[],
+  release: { version: string; previous: string | null; date: string }
+): string
