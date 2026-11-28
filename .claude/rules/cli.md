@@ -114,7 +114,9 @@ a no-op `open`, a memory `Output` (`createMemoryOutput`) and a config store in a
 A plugin that ships commands exports a `CliPlugin` — `{ shared, register(program, action) }` — and
 one line in `apps/cli/src/plugins/index.ts` adds it to `CLI_PLUGINS`. `cli.ts` loops over
 `cliPlugins` and calls `register` once each, **after** every kit command, so `rocketflare --help`
-lists them together and a plugin can never shadow `login`.
+lists them together and a plugin can never shadow `login`. An app domain's commands are the same
+`CliPlugin` shape in `apps/cli/src/<id>/index.ts`, listed in `apps/cli/src/app.ts` (`APP_COMMANDS`),
+and follow every rule below with `@rocketflare/shared/<id>` as the contract.
 
 - **The top-level command name is the plugin's id** (`rocketflare example-feature …`), which is what
   keeps two installed plugins from claiming the same word. Sub-commands below it are the plugin's

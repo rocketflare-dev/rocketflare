@@ -20,6 +20,10 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 - `@testkit/integration` exports `runAgent` (claim and execute one run in-process); `pnpm design:lint` and the guard's UI check read each domain's `ui/`; domain tests in `apps/web/tests/<id>/` join the vitest projects.
 - The tool egress check (`tools/egress.ts`, `pnpm plugin check`) reads app domains' tools too, and names `apps/web/src/<id>/` for one without an answer.
 - `example-hr` and `example-sales` are new example surfaces, for fresh copies only.
+- `@/plugins/api/ui-wiring` exports `defineDomainUi` first, so a domain's UI entry loads when a test imports it before anything else (it crashed with "defineDomainUi is not a function" once a second domain was listed); `tests/example-hr/config/ui-entry.test.ts` pins it.
+- `tests/config/knowledge-entity-types.test.ts` and the events check in `tests/config/plugins.test.ts` read every unit, not only plugins, so a domain's entity types and events pass them.
+- The rule for where code goes is the same in every doc and skill: a domain holds this app's own concepts and logic; a plugin is a reusable capability that works across domains and across apps. `docs/POSITIONING.md` is new and holds the positioning; `CLAUDE.md`, the README, `docs/CONCEPTS.md` and `docs/ADAPTING.md` open with its first line.
+- `docs/ADAPTING.md` §3c is the recipe for adopting an app-owned plugin as a domain, rehearsed on `example-feature`; `/rf-how-do-i` plans an app's own process as a domain, and its worked orders slice is now a domain.
 
 ## How to apply
 
@@ -27,7 +31,9 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 - Skip migration `0038_kit-example-domains.sql`: it creates only the example tables. Run `pnpm db:generate` and confirm it produces no migration.
 - Leave `example-hr` and `example-sales` out; the upgrade records them absent in `.rocketflare.json`.
 - If one of your plugins has the id `core`, `kit` or `app`, rename it before `pnpm plugin check`.
-- If an app-owned concept lives in an in-tree plugin, you may keep it there; moving it into a domain is optional.
+- An app-owned plugin may stay a plugin: it is already a unit. To move one into a domain, follow `docs/ADAPTING.md` §3c after this upgrade — copy its trees out, `pnpm plugin remove <id> --apply --allow-dirty`, `defineDomain`, one line per app list, and no migration (`pnpm db:generate` must print "No schema changes").
+- Take `apps/web/src/plugins/api/ui-wiring.ts` as it is, keeping the `biome-ignore-all` comment, or `pnpm lint:fix` moves the export back.
+- Take the docs as they are where you have not rewritten them (`docs/POSITIONING.md`, `docs/ADAPTING.md` §3 and §3c, `docs/CONCEPTS.md` §16 and §20, the `rf-how-do-i`, `rf-plugin` and `rf-design` skills); where you have, carry over the rule's wording.
 
 ## Conflicts to expect
 
@@ -36,5 +42,6 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 ## Verify
 
 - `pnpm test config apps/web/tests/config/units.test.ts` passes.
+- `src/app.ts` and its four twins exist with empty lists, and no `example-hr` or `example-sales` tree was added.
 - `pnpm plugin check` passes.
 - `pnpm gate` passes.

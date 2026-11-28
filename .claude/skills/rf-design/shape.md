@@ -154,9 +154,11 @@ partner's system?"
 Run `pnpm plugin list --available` once and match each system, and each sizeable capability from
 the destination, against it:
 - **A match:** "install `<id>` at Stage N", in `design.json` `plugins`.
-- **No match:** built in the app, in the stage that first needs it.
-- **Build as a plugin only** if they mean to install it in other apps. A plugin is the format for
-  sharing, and its packaging costs a builder time they don't need to spend on their own domain.
+- **No match:** built in the app as a domain, in the stage that first needs it. A domain holds this
+  app's own concepts and logic.
+- **Build as a plugin only** for a reusable capability that works across domains and across apps,
+  meant to be installed in other apps. A plugin is the format for sharing, and its packaging costs
+  a builder time they don't need to spend on their own domain.
 
 For a commercial plugin, the catalogue names its licence terms. Their use is a question for the
 owner, so record it as fog until answered.

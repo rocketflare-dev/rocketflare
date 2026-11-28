@@ -4,7 +4,7 @@
   "kit": {
     "id": "rocketflare",
     "name": "Rocketflare",
-    "description": "Multi-tenant SaaS starter for internal tools and B2B products",
+    "description": "The kit for agentic business applications: one multi-tenant app holding every process as a domain, with agents acting on its records under each user's permissions",
     "repo": "https://github.com/rocketflare-dev/rocketflare.git",
     "version": { "file": "package.json", "field": "version" },
     "tagPattern": "^\\d+\\.\\d+\\.\\d+$"

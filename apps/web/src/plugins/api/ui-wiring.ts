@@ -18,6 +18,11 @@
  * form, which would show them a nav item whose routes the server 404s.
  */
 
+// biome-ignore-all assist/source/organizeImports: this export stays first, on purpose.
+// A domain's UI entry calls `defineDomainUi` while the hooks below are still loading (they reach
+// `units/ui.ts`, which lists every domain's UI entry), so it must be bound before them.
+export { defineDomainUi } from './domain'
+
 export type { NavConfig, NavGroup, NavItem } from '../../ui/components/SideNav'
 export type { TabConfig } from '../../ui/components/shared'
 export type { NavGuard } from '../../ui/hooks/useNavGuard'
@@ -39,4 +44,3 @@ export type {
   UiPlugin,
   UiUnit,
 } from '../types'
-export { defineDomainUi } from './domain'
