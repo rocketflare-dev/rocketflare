@@ -54,7 +54,12 @@ grep -q "\"commit\": \"$KIT_COMMIT\"" .rocketflare.json || {
   echo "detach: could not record the kit commit in .rocketflare.json (no \"commit\": null line)" >&2
   exit 1
 }
-rm -rf .git && git init -q && git add -A
+# Add exactly what was tracked: `git add -A` would obey a global gitignore and drop such files.
+TRACKED="$(mktemp)"
+trap 'rm -f "$TRACKED"' EXIT
+git ls-files -z > "$TRACKED"
+rm -rf .git && git init -q
+git --literal-pathspecs add -f --pathspec-from-file="$TRACKED" --pathspec-file-nul
 git -c user.name="${GIT_AUTHOR_NAME:-$(git config user.name || echo Rocketflare)}" \
     -c user.email="${GIT_AUTHOR_EMAIL:-$(git config user.email || echo rocketflare@localhost)}" \
     commit -q -m "Start from Rocketflare" -m "Kit commit: $KIT_COMMIT"
