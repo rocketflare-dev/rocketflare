@@ -236,6 +236,92 @@ export function chooseDevDbPort({
   return null
 }
 
+/**
+ * Every host port a running container publishes, and the container publishing it, from
+ * `docker ps --format '{{.Names}}\t{{.Ports}}'`. `0.0.0.0:5432->5432/tcp, [::]:5432->5432/tcp`
+ * and `127.0.0.1:6000-6001->6000-6001/tcp` both count; an exposed but unpublished `5432/tcp`
+ * does not. A port bound by Docker on one address can still look free to a bind test on another
+ * (macOS lets a wildcard bind sit beside a loopback one), so this is asked as well.
+ */
+export function publishedHostPorts(psText) {
+  const ports = new Map()
+  for (const line of String(psText ?? '').split('\n')) {
+    if (!line.trim()) continue
+    const [name, published = ''] = line.split('\t')
+    for (const m of published.matchAll(/:(\d+)(?:-(\d+))?->/g)) {
+      const first = Number(m[1])
+      const last = m[2] ? Number(m[2]) : first
+      for (let p = first; p <= last && p - first < 1000; p += 1) {
+        if (!ports.has(p)) ports.set(p, name)
+      }
+    }
+  }
+  return ports
+}
+
+/**
+ * The dev database's port, decided — never silently moved off a port somebody chose.
+ *
+ * - `requested` (`--port`, or `DEV_DB_PORT` in the environment) is taken or refused, never moved.
+ * - `preferred` is the port `.dev.vars` already carries. When `pinned` (a port this checkout chose
+ *   or was given — anything but the example's default) it is likewise kept or refused: moving it
+ *   once put a checkout on another project's database. Unpinned (a fresh `.dev.vars` still on the
+ *   example's 5432) it may move, and the reason names who holds it.
+ * - `holderOf(port)` → null when the port is this checkout's own or free, else a description of
+ *   whoever holds it (`container <name>`, `another process`). Asked of ANY port, not just the
+ *   scan range: a preferred :5682 is answered for itself.
+ *
+ * Returns `{ port, moved, reason? }`, or `{ error }` to print and exit non-zero on.
+ */
+export function planDevDbPort({
+  requested = null,
+  preferred = null,
+  pinned = false,
+  holderOf,
+  start = 5432,
+  count = 20,
+  skip = [TEST_DB_PORT],
+}) {
+  const blocked = new Set(skip)
+  const refuse = (port, why) => ({
+    error:
+      `port ${port} ${why}. Free it, or choose another with ` +
+      '`pnpm dev:db:up --port <n>` (it is written to apps/web/.dev.vars)',
+  })
+  if (requested !== null && requested !== undefined) {
+    if (!Number.isInteger(requested) || requested < 1 || requested > 65535) {
+      return { error: `--port ${requested} is not a port number` }
+    }
+    if (blocked.has(requested)) return refuse(requested, 'is reserved for the test database')
+    const holder = holderOf(requested)
+    return holder ? refuse(requested, `is taken by ${holder}`) : { port: requested, moved: false }
+  }
+  if (preferred && !blocked.has(preferred)) {
+    const holder = holderOf(preferred)
+    if (!holder) return { port: preferred, moved: false }
+    if (pinned)
+      return refuse(preferred, `(DATABASE_URL in apps/web/.dev.vars) is taken by ${holder}`)
+    for (let port = start; port < start + count; port += 1) {
+      if (blocked.has(port) || port === preferred) continue
+      if (!holderOf(port)) {
+        return { port, moved: true, reason: `:${preferred} is taken by ${holder}` }
+      }
+    }
+    return { error: `no free port in ${start}–${start + count - 1} for the dev database` }
+  }
+  for (let port = start; port < start + count; port += 1) {
+    if (blocked.has(port)) continue
+    if (!holderOf(port)) {
+      return {
+        port,
+        moved: preferred !== null && preferred !== undefined,
+        ...(preferred ? { reason: `:${preferred} is reserved for the test database` } : {}),
+      }
+    }
+  }
+  return { error: `no free port in ${start}–${start + count - 1} for the dev database` }
+}
+
 /** The port in a `postgresql://…` URL, or null when it has none or the URL is unparseable. */
 export function databaseUrlPort(url) {
   try {

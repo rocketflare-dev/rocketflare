@@ -500,7 +500,9 @@ path); no per-PR previews.
   enums, `vector(1024)` (a new dimension means a new table). `migrate.ts` creates the `vector`
   extension first. Detail: `.claude/rules/database.md`.
 - **Local port is chosen** (`scripts/dev-db.mjs`): each checkout gets its own compose project and
-  port, written back to `DATABASE_URL`, so two copies never share a database.
+  port, written back to `DATABASE_URL`, so two copies never share a database. A chosen port
+  (`--port`, `DEV_DB_PORT`, or a non-default `.dev.vars` port) is kept or refused with its holder
+  named, never moved; "held" means any running container publishes it or a bind/connect test fails.
 - **Or an existing database** (`pnpm bootstrap --db-url <url>`): for a machine with no Docker (a
   coding sandbox on a Neon branch). The URL goes into `DATABASE_URL` and nothing is started; a
   `*.neon.tech` URL also sets `DATABASE_DRIVER=neon` there (HTTPS + WebSocket only, which is what a
