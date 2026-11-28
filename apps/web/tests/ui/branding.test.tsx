@@ -63,6 +63,20 @@ describe('the mark follows the deployment', () => {
     expect(container.querySelector('img[src="/brand/missing.svg"]')).toBeNull()
     expect(container.querySelector('svg[viewBox="0 0 512 512"]')).not.toBeNull()
   })
+
+  it("gives a stylesheet a hook on the deployment's logo and none on the bundled mark", async () => {
+    const { container } = renderSignIn({ logoUrl: '/brand/mark.jpg' })
+    expect(container.querySelector('[data-brand-logo]')).toBeNull()
+    await waitFor(() =>
+      expect(container.querySelector('img[src="/brand/mark.jpg"]')).not.toBeNull()
+    )
+    const hooked = [...container.querySelectorAll('[data-brand-logo]')]
+    expect(hooked.length).toBeGreaterThan(0)
+    expect(hooked.every(el => el.matches('img[src="/brand/mark.jpg"]'))).toBe(true)
+    for (const el of hooked) fireEvent.error(el)
+    expect(container.querySelector('[data-brand-logo]')).toBeNull()
+    expect(container.querySelector('svg[viewBox="0 0 512 512"]')).not.toBeNull()
+  })
 })
 
 describe('the tab icon follows the deployment', () => {
