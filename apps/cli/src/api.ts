@@ -94,6 +94,19 @@ export interface ApiClient {
    * whose answer is the target's and is parsed by `schema`.
    */
   upload<T = unknown>(target: string, file: UploadFile, options?: UploadOptions<T>): Promise<T>
+  /**
+   * Multipart `POST` to a plugin's OWN upload route (one under its `uploadPaths`), parsed like
+   * `request`: the API key, the error envelope → `CliApiError`, `schema` on the answer.
+   *
+   * @deprecated Kept so a plugin that has not moved to `uploadTargets` keeps its command; use
+   * `upload(target, file, { fields, schema })` against an `uploadTargets` entry instead. It goes
+   * in a release that only removes deprecated API.
+   */
+  postForm<T = unknown>(
+    path: string,
+    form: FormData,
+    options?: Pick<RequestOptions<T>, 'schema'>
+  ): Promise<T>
 }
 
 export interface UploadFile {
@@ -172,7 +185,7 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     return { status: response.status, raw, data: parsed.data }
   }
 
-  async function sendRaw(method: 'GET', path: string, init: RequestInit) {
+  async function sendRaw(method: 'GET' | 'POST', path: string, init: RequestInit) {
     const url = buildUrl(serverUrl, path)
     let response: Response
     try {
@@ -198,6 +211,29 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     getBytes: async path => {
       const response = await sendRaw('GET', path, { headers: authHeaders(options, '*/*') })
       return new Uint8Array(await response.arrayBuffer())
+    },
+    postForm: async <T>(
+      path: string,
+      form: FormData,
+      formOptions?: Pick<RequestOptions<T>, 'schema'>
+    ): Promise<T> => {
+      // No Content-Type: fetch writes the multipart one, with its boundary.
+      const response = await sendRaw('POST', path, {
+        headers: authHeaders(options, 'application/json'),
+        body: form,
+      })
+      const raw = await readBody(response)
+      if (!formOptions?.schema) return raw as T
+      const parsed = formOptions.schema.safeParse(raw)
+      if (!parsed.success) {
+        throw new CliApiError({
+          status: response.status,
+          code: 'invalid_response',
+          body: raw,
+          message: `Unexpected response from POST ${path}: ${parsed.error.issues[0]?.message ?? 'invalid'}`,
+        })
+      }
+      return parsed.data
     },
     upload: async <T>(target: string, file: UploadFile, uploadOptions: UploadOptions<T> = {}) => {
       const ticket = await request('POST', '/api/uploads', {
