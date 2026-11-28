@@ -7,7 +7,10 @@
  * vector from another model is noise — so a document embedded by an older model is found lexically
  * until it is re-embedded. Each signal retrieves a wide candidate pool, the fusion decides the
  * order, the top `limit` come back with `denseRank`/`lexicalRank` so "did the vector search find
- * this or only the keyword one?" is answerable. Each hit also says WHERE in its document it sits —
+ * this or only the keyword one?" is answerable. Every leg orders by its score THEN `chunks.id`:
+ * equal scores are common (two passages equidistant from the query, the same term counts), and a
+ * leg that left ties to the plan put them in a different order per query, which changed their
+ * fused ranks — the same search answered two orders. Each hit also says WHERE in its document it sits —
  * `seq` (passage n of `documentPassages`), `headingPath`, `page`, and `charOffset`, the passage's
  * position in `documents.content`, so a reader can jump straight there with `get_document`. The
  * offset is the stored `chunks.char_start` (exact: the chunk is that slice of the text); a row
@@ -481,7 +484,7 @@ async function runSearch(
       .from(chunks)
       .innerJoin(documents, eq(documents.id, chunks.documentId))
       .where(and(eq(chunks.tenantId, tenantId), scope, eq(chunks.embeddingModel, vector.model)))
-      .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`)
+      .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`, chunks.id)
       .limit(pool)
   // The platform corpus: `tenant_id IS NULL` and a named source, never anything else — and only
   // the documents embedded by THIS query vector's model. Always under the iterative scan: the
@@ -494,7 +497,7 @@ async function runSearch(
         .from(chunks)
         .innerJoin(documents, eq(documents.id, chunks.documentId))
         .where(and(isNull(chunks.tenantId), platformScope, eq(chunks.embeddingModel, vector.model)))
-        .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`)
+        .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`, chunks.id)
         .limit(pool)
     })
 
@@ -526,7 +529,7 @@ async function runSearch(
             eq(chunks.embeddingModel, vector.model)
           )
         )
-        .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`)
+        .orderBy(sql`${chunks.embedding} <=> ${vector.literal}::vector`, chunks.id)
         .limit(pool)
     })
   const denseLegs: Promise<Candidate[]>[] = shared
@@ -556,7 +559,8 @@ async function runSearch(
             )
           )
           .orderBy(
-            sql`ts_rank_cd(${chunks.searchVector}, to_tsquery(${SEARCH_TEXT_CONFIG}, ${terms})) DESC`
+            sql`ts_rank_cd(${chunks.searchVector}, to_tsquery(${SEARCH_TEXT_CONFIG}, ${terms})) DESC`,
+            chunks.id
           )
           .limit(pool)
       : Promise.resolve([] as Candidate[]),

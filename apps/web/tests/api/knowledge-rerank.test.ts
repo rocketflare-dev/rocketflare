@@ -265,6 +265,40 @@ describe('reranking', () => {
     ).toBe(true)
   })
 
+  it('orders equal-scored passages by chunk id in every leg, so a search answers one order', async () => {
+    const e = env('none')
+    const w = await world(e)
+    // Eight passages tied on BOTH signals: no topic word (one vector for all and for the query)
+    // and the same two query terms once each.
+    for (let i = 0; i < 8; i++) {
+      await ingestText(
+        db,
+        w.cfg,
+        e,
+        {
+          tenantId: w.tenantId,
+          userId: w.userId,
+          title: `tie ${i}`,
+          text: `Granite quarry log, entry ${'x'.repeat(i + 1)}.`,
+        },
+        { jobs: e.JOBS_QUEUE }
+      )
+    }
+    const search = () =>
+      searchKnowledgeChunks(db, w.cfg, e, fullAccessScope(w.tenantId), {
+        query: 'granite quarry',
+        limit: 8,
+        rerank: false,
+      })
+    const { hits } = await search()
+    expect(hits).toHaveLength(8)
+    const ids = hits.map(h => h.chunkId)
+    expect(ids).toEqual([...ids].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+    // Each leg broke its ties the same way, so the fused rank is each leg's rank.
+    expect(hits.every(h => h.denseRank === h.rank && h.lexicalRank === h.rank)).toBe(true)
+    expect((await search()).hits.map(h => h.chunkId)).toEqual(ids)
+  })
+
   it('a tenant rerank row (Fireworks) wins over the binding, and its connection test reranks two documents', async () => {
     const e = env('banana')
     const w = await world(e)

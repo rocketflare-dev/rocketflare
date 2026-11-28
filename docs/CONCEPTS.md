@@ -1162,7 +1162,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   Search is hybrid dense + lexical (the lexical half matches ANY query word against
   `chunks.search_vector` — a GENERATED tsvector over context + heading path + table header + text with a GIN
   index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
-  words cannot veto it) with RRF, scoped by `AccessScope` (§1). **Each dense leg reads only chunks
+  words cannot veto it) with RRF, scoped by `AccessScope` (§1). Every leg breaks score ties by
+  `chunks.id`, and so does the fusion, so equal-scored passages come back in one order. **Each dense leg reads only chunks
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
