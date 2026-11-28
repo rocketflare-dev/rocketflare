@@ -209,7 +209,8 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   that fetches a URL reads only one in `ToolCtx.requesterUrls` (what the person typed) or one its
   own search returned — never a URL the model, a page or a document supplied. Appended after the kit's three knowledge tools;
   `[]` for a tenant without it; a throw is logged and skipped. A test pinning the tool list must be
-  a prefix assertion. Each tool says where it is offered — `surfaces: ['chat' | 'agents' | 'mcp']`,
+  a prefix assertion; any test over a SHARED registry asserts only the plugin's own entries
+  (`expectOwnContributions` from `@testkit/unit`). Each tool says where it is offered — `surfaces: ['chat' | 'agents' | 'mcp']`,
   absent = all, filtered by `toolsFor(surface, ctx)` — and how an MCP client sees it in `mcp: {
   title?, annotations?, outputSchema?, scope? }` (defaults from `sideEffects`: `mcp:read` and
   read-only, or `mcp:write` and destructive). Terminal and approval-gated tools never reach `mcp`.

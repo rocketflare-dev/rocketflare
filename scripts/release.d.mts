@@ -88,3 +88,42 @@ export function mergeNotes(
   parts: readonly NotePart[],
   release: { version: string; previous: string | null; date: string }
 ): string
+
+/** The plugin matrix (#180): the workflow file `kit:release` dispatches, and its default wait. */
+export const MATRIX_WORKFLOW: string
+export const MATRIX_WAIT_MINUTES: number
+export interface ToolResult {
+  status: number
+  stdout: string
+  stderr: string
+}
+export type ToolRunner = (cmd: string, args: string[], options?: { cwd?: string }) => ToolResult
+/** `spawnSync` as a result object; a missing binary is status -1, never a throw. */
+export function runTool(cmd: string, args: string[], options?: { cwd?: string }): ToolResult
+export type MatrixHandle =
+  | { skipped: string; requestId?: undefined }
+  | { requestId: string; sha: string; unpushed: boolean; skipped?: undefined }
+/** Dispatch the matrix against origin/main; `{ skipped }` with the reason when it cannot. */
+export function dispatchPluginMatrix(options: {
+  version: string
+  root: string
+  run?: ToolRunner
+  now?: () => number
+}): MatrixHandle
+/** Wait for the dispatched run (bounded) and return the lines to print. */
+export function awaitPluginMatrix(
+  handle: MatrixHandle,
+  options?: {
+    root?: string
+    run?: ToolRunner
+    sleep?: (ms: number) => void
+    now?: () => number
+    timeoutMs?: number
+    pollMs?: number
+  }
+): string[]
+/** `✔` for an all-green run, else one `⚠ <plugin> fails on main: <step>, <url>` per red job. */
+export function pluginMatrixLines(
+  verdicts: ReadonlyArray<{ plugin: string; ok: boolean; conclusion: string; step: string | null; url: string | null }>,
+  url: string
+): string[]

@@ -1813,8 +1813,8 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
   and the tests of the kit's tooling (`scripts/**`, the rf-security runner: a copy runs it, never
   writes it, and receives it already tested) —
   which the kit's gate runs (`pnpm test` names the project only while its directory exists); its
-  workflows (`kit.yml`, `plugin-ci.yml`, `notify-plugins.yml`); its maintainer scripts
-  (`release.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
+  workflows (`kit.yml`, `plugin-ci.yml`, `plugin-matrix.yml`); its maintainer scripts
+  (`release.mjs`, `plugin-matrix.mjs`, the two nudges and `nudge-lib`, `default-plugins.mjs`, `install.sh`); and its
   project files (`CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, the pending porting notes
   `docs/upgrades/unreleased.md` and the fragments in `docs/upgrades/unreleased/`). `scripts/rename.mjs` deletes them when a
   copy is born, and with them every package.json script (`kit:release`) and `.claude/settings.json`
@@ -2117,6 +2117,27 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   and plugin repos call `plugin-ci.yml` (floor + newest kit), which installs a plugin's
   `requires.plugins` from the same checkout first and takes the highest `minKit` across the set
   as the floor.
+- **The plugin matrix** (`.github/workflows/plugin-matrix.yml`, logic in kit-only
+  `scripts/plugin-matrix.mjs`): the LATEST release of every published plugin (the plugins
+  repository's newest tag, lockstep) against ONE kit ref — one `matrix <id>` job per plugin, its
+  `requires.plugins` installed first, plus a `full-house` job with every plugin installed together.
+  It runs on every kit tag (against that tag), on `workflow_dispatch` (`kit_ref`, `plugins`,
+  `full_house`, `plugins_ref`, `force_fail` — a rehearsal that fails one job on purpose —
+  `request_id`) and as a reusable workflow (plus `plugins_repo`, `tools_ref`; output `results`).
+  It reports through the run alone: a red plugin fails the run, and the summary is one row per
+  plugin — pass/fail, the failing step (the gate's own failing step and test names under it), the
+  `pnpm plugin check --json` warning count (`n/a` on a kit without it; the readiness signal a
+  warning-first contract such as `egress` waits on) and the kit sha. It never opens, edits or closes
+  an issue, by decision. `pnpm kit:release` dispatches it against `origin/main` before it writes
+  anything, waits up to 10 minutes at the end (`--matrix-wait`, `--no-matrix`) and prints `✔` or
+  `⚠ <plugin> fails on main: <step>, <run>`; it warns, never blocks, and says so without `gh`. It
+  replaced `notify-plugins.yml`, whose dispatch token was never set, and its weekly backstop: a
+  tag run that reports itself needs neither.
+- **Cross-plugin tests assert only their own contributions**: "the providers include mine", never
+  "are exactly these", or a second plugin in the host fails the first one's test (the full house
+  shows it). `@testkit/unit` has `ownContributions(id, items, keyOf?)` and
+  `expectOwnContributions(id, items, expectedKeys, keyOf?)` — exact over the plugin's own
+  namespaced keys (`<id>`, `<id>:`, `<id>.`, `<id>/`), blind to everyone else's.
 - **Discovery**: `pnpm plugin list --available [--json]` is the catalogue — every
   `rocketflare-plugin.json` in `rocketflare-dev/rocketflare-plugins` at its newest release tag, one
   line each (id, version, installed here or not, description: the manifest's `description`, else
@@ -2559,7 +2580,7 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
 | 2 | The kit is bare; `defaultPlugins` + a bootstrap step install an app's own set on its fresh clones (empty in the kit: analytics is opt-in) |
 | 3 | `example-feature` is the reference plugin |
 | 4 | A plugin is recorded as a `kind: 'plugin'` surface; `readManifest()` is the one kit-vs-app predicate |
-| 5 | Compatibility is proved in CI from both ends (`kit.yml` with `defaultPlugins` + `ci-plugins.json` installed; `plugin-ci.yml`; `kit:release` refusal) |
+| 5 | Compatibility is proved in CI from both ends (`kit.yml` with `defaultPlugins` + `ci-plugins.json` installed; `plugin-ci.yml`; `kit:release` refusal); the plugin matrix proves every plugin's latest release on each kit tag, reporting through the run alone |
 | 5b | *(reversed)* a `PLUGIN_API` integer beside `requires.kit` |
 | 5c | Compatibility is observed: derived `uses` against the emitted ledger, plus a `minKit` floor |
 | 6 | Cubes/fact tables/dashboards are plugin-owned registries via `extensions`, narrowed by the owner |
@@ -2610,7 +2631,9 @@ chars, and `uses` is only as fresh as the last export; table collisions are caug
 refused at `add`; the isolation check proves a test exists, not that it is right; no database-free
 test of data-touching handlers; one DO per row is unpurgeable (purge-intent ledger not built);
 `plugin-ci.yml` input changes reach callers only via `main`, and nothing tests versions between
-floor and ceiling. `addedDependencies` starts after 0.17.1: a plugin installed by 0.17.1 or earlier has its
+floor and ceiling; the plugin matrix proves only each plugin's newest release (never an older one,
+never an app's own code), reads only the public plugins repository (the commercial one runs its
+own), is not yet called by a plugin release, and alerts nobody beyond a red run and its summary. `addedDependencies` starts after 0.17.1: a plugin installed by 0.17.1 or earlier has its
 older packages kept, never removed, when a release drops them, and a package a plugin added that
 the kit later starts declaring too is still the plugin's to remove. Public mounts (D34) have no `@testkit` builder
 (test them through `request()`), and their rate limit is the kit's approximate KV window, keyed
