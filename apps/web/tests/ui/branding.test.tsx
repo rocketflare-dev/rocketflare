@@ -2,6 +2,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { Route, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { BrandFavicon } from '@/ui/components/BrandFavicon'
+import { LogoMark } from '@/ui/components/shared/LogoMark'
 import { queryKeys } from '@/ui/lib/query-keys'
 import Login from '@/ui/pages/Login'
 import { renderWithProviders, stubFetch } from './helpers/renderWithProviders'
@@ -44,28 +45,35 @@ describe('the sign-in panel follows the deployment', () => {
   })
 })
 
+// The mark is rendered alone so the bundled art can be any SVG: a copy draws its own mark, and
+// only "an <svg>, not the configured <img>" is the behaviour under test.
+function renderMark(branding: Record<string, unknown> = {}) {
+  stubFetch({ '/api/health': { ...HEALTH, ...branding } })
+  return renderWithProviders(<LogoMark />, { session: null })
+}
+
 describe('the mark follows the deployment', () => {
   it("shows the deployment's logo in place of the bundled mark", async () => {
-    const { container } = renderSignIn({ logoUrl: 'https://cdn.example.com/mark.svg' })
+    const { container } = renderMark({ logoUrl: 'https://cdn.example.com/mark.svg' })
     await waitFor(() =>
       expect(container.querySelector('img[src="https://cdn.example.com/mark.svg"]')).not.toBeNull()
     )
-    expect(container.querySelector('svg[viewBox="0 0 512 512"]')).toBeNull()
+    expect(container.querySelector('svg')).toBeNull()
   })
 
   it('draws the bundled mark until a logo is known, and again if it fails to load', async () => {
-    const { container } = renderSignIn({ logoUrl: '/brand/missing.svg' })
-    expect(container.querySelector('svg[viewBox="0 0 512 512"]')).not.toBeNull()
+    const { container } = renderMark({ logoUrl: '/brand/missing.svg' })
+    expect(container.querySelector('svg')).not.toBeNull()
     await waitFor(() =>
       expect(container.querySelector('img[src="/brand/missing.svg"]')).not.toBeNull()
     )
     fireEvent.error(container.querySelector('img[src="/brand/missing.svg"]') as HTMLImageElement)
     expect(container.querySelector('img[src="/brand/missing.svg"]')).toBeNull()
-    expect(container.querySelector('svg[viewBox="0 0 512 512"]')).not.toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
   })
 
   it("gives a stylesheet a hook on the deployment's logo and none on the bundled mark", async () => {
-    const { container } = renderSignIn({ logoUrl: '/brand/mark.jpg' })
+    const { container } = renderMark({ logoUrl: '/brand/mark.jpg' })
     expect(container.querySelector('[data-brand-logo]')).toBeNull()
     await waitFor(() =>
       expect(container.querySelector('img[src="/brand/mark.jpg"]')).not.toBeNull()
@@ -75,7 +83,7 @@ describe('the mark follows the deployment', () => {
     expect(hooked.every(el => el.matches('img[src="/brand/mark.jpg"]'))).toBe(true)
     for (const el of hooked) fireEvent.error(el)
     expect(container.querySelector('[data-brand-logo]')).toBeNull()
-    expect(container.querySelector('svg[viewBox="0 0 512 512"]')).not.toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull()
   })
 })
 
