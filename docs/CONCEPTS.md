@@ -630,6 +630,10 @@ project.
   - Without the key pair the bytes pass through the Worker, so a deployed target is capped at
     `MAX_WORKER_UPLOAD_BYTES` (10 MB; a larger file is 413 with `details.directUploads: false`).
     `development` takes the target's own `maxBytes`, so local dev needs no R2 credentials.
+  - **A route that takes the bytes itself gets the 1 MB cap.** A plugin's own multipart route
+    (`parseBody()` / `formData()`) is held to the host's 1 MB body limit unless the plugin declares
+    the deprecated `uploadPaths` / `uploadLimits` for it (§16). Without them a file above 1 MB is a
+    413, whatever the route's own `bodyLimit` says. `pnpm plugin check` warns about such a route.
 - **`/api/files`**: files arrive through the `avatars` / `uploads` targets (avatars allowlist
   images); tenant-scoped read (another
   tenant's file is 404) with ETag/304; **only allowlisted types render inline, everything else is
@@ -2294,7 +2298,15 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   `uploadPaths` prefix (under `/api/<id>/`) a non-JSON body may be 10 MB + 64 KB; an exact
   `uploadLimits` path, up to 50 MiB (clamped; `uploadLimitIssues` refuses more). A JSON body keeps
   1 MB on both. The route mounts its own `bodyLimit` and checks each file; the Worker holds it in
-  memory.
+  memory. **A multipart route declared in neither keeps the 1 MB cap**: the host's body limit runs
+  before the route's own `bodyLimit`, so a larger file is a 413 `payload_too_large` the route never
+  sees. `pnpm plugin check` warns when a plugin's server source reads `parseBody()` or `formData()`
+  and the plugin declares no `uploadTargets`, `uploadPaths`, `uploadLimits` or public-mount
+  `bodyLimitBytes` (a warning, because a small text-only form is fine at 1 MB). The client for
+  such a route is the deprecated `api.postForm(url, formData, { schema })` from `@/plugins/api/ui`
+  (`api.upload(url, formData)`, the 0.45 call, is a deprecated overload of it), and `postForm(path,
+  form, { schema })` on the CLI's `ApiClient`: the same cookie or API key, CSRF marker and error
+  envelope as every other call. They stay until a release that only removes deprecated API.
 - **Destinations (`useNavigationEntries()`)**, from `@/plugins/api/ui`: every place the reader may
   open as one flat list of `{ id, label, to, group, icon?, keywords?, source }` — the side nav as
   `SideNav` composes it (`composeNav` over `CORE_NAVIGATION` and every plugin's `nav`), the
