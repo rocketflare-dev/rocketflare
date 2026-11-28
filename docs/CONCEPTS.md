@@ -1732,7 +1732,7 @@ are detected, never prevented — Workflows still resumes a parked run on today'
 commit (record from dev or seeded tenants — a recording holds the run's input and model turns), and
 its turn drift is not checked (a system prompt naming the tenant drifts by design); `rerun` is a new
 run, so a parent waiting on a child that reran sees the child `cancelled`; an `onTimeout: 'reject'`
-deadline is applied by the 10-minute sweeper, so it lands up to ~20 minutes late, and at the
+deadline is applied by the hourly sweeper, so it lands up to about 70 minutes late, and at the
 `AGENT_INTERRUPT_TIMEOUT` cap the Workflow's own wait ends first and cancels — keep `hitl.timeout`
 shorter; reminders are one per ask; assignees are checked against tenant membership at notify and
 answer time, not when the ask is raised; a child's budget share is fixed when it is spawned (two
