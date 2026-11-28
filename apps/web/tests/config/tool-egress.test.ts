@@ -26,14 +26,17 @@ const cast = (name: string, extra: Record<string, unknown> = {}): Tool =>
 describe('egress value check', () => {
   it('warns (never fails) for every installed tool without an egress answer', async () => {
     const report = await readToolEgress(installedToolUnits())
+    // Straight to stderr, not console.warn: Vitest drops a passing test's console output under
+    // its agent reporter, so a coding agent running the gate would never see the warnings.
+    const say = (line: string) => process.stderr.write(`${line}\n`)
     for (const t of missingEgress(report)) {
-      console.warn(
+      say(
         `warn: ${t.kind} ${t.unit}: the tool "${t.tool}" has no \`egress\` answer — can it send ` +
           "this organisation's data outside it? (.claude/rules/tools.md)"
       )
     }
     for (const u of report.unreadable) {
-      console.warn(`note: ${u.kind} ${u.unit}: tools(ctx) could not be called (${u.error})`)
+      say(`note: ${u.kind} ${u.unit}: tools(ctx) could not be called (${u.error})`)
     }
     expect(report.tools.some(t => t.unit === 'core' && t.tool === 'search_knowledge')).toBe(true)
   })
