@@ -1,8 +1,9 @@
 # The plugin seam
 
 A plugin is a **git repository copied into an app**, never an npm package; this is the contract for
-writing one. Design: `docs/CONCEPTS.md` §16 · importable symbols: `docs/plugin-api.md` · example:
-`example-feature/` · **`/rf-plugin`** for anything procedural (add, upgrade, remove, `check`).
+writing one. Design: `docs/CONCEPTS.md` §16 · importable symbols: `docs/plugin-surface.json`, by
+job in the `/rf-plugin` reference ("What you want to do") · example: `example-feature/` ·
+**`/rf-plugin`** for anything procedural (add, upgrade, remove, `check`).
 
 The seam is **six barrel lines** — install writes them, remove deletes them; nothing else in the
 host ever names a plugin.

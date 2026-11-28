@@ -12,11 +12,11 @@ package, never a build artefact. Its code lands as ordinary source under three r
 translated into this app's own vocabulary on the way in, and it reaches the host through six
 barrel files and nothing else. In the other direction it imports the host only through the DECLARED
 entries — `@/plugins/api` (the context family), `@/db/schema/kit`, the shared and CLI entries,
-`@testkit/*` — and receives everything else as injected context; `docs/plugin-api.md` is the
-generated reference for that surface, and its `## Surface ledger` block is what every plugin's
-declared `uses` is checked against. `docs/CONCEPTS.md` §16 is the design;
-`apps/web/src/plugins/CLAUDE.md` is the seam; `reference.md` beside this file is the manifest shape,
-the exit codes and what each command verifies.
+`@testkit/*` — and receives everything else as injected context. `docs/plugin-surface.json` is the
+generated list of that surface, what every plugin's derived `uses` is checked against.
+`docs/CONCEPTS.md` §16 is the design; `apps/web/src/plugins/CLAUDE.md` is the seam; `reference.md`
+beside this file opens with "What you want to do" (the name to import for each job), then the
+manifest shape, the exit codes and what each command verifies.
 
 **The rule that matters most:** installing a plugin gives it full Worker and database access, so it
 is as trusting as merging a pull request. Every command prints a plan and stops. **You show the

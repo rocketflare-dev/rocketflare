@@ -5,8 +5,9 @@
  * holds the steps and the argument rules, unit-tested in `apps/web/tests/kit-only/gate.test.ts`.
  *
  * There is deliberately no step for generated files: `typecheck` regenerates
- * `worker-configuration.d.ts` (commit what changes), the `docs/plugin-api.md` diff is the kit's own
- * check (kit.yml), and `pnpm plugin check` runs at `plugin add|upgrade` and in plugin CI.
+ * `worker-configuration.d.ts` (commit what changes), the plugin surface diff
+ * (`docs/plugin-surface.json`, `docs/plugin-api.md`) is the kit's own check (kit.yml), and
+ * `pnpm plugin check` runs at `plugin add|upgrade` and in plugin CI.
  */
 
 export const GATE_LIST_SCHEMA_VERSION = 1

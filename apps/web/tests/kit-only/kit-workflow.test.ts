@@ -34,7 +34,7 @@ describe('kit.yml', () => {
     const checks = job('kit-checks')
     expect(checks).toContain('node scripts/release-check.mjs --unreleased')
     expect(checks).toMatch(
-      /node scripts\/plugin-api-doc\.mjs\n\s+git diff --exit-code -- docs\/plugin-api\.md/
+      /node scripts\/plugin-api-doc\.mjs\n\s+git diff --exit-code -- docs\/plugin-api\.md docs\/plugin-surface\.json/
     )
     expect(checks).toContain('node scripts/plugin.mjs check')
     expect(checks).toContain('node scripts/default-plugins.mjs --ci --github-output')

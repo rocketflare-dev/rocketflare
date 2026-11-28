@@ -57,7 +57,7 @@ CI — is preserved as upstream, as is the plugin catalogue page `rocketflare.de
 `<slug>.example.com`), `.rocketflare` → `.<slug>`, the Postgres owner `rocketflare` → `<snake>`,
 `rocketflare_` → `<snake>_`, `rocketflare-` → `<slug>-`, `Rocketflare` → the display name, bare
 `rocketflare` → `<slug>` — refuses a dirty tree without `--force`, then runs `pnpm install`,
-`node scripts/plugin-api-doc.mjs` (the document cuts summaries at a width the name moves) and
+`node scripts/plugin-api-doc.mjs` (the surface's entry labels carry the package name) and
 `biome check --write` (`--skip-install` to defer all three). Exit `0` ok · `1` error · `2` usage. Delete
 `apps/web/.provision.json` (the git-ignored provisioning cache) when re-adapting a copy that was
 already provisioned — the rename never rewrites it (`.dev.vars` is the only git-ignored file it

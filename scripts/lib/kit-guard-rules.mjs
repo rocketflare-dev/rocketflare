@@ -35,7 +35,7 @@ export const GUARD_RULES = [
   {
     id: 'plugin-api-doc',
     tier: 'sealed',
-    paths: ['docs/plugin-api.md'],
+    paths: ['docs/plugin-api.md', 'docs/plugin-surface.json'],
     why: 'Generated from the source of the declared plugin entries.',
     regenerate: 'node scripts/plugin-api-doc.mjs',
   },
@@ -153,7 +153,7 @@ export const GUARD_RULES = [
       'apps/cli/src/plugins/types.ts',
       'apps/cli/src/plugins/api.ts',
     ],
-    why: 'The declared plugin API (docs/plugin-api.md); every installed plugin compiles against it.',
+    why: 'The declared plugin API (docs/plugin-surface.json); every installed plugin compiles against it.',
     instead:
       'Data one plugin shares with another: `extensions` on `ServerPlugin` / `UiPlugin`, read with `extensions()` from `@/plugins/api/peers`. A member the seam lacks is a kit change: say what you needed and raise it upstream.',
   },

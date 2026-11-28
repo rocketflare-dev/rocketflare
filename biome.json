@@ -87,6 +87,7 @@
       "!**/.claude",
       "!apps/web/migrations",
       "!apps/web/worker-configuration.d.ts",
+      "!docs/plugin-surface.json",
       "!**/dist"
     ]
   },

@@ -33,8 +33,8 @@
  *
  * `--dry-run` prints the per-file table and touches nothing (and skips the dirty-tree check).
  * The real run refuses a dirty tree without `--force`, writes, runs `pnpm install` (the lockfile
- * follows the package names), regenerates `docs/plugin-api.md` (its summaries are cut at a fixed
- * width) and `biome check --write` (a shorter or longer name re-wraps lines),
+ * follows the package names), regenerates the plugin surface (`docs/plugin-surface.json` and
+ * `docs/plugin-api.md`, so the copy's surface is built from its own renamed source) and `biome check --write` (a shorter or longer name re-wraps lines),
  * then prints the verify line. Exit 0 ok · 1 error · 2 usage. Zero dependencies, Node ≥ 24.
  */
 import { execFileSync, spawnSync } from 'node:child_process'
@@ -570,7 +570,7 @@ function main(argv) {
         '/* and rewrites pnpm-lock.yaml)'
     )
     out(
-      'then `node scripts/plugin-api-doc.mjs` (its summaries are cut at a width the new name moves)'
+      'then `node scripts/plugin-api-doc.mjs` (the plugin surface, rebuilt from the renamed source)'
     )
     out('and `pnpm lint:fix` (the new name re-wraps some lines) yourself, then:')
   } else {
@@ -583,9 +583,9 @@ function main(argv) {
       )
       return 1
     }
-    // docs/plugin-api.md cuts each summary at a fixed width, so a longer or shorter name moves
-    // the cut; regenerated here so the copy's ledger matches its own source from the first commit.
-    out('', '$ node scripts/plugin-api-doc.mjs   (summaries are cut at a width the name moves)')
+    // Regenerated here so the copy's surface (docs/plugin-surface.json, docs/plugin-api.md) is
+    // built from its own renamed source from the first commit.
+    out('', '$ node scripts/plugin-api-doc.mjs   (the plugin surface, from the renamed source)')
     const doc = spawnSync('node', ['scripts/plugin-api-doc.mjs'], {
       cwd: REPO_ROOT,
       stdio: 'inherit',
