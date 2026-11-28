@@ -232,7 +232,93 @@ export function mirror(dir) {
         .out.trim()
         .split('\n')
         .filter(t => /^\d+\.\d+\.\d+$/.test(t))[0] ?? null,
+    /**
+     * The newest release of plugin `id` (#181): its own `<id>-vX.Y.Z` tag or a lockstep `X.Y.Z`
+     * one, whichever is the higher version (its own on a tie). `manifest`, the plugin's
+     * `rocketflare-plugin.json` path in the repository, skips a lockstep tag the plugin is not in.
+     * `id` null means lockstep tags only.
+     */
+    latestTagFor: (id, { manifest = null } = {}) => {
+      const tags = quiet(['tag', '--list']).out.trim().split('\n').filter(Boolean)
+      return (
+        releaseCandidates(tags, id).find(
+          t =>
+            !manifest ||
+            parseReleaseTag(t).id !== null ||
+            quiet(['ls-tree', '--name-only', t, '--', manifest]).out.trim() !== ''
+        ) ?? null
+      )
+    },
+    /**
+     * A typed ref as the release it names: a bare `X.Y.Z` becomes `<id>-vX.Y.Z` when the
+     * repository has that tag, so `analytics@3.15.0` keeps working after per-plugin tags; anything
+     * else (a lockstep tag, a branch, a sha, a per-plugin tag) is returned as it is.
+     */
+    releaseRef: (id, ref) => {
+      if (!id || !ref || !BARE_VERSION.test(ref)) return ref
+      const own = pluginReleaseTag(id, ref)
+      return quiet(['rev-parse', '--verify', '--quiet', `refs/tags/${own}^{commit}`]).ok ? own : ref
+    },
   }
+}
+
+// ---------------------------------------------------------------- release tags (#181)
+
+const BARE_VERSION = /^\d+\.\d+\.\d+$/
+const PLUGIN_TAG = /^([a-z][a-z0-9-]*)-v(\d+\.\d+\.\d+)$/
+
+/**
+ * A plugin repository's release tag, in either form: a lockstep `X.Y.Z` (every plugin in the
+ * repository at one version, how the first-party repositories released through 3.14.0) is
+ * `{ id: null, version }`; a per-plugin `<id>-vX.Y.Z` (one plugin, its own version) is
+ * `{ id, version }`. Anything else — a branch, a sha, `v1.0.0`, a prerelease — is null.
+ *
+ * `-v` rather than `@`: `plugin add <repo>@<ref>` already splits on its LAST `@`, so
+ * `<repo>@analytics@3.15.0` would read as repository `<repo>@analytics`.
+ */
+export function parseReleaseTag(tag) {
+  if (BARE_VERSION.test(tag)) return { id: null, version: tag }
+  const m = PLUGIN_TAG.exec(tag)
+  return m ? { id: m[1], version: m[2] } : null
+}
+
+/**
+ * What a catalogue reads in a repository with these tags: the newest lockstep `X.Y.Z` (null when
+ * there is none), and in `own` each plugin whose own newest `<id>-vX.Y.Z` release replaces it: one
+ * at least as new (its own tag winning a tie), or any for a plugin the lockstep tag does not hold
+ * (`inLockstep(id)` false — a plugin first released on its own tags). Any other plugin is read at
+ * the lockstep tag.
+ */
+export function newestReleases(tags, { inLockstep = () => true } = {}) {
+  const lockstep = releaseCandidates(tags, null)[0] ?? null
+  const own = new Map()
+  for (const tag of tags) {
+    const id = parseReleaseTag(tag)?.id
+    if (!id || own.has(id)) continue
+    const mine = releaseCandidates(tags, id).find(t => parseReleaseTag(t).id === id)
+    const newest = releaseCandidates(tags, id)[0]
+    if (newest === mine || !lockstep || !inLockstep(id)) own.set(id, mine)
+  }
+  return { lockstep, own: new Map([...own].sort(([a], [b]) => a.localeCompare(b))) }
+}
+
+/** `<id>-vX.Y.Z`, the tag one plugin's own release carries. */
+export const pluginReleaseTag = (id, version) => `${id}-v${version}`
+
+/**
+ * The tags that can release plugin `id`, newest version first: its own `<id>-vX.Y.Z` and every
+ * lockstep `X.Y.Z`, its own first on a tie. Another plugin's tag is never a candidate.
+ */
+export function releaseCandidates(tags, id = null) {
+  return tags
+    .map(tag => ({ tag, parsed: parseReleaseTag(tag) }))
+    .filter(({ parsed }) => parsed && (parsed.id === null || parsed.id === id))
+    .sort(
+      (a, b) =>
+        cmp(b.parsed.version, a.parsed.version) ||
+        Number(b.parsed.id !== null) - Number(a.parsed.id !== null)
+    )
+    .map(({ tag }) => tag)
 }
 
 const CHANGE_OF = { A: 'added', M: 'modified', D: 'deleted', T: 'modified' }

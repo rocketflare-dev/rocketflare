@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
+import { pluginReleaseTag, releaseCandidates } from '../../../../scripts/lib/git-lib.mjs'
 import { MANIFEST_FILE, readManifest } from '../../../../scripts/lib/manifest.mjs'
 import type { DefaultPluginEntry, Manifest } from '../../../../scripts/lib/upgrade-lib.d.mts'
 import {
@@ -45,15 +46,24 @@ const entry = (over: Partial<DefaultPluginEntry> = {}): DefaultPluginEntry => ({
   ...over,
 })
 
-/** A mirror with a fixed set of refs and a fixed set of files at them. */
+/**
+ * A mirror with a fixed set of refs and a fixed set of files at them (a `<ref>:<file>` key is
+ * that file at that ref only). Tags resolve in either form through git-lib's own ordering.
+ */
 const fakeMirror = (
   files: Record<string, string>,
-  { refs = ['1.0.2'], latest = '1.0.2' as string | null } = {}
+  { refs = ['1.0.2'] }: { refs?: string[] } = {}
 ): MirrorReader => ({
   resolves: (ref: string) => refs.includes(ref),
-  latestTag: () => latest,
-  tryShow: (_ref: string, file: string) =>
-    files[file] === undefined ? { ok: false, out: '' } : { ok: true, out: files[file] },
+  releaseRef: ((id: string | null, ref: string | null | undefined) =>
+    id && ref && refs.includes(pluginReleaseTag(id, ref))
+      ? pluginReleaseTag(id, ref)
+      : ref) as MirrorReader['releaseRef'],
+  latestTagFor: (id: string | null) => releaseCandidates(refs, id)[0] ?? null,
+  tryShow: (ref: string, file: string) => {
+    const out = files[`${ref}:${file}`] ?? files[file]
+    return out === undefined ? { ok: false, out: '' } : { ok: true, out }
+  },
 })
 
 const declaring = (minKit: string, version = '1.0.2', at = PLUGIN_MANIFEST) =>
@@ -138,6 +148,25 @@ describe('resolveDefaultPlugin', () => {
       lsRemote: never,
     })
     expect(resolved).toMatchObject({ ok: true, minKit: '0.6.0' })
+  })
+
+  it('resolves per-plugin tags (#181) beside lockstep ones, either way it is pinned', () => {
+    const at = (ref: string, version: string, minKit: string) => ({
+      [`${ref}:${PLUGIN_MANIFEST}`]: JSON.stringify({ id: 'orders', version, minKit }),
+    })
+    const mirror = fakeMirror(
+      { ...at('1.0.2', '1.0.2', '0.5.0'), ...at('orders-v1.1.0', '1.1.0', '0.6.0') },
+      { refs: ['1.0.2', 'orders-v1.1.0', 'other-v9.0.0'] }
+    )
+    const resolve = (over: Partial<DefaultPluginEntry>) =>
+      resolveDefaultPlugin(entry(over), { openMirror: () => mirror, lsRemote: never })
+    // No pin: the newest release of EITHER form, and never another plugin's tag.
+    expect(resolve({ ref: null })).toMatchObject({ ok: true, version: '1.1.0', minKit: '0.6.0' })
+    // The per-plugin tag pinned as itself, or as its bare version.
+    expect(resolve({ ref: 'orders-v1.1.0' })).toMatchObject({ version: '1.1.0' })
+    expect(resolve({ ref: '1.1.0' })).toMatchObject({ version: '1.1.0' })
+    // The last lockstep tag stays valid.
+    expect(resolve({ ref: '1.0.2' })).toMatchObject({ ok: true, version: '1.0.2' })
   })
 
   it('refuses a pin the repository does not have, naming the ref', () => {

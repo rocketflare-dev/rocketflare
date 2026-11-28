@@ -396,6 +396,8 @@ export interface CatalogueEntry {
   version: string | null
   subdir: string
   description: string
+  /** The release tag this entry was read at (the catalogue's own, or the plugin's `<id>-vX.Y.Z`). */
+  tag?: string
 }
 export function catalogueEntries(
   files: readonly string[],
@@ -414,6 +416,7 @@ export function licenceTerms(
 ): LicenceTerms | null
 export interface Catalogue {
   repo: string
+  /** The newest lockstep `X.Y.Z` tag, else the first per-plugin one. */
   tag: string
   commercial: boolean
   licence?: LicenceTerms | null

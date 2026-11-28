@@ -28,8 +28,10 @@
  * and nothing at the root, so without it `releaseContext()` answers `unknown` and this exits 1.
  * Every plugin in such a repository ships at ONE version and is tagged plain `X.Y.Z`, with no
  * prefix and no per-plugin namespacing — a tag has to stay resolvable by `ls-remote <repo> <ref>`,
- * which cannot resolve a bare SHA, and `latestTag()` is how `--to` and `openSource` default. The
- * accepted cost of that lockstep: a fix to one plugin bumps every plugin's version.
+ * which cannot resolve a bare SHA. The accepted cost of that lockstep: a fix to one plugin bumps
+ * every plugin's version. Per-plugin tags (`<id>-vX.Y.Z`, #181) are the way off it: `pnpm plugin`,
+ * the CI-plugin check below and the plugin matrix already read either form, a plugin's newest
+ * release being whichever of its own tag and the lockstep tag is the higher version.
  *
  * In the KIT it additionally refuses a version its CI plugins (`defaultPlugins` plus
  * `.github/ci-plugins.json`) are not ready for (D31, decision 5): every entry must still resolve
@@ -442,11 +444,16 @@ export function resolveDefaultPlugin(
     return { ok: true, ...recorded }
   }
 
-  const ref = entry.ref ?? mirror.latestTag() ?? 'HEAD'
-  if (!mirror.resolves(ref)) return missingRef()
   const file = entry.subdir
     ? `${entry.subdir.replace(/\/+$/, '')}/${PLUGIN_MANIFEST_FILE}`
     : PLUGIN_MANIFEST_FILE
+  // Either tag form (#181), as `plugin add` reads it: a pinned bare `X.Y.Z` is the plugin's own
+  // `<id>-vX.Y.Z` when that exists, and no pin is the plugin's newest release of either form.
+  const ref =
+    mirror.releaseRef(entry.id, entry.ref) ??
+    mirror.latestTagFor(entry.id, { manifest: file }) ??
+    'HEAD'
+  if (!mirror.resolves(ref)) return missingRef()
   const shown = mirror.tryShow(ref, file)
   if (!shown.ok) return { ok: true, ...recorded }
   try {

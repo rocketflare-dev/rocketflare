@@ -2366,7 +2366,10 @@ export function renderCatalogue(catalogues, installed = []) {
   const lines = []
   for (const c of catalogues) {
     if (lines.length > 0) lines.push('')
-    const where = `${repoDisplayName(c.repo)} at ${c.tag}`
+    // One tag for a lockstep repository; per-plugin tags (#181) are each plugin's own.
+    const where = c.plugins.every(p => (p.tag ?? c.tag) === c.tag)
+      ? `${repoDisplayName(c.repo)} at ${c.tag}`
+      : `${repoDisplayName(c.repo)}, each at its newest release`
     if (c.commercial) {
       lines.push(
         `Commercial plugins (${where}) — licensed separately, not under the kit's licence.`

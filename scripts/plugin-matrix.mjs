@@ -100,73 +100,159 @@ export function matrixEntries(plugins, { only = [], fullHouse = true } = {}) {
     }
     return list.map(p => `${p.id}=${p.subdir}`).join(' ')
   }
+  // Each plugin's own release tag (#181), `id=ref` pairs: separate from `installs` so a workflow
+  // that predates it still installs every plugin at `plugins_ref`. A plugin with no ref of its own
+  // is left out, and the workflow falls back to `plugins_ref` for it.
+  const refs = list =>
+    list
+      .filter(p => p.ref)
+      .map(p => {
+        if (/[\s=]/.test(p.ref))
+          throw new Error(`${p.id}: ref '${p.ref}' contains '=' or whitespace`)
+        return `${p.id}=${p.ref}`
+      })
+      .join(' ')
+  const entry = (id, version, order) => ({
+    id,
+    version,
+    installs: pairs(order),
+    refs: refs(order),
+  })
   const entries = ids.map(id => {
     const order = installOrder(plugins, [id])
-    const plugin = order.at(-1)
-    return { id, version: plugin.version, installs: pairs(order) }
+    return entry(id, order.at(-1).version, order)
   })
   if (fullHouse && plugins.length > 1) {
-    entries.push({
-      id: FULL_HOUSE,
-      version: `${plugins.length} plugins`,
-      installs: pairs(
+    entries.push(
+      entry(
+        FULL_HOUSE,
+        `${plugins.length} plugins`,
         installOrder(
           plugins,
           plugins.map(p => p.id)
         )
-      ),
-    })
+      )
+    )
   }
   return entries
 }
 
-/** Every `rocketflare-plugin.json` under `root` (node_modules and dot directories skipped). */
-export function readPlugins(root) {
+/**
+ * Every `rocketflare-plugin.json` in a tree of repository-relative `files` (below the root, not in
+ * node_modules or a dot directory), read through `read(rel)`. The same answer for a checkout
+ * (`readPlugins`) and for a tag in a bare clone (`readPluginsAt`).
+ */
+export function pluginsFromTree(files, read) {
   const plugins = []
-  const walk = dir => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.'))
-        continue
-      const sub = path.join(dir, entry.name)
-      const file = path.join(sub, MANIFEST)
-      if (existsSync(file)) {
-        let m
-        try {
-          m = JSON.parse(readFileSync(file, 'utf8'))
-        } catch (err) {
-          throw new Error(`${path.relative(root, file)} is not valid JSON: ${err.message}`)
-        }
-        if (!m.id) throw new Error(`${path.relative(root, file)} declares no id`)
-        if (plugins.some(p => p.id === m.id))
-          throw new Error(`plugin id '${m.id}' is declared twice`)
-        plugins.push({
-          id: m.id,
-          version: m.version ?? null,
-          subdir: path.relative(root, sub).split(path.sep).join('/'),
-          requires: (m.requires?.plugins ?? []).map(r =>
-            typeof r === 'object' && r ? r.id : String(r)
-          ),
-        })
-      }
-      walk(sub)
+  const manifests = files
+    .filter(f => f.endsWith(`/${MANIFEST}`))
+    .filter(f => !f.split('/').some(part => part === 'node_modules' || part.startsWith('.')))
+    .sort()
+  for (const file of manifests) {
+    let m
+    try {
+      m = JSON.parse(read(file))
+    } catch (err) {
+      throw new Error(`${file} is not valid JSON: ${err.message}`)
     }
+    if (!m.id) throw new Error(`${file} declares no id`)
+    if (plugins.some(p => p.id === m.id)) throw new Error(`plugin id '${m.id}' is declared twice`)
+    plugins.push({
+      id: m.id,
+      version: m.version ?? null,
+      subdir: file.slice(0, -MANIFEST.length - 1),
+      requires: (m.requires?.plugins ?? []).map(r =>
+        typeof r === 'object' && r ? r.id : String(r)
+      ),
+    })
   }
-  walk(root)
   return plugins.sort((a, b) => a.id.localeCompare(b.id))
 }
 
-/**
- * The newest `X.Y.Z` tag in `ls-remote --sort=version:refname` output. Git orders the versions,
- * so nothing here compares them. Every plugin in the public repository ships at one lockstep
- * version and tag (`release.mjs`), so its newest tag IS each plugin's latest release; per-plugin
- * versions (#181) change this one function.
- */
-export function newestTag(lsRemote) {
-  const tags = lsRemote
+/** Every `rocketflare-plugin.json` under `root` (node_modules and dot directories skipped). */
+export function readPlugins(root) {
+  const files = []
+  const walk = (dir, rel) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === 'node_modules' || entry.name.startsWith('.'))
+        continue
+      const sub = rel === '' ? entry.name : `${rel}/${entry.name}`
+      if (existsSync(path.join(dir, entry.name, MANIFEST))) files.push(`${sub}/${MANIFEST}`)
+      walk(path.join(dir, entry.name), sub)
+    }
+  }
+  walk(root, '')
+  return pluginsFromTree(files, f => readFileSync(path.join(root, f), 'utf8'))
+}
+
+// ------------------------------------------------- release tags (#181), as scripts/lib/git-lib.mjs
+
+const PLUGIN_TAG = /^([a-z][a-z0-9-]*)-v(\d+\.\d+\.\d+)$/
+
+/** `X.Y.Z` (lockstep, id null) or `<id>-vX.Y.Z` (one plugin's own release); else null. */
+export function parseReleaseTag(tag) {
+  if (BARE_VERSION.test(tag)) return { id: null, version: tag }
+  const m = PLUGIN_TAG.exec(tag)
+  return m ? { id: m[1], version: m[2] } : null
+}
+
+const compareVersions = (a, b) => {
+  const pa = a.split('.').map(Number)
+  const pb = b.split('.').map(Number)
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i] < pb[i] ? -1 : 1
+  return 0
+}
+
+/** The tag names in `git ls-remote --tags --refs` output. */
+export function lsRemoteTags(lsRemote) {
+  return lsRemote
     .split('\n')
     .map(l => l.split('refs/tags/')[1]?.trim())
-    .filter(t => t && BARE_VERSION.test(t))
-  return tags.at(-1) ?? null
+    .filter(Boolean)
+}
+
+/**
+ * Each plugin's latest release, from a repository's tags: the newest lockstep `X.Y.Z` tag
+ * (`lockstep`, null when there is none) holds every plugin it contains, and a plugin's own
+ * `<id>-vX.Y.Z` tag replaces it for that plugin when it is at least as new, or when the lockstep
+ * tag does not hold the plugin at all (`inLockstep(id)` false) — `own`, id → tag.
+ * The same rule `pnpm plugin` resolves by (`releaseCandidates` in `scripts/lib/git-lib.mjs`).
+ */
+export function newestReleases(tags, { inLockstep = () => true } = {}) {
+  const parsed = tags.map(tag => ({ tag, ...parseReleaseTag(tag) })).filter(t => t.version)
+  const newest = list => list.sort((a, b) => compareVersions(b.version, a.version))[0] ?? null
+  const lockstep = newest(parsed.filter(t => t.id === null))
+  const own = new Map()
+  for (const id of [...new Set(parsed.map(t => t.id).filter(Boolean))].sort()) {
+    const mine = newest(parsed.filter(t => t.id === id))
+    if (!lockstep || !inLockstep(id) || compareVersions(mine.version, lockstep.version) >= 0)
+      own.set(id, mine.tag)
+  }
+  return { lockstep: lockstep?.tag ?? null, own }
+}
+
+/** The newest `X.Y.Z` tag in `ls-remote` output — the lockstep release, or null. */
+export function newestTag(lsRemote) {
+  return newestReleases(lsRemoteTags(lsRemote)).lockstep
+}
+
+/**
+ * The published plugins, each at its latest release with the tag it is installed from as `ref`:
+ * `readAt(tag)` answers the plugins (`pluginsFromTree`) at one tag. Every plugin of the lockstep
+ * tag, then each plugin's own newer tag in place of it (a plugin released only on its own tags
+ * appears too). A plugin's own tag is read for that plugin alone.
+ */
+export function latestPlugins(tags, readAt) {
+  const { lockstep } = newestReleases(tags)
+  const byId = new Map()
+  if (lockstep) for (const p of readAt(lockstep)) byId.set(p.id, { ...p, ref: lockstep })
+  const { own } = newestReleases(tags, { inLockstep: id => byId.has(id) })
+  for (const [id, tag] of own) {
+    const p = readAt(tag).find(q => q.id === id)
+    if (!p) throw new Error(`tag ${tag} has no plugin '${id}'`)
+    byId.set(id, { ...p, ref: tag })
+  }
+  return { lockstep, plugins: [...byId.values()].sort((a, b) => a.id.localeCompare(b.id)) }
 }
 
 const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g')
@@ -360,21 +446,34 @@ function cmdResolve(args) {
     typeof args['plugins-ref'] === 'string' && args['plugins-ref'] ? args['plugins-ref'] : null
   const git = (...a) =>
     execFileSync('git', a, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-  if (!ref) {
-    ref = newestTag(git('ls-remote', '--tags', '--refs', '--sort=version:refname', repo))
-    if (!ref) throw new Error(`${repo} has no X.Y.Z release tag`)
-  }
   const dir = mkdtempSync(path.join(tmpdir(), 'plugin-matrix-'))
   try {
-    git('clone', '--depth', '1', '--branch', ref, '--quiet', repo, dir)
-    const plugins = readPlugins(dir)
+    let plugins
+    if (ref) {
+      // A named ref (a coordinated change): every plugin as that ref holds it.
+      git('clone', '--depth', '1', '--branch', ref, '--quiet', repo, dir)
+      plugins = readPlugins(dir).map(p => ({ ...p, ref }))
+    } else {
+      // Each plugin's latest release, from either tag form (#181).
+      git('clone', '--bare', '--quiet', repo, dir)
+      const tags = git('-C', dir, 'tag', '--list').split('\n').filter(Boolean)
+      const readAt = tag =>
+        pluginsFromTree(
+          git('-C', dir, 'ls-tree', '-r', '--name-only', tag).split('\n').filter(Boolean),
+          f => git('-C', dir, 'show', `${tag}:${f}`)
+        )
+      const latest = latestPlugins(tags, readAt)
+      plugins = latest.plugins
+      ref = latest.lockstep ?? plugins[0]?.ref ?? null
+      if (!ref) throw new Error(`${repo} has no release tag (X.Y.Z or <id>-vX.Y.Z)`)
+    }
     const only = typeof args.only === 'string' ? args.only.split(/[\s,]+/).filter(Boolean) : []
     const include = matrixEntries(plugins, { only, fullHouse: args['full-house'] !== false })
     const resolved = { repo, ref, plugins, include }
     process.stdout.write(
       [
         `plugins ${repo} @ ${ref}`,
-        ...include.map(e => `  matrix ${e.id} (${e.version}): ${e.installs}`),
+        ...include.map(e => `  matrix ${e.id} (${e.version}): ${e.installs}  [${e.refs}]`),
         '',
       ].join('\n')
     )

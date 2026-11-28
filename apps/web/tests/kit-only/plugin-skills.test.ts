@@ -297,6 +297,8 @@ interface PluginFixture {
   dependencies?: Record<string, Record<string, string>>
   /** Merged into the manifest as written, for fields only some cases care about. */
   manifest?: Record<string, unknown>
+  /** The release tag (default: the bare version, a lockstep tag); `<id>-vX.Y.Z` is per-plugin. */
+  tag?: string
 }
 
 /** A plugin repository with nothing but skills — the smallest thing the slot applies to. */
@@ -337,7 +339,8 @@ function writePluginVersion(root: string, fixture: PluginFixture) {
   for (const [rel, text] of Object.entries(files)) write(root, rel, text)
   git(root, ['add', '-A'])
   git(root, ['commit', '-qm', version])
-  git(root, ['tag', '-a', '-m', version, version])
+  const tag = fixture.tag ?? version
+  git(root, ['tag', '-a', '-m', tag, tag])
 }
 
 const run = (host: string, args: string[], env?: NodeJS.ProcessEnv) => {
@@ -551,6 +554,37 @@ describe('pnpm plugin, with skills, end to end', () => {
     expect(paths).not.toContain('.claude/skills/orders-admin/**')
     const checked = run(host, ['check'])
     expect(checked.status, checked.out).toBe(0)
+  })
+
+  it('upgrade moves from a lockstep tag to the plugin’s own <id>-vX.Y.Z release (#181)', () => {
+    const host = makeHost()
+    const plugin = makePlugin()
+    const added = run(host, ['add', `${plugin}@1.0.0`, '--apply', '--allow-dirty'])
+    expect(added.status, added.out).toBe(0)
+    git(host, ['add', '-A'])
+    git(host, ['commit', '-qm', 'installed'])
+    writePluginVersion(plugin, {
+      version: '1.1.0',
+      tag: 'orders-v1.1.0',
+      files: { 'skills/orders/SKILL.md': skillMd('orders', 'v2', '# Two\n') },
+    })
+    // Another plugin's newer release is never this one's.
+    git(plugin, ['tag', '-a', '-m', 'other', 'other-v9.0.0'])
+
+    // A bare version names the plugin's own tag; no --to takes the newest release of either form.
+    const plan = run(host, ['upgrade', 'orders', '--to', '1.1.0'])
+    expect(plan.status, plan.out).toBe(0)
+    expect(plan.out).toContain('orders  1.0.0 → 1.1.0')
+    const up = run(host, ['upgrade', 'orders', '--apply'])
+    expect(up.status, up.out).toBe(0)
+    expect(readFileSync(path.join(host, '.claude/skills/orders/SKILL.md'), 'utf8')).toBe(
+      skillMd('orders', 'v2', '# Two\n')
+    )
+    const recorded = JSON.parse(readFileSync(path.join(host, '.rocketflare.json'), 'utf8'))
+    expect(recorded.surfaces.find((s: { id: string }) => s.id === 'orders')?.source).toMatchObject({
+      version: '1.1.0',
+    })
+    expect(run(host, ['upgrade', 'orders']).out).toMatch(/already at orders-v1\.1\.0/)
   })
 
   it('upgrade patches the plugin’s files in the kit repository itself, which has no app names', () => {
