@@ -244,6 +244,8 @@ const resolves = (f, p) => {
 }
 // Placeholders in a path are a template, not a reference.
 const PLACEHOLDER = /X\.Y\.Z|NNNN|\bfoo\b|<|\.\.\./
+// A link target that is a stand-in: a bare word (`url`, `link`, `path`, `x`…), `<…>`, an ellipsis.
+const PLACEHOLDER_LINK = /^(url|uri|link|href|path|file|target|dest|x|y)$|[<>{}…]|\.\.\.|X\.Y\.Z|NNNN/i
 
 const topDirs = new Set([...dirSet].map((d) => d.split('/')[0]))
 const anyDirName = new Set([...dirSet].map((d) => d.split('/').pop()))
@@ -269,8 +271,12 @@ function checkReferences(skillDirs) {
       const at = i + 1
       if (/^\s*```/.test(line)) fenced = !fenced
       if (f !== 'README.md') {
-        for (const [, target] of line.matchAll(/\]\(([^)\s]+)\)/g)) {
+        // A link in a fenced example or a code span is a template, and so is one whose target is
+        // a placeholder (`[title](url)`, `[x](<path>)`, `[x](…)`): none names a file.
+        const prose = fenced ? '' : line.replace(/`[^`\n]*`/g, '')
+        for (const [, target] of prose.matchAll(/\]\(([^)\s]+)\)/g)) {
           if (/^(https?:|mailto:|#)/.test(target)) continue
+          if (PLACEHOLDER_LINK.test(target)) continue
           const t = decodeURI(target.split('#')[0])
           if (t && !exists(path.posix.normalize(path.posix.join(path.posix.dirname(f), t))))
             fail(f, at, `link \`${target}\` does not resolve`)

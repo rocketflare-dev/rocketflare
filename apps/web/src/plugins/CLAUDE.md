@@ -61,7 +61,7 @@ host ever names a plugin.
   dependencies are declared in `plugin.json`; `pnpm provision cloudflare <env>` writes BOTH tomls
   (`.claude/rules/cloudflare.md`). A line it needs in any other core file (`vite.config.ts`'s dev
   proxy or an alias) is a declared `coreEdits` entry — anchored on text, applied by `plugin add`,
-  reverted by `remove` — never a hand edit. A DO / Workflow class is re-exported (nothing else) from
+  reverted by `remove` (except a line the kit itself also carries) — never a hand edit. A DO / Workflow class is re-exported (nothing else) from
   `src/plugins/<id>/worker-exports.ts` and named in `workerExports`.
 - **It never renames anything across releases** — expand/contract only; drizzle-kit's rename prompt
   has no non-interactive answer, so a rename stops an unattended install dead.

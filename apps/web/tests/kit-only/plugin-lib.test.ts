@@ -43,6 +43,7 @@ import {
   checkRequirements,
   classifyPluginFile,
   coreEditsByFile,
+  coreLineOwner,
   declaresProperty,
   dependenciesToInstall,
   dependencyClashes,
@@ -56,6 +57,7 @@ import {
   isolationEvidence,
   isVendored,
   jsonKeyLine,
+  kitOwnsCoreLine,
   EVENT_NAME_RE as LIB_EVENT_NAME_RE,
   eventNameProblem as libEventNameProblem,
   loadProjectCompilerOptions,
@@ -84,6 +86,7 @@ import {
   renderSteps,
   resolveSubdir,
   revertCoreEdits,
+  revertCoreEditsKeeping,
   STEP_KINDS,
   SUPPORTED_PLUGIN_BINDING_TYPES,
   surfaceDirectories,
@@ -401,6 +404,65 @@ describe('core edits a plugin declares', () => {
       start: expect.any(Number),
     })
     expect(findEditLine(VITE.split('\n'), edits[1]?.lines[0] ?? '')).toBeNull()
+  })
+
+  it('keeps a line the kit owns when a release stops declaring it', () => {
+    // An old plugin release declared the `/mcp` proxy; the kit later shipped that same line, so
+    // reverting the plugin's edit must leave the kit's copy where it is.
+    const kitVite = VITE.replace(
+      "      '/ws': proxyTo('ws://localhost:3001', { ws: true }),",
+      "      '/ws': proxyTo('ws://localhost:3001', { ws: true }),\n      '/mcp': proxyTo(),"
+    )
+    const installed = applyCoreEdits(kitVite, edits)
+    expect(installed.match(/'\/mcp'/g)).toHaveLength(1)
+    const dropped = [{ ...edits[0], lines: ["'/mcp': proxyTo(),"] }] as never
+    const owner = coreLineOwner('apps/web/vite.config.ts')
+    const r = revertCoreEditsKeeping(installed, dropped, owner)
+    expect(r.text).toBe(installed)
+    expect(r.kept).toEqual(["'/mcp': proxyTo(),"])
+    // Without an owner it is the plain inverse — the behaviour that lost the line.
+    expect(revertCoreEdits(installed, dropped)).not.toContain("'/mcp'")
+  })
+
+  it('keeps only one copy of an owned line that ended up in the file twice', () => {
+    const twice = VITE.replace(
+      "      '/api': proxyTo(),",
+      "      '/api': proxyTo(),\n      '/mcp': proxyTo(),\n      '/mcp': proxyTo(),"
+    )
+    const r = revertCoreEditsKeeping(
+      twice,
+      [{ ...edits[0], lines: ["'/mcp': proxyTo(),"] }] as never,
+      coreLineOwner('apps/web/vite.config.ts')
+    )
+    expect(r.text.match(/'\/mcp'/g)).toHaveLength(1)
+  })
+
+  it("keeps a line the kit's own copy of the file carries, or another plugin declares", () => {
+    const line = "'/reports': proxyTo(),"
+    const withLine = applyCoreEdits(VITE, [{ ...edits[0], lines: [line] }] as never)
+    const dropped = [{ ...edits[0], lines: [line] }] as never
+    // The kit's release has the line: it stays.
+    const fromKit = coreLineOwner('apps/web/vite.config.ts', { kitText: withLine })
+    expect(revertCoreEditsKeeping(withLine, dropped, fromKit).text).toBe(withLine)
+    // Another installed plugin still declares it: it stays.
+    const fromPeer = coreLineOwner('apps/web/vite.config.ts', {
+      otherEdits: [{ file: 'apps/web/vite.config.ts', after: "'/ws'", lines: [line] }],
+    })
+    expect(revertCoreEditsKeeping(withLine, dropped, fromPeer).text).toBe(withLine)
+    // Nobody owns it: it goes.
+    const nobody = coreLineOwner('apps/web/vite.config.ts', { kitText: VITE })
+    expect(revertCoreEditsKeeping(withLine, dropped, nobody).text).toBe(VITE)
+  })
+
+  it('knows the proxy entries for paths the kit reserves', () => {
+    const vite = 'apps/web/vite.config.ts'
+    expect(kitOwnsCoreLine(vite, "'/mcp': proxyTo(),")).toBe(true)
+    expect(kitOwnsCoreLine(vite, "'/oauth': proxyTo(),")).toBe(true)
+    expect(
+      kitOwnsCoreLine(vite, "'^/\\.well-known/(oauth-|openid-configuration)': proxyTo(),")
+    ).toBe(true)
+    expect(kitOwnsCoreLine(vite, "'/cubejs-api': proxyTo(),")).toBe(false)
+    expect(kitOwnsCoreLine('apps/web/src/other.ts', "'/mcp': proxyTo(),")).toBe(false)
   })
 
   it("groups a manifest's edits by the file they touch", () => {

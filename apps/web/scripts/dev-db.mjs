@@ -11,6 +11,8 @@
  * without being told.
  *
  *   node scripts/dev-db.mjs up     [--json]   start it (idempotent; prints the port)
+ *        [--port <n>]                         on THIS port (or `DEV_DB_PORT=<n>`): taken, or refused
+ *                                             with who holds it — never moved
  *        [--neon | --postgres]                also switch the LOCAL driver: `--neon` starts the
  *                                             Neon proxy in front of it and writes NEON_LOCAL_PROXY +
  *                                             DATABASE_DRIVER=neon; `--postgres` stops the proxy.
@@ -21,11 +23,16 @@
  *                                             Hyperdrive override pointing at this database
  *
  * The port is sticky: a re-run keeps the one already in `.dev.vars` whenever it is still ours or
- * still free, so a working database never moves underneath a checkout.
+ * still free, so a working database never moves underneath a checkout. A port anyone CHOSE —
+ * `--port`, `DEV_DB_PORT`, or a `.dev.vars` port other than the example's — is never moved: when
+ * something else holds it, `up` stops and names the holder (`planDevDbPort`). Only a fresh
+ * checkout still on the example's port moves, and says why. "Something else" is any running
+ * container publishing the port, or a failed bind/connect test on it: a database another project
+ * published on one address used to pass the bind test on another and be taken over.
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:net'
+import { connect, createServer } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -34,6 +41,8 @@ import {
   databaseUrlPort,
   databaseUrlTarget,
   isLocalDatabaseUrl,
+  planDevDbPort,
+  publishedHostPorts,
   readDevVars,
   upsertDevVar,
   withDatabaseUrlPort,
@@ -85,41 +94,101 @@ function oursPorts() {
 }
 
 /**
- * `0.0.0.0`, not `127.0.0.1`: compose publishes on the wildcard address, and on macOS a
- * loopback bind SUCCEEDS while Docker holds the same port — which is exactly how a second
- * checkout used to sail past the check and then fail inside `docker compose up`.
+ * `0.0.0.0` first: compose publishes on the wildcard address, and on macOS a loopback bind
+ * SUCCEEDS while Docker holds the same port — which is exactly how a second checkout used to sail
+ * past the check and then fail inside `docker compose up`. Then `127.0.0.1`, because the reverse
+ * also holds: a server on loopback alone leaves the wildcard bind free.
  */
-const portIsFree = port =>
+const bindsOn = (port, host) =>
   new Promise(resolve => {
     const server = createServer()
     server.once('error', () => resolve(false))
     server.once('listening', () => server.close(() => resolve(true)))
-    server.listen(port, '0.0.0.0')
+    server.listen(port, host)
   })
+
+/** True when something accepts a TCP connection on `127.0.0.1:port`. */
+const answersOn = port =>
+  new Promise(resolve => {
+    const socket = connect({ port, host: '127.0.0.1' })
+    const done = answer => {
+      socket.destroy()
+      resolve(answer)
+    }
+    socket.setTimeout(500, () => done(false))
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+  })
+
+const portIsFree = async port =>
+  (await bindsOn(port, '0.0.0.0')) && (await bindsOn(port, '127.0.0.1')) && !(await answersOn(port))
+
+/** Host port → name of every running container publishing it (none without docker). */
+function publishedByContainers() {
+  const ps = sh('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}'])
+  return ps.status === 0 ? publishedHostPorts(ps.stdout) : new Map()
+}
+
+/**
+ * `holderOf` for the planners: null when `port` is this checkout's or free, else who holds it.
+ * Probed for exactly the ports asked about (async), then answered synchronously.
+ */
+async function portHolders(ports) {
+  const ours = oursPorts()
+  const containers = publishedByContainers()
+  const held = new Map()
+  for (const p of new Set(ports)) {
+    if (!p || ours.has(p)) continue
+    if (containers.has(p)) held.set(p, `container ${containers.get(p)}`)
+    else if (!(await portIsFree(p))) held.set(p, 'another process')
+  }
+  return port => held.get(port) ?? null
+}
+
+const DEV_DB_RANGE = { start: 5432, count: 20 }
+const range = ({ start, count }) => Array.from({ length: count }, (_, i) => start + i)
+
+/** `--port <n>` / `--port=<n>`, else `DEV_DB_PORT` from the environment, else null. */
+function requestedPort(argv) {
+  const i = argv.findIndex(a => a === '--port' || a.startsWith('--port='))
+  const raw =
+    i === -1 ? process.env.DEV_DB_PORT : argv[i].includes('=') ? argv[i].split('=')[1] : argv[i + 1]
+  if (raw === undefined || raw === '') return null
+  return /^\d+$/.test(raw) ? Number(raw) : Number.NaN
+}
+
+/** The port `.dev.vars.example` ships — a `.dev.vars` still on it has not chosen one. */
+function examplePort() {
+  if (!existsSync(DEV_VARS_EXAMPLE)) return 5432
+  const url = readDevVars(readFileSync(DEV_VARS_EXAMPLE, 'utf8')).DATABASE_URL
+  return (url && databaseUrlPort(url)) || 5432
+}
 
 /**
  * The port this checkout should use, and the URL carrying it. Sticky: the port already in
- * `.dev.vars` wins whenever it is still ours or still free.
+ * `.dev.vars` wins whenever it is still ours or still free; a chosen one is never moved.
+ * `strict: false` (status, down) reports a problem instead of exiting on it.
  */
-async function resolvePort() {
+async function resolvePort(argv = [], { strict = true } = {}) {
   const url = currentUrl()
   const preferred = databaseUrlPort(url)
   // An off-box DATABASE_URL (`pnpm bootstrap --db-url`, a Neon branch) is not ours to re-port:
   // hand it through unchanged, and `up` has nothing to start.
   if (!isLocalDatabaseUrl(url)) return { port: preferred, url, moved: false, external: true }
-  const ours = oursPorts()
-  const free = new Map()
-  for (let p = 5432; p < 5452; p += 1) free.set(p, await portIsFree(p))
-  const isAvailable = port => ours.has(port) || free.get(port) === true
-  const port = chooseDevDbPort({ preferred, isAvailable })
-  if (port === null) {
-    console.error('dev-db: no free port in 5432–5451 for the dev database')
+  const requested = requestedPort(argv)
+  const pinned = existsSync(DEV_VARS) && preferred !== null && preferred !== examplePort()
+  const holderOf = await portHolders([requested, preferred, ...range(DEV_DB_RANGE)])
+  const plan = planDevDbPort({ requested, preferred, pinned, holderOf, ...DEV_DB_RANGE })
+  if ('error' in plan) {
+    if (!strict) return { port: preferred, url, moved: false, problem: plan.error }
+    console.error(`dev-db: ${plan.error}`)
     process.exit(1)
   }
   return {
-    port,
-    url: withDatabaseUrlPort(url, port),
-    moved: preferred !== null && port !== preferred,
+    port: plan.port,
+    url: withDatabaseUrlPort(url, plan.port),
+    moved: plan.moved,
+    reason: plan.reason,
   }
 }
 
@@ -150,14 +219,10 @@ function localDriver(argv) {
 async function resolveProxyPort() {
   const current = devVars().NEON_LOCAL_PROXY
   const preferred = current ? Number(new URL(current).port) || null : null
-  const ours = oursPorts()
-  const free = new Map()
-  for (let p = PROXY_PORT_START; p < PROXY_PORT_START + 20; p += 1) {
-    free.set(p, await portIsFree(p))
-  }
+  const holderOf = await portHolders([preferred, ...range({ start: PROXY_PORT_START, count: 20 })])
   const port = chooseDevDbPort({
     preferred,
-    isAvailable: p => ours.has(p) || free.get(p) === true,
+    isAvailable: p => holderOf(p) === null,
     start: PROXY_PORT_START,
     count: 20,
     skip: [4433],
@@ -184,7 +249,7 @@ const composeEnv = (port, url, proxyPort = PROXY_PORT_START) => ({
 
 async function up(argv, json) {
   const driver = localDriver(argv)
-  const { port, url, moved, external } = await resolvePort()
+  const { port, url, moved, reason, external } = await resolvePort(argv)
   if (external) {
     // Somebody else's database: under `neon` the driver talks to Neon directly, no proxy.
     writeDevVars({ DATABASE_DRIVER: driver, NEON_LOCAL_PROXY: '' })
@@ -222,12 +287,20 @@ async function up(argv, json) {
   })
   if (json) {
     console.log(
-      JSON.stringify({ port, url, project: PROJECT, moved, wroteDevVars: wrote, driver, proxy })
+      JSON.stringify({
+        port,
+        url,
+        project: PROJECT,
+        moved,
+        ...(reason ? { reason } : {}),
+        wroteDevVars: wrote,
+        driver,
+        proxy,
+      })
     )
   } else {
     console.log(`dev database ready on :${port}  (project ${PROJECT})`)
-    if (moved)
-      console.log(`  :${port} chosen because the previous port was taken by something else`)
+    if (moved) console.log(`  :${port} chosen because ${reason ?? 'the previous port was taken'}`)
     console.log(
       driver === 'neon'
         ? `  local driver: neon, through the Neon proxy on :${proxyPort}`
@@ -238,7 +311,7 @@ async function up(argv, json) {
 }
 
 async function down(json) {
-  const { port, url } = await resolvePort()
+  const { port, url } = await resolvePort([], { strict: false })
   const result = spawnSync(
     'docker',
     ['compose', '-p', PROJECT, '-f', COMPOSE_FILE, '--profile', 'neon', 'down'],
@@ -272,13 +345,22 @@ function allDevDatabases() {
 }
 
 async function status(json) {
-  const { port, url, external } = await resolvePort()
+  const { port, url, external, problem } = await resolvePort([], { strict: false })
   const rows = allDevDatabases()
   if (json) {
     // An external URL carries a real password: report where it points, never the URL itself.
     const where = external ? { external: true, target: databaseUrlTarget(url) } : { port, url }
     const { DATABASE_DRIVER: driver = 'postgres', NEON_LOCAL_PROXY: proxy = '' } = devVars()
-    console.log(JSON.stringify({ project: PROJECT, ...where, driver, proxy, containers: rows }))
+    console.log(
+      JSON.stringify({
+        project: PROJECT,
+        ...where,
+        driver,
+        proxy,
+        ...(problem ? { problem } : {}),
+        containers: rows,
+      })
+    )
     return
   }
   const vars = devVars()
@@ -290,6 +372,7 @@ async function status(json) {
   if (external)
     console.log(`  external database ${databaseUrlTarget(url)} (pnpm bootstrap --db-url)`)
   else console.log(`  project ${PROJECT} · port ${port}`)
+  if (problem) console.log(`  problem: ${problem}`)
   if (rows.length === 0) {
     console.log('  no dev Postgres container is running')
     return

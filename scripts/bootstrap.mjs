@@ -411,8 +411,9 @@ async function stepExternalDatabase(plan) {
 async function stepDatabase(opts, plan) {
   if (plan.database === 'external') return stepExternalDatabase(plan)
   // scripts/dev-db.mjs owns the port, the container name and the compose project: it keeps the
-  // port already in .dev.vars when that is still ours or still free, and otherwise picks the
-  // next free one and writes it back. A second checkout therefore starts its OWN database
+  // port already in .dev.vars when that is still ours or still free, refuses a CHOSEN port that
+  // something else holds, and moves only a fresh checkout's default (writing the new one back,
+  // with the reason). A second checkout therefore starts its OWN database
   // instead of colliding on 5432 or silently attaching to the first checkout's container.
   const up = await run('node', [path.join(WEB_DIR, 'scripts/dev-db.mjs'), 'up', '--json'], {
     cwd: WEB_DIR,
@@ -436,7 +437,7 @@ async function stepDatabase(opts, plan) {
   }
   if (chosen?.moved) {
     notes.push(
-      `port ${chosen.port}: the previous one was taken by another checkout or another program`
+      `port ${chosen.port}: ${chosen.reason ?? 'the previous one was taken by another checkout or another program'}`
     )
   }
   if (chosen?.wroteDevVars) notes.push('apps/web/.dev.vars updated to match (DATABASE_URL, driver)')
