@@ -32,8 +32,12 @@ import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
   behaviourFiles,
   compareVersions,
+  FRAGMENT_README,
+  fragmentProblems,
+  fragmentsDir,
   hasChangelogSection,
   isDeployable,
+  isFragmentPath,
   isKitManifest,
   noteLengthWarning,
   noteProblems,
@@ -127,6 +131,55 @@ export function releaseNotes(notesDir = 'docs/upgrades', { root = SCRIPT_ROOT } 
     .filter(f => VERSION_RE.test(f.replace(/\.md$/, '')))
     .map(f => ({ version: f.replace(/\.md$/, ''), file: `${notesDir}/${f}` }))
     .sort((a, b) => compareVersions(a.version, b.version))
+}
+
+/**
+ * Every pending fragment of a notes directory (`<notesDir>/unreleased/<slug>.md`), sorted by
+ * filename — the order `pnpm kit:release` folds them in after any `order:`. Its README is not one.
+ */
+export function listFragments(notesDir = 'docs/upgrades', { root = SCRIPT_ROOT } = {}) {
+  const dir = fragmentsDir(notesDir)
+  if (!existsSync(path.join(root, dir))) return []
+  return readdirSync(path.join(root, dir))
+    .filter(f => f.endsWith('.md') && f !== FRAGMENT_README)
+    .sort()
+    .map(f => ({ name: f, file: `${dir}/${f}`, text: read(root, `${dir}/${f}`) }))
+}
+
+/**
+ * The checks a fragment is held to, with the surface ids from the KIT's manifest when there is
+ * one (a plugin repository has none, and `surfaceIds: null` skips that check honestly).
+ */
+export function fragmentCheckOptions(root = SCRIPT_ROOT) {
+  const manifestPath = path.join(root, MANIFEST_FILE)
+  if (!existsSync(manifestPath)) return { surfaceIds: null }
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+  return {
+    surfaceIds: (manifest.surfaces ?? []).map(s => s.id),
+    retiredSurfaceIds: manifest.retiredSurfaces ?? {},
+    manifestFile: MANIFEST_FILE,
+  }
+}
+
+/** The tag gate's "nothing left pending" half, for one notes directory. */
+function pendingProblems(root, notesDir, tag, problems) {
+  const unreleasedPath = `${notesDir}/unreleased.md`
+  const unreleased = existsSync(path.join(root, unreleasedPath)) ? read(root, unreleasedPath) : null
+  if (unreleased === null) problems.push(`${unreleasedPath} does not exist`)
+  else {
+    if (!/_Nothing yet\./.test(unreleased)) {
+      problems.push(`${unreleasedPath} still has entries — they belong in the release note`)
+    }
+    if (!unreleased.includes(`previous: ${tag}`)) {
+      problems.push(`${unreleasedPath} should now read 'previous: ${tag}'`)
+    }
+  }
+  const left = listFragments(notesDir, { root })
+  if (left.length > 0) {
+    problems.push(
+      `${fragmentsDir(notesDir)}/ still has ${left.length} fragment(s) — they belong in the release note: ${left.map(f => f.name).join(', ')}`
+    )
+  }
 }
 
 /** Directory names a manifest scan never descends into. */
@@ -239,13 +292,7 @@ function checkTag(root, tag, problems) {
   if (!changelog.includes(`docs/upgrades/${tag}.md`))
     problems.push(`CHANGELOG.md does not link docs/upgrades/${tag}.md`)
 
-  const unreleased = read(root, 'docs/upgrades/unreleased.md')
-  if (!/_Nothing yet\./.test(unreleased)) {
-    problems.push('docs/upgrades/unreleased.md still has entries — they belong in the release note')
-  }
-  if (!unreleased.includes(`previous: ${tag}`)) {
-    problems.push(`docs/upgrades/unreleased.md should now read 'previous: ${tag}'`)
-  }
+  pendingProblems(root, 'docs/upgrades', tag, problems)
 }
 
 /**
@@ -304,6 +351,11 @@ function checkPluginTag(root, tag, manifests, problems) {
           `${unreleasedPath} has entries but there is no ${notesDir}/${tag}.md — release them, or move them out`
         )
       }
+      if (listFragments(notesDir, { root }).length > 0) {
+        problems.push(
+          `${fragmentsDir(notesDir)}/ has fragments but there is no ${notesDir}/${tag}.md — release them, or move them out`
+        )
+      }
       continue
     }
     noted++
@@ -312,15 +364,7 @@ function checkPluginTag(root, tag, manifests, problems) {
       expectPrevious: idx === 0 ? 'null' : notes[idx - 1].version,
     })
     if (!changelog.includes(note.file)) problems.push(`CHANGELOG.md does not link ${note.file}`)
-    if (unreleased === null) problems.push(`${unreleasedPath} does not exist`)
-    else {
-      if (!/_Nothing yet\./.test(unreleased)) {
-        problems.push(`${unreleasedPath} still has entries — they belong in the release note`)
-      }
-      if (!unreleased.includes(`previous: ${tag}`)) {
-        problems.push(`${unreleasedPath} should now read 'previous: ${tag}'`)
-      }
-    }
+    pendingProblems(root, notesDir, tag, problems)
   }
 
   if (!hasChangelogSection(changelog, tag)) problems.push(`CHANGELOG.md has no '## ${tag}' section`)
@@ -544,6 +588,37 @@ export function gatedDecision({ sha, runs, versionOnly: check }) {
   }
 }
 
+/**
+ * Does a change carry its porting note, in one notes directory? Either form counts: an edit to the
+ * legacy `unreleased.md`, or at least one fragment the change adds or edits (and that still
+ * exists — deleting one records nothing). Every such fragment is held to `fragmentProblems`, so a
+ * malformed one fails here rather than at release time. Pure but for reading the files named.
+ */
+export function unreleasedVerdict(root, changed, notesDir = 'docs/upgrades') {
+  const problems = []
+  const warnings = []
+  const legacy = `${notesDir}/unreleased.md`
+  let noted = false
+  if (changed.includes(legacy)) {
+    noted = true
+    // Never a failure: a long note is a release that is due, not a broken one.
+    const warning = existsSync(path.join(root, legacy))
+      ? noteLengthWarning(read(root, legacy), legacy)
+      : null
+    if (warning) warnings.push(warning)
+  }
+  const fragments = changed.filter(
+    f => isFragmentPath(f, notesDir) && existsSync(path.join(root, f))
+  )
+  if (fragments.length > 0) {
+    noted = true
+    const options = fragmentCheckOptions(root)
+    for (const f of fragments)
+      problems.push(...fragmentProblems(read(root, f), { ...options, file: f }))
+  }
+  return { noted, problems, warnings }
+}
+
 function checkUnreleased(root, base, problems, pluginManifests = []) {
   let changed = []
   try {
@@ -569,22 +644,19 @@ function checkUnreleased(root, base, problems, pluginManifests = []) {
   const scopes = pluginManifests.length === 0 ? [''] : pluginManifests.map(subdirOf)
   let recorded = 0
   for (const within of scopes) {
+    const notesDir = within === '' ? 'docs/upgrades' : `${within}/docs/upgrades`
+    // A fragment the change carries is checked whether or not the change needs one: a malformed
+    // fragment fails the release that folds it, so it fails here first.
+    const verdict = unreleasedVerdict(root, changed, notesDir)
+    problems.push(...verdict.problems)
     const behaviour = behaviourFiles(changed, { within })
     if (behaviour.length === 0) continue
     recorded++
     const where = within === '' ? 'apps/ or packages/' : `${within}/`
-    const notePath =
-      within === '' ? 'docs/upgrades/unreleased.md' : `${within}/docs/upgrades/unreleased.md`
-    if (changed.includes(notePath)) {
-      // Never a failure: a long note is a release that is due, not a broken one.
-      const warning = existsSync(path.join(root, notePath))
-        ? noteLengthWarning(read(root, notePath), notePath)
-        : null
-      if (warning) out(`release-check: ${warning}`)
-      continue
-    }
+    for (const warning of verdict.warnings) out(`release-check: ${warning}`)
+    if (verdict.noted) continue
     problems.push(
-      `${behaviour.length} file(s) under ${where} changed without an entry in ${notePath}.`,
+      `${behaviour.length} file(s) under ${where} changed without a porting note: add a fragment, ${fragmentsDir(notesDir)}/<slug>.md (or an entry in ${notesDir}/unreleased.md).`,
       'An adopter ports this change by reading that note; without it the change is invisible to every copy.',
       `First few: ${behaviour.slice(0, 5).join(', ')}`
     )

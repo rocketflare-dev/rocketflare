@@ -31,7 +31,8 @@
       "scripts/install.sh",
       "CONTRIBUTING.md",
       "CODE_OF_CONDUCT.md",
-      "docs/upgrades/unreleased.md"
+      "docs/upgrades/unreleased.md",
+      "docs/upgrades/unreleased/**"
     ],
     "postInit": ["pnpm install --no-frozen-lockfile", "pnpm lint:fix"],
     "appManifest": ".rocketflare.json"

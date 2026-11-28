@@ -7,9 +7,11 @@
  * WHICH repository it releases is `resolveRepoRoot` (`release-check.mjs`): `--repo-root <path>`,
  * else the git toplevel of the working directory, else the directory this script lives in.
  *
- * Folds `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md`, fills its `version`,
- * `previous` and `date`, bumps every version file, prepends a `CHANGELOG.md` section, and writes a
- * fresh empty `unreleased.md`.
+ * Folds every pending fragment (`docs/upgrades/unreleased/<slug>.md`, one per pull request) and
+ * `docs/upgrades/unreleased.md`, when it has entries, into `docs/upgrades/X.Y.Z.md` (`mergeNotes`),
+ * fills its `version`, `previous` and `date`, bumps every version file, prepends a `CHANGELOG.md`
+ * section, deletes the fragments and writes a fresh empty `unreleased.md`. With no fragment the
+ * legacy file is the note, byte for byte, as before fragments existed.
  *
  * Then: commit, `git tag -m "Release X.Y.Z" X.Y.Z && git push origin main X.Y.Z` (docs/DEPLOY.md,
  * "The release dance"); for the kit, also the site's changelog (CONTRIBUTING.md, "Cutting a release").
@@ -40,7 +42,7 @@
  * Exit 0 ok · 1 error · 2 usage.
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ciPluginEntries, readCiPlugins } from './default-plugins.mjs'
@@ -50,14 +52,25 @@ import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
 import {
   changelogSection,
   defaultPluginProblems,
+  fragmentProblems,
+  fragmentRank,
+  fragmentsDir,
   isKitManifest,
   matchesAny,
+  NOTE_HEADINGS,
   noteLengthWarning,
   parseNote,
   prependChangelogSection,
+  sectionOf,
   VERSION_RE,
 } from './lib/upgrade-lib.mjs'
-import { findPluginManifests, releaseNotes, resolveRepoRoot } from './release-check.mjs'
+import {
+  findPluginManifests,
+  fragmentCheckOptions,
+  listFragments,
+  releaseNotes,
+  resolveRepoRoot,
+} from './release-check.mjs'
 
 /** Where this SCRIPT lives — the last resort, and what the exported seams default to. */
 const SCRIPT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -368,6 +381,160 @@ function summaryOf(parsed) {
   )
 }
 
+// ---------------------------------------------------------------- folding fragments
+
+/** A list item's marker at column 0: `- `, `* `, `1. ` or `1) `. The number is ignored. */
+const ITEM_MARKER = /^(?:\d+[.)]|[-*])\s+/
+/** The one Verify step every change ends with, kept once, last. */
+const GATE_STEP = /^`pnpm gate` passes\.?$/
+
+/**
+ * A section's list items. A line opening with a marker starts an item; every line until the next
+ * marker (blank lines inside included) continues it, dedented by up to the marker's width so it
+ * can be re-indented under a new number. Prose before any marker is one item. A fragment writes
+ * its steps unnumbered; whatever numbers a step carries are dropped here.
+ */
+export function listItems(content) {
+  const items = []
+  let current = null
+  let blanks = 0
+  for (const line of (content ?? '').split('\n')) {
+    const marker = line.match(ITEM_MARKER)
+    if (marker) {
+      current = { first: line.slice(marker[0].length), rest: [], width: marker[0].length }
+      items.push(current)
+      blanks = 0
+    } else if (line.trim() === '') {
+      if (current) blanks++
+    } else if (!current) {
+      current = { first: line.trim(), rest: [], width: 0 }
+      items.push(current)
+    } else {
+      for (; blanks > 0; blanks--) current.rest.push('')
+      const indent = line.length - line.trimStart().length
+      current.rest.push(line.slice(Math.min(indent, current.width)))
+    }
+  }
+  return items.map(({ first, rest }) => ({ first, rest }))
+}
+
+/** Items as a numbered list, each continuation indented under its own number. */
+function numbered(items) {
+  return items
+    .map((item, i) => {
+      const marker = `${i + 1}. `
+      const pad = ' '.repeat(marker.length)
+      return [marker + item.first, ...item.rest.map(l => (l === '' ? '' : pad + l))].join('\n')
+    })
+    .join('\n')
+}
+
+/** `[a, b]`, quoting an item a reader would split or misread. */
+const inlineList = items =>
+  `[${items.map(i => (/[,[\]"']/.test(i) ? JSON.stringify(i) : i)).join(', ')}]`
+
+/** A block sequence for the human sentences `migrations` holds, or `[]`. */
+const blockList = items =>
+  items.length === 0 ? ' []' : `\n${items.map(i => `  - ${JSON.stringify(i)}`).join('\n')}`
+
+const union = lists => [...new Set(lists.flat().filter(v => typeof v === 'string' && v !== ''))]
+
+/**
+ * Fold the pending parts of a release (the legacy `unreleased.md`, when it has entries, and every
+ * fragment) into one porting note's text. A part is `{ name, text, legacy? }`.
+ *
+ * ORDER, the same in every section: a fragment's `order` first (`first`, then integers low to
+ * high, absent = 0, then `last`), the legacy file ahead of fragments at the same rank, then
+ * fragments by filename.
+ *
+ * FRONTMATTER: `breaking` and `manual` are true if any part's is; the four lists are unioned in
+ * that order and de-duplicated; `version`, `previous` and `date` are the release's.
+ *
+ * BODY: "What changed" opens with every part's summary sentence in one paragraph (the CHANGELOG
+ * line, so tighten it by hand when it runs long), then every part's bullets. "How to apply" and
+ * "Verify" are renumbered from 1; Verify's "`pnpm gate` passes." is dropped from every part and
+ * written once, last, when any part had it. "Conflicts to expect" concatenates, and is `None.`
+ * only when every part says none.
+ */
+export function mergeNotes(parts, { version, previous, date }) {
+  const parsed = parts
+    .map((part, index) => {
+      const note = parseNote(part.text)
+      if (!note) throw new Error(`${part.name}: no YAML frontmatter`)
+      const rank = part.legacy ? 0 : fragmentRank(note.data.order)
+      if (rank === null) throw new Error(`${part.name}: order is '${note.data.order}'`)
+      for (const heading of note.body.split('\n').filter(l => /^## /.test(l))) {
+        if (!NOTE_HEADINGS.includes(heading)) {
+          throw new Error(`${part.name}: '${heading}' is not one of the four headings`)
+        }
+      }
+      return { ...part, ...note, rank, index }
+    })
+    .sort(
+      (a, b) =>
+        a.rank - b.rank ||
+        Number(Boolean(b.legacy)) - Number(Boolean(a.legacy)) ||
+        (a.name < b.name ? -1 : a.name > b.name ? 1 : a.index - b.index)
+    )
+
+  const summaries = []
+  const changes = []
+  const steps = []
+  const conflicts = []
+  const checks = []
+  let gate = false
+  for (const part of parsed) {
+    // The summary is the opening paragraph: up to the first blank line or list item.
+    const lines = (sectionOf(part.body, '## What changed') ?? '').split('\n')
+    const cut = lines.findIndex(l => l.trim() === '' || ITEM_MARKER.test(l))
+    const summary = (cut === -1 ? lines : lines.slice(0, cut)).join('\n').trim()
+    const rest = cut === -1 ? '' : lines.slice(cut).join('\n').trim()
+    if (summary) summaries.push(summary)
+    if (rest) changes.push(rest)
+    steps.push(...listItems(sectionOf(part.body, '## How to apply')))
+    const conflict = sectionOf(part.body, '## Conflicts to expect') ?? ''
+    if (conflict !== '' && !/^None\b/i.test(conflict)) conflicts.push(conflict)
+    for (const item of listItems(sectionOf(part.body, '## Verify'))) {
+      if (item.rest.length === 0 && GATE_STEP.test(item.first.trim())) gate = true
+      else checks.push(item)
+    }
+  }
+  if (gate) checks.push({ first: '`pnpm gate` passes.', rest: [] })
+
+  const data = parsed.map(p => p.data)
+  const list = key => union(data.map(d => (Array.isArray(d[key]) ? d[key] : [])))
+  return [
+    '---',
+    `version: ${version}`,
+    `previous: ${previous ?? 'null'}`,
+    `date: ${date}`,
+    `breaking: ${data.some(d => d.breaking === true)}`,
+    `migrations:${blockList(list('migrations'))}`,
+    `areas: ${inlineList(list('areas'))}`,
+    `touches_surfaces: ${inlineList(list('touches_surfaces'))}`,
+    `requires_surfaces: ${inlineList(list('requires_surfaces'))}`,
+    `manual: ${data.some(d => d.manual === true)}`,
+    '---',
+    '',
+    '## What changed',
+    '',
+    [summaries.join('\n'), changes.join('\n')].filter(Boolean).join('\n\n'),
+    '',
+    '## How to apply',
+    '',
+    numbered(steps),
+    '',
+    '## Conflicts to expect',
+    '',
+    conflicts.length > 0 ? conflicts.join('\n') : 'None.',
+    '',
+    '## Verify',
+    '',
+    numbered(checks),
+    '',
+  ].join('\n')
+}
+
 const freshUnreleased = version => `---
 version: unreleased
 previous: ${version}
@@ -382,10 +549,9 @@ manual: false
 
 ## What changed
 
-_Nothing yet. Add an entry here in the same pull request as the change. This first paragraph is
-lifted VERBATIM into \`CHANGELOG.md\`, so make it ONE standalone summary sentence of ≤ 40 words —
-then one bullet per change, one line each, and no \`###\` sub-headings. Rationale belongs in
-\`docs/CONCEPTS.md\` and is linked, never restated; see \`README.md\` beside this file._
+_Nothing yet. A change adds a fragment, \`unreleased/<slug>.md\` beside this file, rather than
+editing this one: parallel pull requests then never conflict here (\`README.md\` beside this file
+has the shape). \`pnpm kit:release\` folds both forms into the release note._
 
 ## How to apply
 
@@ -517,38 +683,73 @@ function main(argv) {
       return 1
     }
     const unreleasedPath = `${target.notesDir}/unreleased.md`
-    if (!existsSync(abs(repoRoot, unreleasedPath))) {
+    const fragments = listFragments(target.notesDir, { root: repoRoot })
+    const hasLegacy = existsSync(abs(repoRoot, unreleasedPath))
+    if (!hasLegacy && fragments.length === 0) {
       warn(`error: ${unreleasedPath} does not exist`)
       return 1
     }
-    const unreleased = read(repoRoot, unreleasedPath)
-    const parsed = parseNote(unreleased)
-    if (!parsed) {
+    const unreleased = hasLegacy ? read(repoRoot, unreleasedPath) : null
+    if (unreleased !== null && !parseNote(unreleased)) {
       warn(`error: ${unreleasedPath} has no frontmatter`)
       return 1
     }
-    if (/_Nothing yet\./.test(unreleased)) {
+    // A fragment is checked by `release-check --unreleased` in its own pull request; checked again
+    // here, because a fragment that slipped past it would be folded into a note that cannot change.
+    const checkOptions = fragmentCheckOptions(repoRoot)
+    const fragmentErrors = fragments.flatMap(f =>
+      fragmentProblems(f.text, { ...checkOptions, file: f.file })
+    )
+    if (fragmentErrors.length > 0) {
+      warn('error: fix these fragments first:', ...fragmentErrors.map(p => `  ${p}`))
+      return 1
+    }
+    const legacyHasEntries = unreleased !== null && !/_Nothing yet\./.test(unreleased)
+    if (!legacyHasEntries && fragments.length === 0) {
       warn(
-        `error: ${unreleasedPath} is empty — a release with nothing to port is a gap every adopter`,
-        'has to step over. Write what changed first (docs/upgrades/README.md).'
+        `error: ${unreleasedPath} is empty and ${fragmentsDir(target.notesDir)}/ has no fragment —`,
+        'a release with nothing to port is a gap every adopter has to step over. Write what changed',
+        'first (docs/upgrades/README.md).'
       )
       return 1
     }
-    // Released anyway — a guide, not a gate — but said, so the next one is cut sooner.
-    const tooLong = noteLengthWarning(unreleased, unreleasedPath)
-    if (tooLong) out(tooLong)
     const notes = releaseNotes(target.notesDir, { root: repoRoot })
     const previous = notes.length > 0 ? notes[notes.length - 1].version : null
+    // No fragment: the legacy file IS the note, byte for byte, as it always was.
+    const note =
+      fragments.length === 0
+        ? unreleased
+            .replace(/^version: .*$/m, `version: ${version}`)
+            .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
+            .replace(/^date: .*$/m, `date: ${date}`)
+        : mergeNotes(
+            [
+              ...(legacyHasEntries
+                ? [{ name: 'unreleased.md', text: unreleased, legacy: true }]
+                : []),
+              ...fragments.map(f => ({ name: f.name, text: f.text })),
+            ],
+            { version, previous, date }
+          )
+    // Released anyway — a guide, not a gate — but said, so the next one is cut sooner.
+    const tooLong = noteLengthWarning(note, notePath)
+    if (tooLong) out(tooLong)
+    const folded = fragments.length + (legacyHasEntries ? 1 : 0)
+    if (folded > 1) {
+      out(
+        `note: ${notePath} opens "What changed" with ${folded} summary sentences, one per part —`,
+        '  CHANGELOG.md lifts that paragraph verbatim, so tighten it in both before you commit.'
+      )
+    }
     jobs.push({
       id: target.id ?? null,
       notePath,
       unreleasedPath,
+      legacyHasEntries,
+      fragments: fragments.map(f => f.file),
       previous,
-      summary: summaryOf(parsed),
-      note: unreleased
-        .replace(/^version: .*$/m, `version: ${version}`)
-        .replace(/^previous: .*$/m, `previous: ${previous ?? 'null'}`)
-        .replace(/^date: .*$/m, `date: ${date}`),
+      summary: summaryOf(parseNote(note)),
+      note,
     })
   }
 
@@ -608,18 +809,29 @@ function main(argv) {
   // together into one unreadable word.
   const width = Math.max(
     32,
-    1 + Math.max(...jobs.flatMap(j => [j.notePath.length, j.unreleasedPath.length])),
+    1 +
+      Math.max(
+        ...jobs.flatMap(j => [j.notePath.length, j.unreleasedPath.length]),
+        ...jobs.flatMap(j => j.fragments.map(f => f.length))
+      ),
     1 + ctx.changelog.length,
     1 + Math.max(...stamped.map(s => s.file.length))
   )
   const pad = value => value.padEnd(width)
+  // With no fragment the lines read exactly as they always did.
+  const source = j => {
+    if (j.fragments.length === 0) return 'unreleased.md'
+    const frags = `${j.fragments.length} fragment(s)`
+    return j.legacyHasEntries ? `unreleased.md + ${frags}` : frags
+  }
 
   if (dryRun) {
     out(
       `dry run — would write:`,
       ...jobs.flatMap(j => [
-        `  ${pad(j.notePath)}from unreleased.md (previous: ${j.previous ?? 'null'})`,
+        `  ${pad(j.notePath)}from ${source(j)} (previous: ${j.previous ?? 'null'})`,
         `  ${pad(j.unreleasedPath)}reset`,
+        ...j.fragments.map(f => `  ${pad(f)}folded, deleted`),
       ]),
       `  ${pad(ctx.changelog)}new '## ${version}' section`,
       ...stamped.map(s => `  ${pad(s.file)}${s.label} ${version}`)
@@ -630,14 +842,16 @@ function main(argv) {
   for (const j of jobs) {
     writeFileSync(abs(repoRoot, j.notePath), j.note)
     writeFileSync(abs(repoRoot, j.unreleasedPath), freshUnreleased(version))
+    for (const f of j.fragments) rmSync(abs(repoRoot, f))
   }
   writeFileSync(abs(repoRoot, ctx.changelog), nextChangelog)
   for (const s of stamped) writeFileSync(abs(repoRoot, s.file), s.text)
 
   out(
     ...jobs.flatMap(j => [
-      `✔ ${pad(j.notePath)}folded from unreleased.md (previous: ${j.previous ?? 'null'})`,
+      `✔ ${pad(j.notePath)}folded from ${source(j)} (previous: ${j.previous ?? 'null'})`,
       `✔ ${pad(j.unreleasedPath)}reset`,
+      ...j.fragments.map(f => `✔ ${pad(f)}folded, deleted`),
     ]),
     `✔ ${pad(ctx.changelog)}'## ${version}' prepended`,
     ...stamped.map(s => `✔ ${pad(s.file)}${s.label} ${version}`),

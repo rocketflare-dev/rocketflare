@@ -40,6 +40,32 @@ export function resolveRepoRoot(
 
 export function releaseNotes(notesDir?: string, options?: { root?: string }): ReleaseNote[]
 
+/** One pending porting-note fragment, `<notesDir>/unreleased/<slug>.md`. */
+export interface NoteFragment {
+  /** The filename, `<slug>.md`. */
+  name: string
+  /** Repo-root-relative. */
+  file: string
+  text: string
+}
+/** Every fragment of a notes directory, sorted by filename; its README is not one. */
+export function listFragments(notesDir?: string, options?: { root?: string }): NoteFragment[]
+/** The surface ids (and retired ones) a fragment is checked against, from the kit's manifest. */
+export function fragmentCheckOptions(root?: string): {
+  surfaceIds: string[] | null
+  retiredSurfaceIds?: Record<string, string>
+  manifestFile?: string
+}
+/**
+ * Does a change carry its porting note in `notesDir`: an edit to `unreleased.md`, or at least one
+ * fragment added or edited (and still present)? `problems` are the changed fragments' own.
+ */
+export function unreleasedVerdict(
+  root: string,
+  changed: readonly string[],
+  notesDir?: string
+): { noted: boolean; problems: string[]; warnings: string[] }
+
 export function findPluginManifests(root?: string, options?: { maxDepth?: number }): string[]
 
 export function deployable(root?: string): Deployability

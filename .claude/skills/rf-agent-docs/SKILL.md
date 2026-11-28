@@ -77,6 +77,6 @@ the wrong dir) · **costs** (true but dead weight). End with the script's summar
   always the side that is wrong.
 - Re-run `check.mjs` until no `✖`, then re-score the report as before → after.
 - Docs-only edits need no upgrade note; a change to this skill or its script does (kit repository
-  only, `docs/upgrades/unreleased.md`). Commit only when asked, staging explicit paths.
+  only, a fragment in `docs/upgrades/unreleased/`). Commit only when asked, staging explicit paths.
 
 Limits are Anthropic's: `code.claude.com/docs/en/memory`, `code.claude.com/docs/en/skills`.

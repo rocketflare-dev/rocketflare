@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * A Claude Code `PreToolUse` hook: before a `git commit`, notice when a behaviour change is about
- * to be committed without an entry in `docs/upgrades/unreleased.md`.
+ * to be committed without a porting note: a fragment `docs/upgrades/unreleased/<slug>.md` (the
+ * documented way) or an entry in the legacy `docs/upgrades/unreleased.md`.
  *
  * Why bother, given `.github/workflows/ci.yml` checks the same thing: the entry is much easier to
  * write while the change is in your head than a day later from a diff, and the note is the ONLY
@@ -26,10 +27,11 @@ import { fileURLToPath } from 'node:url'
 import { MANIFEST_FILE } from './lib/manifest.mjs'
 import { hookJson } from './lib/nudge-lib.mjs'
 import { PLUGIN_MANIFEST_FILE } from './lib/plugin-lib.mjs'
-import { behaviourFiles } from './lib/upgrade-lib.mjs'
+import { behaviourFiles, recordsPortingNote } from './lib/upgrade-lib.mjs'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const NOTE = 'docs/upgrades/unreleased.md'
+const FRAGMENT = 'docs/upgrades/unreleased/<slug>.md'
 
 const readStdin = () => {
   try {
@@ -75,7 +77,7 @@ function main() {
       ]
     : staged
 
-  if (all.includes(NOTE)) return
+  if (recordsPortingNote(all)) return
   // The same predicate `scripts/release-check.mjs --unreleased` applies in CI: this hook exists to
   // catch the note BEFORE the gate does, which it can only do by agreeing with it exactly.
   const behaviour = behaviourFiles(all)
@@ -85,12 +87,12 @@ function main() {
   // Claude, which is how this nudge was silent until it was rewritten (`lib/nudge-lib.mjs`).
   process.stdout.write(
     hookJson(
-      `This commit changes ${behaviour.length} file(s) under apps/ or packages/ with no entry in ${NOTE}.\n` +
+      `This commit changes ${behaviour.length} file(s) under apps/ or packages/ with no porting note.\n` +
         `Every ${isPluginRepo ? 'host that installed this plugin' : 'copy of the kit'} absorbs this change by reading that note; without one the change is\n` +
-        'invisible to all of them. Add an entry (docs/upgrades/README.md has the shape), or say why\n' +
-        'this one needs none.\n' +
+        `invisible to all of them. Add a fragment, ${FRAGMENT} (docs/upgrades/README.md has the\n` +
+        'shape), or say why this one needs none.\n' +
         `First few: ${behaviour.slice(0, 5).join(', ')}`,
-      `No ${NOTE} entry for ${behaviour.length} changed source file(s).`
+      `No porting note (${FRAGMENT}) for ${behaviour.length} changed source file(s).`
     )
   )
 }

@@ -556,6 +556,10 @@ describe('what a plugin may bring', () => {
       // repository and never to a host, where `scripts/` is the kit's own.
       'scripts/release.mjs',
       'scripts/lib/upgrade-lib.mjs',
+      // A pending porting-note fragment: the plugin's next release folds it into a released note,
+      // which is all a host ever reads.
+      'docs/upgrades/unreleased/new-cube.md',
+      'docs/upgrades/unreleased/README.md',
     ]) {
       expect(roles(p)).toBe('repo-only')
     }

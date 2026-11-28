@@ -1004,8 +1004,9 @@ Verify: the host serves the app over HTTPS; the parity test still passes (`route
 ### 3.7 The release dance (every subsequent deploy)
 1. Bump the **root** `package.json` `version` to `X.Y.Z`, add its section to your `CHANGELOG.md`,
    commit. (The `apps/*` versions are informational; one tag ships web and cli together.)
-   *Kit repository only:* `pnpm kit:release X.Y.Z` does this step instead — it also folds
-   `docs/upgrades/unreleased.md` into `docs/upgrades/X.Y.Z.md` and stamps `.rocketflare.json`
+   *Kit repository only:* `pnpm kit:release X.Y.Z` does this step instead — it also folds the
+   fragments in `docs/upgrades/unreleased/` and `docs/upgrades/unreleased.md` into
+   `docs/upgrades/X.Y.Z.md` and stamps `.rocketflare.json`
    `kit.version`, and the deploy refuses a kit tag whose porting note is missing, because that note
    is how every copy absorbs the release. An app has neither the command nor the check.
 2. `git tag X.Y.Z && git push origin X.Y.Z` → **staging** deploys (`deploy.yml`: CI gate — skipped
