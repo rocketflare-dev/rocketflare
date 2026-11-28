@@ -6,6 +6,11 @@ copy of the kit forward without recreating anything its owner deleted.
 
 If you are running a copy: `pnpm kit:upgrade` tells you which of these you are missing.
 
+## 0.46.1 — 2026-11-28
+
+Branding becomes configuration (tagline, sign-in art, logo and favicon as `[vars]`, the page title and description written from `APP_NAME` and `APP_TAGLINE`), and a round of upgrade fixes from a real copy's field report: `kit:upgrade` hands copies older than 0.44 a stop step, catches up the vendored example plugin, keeps the kit's links and a customised look, and formats what it writes; `--adopt-default-look` keeps an app's own CSS rules; plugin UIs that post `FormData` work again; and `plugin upgrade`, `dev:db:up` and the agent-docs check stop removing kit lines, moving chosen ports and flagging placeholder links.
+[Porting note](docs/upgrades/0.46.1.md).
+
 ## 0.46.0 — 2026-11-27
 
 Uploads move to `/api/uploads` (presign, PUT, confirm): straight to R2 once an R2 API token is set, through the Worker otherwise; plugins gain `uploadTargets`, and `uploadPaths` / `uploadLimits` keep working, deprecated.
