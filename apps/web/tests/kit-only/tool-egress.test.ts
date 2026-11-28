@@ -5,16 +5,23 @@
  * pins the kit's own tool list, which a copy extends.
  */
 import { describe, expect, it } from 'vitest'
-import { installedToolUnits, readToolEgress } from '@/api/services/agents/tools/egress'
+import { coreToolUnit, pluginToolUnits, readToolEgress } from '@/api/services/agents/tools/egress'
 import {
   declaredToolEgress,
   egressProblems,
   stringConstants,
 } from '../../../../scripts/lib/plugin-lib.mjs'
 
+/** The plugins the kit itself ships. CI also installs published plugins, which answer on their own schedule. */
+const KIT_PLUGINS = new Set(['example-feature'])
+
 describe("the kit's own tools", () => {
   it('every one answers egress and readsContent', async () => {
-    const report = await readToolEgress(installedToolUnits())
+    const plugins = pluginToolUnits()
+    const report = await readToolEgress([
+      coreToolUnit(plugins),
+      ...plugins.filter(u => KIT_PLUGINS.has(u.id)),
+    ])
     expect(report.unreadable).toEqual([])
     expect(report.tools.length).toBeGreaterThanOrEqual(5)
     for (const t of report.tools) {
