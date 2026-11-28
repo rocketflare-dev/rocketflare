@@ -644,7 +644,8 @@ project.
 - **Framing is opt-in per response**: only a route that proved the type (`isEmbeddableMimeType`, PDF)
   sets `embeddable`, which relaxes `DENY` to `SAMEORIGIN` for that one response. It is set before
   the 304 early return. Never use a path allowlist for this. A plugin route reaches the same flag
-  through `ctx.embeddable(contentType)` (§16), which applies the same `isEmbeddableMimeType` test.
+  through `ctx.embeddable(contentType)` (§16), which applies the same `isEmbeddableMimeType` test
+  and also lets a raster image (`EMBEDDABLE_IMAGE_MIME_TYPES`, never SVG) be framed.
 - A missing `FILES` binding is 503 `storage_not_configured`. `tenant.purge` pages through the
   tenant prefix and is idempotent.
 
@@ -896,7 +897,19 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   all); on `mcp` a terminal tool or one with an approval gate is never offered, and
   `mcpToolProfile(tool)` derives the scope a call needs (`mcp:read`, or `mcp:write` for
   `sideEffects`) and the annotations (`readOnlyHint`/`destructiveHint`/`idempotentHint` from
-  `sideEffects` and `durable`, `openWorldHint` false), each overridable in `Tool.mcp`. **Long threads are compacted**: a
+  `sideEffects` and `durable`, `openWorldHint` false), each overridable in `Tool.mcp`. **Two
+  governance facts per tool**: `Tool.egress` answers *can this tool send your data outside your
+  organisation — by email, a webhook, a web request, or by publishing a page?* about what its
+  HANDLER does (the app's own embeddings, reranker and chat model are not outside it, so
+  `search_knowledge` is `false`; which surfaces it reaches is judged separately), and
+  `Tool.readsContent` says it returns tenant text a model reads (private and untrusted; absent
+  reads as `true`). Every kit tool answers both. Both are optional for now: the **value check**
+  (`services/agents/tools/egress.ts`) CALLS every unit's `tools(ctx)` with a stub context (every
+  flag on, every permission, no database) and reads `egress` off the values, so an `as Tool` cast
+  hides nothing; a tool without it is a WARNING in the gate (`tests/config/tool-egress.test.ts`)
+  and in `pnpm plugin check` (`<unit>:egress:<tool>`, which the plugin matrix counts), never a
+  failure. A builder that queries the database is unreadable there, and `plugin check` reads its
+  `defineTool({ … })` calls statically instead. **Long threads are compacted**: a
   character-budget window (`CHAT_HISTORY_MAX_CHARS`), with the dropped prefix folded into
   `conversations.summary` by the `chat.compact` job (compare-and-set). Document cards come from
   `kit.document` events produced by a pure mapper, so nothing about a card is stored. The admin
@@ -1589,7 +1602,10 @@ no images inside rendered Markdown (a model's or document's image is shown as a 
 tool with an approval gate is available to agent runs only), no `STATE_DELTA`; protobuf has no
 stream cursor; a cancelled CHAT turn emits nothing rather than AG-UI 1.0's `RUN_FINISHED`
 `cancelled` outcome (the client closed the socket — agent runs do emit it); no token-level streaming for runs (would need a per-run DO); char-based history budget
-not derived from the model; sliding window defeats prompt caching on long threads; `enqueueRun`
+not derived from the model; sliding window defeats prompt caching on long threads;
+`Tool.egress` is optional and only warned about — nothing yet refuses a tool without it or checks a
+tool set's `readsContent` + unapproved `egress` combination, and a builder that returns `[]` under
+the stub context (rather than querying) is not seen by the value check; `enqueueRun`
 does not pre-resolve the client; Workers AI forced tools on off-list models are best-effort;
 lexical search is English-only (`SEARCH_TEXT_CONFIG` is one constant, not per tenant);
 contextual prefixes: contexts are
@@ -2333,8 +2349,9 @@ opens with "What you want to do", the name to import for each job), `docs/plugin
   carries them) but stay data in `pages/home-links.ts` as destinations, so the plugin UI kit never
   imports the Home page (`plugin-ui-kit-graph.test.ts`).
 - **Framing a response (`ctx.embeddable(contentType)`)**: a plugin route that has proved its body
-  is an `EMBEDDABLE_MIME_TYPES` type (today PDF) — from its own row, never the request — lets a
-  same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6). Any other type
+  is an `EMBEDDABLE_MIME_TYPES` type (PDF) or an `EMBEDDABLE_IMAGE_MIME_TYPES` raster image (PNG,
+  JPEG, GIF, WebP — never SVG; an attachment preview) — from its own row, never the request — lets a
+  same-origin page frame that one response, the opt-in `/api/files/:id` uses (§6, PDFs only). Any other type
   is refused (`false`) and `DENY` stands. Call it before any 304 early return.
 - **Upload targets (`ServerPlugin.uploadTargets`)**: `PluginUploadTarget` entries from
   `@/plugins/api`. Each one has:

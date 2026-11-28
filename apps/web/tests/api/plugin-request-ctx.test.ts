@@ -101,6 +101,14 @@ describe('requestCtx embeddable', () => {
     expect(res.headers.get('Content-Security-Policy')).toBe(EMBEDDABLE_CONTENT_SECURITY_POLICY)
   })
 
+  it('lets a raster image be framed too (an attachment preview), never an SVG', async () => {
+    for (const type of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
+      const res = await frame(type)
+      expect(res.headers.get('X-Framed')).toBe('true')
+      expect(res.headers.get('X-Frame-Options')).toBe('SAMEORIGIN')
+    }
+  })
+
   it('refuses a type the kit does not let be framed, leaving DENY in place', async () => {
     for (const type of ['text/html', 'image/svg+xml', '']) {
       const res = await frame(type)

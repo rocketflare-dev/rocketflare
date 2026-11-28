@@ -94,6 +94,9 @@ const submitAnswerTool: Tool<SubmitAnswer> = {
   description:
     'Submit the finished answer and the documents it cites. Call exactly once, when you can answer the question or have established that the knowledge base does not hold the answer.',
   schema: submitAnswerSchema,
+  // Terminal: no handler, so it does nothing and returns nothing.
+  egress: false,
+  readsContent: false,
 }
 
 /**
@@ -194,6 +197,9 @@ function askHumanTool(ctx: AgentContext<ResearchTopicInput>): Tool {
     description:
       'Ask the person who started this run to settle an ambiguity you cannot resolve from the knowledge base. The run pauses until they answer, so use it only when the question genuinely changes the answer.',
     schema,
+    // Asks the person who started the run, inside the app; returns only their answer.
+    egress: false,
+    readsContent: false,
     handler: async ({ question, options }) => {
       const answer = await ctx.interrupt({
         key: `ask-human:${question}`,
@@ -248,6 +254,9 @@ function indexFindingTool(ctx: AgentContext<ResearchTopicInput>): Tool {
     description:
       'Save a finding into this workspace’s knowledge base so later questions can find it. Only use it when the person asked you to record or save something; a person must approve every call.',
     schema,
+    // Writes into this organisation's own knowledge base, which only its members can search.
+    egress: false,
+    readsContent: false,
     requiresApproval: true,
     allowEdits: true,
     approvalMessage:

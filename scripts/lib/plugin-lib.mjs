@@ -3523,6 +3523,81 @@ export function declaredTools(source, constants = new Map()) {
   return out
 }
 
+/**
+ * Which `defineTool({ … })` calls in a source write an `egress:` key — the STATIC half of the
+ * egress check, used only for a plugin whose `tools(ctx)` could not be called (it reads the
+ * database before it builds, or the value check could not run at all). Best effort, like
+ * {@link declaredTools}: a key inside the call is taken as the answer.
+ */
+export function declaredToolEgress(source, constants = new Map()) {
+  const text = stripComments(source)
+  const names = declaredTools(source, constants).map(t => t.name)
+  const out = []
+  let i = 0
+  for (const m of text.matchAll(/\bdefineTool\s*(?:<[^>]*>)?\s*\(/g)) {
+    const body = callBody(text, m.index + m[0].length - 1)
+    if (body === null) continue
+    out.push({ name: names[i] ?? null, answers: /(?:^|[,{\s])egress\s*:/.test(body) })
+    i++
+  }
+  return out
+}
+
+const EGRESS_QUESTION =
+  'can this tool send your data outside your organisation — by email, a webhook, a web request, or by publishing a page?'
+
+/**
+ * The egress warnings `plugin check` raises: one per tool with no `egress` answer, read from the
+ * VALUES the value check got back by calling each unit's `tools(ctx)` (`report`, from
+ * `apps/web/scripts/tool-egress.ts`), never from a type. A plugin whose builder could not be
+ * called — or every plugin, when `report` is null because the check could not run — is read
+ * statically instead, from `declarations` (`{ pluginId, file, tools: declaredToolEgress(…) }`).
+ *
+ * Always `warn`: `egress` is optional until a later kit release makes it required, so a released
+ * plugin keeps passing meanwhile. The id is `<unit>:egress:<tool>`, which is how the plugin
+ * matrix counts each plugin's warnings. A tool from a non-plugin unit (the kit's own list, an
+ * app's tools) is reported under its unit id.
+ */
+export function egressProblems(report, declarations = []) {
+  const out = []
+  const fileOf = (unit, tool) =>
+    declarations.find(d => d.pluginId === unit && d.tools.some(t => t.name === tool))?.file ??
+    (unit === 'core'
+      ? 'apps/web/src/api/services/agents/tools/index.ts'
+      : `apps/web/src/plugins/${unit}/`)
+  const warn = (unit, tool, file, how) =>
+    out.push({
+      severity: 'warn',
+      unit,
+      tool,
+      file,
+      kind: 'egress',
+      problem: `declares the tool "${tool}" with no \`egress\` answer (${how})`,
+      fix:
+        `set \`egress: true\` or \`egress: false\` on it, answering "${EGRESS_QUESTION}" from what ` +
+        'its handler does — fetch, email, a webhook or a publish is true; reading or writing this ' +
+        "organisation's own records is false. Never default it to false (.claude/rules/tools.md)",
+    })
+  const unreadable = new Set((report?.unreadable ?? []).map(u => u.unit))
+  for (const t of report?.tools ?? []) {
+    if (t.egress === undefined)
+      warn(t.unit, t.tool, fileOf(t.unit, t.tool), 'read from the value tools(ctx) returned')
+  }
+  for (const d of declarations) {
+    if (report && !unreadable.has(d.pluginId)) continue
+    for (const t of d.tools) {
+      if (!t.answers)
+        warn(
+          d.pluginId,
+          t.name ?? '?',
+          d.file,
+          'read statically: tools(ctx) could not be called with the stub context'
+        )
+    }
+  }
+  return out
+}
+
 /** The request-body readers that take a form: Hono's `c.req.parseBody()`, `Request.formData()`. */
 const FORM_BODY_READERS = new Set(['parseBody', 'formData'])
 /** What lifts the host's 1 MB body cap for a plugin: the upload seams and a public body limit. */

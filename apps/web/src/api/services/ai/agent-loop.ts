@@ -113,6 +113,31 @@ export interface Tool<Input = unknown> {
    */
   sideEffects?: boolean
   /**
+   * **Can this tool send your data outside your organisation — by email, a webhook, a web
+   * request, or by publishing a page?** `true` for a handler that emails, calls a webhook, fetches
+   * a URL, calls a remote MCP tool, or writes something another organisation or the public can see
+   * (a published page). `false` for one that only reads or writes this organisation's own records.
+   *
+   * It describes what the HANDLER itself does. The app's own AI providers are part of the app, not
+   * outside it: a tool whose only outbound call is the embeddings model, the reranker or the chat
+   * model is `false` (`search_knowledge`). Which surfaces a tool is offered on (chat, agents, MCP)
+   * is judged separately, by {@link Tool.surfaces} and the MCP rules, never folded in here.
+   *
+   * Answer it from what the handler does; never default it to `false`. Optional for now: a tool
+   * without it is a WARNING in `pnpm gate` and `pnpm plugin check`, and it becomes required in a
+   * later release. Read as a VALUE (the check calls each `tools(ctx)`), so an `as Tool` cast does
+   * not hide a missing answer.
+   */
+  egress?: boolean
+  /**
+   * The tool returns this organisation's text for the model to read — a document, a message, a
+   * record's free text. Such text is private AND untrusted (it may carry instructions somebody
+   * planted), so a tool set that holds a `readsContent` tool and an unapproved `egress` tool is
+   * the combination that can leak. Absent is read as `true` (fail closed): set `false` only for a
+   * tool that returns nothing of the kind (a terminal tool, a count, an id).
+   */
+  readsContent?: boolean
+  /**
    * The handler is safe to run again with the same {@link ToolCallInfo.idempotencyKey} — the
    * system it writes to deduplicates on it. A `sideEffects` tool marked `durable` is re-run after
    * a crash instead of settling as an unknown outcome.

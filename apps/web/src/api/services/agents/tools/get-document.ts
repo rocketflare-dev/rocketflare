@@ -94,6 +94,9 @@ export function getDocumentTool(ctx: AgentToolContext): Tool<GetDocumentInput> {
     mcp: { title: 'Read a document' },
     description: `Read one knowledge-base document's text, whole or in windows: \`offset\` and \`maxChars\` select a character range (default and maximum ${cap} characters, from the start; the answer reports \`totalChars\`, \`hasMore\` and \`nextOffset\`, so a long document is read by calling again with \`nextOffset\` until \`hasMore\` is false). Use it after search_knowledge when a passage is cut off or you need the surrounding context, or on any id from list_documents. An unknown id answers with the documents that do exist.`,
     schema: getDocumentSchema(cap),
+    // Reads this organisation's documents from its own database; nothing leaves.
+    egress: false,
+    readsContent: true,
     async handler(input) {
       const window = await readDocumentWindow(
         ctx.db,

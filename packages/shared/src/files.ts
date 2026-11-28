@@ -52,6 +52,25 @@ export function isEmbeddableMimeType(type: string): type is EmbeddableMimeType {
   return (EMBEDDABLE_MIME_TYPES as readonly string[]).includes(type)
 }
 
+/**
+ * Raster images a PLUGIN route may also let be framed, through `ctx.embeddable(contentType)` — an
+ * attachment preview that shows a PDF and an image in the same frame. A raster image runs no
+ * script, and the host sends `nosniff`, so a row that lies about its type still cannot render as
+ * a page. **Never SVG** (it can carry script). `/api/files/:id` does not use this list: the kit's
+ * own files frame PDFs only, and an avatar stays `DENY`.
+ */
+export const EMBEDDABLE_IMAGE_MIME_TYPES = [
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+] as const
+export type EmbeddableImageMimeType = (typeof EMBEDDABLE_IMAGE_MIME_TYPES)[number]
+
+export function isEmbeddableImageMimeType(type: string): type is EmbeddableImageMimeType {
+  return (EMBEDDABLE_IMAGE_MIME_TYPES as readonly string[]).includes(type)
+}
+
 /** The download URL for a stored file — the same string the API writes into `users.avatarUrl`. */
 export const filePath = (id: string): string => `/api/files/${id}`
 

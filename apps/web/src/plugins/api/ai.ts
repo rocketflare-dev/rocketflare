@@ -183,6 +183,11 @@ export function toolCtx(ctx: AgentToolContext): ToolCtx {
  * server a tool needs a handler and no approval gate, and `mcp` shapes how a client sees it:
  * `scope` (`mcp:read`, or `mcp:write` for a `sideEffects` tool), `annotations` (defaulted from
  * `sideEffects`/`durable`), `title`, `outputSchema`. Whether a tenant exposes it is the tenant's.
+ *
+ * **Answer `egress`** — can this tool send your data outside your organisation, by email, a
+ * webhook, a web request, or by publishing a page? — and `readsContent` (see `Tool`). Write them
+ * in this call: the check reads the values `tools(ctx)` returns, and falls back to this call's
+ * text when your builder queries before it builds.
  */
 export function defineTool<Input>(tool: Tool<Input>): Tool<Input> {
   return tool
