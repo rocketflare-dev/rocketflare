@@ -10,7 +10,7 @@
  * Read lazily (`emitEvent` imports this module at call time): the table reads the server barrel and
  * the agent registry, both of which a plugin module must never reach at module scope.
  */
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import type { JobContext } from '../../queues/jobs'
 import { agentTriggerSubscribers } from '../agents/triggers'
 import { APP_EVENT_HANDLERS } from './app-handlers'
@@ -35,7 +35,7 @@ let table: readonly EventSubscriber[] | null = null
 /** Every subscriber, built once per isolate: plugins in barrel order, then the app, then agents. */
 export function eventSubscribers(): readonly EventSubscriber[] {
   table ??= [
-    ...serverPlugins.flatMap(p =>
+    ...serverUnits.flatMap(p =>
       (p.eventHandlers ?? []).map(h => handlerSubscriber(`handler:${p.shared.id}`, h))
     ),
     ...APP_EVENT_HANDLERS.map(h => handlerSubscriber('app', h)),

@@ -9,14 +9,14 @@
  * **Both are FUNCTIONS, and that is not a style choice.** This module reads
  * `apps/web/src/plugins/server.ts`, which imports every installed plugin, which imports this
  * module — a cycle, whichever way round the app is entered. Evaluated at MODULE scope, one side
- * finds `serverPlugins` still `undefined`, and the failure is `undefined.flatMap` at IMPORT time:
+ * finds `serverUnits` still `undefined`, and the failure is `undefined.flatMap` at IMPORT time:
  * the Worker never starts, and which entry point loses the race depends on nothing a reader can
  * see. Read at CALL time, live bindings make it always defined. `docs/CONCEPTS.md` §16 has the
  * measurement and `services/access.ts` carries the same note.
  */
 
 import * as schema from '../../db/schema'
-import { serverPlugins } from '../server'
+import { serverUnits } from '../../units/server'
 
 /**
  * Everything every installed plugin contributed under one `extensions` key.
@@ -31,12 +31,12 @@ import { serverPlugins } from '../server'
  * dashboard that renders empty, and nothing anywhere says why.
  */
 export function extensions(key: string): readonly unknown[] {
-  return serverPlugins.flatMap(p => p.extensions?.[key] ?? [])
+  return serverUnits.flatMap(p => p.extensions?.[key] ?? [])
 }
 
 /** Which plugins contributed under a key — for the error message when one of them fails to parse. */
 export function extensionSources(key: string): readonly string[] {
-  return serverPlugins.filter(p => (p.extensions?.[key]?.length ?? 0) > 0).map(p => p.shared.id)
+  return serverUnits.filter(p => (p.extensions?.[key]?.length ?? 0) > 0).map(p => p.shared.id)
 }
 
 /** The merged drizzle schema: every core table AND every installed plugin's. */

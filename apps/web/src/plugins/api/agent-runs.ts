@@ -22,7 +22,7 @@
  * The runtime is reached through a FUNCTION-SCOPE `await import(...)`, for the reason `./http`'s
  * visibility methods give: `services/agents/registry` composes the agent table by reading the
  * plugin barrel, every plugin imports this module through `@/plugins/api`, and a static import
- * here would close that cycle — `serverPlugins` read before the barrel has finished evaluating.
+ * here would close that cycle — `serverUnits` read before the barrel has finished evaluating.
  */
 
 import type { AgentKey, AgentRunStatus, BindableAgent } from '@rocketflare/shared/ai/agents'

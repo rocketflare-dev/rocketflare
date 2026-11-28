@@ -12,7 +12,7 @@ import {
   loginPanelArtSchema,
   taglineSchema,
 } from '@rocketflare/shared/branding'
-import { sharedPlugins } from '@rocketflare/shared/plugins'
+import { sharedUnits } from '@rocketflare/shared/units'
 import { z } from 'zod'
 
 /** `wrangler dev` passes `KEY=` lines from .dev.vars as empty strings; treat those as unset. */
@@ -436,10 +436,7 @@ const coreConfigSchema = z.object({
  * key into `any`. A plugin reads its own keys through its own narrowing helper — one plugin's vars
  * can never widen, or weaken, the type core is checked against.
  */
-const pluginConfigShape: z.ZodRawShape = Object.assign(
-  {},
-  ...sharedPlugins.map(p => p.config ?? {})
-)
+const pluginConfigShape: z.ZodRawShape = Object.assign({}, ...sharedUnits.map(p => p.config ?? {}))
 const configSchema = coreConfigSchema.extend(pluginConfigShape).superRefine((cfg, ctx) => {
   // An OIDC-only login page with no issuer would offer no way in at all.
   if (cfg.AUTH_OIDC_ONLY && !(cfg.OIDC_ISSUER && cfg.OIDC_CLIENT_ID)) {

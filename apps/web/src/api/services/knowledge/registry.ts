@@ -18,7 +18,7 @@
  * A violation throws: a type that silently failed to register would extract nothing, unnoticed.
  */
 import { entityTypeSchema } from '@rocketflare/shared/ai/knowledge-facts'
-import { serverPlugins } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { APP_ENTITY_TYPES } from './entity-types'
 import { registrationTableIssues } from './resolve'
 import type { EntityTypeRegistration } from './types'
@@ -112,7 +112,7 @@ export function knowledgeEntityTypes(): readonly EntityTypeRegistration[] {
   if (memo === null) {
     memo = composeEntityTypes([
       { owner: null, types: APP_ENTITY_TYPES },
-      ...serverPlugins.map(p => ({ owner: p.shared.id, types: p.knowledgeEntityTypes ?? [] })),
+      ...serverUnits.map(p => ({ owner: p.shared.id, types: p.knowledgeEntityTypes ?? [] })),
     ])
   }
   return memo

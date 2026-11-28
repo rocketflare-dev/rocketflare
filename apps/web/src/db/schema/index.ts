@@ -5,12 +5,14 @@
  */
 
 /**
- * Installed plugin tables. Position in this file decides nothing: a name exported by two
+ * The app domains' tables (`app-schema.ts`, docs/CONCEPTS.md §20), then the installed plugins'.
+ * Position in this file decides nothing: a name exported by two
  * `export *` declarations is AMBIGUOUS, and TypeScript reports it (TS2308) instead of silently
  * letting one win — which is the loud failure that wants to happen before `pnpm db:generate`
  * writes DDL for a table that shadows a core one. Biome sorts these lines, so this one sits where
- * the sorter puts it.
+ * the sorter puts them.
  */
+export * from '../../app-schema'
 export * from '../../plugins/schema'
 export * from './_helpers'
 export * from './access-requests'

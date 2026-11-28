@@ -74,6 +74,7 @@ import { applyReplacements, deriveNames, isExcluded } from './lib/rename-lib.mjs
 import { containedPath, repoPathProblem, writePathProblem } from './lib/repo-paths.mjs'
 import {
   absentSurfaces,
+  arrivingExamples,
   classifyPath,
   compareVersions,
   countLines,
@@ -85,6 +86,7 @@ import {
   lookManualReason,
   matchesAny,
   matchingRelease,
+  missingAppLists,
   NOTES_SUBDIR,
   notePath,
   noteReportLines,
@@ -205,6 +207,11 @@ function writeManifest(manifest) {
 function stampUpgrade(manifest, plan) {
   manifest.kit.version = plan.to.version ?? manifest.kit.version
   manifest.kit.commit = plan.to.commit
+  // Examples the release added, recorded so every later upgrade knows them — and, their anchors
+  // missing, treats them as absent. Never their files.
+  for (const a of plan.surfaces?.available ?? []) {
+    if (!manifest.surfaces.some(s => s.id === a.id)) manifest.surfaces.push(a.surface)
+  }
   manifest.history.push({
     from: plan.from.commit,
     to: plan.to.commit,
@@ -484,23 +491,33 @@ function main(argv) {
   // The TARGET kit's kit-only list, read out of the mirror: `.rocketflare.json` is never ported, so
   // this copy's own file only knows the kit-only paths of the release it was made from, and a later
   // release that declares a new one must still never land it here. Unreadable = the local list.
+  const localSet = new Set(tracked)
   const targetManifest = kit.tryShow(to, MANIFEST)
   let targetKitOnly = []
+  let target = null
   if (targetManifest.ok) {
     try {
-      targetKitOnly = kitOnlyGlobs(JSON.parse(targetManifest.out))
+      target = JSON.parse(targetManifest.out)
+      targetKitOnly = kitOnlyGlobs(target)
     } catch {
       targetKitOnly = []
     }
   }
-  const localSet = new Set(tracked)
+  // The same reason: an EXAMPLE the target release adds is a surface this copy's manifest has
+  // never heard of, so its files would classify as new core and be ported. They are absent here —
+  // reported as available, recorded absent at the stamp — because an example is for a fresh copy.
+  const arriving = arrivingExamples(manifest, target)
+  const classifyAbsent = [...absent, ...arriving.map(s => s.id)]
+  const classifyManifest = { ...manifest, surfaces: [...manifest.surfaces, ...arriving] }
+  // The app's unit lists, which the core this run ports imports: created empty where missing.
+  const appLists = missingAppLists(p => localSet.has(p) || existsSync(path.join(REPO_ROOT, p)))
   const changes = collectChanges(kit, from, to)
   const renames = collectRenames(kit, from, to)
   const files = changes.map(c => ({
     ...c,
     ...classifyPath(c.path, {
-      manifest,
-      absent,
+      manifest: classifyManifest,
+      absent: classifyAbsent,
       existsLocally: localSet.has(c.path),
       change: c.change,
       includeKitTooling: args.includeKitTooling,
@@ -696,7 +713,10 @@ function main(argv) {
     surfaces: {
       present: manifest.surfaces.map(s => s.id).filter(id => !absent.includes(id)),
       absent,
+      // New examples in the target release: available, not applied (recorded absent at the stamp).
+      available: arriving.map(s => ({ id: s.id, label: s.label ?? s.id, surface: s })),
     },
+    appLists: appLists.map(l => l.path),
     notes: notes.map(n => ({
       version: n.version,
       // `file` is the note's path in the KIT; `path` is where this run copied it — the one to read,
@@ -819,6 +839,12 @@ function main(argv) {
       }
     }
     toStage.push(...addedFiles)
+    for (const l of appLists) {
+      const abs = containedPath(REPO_ROOT, l.path)
+      mkdirSync(path.dirname(abs), { recursive: true })
+      writeFileSync(abs, l.text)
+      toStage.push(l.path)
+    }
     // A repaired file is staged with the rest, unless its patch left work in it.
     for (const r of repairs) {
       if (!rejectedFiles.includes(r.path) && !conflictedFiles.includes(r.path)) toStage.push(r.path)
@@ -1129,6 +1155,21 @@ function report(plan, notes, applicable, { dryRun, applied, applyDeletes, remove
     )
   }
   if (skippedLocal > 0) lines.push(`Skipped ${skippedLocal} file(s) you had already deleted.`)
+  for (const a of plan.surfaces.available ?? []) {
+    lines.push(
+      `Available, not applied: the example ${a.id} — ${a.label}. Examples reach fresh copies ` +
+        'only; read it in the kit if you want the pattern.'
+    )
+  }
+  const appOwned = bucket('skipped-app-owned').length
+  if (appOwned > 0) {
+    lines.push(`Skipped ${appOwned} change(s) to the app's own domain lists (app-owned).`)
+  }
+  for (const p of plan.appLists ?? []) {
+    lines.push(
+      `${applied ? 'Created' : 'Will create'} ${p}, empty — the app's list of its own domains.`
+    )
+  }
   // D31: a plugin ships its own release chain, so a KIT diff never touches its files. Reported
   // rather than silently dropped, because "the kit changed nothing here" and "the kit is not
   // allowed to change anything here" are different answers.
@@ -1251,6 +1292,8 @@ function renderPlan(plan, notes) {
     `App: ${plan.names.display} (${plan.names.slug})`,
     `Surfaces present: ${plan.surfaces.present.join(', ') || 'none'}`,
     `Surfaces absent: ${plan.surfaces.absent.join(', ') || 'none'}`,
+    `Examples available, not applied: ${(plan.surfaces.available ?? []).map(a => a.id).join(', ') || 'none'}`,
+    `App lists created empty: ${(plan.appLists ?? []).join(', ') || 'none'}`,
     '',
     '## Files',
     '',

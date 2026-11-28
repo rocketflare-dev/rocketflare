@@ -6,7 +6,7 @@
  * `apps/web/src/ui/lib/query-keys.ts`); the server emits, the UI reacts, both through this file.
  */
 import { z } from 'zod'
-import { sharedPlugins } from './plugins/index'
+import { sharedUnits } from './units'
 
 export const realtimeEventTypeSchema = z.enum([
   'notification.created',
@@ -92,7 +92,7 @@ export const REALTIME_INVALIDATIONS: Record<RealtimeEventType, string[][]> = {
   ...CORE_REALTIME_INVALIDATIONS,
   'access.changed': [
     ...CORE_REALTIME_INVALIDATIONS['access.changed'],
-    ...sharedPlugins.flatMap(p => (p.realtimeRoots ?? []).map(root => [root])),
+    ...sharedUnits.flatMap(p => (p.realtimeRoots ?? []).map(root => [root])),
   ],
 }
 

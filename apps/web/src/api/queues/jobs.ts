@@ -16,7 +16,7 @@ import { and, eq } from 'drizzle-orm'
 import type { AppConfig } from '../../config'
 import { type DatabaseHandle, openDatabase } from '../../db/client'
 import { documents, tenants } from '../../db/schema'
-import { serverPlugins } from '../../plugins/server'
+import { serverUnits } from '../../units/server'
 import { databaseSpanStore } from '../observability/span-store'
 import type { Tracer } from '../observability/tracer'
 import { tracerFor } from '../observability/tracing'
@@ -87,7 +87,7 @@ const coreHandlers: { [T in CoreJobType]: JobHandler<T> } = {
  */
 const handlers = {
   ...coreHandlers,
-  ...(Object.assign({}, ...serverPlugins.map(p => p.jobHandlers ?? {})) as Record<
+  ...(Object.assign({}, ...serverUnits.map(p => p.jobHandlers ?? {})) as Record<
     string,
     JobHandler<JobType>
   >),

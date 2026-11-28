@@ -547,3 +547,91 @@ export interface UiPlugin<S extends SharedPlugin = SharedPlugin> {
 /** The element type of the barrels — a plugin whose shared half is not narrowed. */
 export type AnyServerPlugin = ServerPlugin<SharedPlugin>
 export type AnyUiPlugin = UiPlugin<SharedPlugin>
+
+// ---- App domains: the other kind of unit ---------------------------------------------------------
+
+export type { UnitKind } from '@rocketflare/shared/plugins'
+
+/**
+ * The `ServerPlugin` slots an app domain may fill. The same shapes, so every registry reads a domain
+ * exactly as it reads a plugin.
+ *
+ * Left out on purpose: `requires` (a domain is not installed into anything); the identity slots
+ * (`loginMethods`, `ssoPolicy`), which are capabilities another app would want, so a plugin's;
+ * `apiPrefixes` and `publicSites`, which need a toml edit that `pnpm provision` makes from a plugin
+ * manifest a domain does not have; and the deprecated `agentTools`, `uploadPaths` and
+ * `uploadLimits`, which are not offered to new code.
+ */
+export type DomainServerSlots<S extends SharedPlugin = SharedPlugin> = Omit<
+  ServerPlugin<S>,
+  | 'shared'
+  | 'requires'
+  | 'loginMethods'
+  | 'ssoPolicy'
+  | 'publicSites'
+  | 'apiPrefixes'
+  | 'agentTools'
+  | 'uploadPaths'
+  | 'uploadLimits'
+>
+
+/** What `defineDomain` takes: the domain's id and contracts, its edges, and its slots. */
+export interface DomainDefinition<S extends SharedPlugin = SharedPlugin>
+  extends DomainServerSlots<S> {
+  /**
+   * The unit id: the same id as `shared.id`, and the directory name of all three trees (`apps/web/src/<id>/`,
+   * `packages/shared/src/<id>/`, `apps/cli/src/<id>/`).
+   */
+  id: S['id']
+  shared: S
+  /**
+   * The domains this one reads from or writes through — a declared data flow, not a version. An
+   * import from another domain's `public.ts` needs its id here; a cycle fails the gate. Written as
+   * a literal array, like `tablePrefix` and `tables`: the boundary check reads all three from
+   * source.
+   */
+  dependsOn?: readonly string[]
+  /**
+   * The table namespace, when it is not the default `<first hyphen-separated segment of the id>_`
+   * (an existing copy's tables are often unprefixed). Every table the domain defines must start
+   * with it.
+   */
+  tablePrefix?: string
+  /** An exact allow-list of table names instead of a prefix. Wins over `tablePrefix`. */
+  tables?: readonly string[]
+}
+
+/** A domain as the registries see it: a `ServerPlugin`-shaped unit with its id and kind. */
+export interface ServerDomain<S extends SharedPlugin = SharedPlugin> extends ServerPlugin<S> {
+  readonly id: string
+  readonly kind: 'domain'
+  readonly dependsOn: readonly string[]
+}
+
+/** The UI half of a domain: `UiPlugin`'s slots, with the id written beside them. */
+export interface DomainUiDefinition<S extends SharedPlugin = SharedPlugin>
+  extends Omit<UiPlugin<S>, 'shared'> {
+  id: S['id']
+  shared: S
+}
+
+export interface UiDomain<S extends SharedPlugin = SharedPlugin> extends UiPlugin<S> {
+  readonly id: string
+  readonly kind: 'domain'
+}
+
+/**
+ * One entry of the unit list every server registry iterates (`apps/web/src/units/server.ts`): an
+ * installed plugin or an app domain, with `id` and `kind` beside the slots.
+ */
+export type ServerUnit = AnyServerPlugin & {
+  readonly id: string
+  readonly kind: 'plugin' | 'domain'
+  readonly dependsOn?: readonly string[]
+}
+
+/** The UI twin of `ServerUnit` (`apps/web/src/units/ui.ts`). */
+export type UiUnit = AnyUiPlugin & { readonly id: string; readonly kind: 'plugin' | 'domain' }
+
+export type AnyServerDomain = ServerDomain<SharedPlugin>
+export type AnyUiDomain = UiDomain<SharedPlugin>

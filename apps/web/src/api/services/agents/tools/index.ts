@@ -18,7 +18,7 @@
 import { KNOWLEDGE_TOOLS } from '@rocketflare/shared/ai/embeddings'
 import { MCP_TOOL_NAME_PATTERN } from '@rocketflare/shared/mcp'
 import type { AnyServerPlugin } from '../../../../plugins/server'
-import { serverPlugins } from '../../../../plugins/server'
+import { serverUnits } from '../../../../units/server'
 import { loggerFor } from '../../../utils/core/logger'
 import type { AccessScope } from '../../access-sql'
 import type { Tool, ToolSurface } from '../../ai/agent-loop'
@@ -52,15 +52,15 @@ export * from './surfaces'
  */
 export async function buildAgentTools(ctx: AgentToolContext): Promise<Tool[]> {
   const log = loggerFor(ctx.cfg, {})
-  const platformSources = await pluginKnowledgeSources(serverPlugins, ctx.scope, (pluginId, err) =>
+  const platformSources = await pluginKnowledgeSources(serverUnits, ctx.scope, (pluginId, err) =>
     log.warn({ err, pluginId }, 'plugin knowledgeSources failed; its sources are left out')
   )
   const contributed = await Promise.allSettled(
-    serverPlugins.map(async p => (await pluginTools(p, ctx)) ?? [])
+    serverUnits.map(async p => (await pluginTools(p, ctx)) ?? [])
   )
   const fromPlugins = admittedPluginTools(
     contributed.map((result, i) => {
-      const pluginId = serverPlugins[i]?.shared.id ?? 'unknown'
+      const pluginId = serverUnits[i]?.shared.id ?? 'unknown'
       if (result.status === 'fulfilled') return { pluginId, tools: result.value }
       loggerFor(ctx.cfg, { pluginId }).warn(
         { err: result.reason },

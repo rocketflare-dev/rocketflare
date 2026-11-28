@@ -24,9 +24,10 @@ export type { NavGuard } from '../../ui/hooks/useNavGuard'
 export { isGuardList, useNavGuard } from '../../ui/hooks/useNavGuard'
 export { featureGuard } from '../../ui/lib/feature-guards'
 export type { QuickLink } from '../../ui/pages/home-links'
-
 export type {
+  AnyUiDomain,
   AnyUiPlugin,
+  DomainUiDefinition,
   PluginHeaderItem,
   PluginHeaderPlacement,
   PluginHomeCard,
@@ -34,5 +35,8 @@ export type {
   PluginRoute,
   PluginRouteTier,
   PluginSettingsTab,
+  UiDomain,
   UiPlugin,
+  UiUnit,
 } from '../types'
+export { defineDomainUi } from './domain'

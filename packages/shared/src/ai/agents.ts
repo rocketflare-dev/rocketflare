@@ -7,7 +7,8 @@
  */
 import { z } from 'zod'
 import { paginationQuerySchema } from '../pagination'
-import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from '../plugins'
+import type { DeclaredBy } from '../plugins'
+import { type SHARED_UNITS, sharedUnits } from '../units'
 import { agentArtifactEventDataSchema, agentArtifactSchema } from './artifacts'
 import { agentDecisionEventDataSchema, agentRunDecisionSchema } from './decisions'
 import {
@@ -23,7 +24,7 @@ import { promptKeySchema } from './prompts'
 /** Stable identifier for each built-in agent. Append LAST; an app extends this list. */
 export const CORE_AGENT_KEYS = ['summarize-text', 'research-topic', 'triage-research'] as const
 
-type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'agentKeys'>>[number]
+type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_UNITS)[number], 'agentKeys'>>[number]
 
 /**
  * Core keys plus every installed plugin's. `z.enum` needs a non-empty tuple and gets one
@@ -33,7 +34,7 @@ type PluginAgentKey = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'a
  */
 export const AGENT_KEYS = [
   ...CORE_AGENT_KEYS,
-  ...(sharedPlugins.flatMap(p => p.agentKeys ?? []) as PluginAgentKey[]),
+  ...(sharedUnits.flatMap(p => p.agentKeys ?? []) as PluginAgentKey[]),
 ] as const
 export const agentKeySchema = z.enum(AGENT_KEYS)
 export type AgentKey = z.infer<typeof agentKeySchema>

@@ -14,7 +14,7 @@
  */
 import type { AgentInfo, AgentKey } from '@rocketflare/shared/ai/agents'
 import { z } from 'zod'
-import { uiPlugins } from '@/plugins/ui'
+import { uiUnits } from '@/units/ui'
 import { JsonForm } from './JsonForm'
 import { researchTopicForm } from './research-topic'
 import { schemaForm } from './SchemaForm'
@@ -47,7 +47,7 @@ const CORE_AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
  */
 const AGENT_FORMS: Partial<Record<AgentKey, AgentForm>> = {
   ...CORE_AGENT_FORMS,
-  ...(Object.assign({}, ...uiPlugins.map(p => p.agentForms ?? {})) as Partial<
+  ...(Object.assign({}, ...uiUnits.map(p => p.agentForms ?? {})) as Partial<
     Record<AgentKey, AgentForm>
   >),
 }

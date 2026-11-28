@@ -19,7 +19,7 @@ import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import { and, count, eq, inArray, type SQL, sql } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { documentGroups, documents, groups, groupTypes } from '../../db/schema'
-import { serverPlugins } from '../../plugins/server'
+import { serverUnits } from '../../units/server'
 import { ForbiddenError } from '../utils/core/errors'
 import { type AccessScope, accessScopeOf, sharedWithMyGroups } from './access-sql'
 
@@ -155,7 +155,7 @@ export const CORE_VISIBILITY_RESOURCES: readonly VisibilityResource[] = [documen
  * **A function, memoised — not a const.** A plugin's visibility resource sits in a module that
  * imports this one (for `sharedWithMyGroups`, for typed route helpers, for anything), so this
  * module and the plugin barrel are in a cycle whichever way round the app is entered. Evaluated at
- * module scope, `serverPlugins` is `undefined` for whichever side loses the race, and the failure
+ * module scope, `serverUnits` is `undefined` for whichever side loses the race, and the failure
  * is `undefined.flatMap` at IMPORT time — the Worker never starts, and which entry point triggers
  * it depends on nothing a reader can see. Read at CALL time, live bindings make it always defined.
  * The memo is what keeps `countGroupGrants` from re-walking every plugin per request.
@@ -166,7 +166,7 @@ export function visibilityResources(): readonly VisibilityResource[] {
   if (visibilityResourcesMemo === null) {
     visibilityResourcesMemo = [
       ...CORE_VISIBILITY_RESOURCES,
-      ...serverPlugins.flatMap(p => p.visibilityResources ?? []),
+      ...serverUnits.flatMap(p => p.visibilityResources ?? []),
     ]
   }
   return visibilityResourcesMemo

@@ -12,11 +12,12 @@ import {
   type PromptRegistry,
   type PromptWithResolved,
 } from '@rocketflare/shared/ai/prompts'
-import type { PromptKeyOf, SHARED_PLUGINS } from '@rocketflare/shared/plugins'
+import type { PromptKeyOf } from '@rocketflare/shared/plugins'
+import type { SHARED_UNITS } from '@rocketflare/shared/units'
 import { and, eq } from 'drizzle-orm'
 import type { Database } from '../../db/client'
 import { type PromptOverrideRow, promptOverrides } from '../../db/schema'
-import { serverPlugins } from '../../plugins/server'
+import { serverUnits } from '../../units/server'
 
 const CHAT_DEFAULT = `You are the assistant built into {{appName}}, helping {{userName}} at {{tenantName}}.
 
@@ -311,12 +312,12 @@ export const CORE_PROMPT_REGISTRY = {
  */
 export const PROMPT_REGISTRY = {
   ...CORE_PROMPT_REGISTRY,
-  ...(Object.assign({}, ...serverPlugins.map(p => p.prompts ?? {})) as PromptRegistry),
+  ...(Object.assign({}, ...serverUnits.map(p => p.prompts ?? {})) as PromptRegistry),
 } as typeof CORE_PROMPT_REGISTRY & Record<RegistryPromptKey, PromptDefinition>
 
 export type RegistryPromptKey =
   | keyof typeof CORE_PROMPT_REGISTRY
-  | PromptKeyOf<(typeof SHARED_PLUGINS)[number]>
+  | PromptKeyOf<(typeof SHARED_UNITS)[number]>
 
 export const PROMPT_KEYS = Object.keys(PROMPT_REGISTRY) as RegistryPromptKey[]
 
@@ -329,7 +330,7 @@ export function isPromptKey(key: string): key is RegistryPromptKey {
  * prompt or an unknown key — the namespace `streamChat` holds a plugin's events and usage to.
  */
 export function promptOwner(key: string): string | null {
-  return serverPlugins.find(p => Object.hasOwn(p.prompts ?? {}, key))?.shared.id ?? null
+  return serverUnits.find(p => Object.hasOwn(p.prompts ?? {}, key))?.shared.id ?? null
 }
 
 export function promptDefinition(key: RegistryPromptKey): PromptDefinition {

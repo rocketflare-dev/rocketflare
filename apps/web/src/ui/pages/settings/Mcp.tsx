@@ -10,7 +10,7 @@
  * deployment ships `mcp` (the tab's guard).
  */
 import type { McpConnectPolicy, McpExposure, McpToolListing } from '@rocketflare/shared/mcp'
-import { sharedPlugins } from '@rocketflare/shared/plugins'
+import { sharedUnits } from '@rocketflare/shared/units'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { McpConnectionsTable } from '@/ui/components/mcp/McpConnectionsTable'
 import {
@@ -67,7 +67,7 @@ export function DescriptionText({ text }: { text: string }) {
 
 function providerLabel(provider: string): string {
   if (provider === PROVIDER_CORE) return 'Knowledge'
-  return sharedPlugins.find(p => p.id === provider)?.label ?? provider
+  return sharedUnits.find(p => p.id === provider)?.label ?? provider
 }
 
 const UNAVAILABLE_TEXT: Record<NonNullable<McpToolListing['unavailableReason']>, string> = {

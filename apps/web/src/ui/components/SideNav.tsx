@@ -13,11 +13,11 @@ import {
 import { type ComponentType, type ReactNode, useSyncExternalStore } from 'react'
 import { Link, NavLink, useLocation } from 'react-router'
 import type { PluginNavGroup } from '@/plugins/types'
-import { uiPlugins } from '@/plugins/ui'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 import { useBooleanPreference } from '@/ui/hooks/useLocalStoragePreference'
 import { type NavBadgeKey, type NavBadges, useNavBadges } from '@/ui/hooks/useNavBadges'
 import { type NavGuard, useNavGuard } from '@/ui/hooks/useNavGuard'
+import { uiUnits } from '@/units/ui'
 import { LogoMark } from './shared/LogoMark'
 
 export interface NavItem {
@@ -138,7 +138,7 @@ export function composeNav(core: NavConfig, plugins: readonly PluginNavGroup[] =
 /** The core nav with every installed plugin's groups spliced in. */
 export const navigationConfig: NavConfig = composeNav(
   CORE_NAVIGATION,
-  uiPlugins.flatMap(p => p.nav ?? [])
+  uiUnits.flatMap(p => p.nav ?? [])
 )
 
 /** Apply `canAccess` to every item and drop groups that end up empty. Pure — unit-testable. */

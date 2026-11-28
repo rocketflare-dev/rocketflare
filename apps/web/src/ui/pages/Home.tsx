@@ -14,16 +14,16 @@
  */
 import { type ComponentType, Suspense } from 'react'
 import { Link } from 'react-router'
-import { uiPlugins } from '@/plugins/ui'
 import { ErrorBoundary } from '@/ui/components/ErrorBoundary'
 import { PluginHomeCards } from '@/ui/components/PluginHomeCards'
 import { SectionPanel, SectionPanelSkeleton } from '@/ui/components/shared'
 import { useAuth } from '@/ui/hooks/useAuth'
 import { useNavGuard } from '@/ui/hooks/useNavGuard'
+import { uiUnits } from '@/units/ui'
 import type { QuickLink } from './home-links'
 import { HOME_SECTIONS, type HomePlacement, type HomeSection, sectionsFor } from './home-sections'
 
-const PLUGIN_LINKS: QuickLink[] = uiPlugins.flatMap(p => p.homeLinks ?? [])
+const PLUGIN_LINKS: QuickLink[] = uiUnits.flatMap(p => p.homeLinks ?? [])
 
 export default function Home({
   sections = HOME_SECTIONS,
@@ -46,7 +46,7 @@ export default function Home({
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6">{placed('lead')}</div>
 
-      <PluginHomeCards plugins={uiPlugins} />
+      <PluginHomeCards plugins={uiUnits} />
 
       <div className="grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)] items-start">
         <div className="grid grid-cols-[minmax(0,1fr)] gap-6">{placed('main')}</div>

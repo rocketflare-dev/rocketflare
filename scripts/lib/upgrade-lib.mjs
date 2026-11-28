@@ -294,6 +294,7 @@ export const CLASSES = Object.freeze([
   'skipped-plugin-owned',
   'skipped-locally-deleted',
   'skipped-kit-only',
+  'skipped-app-owned',
   'migration-derived',
   'manual-toml',
   'manual-env',
@@ -301,6 +302,63 @@ export const CLASSES = Object.freeze([
   'binary',
   'verbatim',
 ])
+
+/**
+ * The app's unit lists — which of its own domains exist (docs/CONCEPTS.md §20). The app writes
+ * them and the kit never does: a kit change to one is skipped, and an upgrade only CREATES one,
+ * empty, where a copy older than domains has none (the core it ports imports all five). The kit's
+ * own copies list its example domains, which an existing app never receives.
+ */
+export const APP_OWNED_PATHS = Object.freeze([
+  'apps/web/src/app.ts',
+  'apps/web/src/app-ui.ts',
+  'apps/web/src/app-schema.ts',
+  'packages/shared/src/app.ts',
+  'apps/cli/src/app.ts',
+])
+
+const APP_LIST_HEADER = (half, more = '') =>
+  `/**\n * The app's own domains, ${half} — ONE line per domain, written by hand (docs/CONCEPTS.md §20).` +
+  `\n * App-owned: \`kit:upgrade\` created this file empty and never writes to it again.${more}\n */\n`
+
+/** What an upgrade writes for each missing app list. Names-free, so it needs no translation. */
+export const EMPTY_APP_LISTS = Object.freeze({
+  'apps/web/src/app.ts':
+    APP_LIST_HEADER('server half', "\n *\n *     import { expenses } from './expenses'") +
+    "import type { AnyServerDomain } from './plugins/types'\n\n" +
+    'export const APP_DOMAINS = [] as const satisfies readonly AnyServerDomain[]\n',
+  'apps/web/src/app-ui.ts':
+    APP_LIST_HEADER('UI half') +
+    "import type { AnyUiDomain } from './plugins/types'\n\n" +
+    'export const APP_DOMAIN_UIS = [] as const satisfies readonly AnyUiDomain[]\n',
+  'apps/web/src/app-schema.ts': `${APP_LIST_HEADER('tables', "\n *\n *     export * from './expenses/db/schema'")}export {}\n`,
+  'packages/shared/src/app.ts':
+    APP_LIST_HEADER('shared half') +
+    "import type { SharedDomain } from './plugins/types'\n\n" +
+    'export const SHARED_DOMAINS = [] as const satisfies readonly SharedDomain[]\n\n' +
+    '/** The list widened for iteration; `SHARED_DOMAINS` is for type derivation. */\n' +
+    'export const sharedDomains: readonly SharedDomain[] = SHARED_DOMAINS\n',
+  'apps/cli/src/app.ts':
+    APP_LIST_HEADER('CLI half') +
+    "import type { AnyCliPlugin } from './plugins/types'\n\n" +
+    'export const APP_COMMANDS = [] as const satisfies readonly AnyCliPlugin[]\n',
+})
+
+/** The app lists a copy is missing, `{ path, text }` each — what an upgrade creates. */
+export function missingAppLists(exists) {
+  return APP_OWNED_PATHS.filter(p => !exists(p)).map(p => ({ path: p, text: EMPTY_APP_LISTS[p] }))
+}
+
+/**
+ * The `kind: "example"` surfaces the target release has and this copy's manifest has never heard
+ * of. An example teaches by being in a FRESH copy; an existing app gets the note, never the files:
+ * each is classified absent for the run and recorded, absent, in the copy's manifest at the stamp,
+ * so every later upgrade skips it too.
+ */
+export function arrivingExamples(localManifest, targetManifest) {
+  const known = new Set((localManifest?.surfaces ?? []).map(s => s.id))
+  return (targetManifest?.surfaces ?? []).filter(s => s.kind === 'example' && !known.has(s.id))
+}
 
 const TOML_PATHS = ['apps/web/wrangler.toml', 'apps/web/wrangler.staging.toml']
 const ENV_PATHS = ['apps/web/.dev.vars.example', 'apps/web/.env.test']
@@ -333,6 +391,14 @@ export function classifyPath(relPath, ctx) {
       translate: false,
       reason:
         "kit-only — the kit's own test, workflow or maintainer script; a copy never carries it",
+    }
+  }
+  // The app's own lists of its domains: the kit's edits to them are its examples' lines.
+  if (APP_OWNED_PATHS.includes(relPath)) {
+    return {
+      class: 'skipped-app-owned',
+      translate: false,
+      reason: "app-owned — the app's list of its own domains; the kit never writes it",
     }
   }
   const surface = manifest.surfaces.find(s => matchesAny(relPath, s.paths))

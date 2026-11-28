@@ -68,8 +68,8 @@ import {
   tenantUsers,
   users,
 } from '../src/db/schema'
-import { serverPlugins } from '../src/plugins/server'
 import { DEV_ACCOUNTS } from '../src/ui/lib/dev-accounts'
+import { serverUnits } from '../src/units/server'
 import {
   applySeedFeatures,
   parseSeedFeatureArgs,
@@ -254,9 +254,9 @@ async function main() {
 
   // Installed plugins' `hooks.seed` (every run, demo or not), then the demo, then the command
   // line's `--feature` overrides — last, so `--feature x=off` beats any hook that turned x on.
-  if (serverPlugins.some(p => p.hooks?.seed)) log('')
+  if (serverUnits.some(p => p.hooks?.seed)) log('')
   await runPluginSeedHooks(
-    serverPlugins,
+    serverUnits,
     'seed',
     db,
     plugin => pluginSeedContext(db, plugin, tenant.id, owner.id, log),
@@ -274,7 +274,7 @@ async function main() {
 /** What a plugin's `seed` / `seedDemo` hook is handed: ids namespaced with its id, a log prefix. */
 function pluginSeedContext(
   db: Database,
-  plugin: (typeof serverPlugins)[number],
+  plugin: { shared: { id: string } },
   tenantId: string,
   ownerId: string,
   log: (s: string) => void
@@ -2061,7 +2061,7 @@ Before release, the export coordinator runs the pre-departure checklist — a ve
   // with the plugin's id) and `onConflictDoNothing`, so re-running adds nothing. One plugin's
   // failure is reported and the rest still run — a half-seeded demo beats no demo.
   await runPluginSeedHooks(
-    serverPlugins,
+    serverUnits,
     'seedDemo',
     db,
     plugin => pluginSeedContext(db, plugin, tenantId, owner.id, log),

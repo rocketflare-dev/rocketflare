@@ -99,7 +99,11 @@ export {
   type ScheduledTask,
   type TaskReport,
 } from '@/api/scheduled'
-
+/**
+ * Run one agent to its end in-process (claim → execute, the Workflow's own steps) and return the
+ * outcome and the settled row: a real run, its tools built from every unit for the requester.
+ */
+export { type RunAgentOptions, runAgent } from '../helpers/agent-runs'
 /**
  * D42: run the `event.deliver` jobs an emit queued through the real consumer — each subscriber's
  * own delivery — and report `{ subscriber, eventId, outcome }` for each. Other jobs stay queued.

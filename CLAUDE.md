@@ -22,6 +22,12 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > plan before `--apply`. `pnpm plugin list --available` lists what is published: check it before building. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
 > generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
 > `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
+> **Domain or plugin?** (`docs/CONCEPTS.md` §20) A **domain** holds this app's own concepts
+> (`apps/web/src/<id>/`, `defineDomain`, listed by hand in `src/app.ts` and its twins); a **plugin**
+> is a reusable capability another app could install. Same slots and namespaces; one boundary check
+> (`scripts/lib/units.mjs`) over both. Another domain is reached through its `public.ts` along a
+> `dependsOn` edge, or by handling its event; its tables directly only with a warning.
+> `example-hr` / `example-sales` are the examples (fresh copies only).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never
 > recreates a surface whose anchor file is gone. **In the kit repository only** (`.rocketflare.json`
@@ -103,17 +109,21 @@ apps/web/          @rocketflare/web — wrangler*.toml, worker-configuration.d.t
 │                  middleware/ · auth/ · routes/ (thin) · services/ (ai/, agents/, mcp/, prompts.ts) ·
 │                  workflows/ · observability/ · utils/ · queues/ · durable-objects/
 │  src/ui/         React app
+│  src/app.ts      the app's own domains (+ app-ui.ts, app-schema.ts; app-owned, never ported)
+│  src/<domain>/   an app domain: index.ts (defineDomain), server/, ui/, db/, public.ts — e.g.
+│                  example-hr/, example-sales/ (§20); src/units/ merges plugins + domains
 │  src/plugins/    D31 seam: types.ts, api/ (the context family a plugin imports) + the
 │                  server/ui/schema/worker-exports barrels (one line per installed plugin)
 │                  + each plugin's tree — `example-feature/` vendored as the reference one, and
 │                  `analytics/` (cubes, dashboards, fact tables) once you opt in to it
 │                  (per-dir CLAUDE.md: permissions, db/schema, api/*, ui, plugins, plugins/<id>)
 apps/cli/          @rocketflare/cli — src/cli.ts, commands/*, api.ts (only fetch site), config.ts, login.ts,
-                   plugins/ (CLI_PLUGINS barrel + each plugin's commands)
+                   plugins/ (CLI_PLUGINS barrel + each plugin's commands), app.ts (domains' commands)
 apps/evals/        @rocketflare/evals — vitest-evals suites over apps/web in-process: kit/ (targets, judges),
                    suites/, datasets/*.jsonl, baselines/; `pnpm eval` only, never the gate (docs/EVALS.md)
 packages/shared/   @rocketflare/shared — src/*.ts zod contracts, errors, pagination, permissions,
-                   plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts) (CLAUDE.md)
+                   plugins/ (SharedPlugin + the SHARED_PLUGINS barrel + each plugin's contracts),
+                   app.ts + <domain>/ (each domain's contracts), units.ts (both lists) (CLAUDE.md)
 scripts/           bootstrap.sh → bootstrap.mjs (10 steps), rename.mjs, upgrade.mjs (port a kit
                    release into a copy), release-check.mjs (deploy gates),
                    kit-update-check.mjs (SessionStart: tells a copy about a newer kit release),

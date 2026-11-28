@@ -3,7 +3,7 @@
  *
  * `services/access.ts` composes the registry, and to do that it reads the plugin barrel. So a
  * plugin's own visibility resource cannot import a value from it: the barrel imports the plugin,
- * the plugin imports the composer, and the cycle resolves with `serverPlugins` still `undefined`
+ * the plugin imports the composer, and the cycle resolves with `serverUnits` still `undefined`
  * at module evaluation — a registry composed at import time would throw on `undefined.flatMap`,
  * taking the whole Worker down rather than failing one request (so `visibilityResources()` is a
  * function, composed on first call).

@@ -5,6 +5,7 @@
  * `--server <url>` and `--json` apply to every command. The bin name comes from `package.json`.
  */
 import { Command, InvalidArgumentError } from 'commander'
+import { APP_COMMANDS } from './app'
 import { runActivityList } from './commands/activity'
 import { runAgentRunsList, runAgentsInspect, runAgentsList, runAgentsRun } from './commands/agents'
 import { runConfigGet, runConfigPath, runConfigSet } from './commands/config'
@@ -26,6 +27,7 @@ import { type CommandContext, createContext } from './context'
 import { CliError, exitCodeFor } from './errors'
 import { BIN_NAME, VERSION } from './package-info'
 import { cliPlugins } from './plugins'
+import type { AnyCliPlugin } from './plugins/types'
 import { createLogger } from './utils/logger'
 import { formatJson } from './utils/output'
 
@@ -329,5 +331,8 @@ config.command('path').description('print the config file path').action(action(r
 // under its own id. They get the same `action()` wrapper, and so the same context, error printer
 // and exit-code mapping as everything above.
 for (const plugin of cliPlugins) plugin.register(program, action)
+// Then the app's own domains (`app.ts`), through the same wrapper.
+const appCommands: readonly AnyCliPlugin[] = APP_COMMANDS
+for (const domain of appCommands) domain.register(program, action)
 
 program.parseAsync(process.argv)

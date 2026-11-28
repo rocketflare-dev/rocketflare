@@ -267,6 +267,13 @@
       "when": 1795776630666,
       "tag": "0037_kit-pending-uploads-keep-on-user-delete",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1795865423565,
+      "tag": "0038_kit-example-domains",
+      "breakpoints": true
     }
   ]
 }

@@ -19,7 +19,7 @@
  */
 import { loadConfig } from '../config'
 import { openDatabase } from '../db/client'
-import { serverPlugins } from '../plugins/server'
+import { serverUnits } from '../units/server'
 import { EMAIL_CATCH_ALL, emailLocalPart } from './email-address'
 import type { TaskContext } from './scheduled'
 import type { AppBindings } from './types'
@@ -54,7 +54,7 @@ export function resolveEmailHandler(
 }
 
 /** Every installed plugin's handlers, in barrel order. */
-export const EMAIL_HANDLERS: readonly EmailHandler[] = serverPlugins.flatMap(
+export const EMAIL_HANDLERS: readonly EmailHandler[] = serverUnits.flatMap(
   p => p.emailHandlers ?? []
 )
 

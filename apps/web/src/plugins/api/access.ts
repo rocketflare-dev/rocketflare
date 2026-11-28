@@ -20,7 +20,7 @@
  * `sharedWithMyGroups` comes from `services/access-sql.ts`, the LEAF half of the access module,
  * and not from `services/access.ts`, which composes the registry by reading the plugin barrel. That
  * split exists for this import: a plugin's visibility resource needs the SQL at module scope, and
- * taking it from the composing module resolves the cycle with `serverPlugins` still `undefined` —
+ * taking it from the composing module resolves the cycle with `serverUnits` still `undefined` —
  * `undefined.flatMap` at IMPORT time, which takes the Worker down rather than failing one request
  * (measured; `docs/CONCEPTS.md` §16).
  */

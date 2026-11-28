@@ -42,8 +42,11 @@ export type {
   EntityTypeRegistration,
 } from '../../api/services/knowledge/types'
 export type {
+  AnyServerDomain,
   AnyServerPlugin,
   AnyUiPlugin,
+  DomainDefinition,
+  DomainServerSlots,
   PluginHeaderItem,
   PluginHeaderPlacement,
   PluginHomeCard,
@@ -53,8 +56,11 @@ export type {
   PluginRouteTier,
   PluginSeedContext,
   PluginSettingsTab,
+  ServerDomain,
   ServerPlugin,
+  ServerUnit,
   UiPlugin,
+  UnitKind,
 } from '../types'
 export type {
   AccessScope,
@@ -120,6 +126,7 @@ export {
 } from './chat'
 export type { HookCtx, SeedCtx, Tenant } from './db'
 export { affected, isUniqueViolation, pgErrorCode, rows, transaction } from './db'
+export { defineDomain, domainIdProblem } from './domain'
 export type { EmailContext, EmailCtx, EmailHandler } from './email'
 export { EMAIL_CATCH_ALL, emailCtx, emailLocalPart, emailSubaddress } from './email'
 export type {

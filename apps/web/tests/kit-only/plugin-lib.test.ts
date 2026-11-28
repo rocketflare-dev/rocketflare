@@ -1119,7 +1119,11 @@ describe('scripts/plugin.mjs, end to end', () => {
         }
         const manifestFile = path.join(dir, PLUGIN_MANIFEST_FILE)
         const rebadged = JSON.parse(
-          readFileSync(manifestFile, 'utf8').replaceAll(subject as string, 'smoke-plugin')
+          readFileSync(manifestFile, 'utf8')
+            .replaceAll(subject as string, 'smoke-plugin')
+            // Its tables too: `example_` is the kit's examples' namespace, which the example
+            // domains hold, and a plugin from another repository may not define a table in it.
+            .replaceAll('"example_', '"smoke_')
         )
         rebadged.repo = 'https://github.com/acme/rocketflare-plugin-smoke.git'
         rebadged.minKit = '0.1.0'

@@ -20,7 +20,8 @@ import {
   tenantUsers,
   users,
 } from '../../../db/schema'
-import { type AnyServerPlugin, serverPlugins } from '../../../plugins/server'
+import type { AnyServerPlugin } from '../../../plugins/server'
+import { serverUnits } from '../../../units/server'
 import { recordActivity } from '../../services/activity'
 import type { AppBindings } from '../../types'
 import { ConflictError, ForbiddenError } from '../core/errors'
@@ -199,7 +200,7 @@ async function onTenantCreated(
   userId: string,
   features: readonly string[]
 ): Promise<void> {
-  for (const plugin of serverPlugins) {
+  for (const plugin of serverUnits) {
     try {
       await plugin.hooks?.onTenantCreated?.(db, tenant, userId, features)
     } catch {
@@ -223,7 +224,7 @@ export async function runTenantDeletedHooks(
   tenantId: string,
   env: AppBindings,
   logger?: Logger,
-  plugins: readonly AnyServerPlugin[] = serverPlugins
+  plugins: readonly AnyServerPlugin[] = serverUnits
 ): Promise<void> {
   for (const plugin of plugins) {
     try {
@@ -248,7 +249,7 @@ export async function runTenantStatusChangedHooks(
   status: 'active' | 'suspended',
   env: AppBindings,
   logger?: Pick<Logger, 'warn'>,
-  plugins: readonly AnyServerPlugin[] = serverPlugins
+  plugins: readonly AnyServerPlugin[] = serverUnits
 ): Promise<void> {
   for (const plugin of plugins) {
     try {

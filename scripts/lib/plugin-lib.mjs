@@ -74,6 +74,9 @@ export function pluginIdProblem(id) {
   // `plugins/api/**` is the host's plugin API (surface.mjs reserves it too): a plugin there would
   // install into the directory every plugin imports its context from.
   if (id === 'api') return `'api' is the host's plugin API directory (apps/web/src/plugins/api)`
+  // Every unit's reserved ids (`RESERVED_UNIT_IDS` in `@rocketflare/shared/plugins`): the kit, its
+  // event namespace, and the app's own lists of its domains.
+  if (['core', 'kit', 'app'].includes(id)) return `'${id}' is a reserved unit id (core, kit, app)`
   return null
 }
 

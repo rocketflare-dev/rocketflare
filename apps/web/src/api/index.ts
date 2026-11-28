@@ -6,7 +6,7 @@
  */
 
 import type { Hono, MiddlewareHandler } from 'hono'
-import { serverPlugins } from '../plugins/server'
+import { serverUnits } from '../units/server'
 import { authMiddleware, globalAdminMiddleware } from './middleware/auth'
 import {
   apiBodyLimit,
@@ -71,11 +71,11 @@ import { createRouter } from './utils/routes/router'
 const app = createRouter()
 
 /** Every installed plugin's unauthenticated mounts — read twice below (body cap, then routes). */
-const publicMounts = serverPlugins.flatMap(p => p.publicMounts ?? [])
+const publicMounts = serverUnits.flatMap(p => p.publicMounts ?? [])
 
 // The MCP server and its authorization server own `/mcp`, `/oauth` and the OAuth `.well-known`
 // documents; a plugin claiming any of them would shadow or impersonate them. Refused at load.
-assertNoReservedPluginPaths(serverPlugins)
+assertNoReservedPluginPaths(serverUnits)
 
 // 1. Error envelope first so every later failure (including config validation) uses it.
 app.onError(errorHandler)
@@ -114,12 +114,12 @@ app.use(
           ? LARGEST_UPLOAD_TARGET
           : Math.min(LARGEST_UPLOAD_TARGET, MAX_WORKER_UPLOAD_BYTES),
     },
-    pluginUploadPaths: serverPlugins.flatMap(p => p.uploadPaths ?? []),
-    uploadLimits: pluginUploadLimits(serverPlugins),
+    pluginUploadPaths: serverUnits.flatMap(p => p.uploadPaths ?? []),
+    uploadLimits: pluginUploadLimits(serverUnits),
   })
 )
 // A plugin may own a prefix outside `/api` (a protocol endpoint); it gets the JSON cap too.
-for (const prefix of serverPlugins.flatMap(p => p.apiPrefixes ?? [])) {
+for (const prefix of serverUnits.flatMap(p => p.apiPrefixes ?? [])) {
   if (!isUnderPrefix(prefix, '/api')) app.use(`${prefix}/*`, jsonBodyLimit)
 }
 app.use('/auth/*', jsonBodyLimit)
@@ -136,7 +136,7 @@ app.use('*', databaseMiddleware)
 
 // 9. Public site hosts: on a host a plugin claims, its router answers everything, so none of the
 //    mounts below is reachable there. Unconditional pass-through with no `publicSites` plugin.
-app.use('*', publicSitesMiddleware(serverPlugins))
+app.use('*', publicSitesMiddleware(serverUnits))
 
 // 10. Per-request tracer: OTLP export when a backend is configured + the `ai_spans` store; flushed in
 //    `waitUntil` after the handler. Streaming routes flush again before their stream closes.
@@ -222,7 +222,7 @@ const mounts: readonly (readonly [string, Hono<AppEnv>, MiddlewareHandler?])[] =
   // registration order. Each mount gets `authMiddleware` and its own optional gate exactly like a
   // core mount; the convention is `/api/<plugin id>`, and `tests/config/plugins.test.ts` is what
   // keeps two plugins from claiming the same one.
-  ...serverPlugins.flatMap(p => p.mounts ?? []),
+  ...serverUnits.flatMap(p => p.mounts ?? []),
 ]
 for (const [prefix, router, gate] of mounts) {
   app.use(prefix, authMiddleware)

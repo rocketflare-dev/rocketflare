@@ -90,13 +90,15 @@ function makeHost(
     path.join(host, '.gitignore'),
     '.upgrade/\n.rocketflare.local.json\nnode_modules/\n'
   )
-  // `plugin check` parses with typescript6 and fails a host with no node_modules: a copy always
+  // `plugin check` parses (typescript6, oxc-parser) and fails a host with no node_modules: a copy always
   // has both, so the throwaway host borrows the kit's parser.
   mkdirSync(path.join(host, 'node_modules'))
-  symlinkSync(
-    realpathSync(path.join(KIT_ROOT, 'node_modules/typescript6')),
-    path.join(host, 'node_modules/typescript6')
-  )
+  for (const parser of ['typescript6', 'oxc-parser']) {
+    symlinkSync(
+      realpathSync(path.join(KIT_ROOT, 'node_modules', parser)),
+      path.join(host, 'node_modules', parser)
+    )
+  }
   git(host, ['init', '-q', '-b', 'main'])
   git(host, ['add', '.'])
   git(host, ['commit', '-q', '-m', 'host'])

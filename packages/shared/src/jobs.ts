@@ -14,7 +14,8 @@
  */
 import { z } from 'zod'
 import { activityMetadataSchema } from './activity'
-import { type DeclaredBy, type SHARED_PLUGINS, sharedPlugins } from './plugins'
+import type { DeclaredBy } from './plugins'
+import { type SHARED_UNITS, sharedUnits } from './units'
 
 // ---- Payloads ------------------------------------------------------------------------------
 
@@ -169,7 +170,7 @@ export const CORE_JOB_VARIANTS = [
   }),
 ] as const
 
-type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_PLUGINS)[number], 'jobs'>>[number]
+type PluginJobVariant = NonNullable<DeclaredBy<(typeof SHARED_UNITS)[number], 'jobs'>>[number]
 
 /**
  * Core first, then every installed plugin's variants, as ONE tuple.
@@ -183,7 +184,7 @@ export const JOB_VARIANTS = [
   ...CORE_JOB_VARIANTS,
   // Iterated through the widened list (an EMPTY tuple indexes to `never`, and `never.jobs` is a
   // type error); the cast restores what the tuple above says those elements actually are.
-  ...(sharedPlugins.flatMap(p => p.jobs ?? []) as PluginJobVariant[]),
+  ...(sharedUnits.flatMap(p => p.jobs ?? []) as PluginJobVariant[]),
 ] as const
 
 /** What a caller hands to `enqueueJob` — the envelope fields are stamped by the producer. */
