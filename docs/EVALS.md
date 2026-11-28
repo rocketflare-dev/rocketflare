@@ -7,8 +7,9 @@ make answers better or worse?** They run locally with `pnpm eval`, cost real tok
 
 ## Setup
 
-1. `pnpm test:db:up`. Evals use the TEST database (:5433, `apps/web/.env.test`) and migrate it
-   themselves. They never truncate it, so a test run and an eval run can share it.
+1. `pnpm test:db:up`. Evals use this checkout's TEST database (:5433, `apps/web/.env.test`, the
+   per-checkout name `pnpm test` uses) and create and migrate it themselves. They never truncate it,
+   so a test run and an eval run can share it.
 2. Put `ANTHROPIC_API_KEY` in `apps/web/.dev.vars`. It's the only key the target and the judge need:
    both resolve through the kit's own resolver, on the platform tier. With no key, every suite
    **skips** and says why. `EMBEDDINGS_API_KEY` is optional. Without it, retrieval uses the test

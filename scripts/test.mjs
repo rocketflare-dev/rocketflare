@@ -22,6 +22,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { planChanged, readsFiles, selectTests } from './lib/gate-changed.mjs'
 import { changedFiles, workspacePackages } from './lib/gate-changed-git.mjs'
+import { applyCheckoutDatabase } from './lib/test-db.mjs'
 import {
   COMPOSE_FILE,
   envTestDatabasePort,
@@ -86,8 +87,9 @@ function holderOf(port) {
 /**
  * Another checkout's test containers already hold the ports (every copy of the kit publishes
  * :5433 and :4433 unless it moved them in its compose file): reuse them instead of failing
- * `compose up`, and give this checkout its own database there, named by its `.env.test`. Returns
- * true when the shared servers are in use.
+ * `compose up`. This checkout's own database there is created by the suite's global setup
+ * (`ensureTestDatabase`), as it is in our own containers. Returns true when the shared servers are
+ * in use.
  */
 function reuseSharedTestServers() {
   const ours = new Set([...COMPOSE_TEXT.matchAll(/container_name:\s*(\S+)/g)].map(m => m[1]))
@@ -102,22 +104,14 @@ function reuseSharedTestServers() {
     )
   }
   const url = new URL(/^DATABASE_URL=(\S+)/m.exec(ENV_TEST_TEXT)?.[1] ?? '')
-  const db = url.pathname.slice(1)
   const user = decodeURIComponent(url.username)
-  if (!/^[a-z0-9_]+$/.test(db)) fail(`.env.test DATABASE_URL names an odd database "${db}"`)
   const psql = sql => ['docker', 'exec', pg, 'psql', '-U', user, '-d', 'postgres', '-tAc', sql]
-  const exists = capture(psql(`select 1 from pg_database where datname = '${db}'`))
-  if (exists === null) {
+  if (capture(psql('select 1')) === null) {
     fail(
       `cannot reach Postgres in ${pg} as ${user} — is it another app's test server with other credentials?`
     )
   }
-  if (exists !== '1' && run(psql(`create database ${db}`), { quiet: true }) !== 0) {
-    fail(`could not create database ${db} in ${pg}`)
-  }
-  console.log(
-    `· test servers: reusing ${pg} + ${proxy}; database ${db}${exists === '1' ? '' : ' (created)'}`
-  )
+  console.log(`· test servers: reusing ${pg} + ${proxy}`)
   return true
 }
 
@@ -209,6 +203,14 @@ const plan =
 if ('error' in plan) fail(plan.error)
 
 console.log(plan.banner)
+if (plan.target === 'local') {
+  // What apps/web/vitest.config.ts will choose: shown, not set — vitest sets it for itself.
+  const chosen = applyCheckoutDatabase(
+    { DATABASE_URL: /^DATABASE_URL=(\S+)/m.exec(ENV_TEST_TEXT)?.[1] },
+    { envTestText: ENV_TEST_TEXT }
+  )
+  if (chosen) console.log(`· test database: ${chosen.name} (this checkout's, ${chosen.path})`)
+}
 
 if (plan.compose) {
   // The suite connects where `.env.test` says; the runner starts what the compose file says. When

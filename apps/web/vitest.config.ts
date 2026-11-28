@@ -4,6 +4,7 @@ import path from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defaultClientConditions } from 'vite'
 import { defineConfig } from 'vitest/config'
+import { applyCheckoutDatabase } from '../../scripts/lib/test-db.mjs'
 import {
   isMarkedFixtureAgents,
   isMarkedIsolated,
@@ -13,6 +14,15 @@ import {
   uiNeedsIsolation,
 } from './tests/helpers/isolation.ts'
 import { latencyFactor } from './tests/helpers/latency.ts'
+
+/**
+ * This checkout's own test database (`scripts/lib/test-db.mjs`, docs/CONCEPTS.md §4): `.env.test`
+ * names `rocketflare_test`, and the suite runs on `rocketflare_test_<hash of this checkout's
+ * path>` in the same Postgres, so two checkouts' runs never truncate each other's tables. Set here,
+ * in the main process before any fork or global setup starts, so every way of starting vitest gets
+ * it; a remote target and a URL naming another database are left alone.
+ */
+applyCheckoutDatabase(process.env)
 
 const alias = {
   '@': path.resolve(import.meta.dirname, './src'),

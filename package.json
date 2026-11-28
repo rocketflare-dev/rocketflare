@@ -27,6 +27,7 @@
     "security:sandbox": "node scripts/security-sandbox.mjs",
     "test:db:up": "pnpm --filter @rocketflare/web test:db:up",
     "test:db:down": "pnpm --filter @rocketflare/web test:db:down",
+    "test:db:prune": "pnpm --filter @rocketflare/web test:db:prune",
     "db:generate": "pnpm --filter @rocketflare/web db:generate",
     "db:migrate": "pnpm --filter @rocketflare/web db:migrate",
     "db:migrate:ci": "pnpm --filter @rocketflare/web db:migrate:ci",

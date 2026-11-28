@@ -1,5 +1,6 @@
 /**
- * Once per `pnpm eval`: bring the TEST database (:5433, `apps/web/.env.test`) to the current schema —
+ * Once per `pnpm eval`: bring this checkout's TEST database (:5433, `apps/web/.env.test`, named per
+ * checkout by `scripts/lib/test-db.mjs`; created if new) to the current schema —
  * roles → migrations → grants, the web suite's own sequence — without truncating it, so an eval run
  * and a test run can share the database. `safetyCheck()` inside `testDatabaseUrl()` refuses anything
  * but localhost under `NODE_ENV=test`.
@@ -7,9 +8,10 @@
 import path from 'node:path'
 import { applyDbRoles } from '../web/scripts/db-roles'
 import { runMigrations } from '../web/scripts/migrate'
-import { closeTestDatabases, testDatabaseUrl } from '../web/tests/helpers/db'
+import { closeTestDatabases, ensureTestDatabase, testDatabaseUrl } from '../web/tests/helpers/db'
 
 export default async function setup() {
+  await ensureTestDatabase()
   await applyDbRoles({ phase: 'role', quiet: true })
   await runMigrations(testDatabaseUrl(), {
     quiet: true,

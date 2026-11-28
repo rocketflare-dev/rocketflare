@@ -67,8 +67,8 @@ zod contracts (`packages/shared`). `AGENTS.md` symlinks here.
 - **UI**: React 19 + Vite, DaisyUI 5 / Tailwind v4, React Router 7, TanStack Query 5; served as `ASSETS`
 - **CLI**: commander + chalk + open; `tsx` in dev, esbuild → `dist/cli.js` (bin `rocketflare`)
 - **Tests**: vitest projects `api` · `api-isolated` · `api-fixtures` · `driver` · `ui` · `ui-isolated` · `config` · `config-isolated` · `kit-only` (the kit's own
-  tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433; the
-  suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
+  tests, `apps/web/tests/kit-only/`, deleted by the rename — never in a copy) (Postgres :5433, a database per
+  checkout — `pnpm test:db:prune` drops stale ones; the suite under `postgres`, then `driver` — the seam's conformance suite — under `neon` through the
   local proxy); cli; the eval kit's unit tests (`apps/evals/tests`). Evals themselves are
   `pnpm eval`, outside the gate
 - **Lint**: Biome 2 at the root (single quotes, `asNeeded` semicolons, 100 cols)

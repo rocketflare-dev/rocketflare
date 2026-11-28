@@ -1,7 +1,8 @@
 /**
  * Global test setup — runs once per vitest project before the api suites:
- * roles (phase=role) → migrations → roles (phase=grants) → clean → seed one owner/tenant/API
- * key/session, exposed to tests as `inject('seed')` (`TestSeed` in helpers/auth.ts).
+ * this checkout's database (created if new) → roles (phase=role) → migrations → roles
+ * (phase=grants) → clean → seed one owner/tenant/API key/session, exposed to tests as
+ * `inject('seed')` (`TestSeed` in helpers/auth.ts).
  *
  * Three projects (`api`, `api-isolated`, `api-fixtures`) name this file, and vitest runs it ONCE PER
  * PROJECT, re-importing the module, so a module-level flag would not dedupe. The memo hangs
@@ -13,6 +14,7 @@ import { seedTestFixtures, type TestSeed } from './helpers/auth'
 import {
   cleanDatabase,
   closeTestDatabases,
+  ensureTestDatabase,
   runTestMigrations,
   safetyCheck,
   setupTestDatabase,
@@ -39,6 +41,8 @@ async function prepareTestDatabase(): Promise<TestSeed> {
   // FIRST, before anything connects: applyDbRoles below opens DATABASE_URL itself and would run
   // its role DDL on whatever database that is before a later helper got to refuse it.
   safetyCheck()
+  // This checkout's own database (scripts/lib/test-db.mjs), created on its first run.
+  await ensureTestDatabase()
   // The role RLS policies target must exist before a migration can reference it. With
   // APP_DATABASE_URL unset the role is created NOLOGIN and the policies are inert.
   await applyDbRoles({ phase: 'role', quiet: true })
