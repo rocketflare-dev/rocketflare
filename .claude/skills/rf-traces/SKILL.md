@@ -49,7 +49,7 @@ invoke_agent research-topic   ERROR …            ← root: the run / turn / jo
   span already points at it. A tree of `execute#N` spans (and the zero-length `run started` span the
   first claim exports, `rocketflare.run.pending`) with no root above them is a run **still in
   flight** (or parked on a person) — not a bug. A `run started` with nothing else after an hour is
-  a run that never reached `execute`: the `sweepLostRuns` cron settles it within 10 minutes of the
+  a run that never reached `execute`: the `sweepLostRuns` cron settles it within the hour after the
   instance ending. Several `execute#N` under one root are retries or
   resumes; the trace's status is the ROOT's, so a tool error inside a run that recovered is not a
   failed run.

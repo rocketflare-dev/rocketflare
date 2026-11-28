@@ -126,8 +126,9 @@ export type AgentVersionChangePolicy = (typeof AGENT_VERSION_CHANGE_POLICIES)[nu
 export interface AgentHitl {
   /**
    * How long an ask stays open (a Workflows duration), capped at `AGENT_INTERRUPT_TIMEOUT` —
-   * the Workflow's own wait. Set it SHORTER than that for `onTimeout: 'reject'`: the sweeper
-   * (every 10 minutes) applies it, and at the cap the Workflow's wait ends first and cancels.
+   * the Workflow's own wait. Set it at least an hour SHORTER than that for `onTimeout: 'reject'`:
+   * the sweeper (hourly, so up to an hour late) applies it, and at the cap the Workflow's wait
+   * ends first and cancels.
    */
   timeout?: string
   remindAfter?: string
