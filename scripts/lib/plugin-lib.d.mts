@@ -553,20 +553,28 @@ export interface ToolEgressReport {
     readsContent?: boolean
   }[]
   unreadable: { kind: string; unit: string; error: string }[]
+  /** Each unit as the check called it (absent from a report by an older kit). */
+  units?: { kind: string; unit: string; builder: boolean; returned: number | null }[]
 }
+/** A plugin server entry declares `tools` or `agentTools`. */
+export function declaresToolBuilder(source: string): boolean
 export interface EgressProblem {
   severity: 'warn'
   unit: string
   tool: string
   file: string
-  kind: 'egress'
+  kind: 'egress' | 'egress-unverifiable'
   problem: string
   fix: string
 }
-/** One warning per tool with no `egress` answer: from the values, else statically. */
+/**
+ * One warning per tool with no `egress` answer — from the values, and statically for every defined
+ * tool the values did not show — plus one per plugin with a builder neither read could see into.
+ */
 export function egressProblems(
   report: ToolEgressReport | null,
-  declarations?: readonly { pluginId: string; file: string; tools: readonly DeclaredToolEgress[] }[]
+  declarations?: readonly { pluginId: string; file: string; tools: readonly DeclaredToolEgress[] }[],
+  builders?: readonly { pluginId: string; builder: boolean }[]
 ): EgressProblem[]
 export interface UploadBodyProblem {
   severity: 'warn'

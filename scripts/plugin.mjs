@@ -85,6 +85,7 @@ import {
   declaredTools,
   declaresProperty,
   declaresPublicSites,
+  declaresToolBuilder,
   dependenciesToInstall,
   dependencyClashes,
   dependencyDelta,
@@ -2793,6 +2794,7 @@ function cmdCheck(args, host) {
   // name a static read cannot resolve is left to the runtime check.
   const toolDeclarations = []
   const egressDeclarations = []
+  const toolBuilders = []
   for (const { manifest } of anchors) {
     const tree = `apps/web/src/plugins/${manifest.id}`
     if (!existsSync(abs(tree))) continue
@@ -2813,6 +2815,11 @@ function cmdCheck(args, host) {
       const egress = declaredToolEgress(text, constants)
       if (egress.length > 0) egressDeclarations.push({ pluginId: manifest.id, file, tools: egress })
     }
+    const entry = sources.find(x => x.file === `${tree}/index.ts`)
+    toolBuilders.push({
+      pluginId: manifest.id,
+      builder: entry ? declaresToolBuilder(entry.text) : false,
+    })
     // **A multipart route under the 1 MB cap.** Server sources only: the UI half reads no request.
     const serverSources = sources.filter(s => !/\/ui\//.test(s.file.slice(tree.length)))
     for (const p of uploadBodyProblems(manifest.id, serverSources)) {
@@ -2849,8 +2856,8 @@ function cmdCheck(args, host) {
           )
       }
     }
-    for (const p of egressProblems(report, egressDeclarations)) {
-      add(p.severity, `${p.unit}:egress:${p.tool}`, {
+    for (const p of egressProblems(report, egressDeclarations, toolBuilders)) {
+      add(p.severity, p.kind === 'egress' ? `${p.unit}:egress:${p.tool}` : `${p.unit}:${p.kind}`, {
         file: p.file,
         problem: p.problem,
         fix: p.fix,

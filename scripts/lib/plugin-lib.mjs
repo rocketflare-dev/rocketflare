@@ -3525,8 +3525,9 @@ export function declaredTools(source, constants = new Map()) {
 
 /**
  * Which `defineTool({ … })` calls in a source write an `egress:` key — the STATIC half of the
- * egress check, used only for a plugin whose `tools(ctx)` could not be called (it reads the
- * database before it builds, or the value check could not run at all). Best effort, like
+ * egress check. The value check only sees the tools a builder returns under its stub context,
+ * and a builder gated on a connection or a configured secret returns fewer (often none), so
+ * every defined tool the values did not show is judged from this. Best effort, like
  * {@link declaredTools}: a key inside the call is taken as the answer.
  */
 export function declaredToolEgress(source, constants = new Map()) {
@@ -3543,28 +3544,46 @@ export function declaredToolEgress(source, constants = new Map()) {
   return out
 }
 
+/**
+ * Whether a plugin's server entry declares a tool builder (`tools` or the deprecated
+ * `agentTools`) — the static stand-in for the value check's `units`, used when it could not run.
+ */
+export function declaresToolBuilder(source) {
+  return /(?:^|[,{\s])(?:async\s+)?(?:tools|agentTools)\s*[:(]/.test(stripComments(source))
+}
+
 const EGRESS_QUESTION =
   'can this tool send your data outside your organisation — by email, a webhook, a web request, or by publishing a page?'
 
 /**
- * The egress warnings `plugin check` raises: one per tool with no `egress` answer, read from the
- * VALUES the value check got back by calling each unit's `tools(ctx)` (`report`, from
- * `apps/web/scripts/tool-egress.ts`), never from a type. A plugin whose builder could not be
- * called — or every plugin, when `report` is null because the check could not run — is read
- * statically instead, from `declarations` (`{ pluginId, file, tools: declaredToolEgress(…) }`).
+ * The egress warnings `plugin check` raises, so that zero warnings means every tool answers:
+ *
+ * - one per tool with no `egress` answer read from the VALUES the value check got back by calling
+ *   each unit's `tools(ctx)` with a stub context (`report`, from `apps/web/scripts/tool-egress.ts`);
+ * - one per `defineTool({ … })` call (`declarations`, `{ pluginId, file, tools: declaredToolEgress(…) }`)
+ *   the values did NOT show — a builder that threw, one gated on a connection or a secret the stub
+ *   lacks, or every plugin when `report` is null — that writes no `egress:` key. A call whose name
+ *   the static read cannot resolve is paired with a returned tool it could not name, if any;
+ * - one `<unit>:egress-unverifiable` per plugin that has a tool builder (from `report.units`, else
+ *   `builders`, `{ pluginId, builder }` read by {@link declaresToolBuilder}) but showed no tool
+ *   either way: its tools are built some way neither read can see, so nothing says they answer.
  *
  * Always `warn`: `egress` is optional until a later kit release makes it required, so a released
  * plugin keeps passing meanwhile. The id is `<unit>:egress:<tool>`, which is how the plugin
  * matrix counts each plugin's warnings. A tool from a non-plugin unit (the kit's own list, an
  * app's tools) is reported under its unit id.
  */
-export function egressProblems(report, declarations = []) {
+export function egressProblems(report, declarations = [], builders = []) {
   const out = []
   const fileOf = (unit, tool) =>
     declarations.find(d => d.pluginId === unit && d.tools.some(t => t.name === tool))?.file ??
     (unit === 'core'
       ? 'apps/web/src/api/services/agents/tools/index.ts'
       : `apps/web/src/plugins/${unit}/`)
+  const fix =
+    `set \`egress: true\` or \`egress: false\` on it, answering "${EGRESS_QUESTION}" from what ` +
+    'its handler does — fetch, email, a webhook or a publish is true; reading or writing this ' +
+    "organisation's own records is false. Never default it to false (.claude/rules/tools.md)"
   const warn = (unit, tool, file, how) =>
     out.push({
       severity: 'warn',
@@ -3573,26 +3592,59 @@ export function egressProblems(report, declarations = []) {
       file,
       kind: 'egress',
       problem: `declares the tool "${tool}" with no \`egress\` answer (${how})`,
-      fix:
-        `set \`egress: true\` or \`egress: false\` on it, answering "${EGRESS_QUESTION}" from what ` +
-        'its handler does — fetch, email, a webhook or a publish is true; reading or writing this ' +
-        "organisation's own records is false. Never default it to false (.claude/rules/tools.md)",
+      fix,
     })
-  const unreadable = new Set((report?.unreadable ?? []).map(u => u.unit))
+  const seen = new Map()
   for (const t of report?.tools ?? []) {
+    if (!seen.has(t.unit)) seen.set(t.unit, new Set())
+    seen.get(t.unit).add(t.tool)
     if (t.egress === undefined)
       warn(t.unit, t.tool, fileOf(t.unit, t.tool), 'read from the value tools(ctx) returned')
   }
-  for (const d of declarations) {
-    if (report && !unreadable.has(d.pluginId)) continue
-    for (const t of d.tools) {
-      if (!t.answers)
-        warn(
-          d.pluginId,
-          t.name ?? '?',
-          d.file,
-          'read statically: tools(ctx) could not be called with the stub context'
-        )
+  const unreadable = new Set((report?.unreadable ?? []).map(u => u.unit))
+  const why = unit =>
+    !report
+      ? 'read statically: the value check could not run'
+      : unreadable.has(unit)
+        ? 'read statically: tools(ctx) could not be called with the stub context'
+        : 'read statically: tools(ctx) did not return it under the stub context'
+  const units = new Map()
+  for (const b of builders) units.set(b.pluginId, b.builder)
+  for (const u of report?.units ?? []) if (u.kind === 'plugin') units.set(u.unit, u.builder)
+  for (const d of declarations) if (!units.has(d.pluginId)) units.set(d.pluginId, true)
+  for (const [unit, builder] of units) {
+    const mine = declarations.filter(d => d.pluginId === unit)
+    const shown = seen.get(unit) ?? new Set()
+    const named = new Set(mine.flatMap(d => d.tools.map(t => t.name)).filter(Boolean))
+    // Returned tools the static read could not name stand for that many unnamed calls.
+    let unnamedShown = [...shown].filter(name => !named.has(name)).length
+    let defined = 0
+    for (const d of mine) {
+      for (const t of d.tools) {
+        defined++
+        if (t.name !== null && shown.has(t.name)) continue
+        if (t.name === null && unnamedShown > 0) {
+          unnamedShown--
+          continue
+        }
+        if (!t.answers) warn(unit, t.name ?? '?', d.file, why(unit))
+      }
+    }
+    if (builder && defined === 0 && shown.size === 0) {
+      out.push({
+        severity: 'warn',
+        unit,
+        tool: '*',
+        file: `apps/web/src/plugins/${unit}/`,
+        kind: 'egress-unverifiable',
+        problem:
+          'has a tool builder, but neither read showed a tool: tools(ctx) returned none under the ' +
+          'stub context (or could not be called) and no `defineTool({ … })` call was found, so ' +
+          'nothing says whether its tools answer `egress`',
+        fix:
+          'build each tool with `defineTool({ … })` from `@/plugins/api` and answer `egress` on it ' +
+          '(.claude/rules/tools.md)',
+      })
     }
   }
   return out

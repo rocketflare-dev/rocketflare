@@ -14,8 +14,11 @@
  *
  * The stub context has NO database: any query a builder makes throws, and that unit is reported
  * as unreadable rather than guessed at. A builder that reads a settings row before it builds
- * (to return `[]` for an organisation that has not turned it on) is unreadable here, and
- * `plugin check` falls back to reading its `defineTool({ … })` calls statically.
+ * is unreadable here; one gated on something the stub lacks (a connection, a configured secret)
+ * returns fewer tools than it defines, often `[]`. So a short read is never taken as the whole
+ * answer: `plugin check` reads every `defineTool({ … })` call statically too and warns on any
+ * defined tool the values did not show, and `units` says which units have a builder at all, so
+ * a builder that showed nothing and declares nothing readable is reported as unverifiable.
  */
 import { FEATURE_KEYS } from '@rocketflare/shared/features'
 import { loadConfig } from '../../../../config'
@@ -32,6 +35,17 @@ export interface ToolUnit {
   kind: string
   id: string
   tools(ctx: AgentToolContext): Tool[] | Promise<Tool[]> | undefined
+  /** False for a unit that declares no builder at all (a plugin with neither `tools` nor `agentTools`). */
+  builder?: boolean
+}
+
+/** One unit as the check called it: whether it has a builder, and how many tools came back. */
+export interface ToolEgressUnit {
+  kind: string
+  unit: string
+  builder: boolean
+  /** The tools its builder returned under the stub context; null when it threw. */
+  returned: number | null
 }
 
 /** One tool as the check read it. */
@@ -53,6 +67,7 @@ export interface UnreadableToolUnit {
 export interface ToolEgressReport {
   tools: ToolEgressEntry[]
   unreadable: UnreadableToolUnit[]
+  units: ToolEgressUnit[]
 }
 
 /** What a builder sees when it touches the stub's database. */
@@ -106,6 +121,7 @@ export function pluginToolUnits(
   return plugins.map(p => ({
     kind: 'plugin',
     id: p.shared.id,
+    builder: Boolean(p.tools ?? p.agentTools),
     tools: ctx => pluginTools(p, ctx),
   }))
 }
@@ -144,8 +160,9 @@ export async function readToolEgress(
   units: readonly ToolUnit[],
   ctx: AgentToolContext = stubToolContext()
 ): Promise<ToolEgressReport> {
-  const report: ToolEgressReport = { tools: [], unreadable: [] }
+  const report: ToolEgressReport = { tools: [], unreadable: [], units: [] }
   for (const unit of units) {
+    const builder = unit.builder ?? true
     let tools: Tool[]
     try {
       tools = (await unit.tools(ctx)) ?? []
@@ -155,8 +172,10 @@ export async function readToolEgress(
         unit: unit.id,
         error: err instanceof Error ? err.message : String(err),
       })
+      report.units.push({ kind: unit.kind, unit: unit.id, builder, returned: null })
       continue
     }
+    report.units.push({ kind: unit.kind, unit: unit.id, builder, returned: tools.length })
     for (const tool of tools) {
       report.tools.push({
         kind: unit.kind,
