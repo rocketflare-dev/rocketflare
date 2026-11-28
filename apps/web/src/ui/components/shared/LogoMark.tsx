@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useAppInfo } from '@/ui/hooks/useAppInfo'
 
-/** The deployment's `APP_LOGO_URL` when it loads, else the bundled mark. */
+/** `APP_LOGO_URL` as `<img data-brand-logo>` (the stable styling hook), else the bundled mark. */
 export function LogoMark({ className = 'w-7 h-7' }: { className?: string }) {
   const { logoUrl } = useAppInfo()
   const [failedUrl, setFailedUrl] = useState<string>()
   if (logoUrl && logoUrl !== failedUrl) {
     return (
       <img
+        data-brand-logo
         src={logoUrl}
         alt=""
         aria-hidden="true"

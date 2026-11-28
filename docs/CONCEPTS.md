@@ -696,14 +696,25 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   `https://` URL or a root-relative path into the app's own static assets (`/brand/logo.svg` is
   `src/ui/public/brand/logo.svg`); anything else stops the Worker at `loadConfig`, and the page
   drops a value the same schema refuses. `LogoMark` renders the configured logo as an `<img>` and
-  returns to the bundled mark if it fails to load; `BrandFavicon` (mounted once in `App`) points
+  returns to the bundled mark if it fails to load. That `<img>`, and never the bundled mark,
+  carries `data-brand-logo`: the stable hook an app styles its logo by, with a plain rule in
+  `shared/theme-tokens.css` (`[data-brand-logo] { border-radius: 22%; }` for a JPEG on a filled
+  square; a ring, padding or `object-fit` the same way; `[data-theme$="-dark"] [data-brand-logo]`
+  for a per-theme `filter`). An unlayered rule wins over the component's utility classes, and the
+  size stays the caller's `className`. `BrandFavicon` (mounted once in `App`) points
   `<link rel="icon">` at the configured favicon once it has loaded as an image, so a wrong URL
   leaves the bundled icon in place. The tagline is neutral in the kit; the rename
   sets `APP_TAGLINE` in both tomls from `docs/design/design.json` `app.tagline`. Known gaps: until
   `/api/health` answers, the page shows the bundled name, mark and tab icon; `index.html`'s
   `<title>`, description and `theme-color` stay compiled in; a configured logo is one image for
-  both themes; colours and type remain a build-time brand (`docs/design/brand.css`), because
-  their contrast is checked at build.
+  both themes (a dark-theme rule on the hook can filter it, not swap it); the logo's styling is
+  compiled in, so deployments of one build share it — a per-deployment `APP_LOGO_STYLE` was
+  weighed and left out, because a copy has one brand and the setting needs a CSS allowlist that
+  still could not carry a per-theme rule; `pnpm design:docs --adopt-default-look` rebuilds
+  `theme-tokens.css` from the kit's file and keeps only token declarations, so it drops a
+  `[data-brand-logo]` rule without reporting it — re-add the rule from the diff; colours and type
+  remain a build-time brand (`docs/design/brand.css`), because their contrast is checked at
+  build.
 - **Home sections**: Home is an operational dashboard laid out from `pages/home-sections.ts`, a
   registry of `{ id, placement: 'lead'|'main'|'aside', order, guard?, Component }`. A feature owns
   its own section — the chat composer (`lead`), recent agent runs, recent documents — as one entry
