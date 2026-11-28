@@ -100,14 +100,14 @@ env:
 jobs:
   resolve:
     name: Resolve the kit ref and the plugins
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 10
     outputs:
       kit_ref: ${{ steps.kit.outputs.kit_ref }}
       plugins_ref: ${{ steps.plugins.outputs.plugins_ref }}
       matrix: ${{ steps.plugins.outputs.matrix }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPOSITORY }}
           ref: ${{ env.TOOLS_REF }}
@@ -155,7 +155,7 @@ jobs:
   plugin:
     name: matrix ${{ matrix.id }}
     needs: resolve
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 45
     strategy:
       fail-fast: false # which plugin broke is the whole diagnosis
@@ -166,7 +166,7 @@ jobs:
       PLUGINS_REF: ${{ needs.resolve.outputs.plugins_ref }}
     steps:
       # The script first, so a kit ref that will not check out still records a result.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPOSITORY }}
           ref: ${{ env.TOOLS_REF }}
@@ -178,7 +178,7 @@ jobs:
             /.nvmrc
           sparse-checkout-cone-mode: false
       # --depth 2: the kit's suite resolves HEAD~1 in places (plugin-ci.yml says why).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPOSITORY }}
           ref: ${{ env.KIT_REF }}
@@ -285,12 +285,12 @@ jobs:
     name: Summary
     needs: [resolve, plugin]
     if: always() && needs.resolve.result == 'success'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 5
     outputs:
       results: ${{ steps.summary.outputs.results }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPOSITORY }}
           ref: ${{ env.TOOLS_REF }}

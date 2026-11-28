@@ -94,12 +94,12 @@ jobs:
   # loudly at the parity check if it was never provisioned — that gate is the point of it.
   guard:
     name: Anything to deploy?
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 5
     outputs:
       deployable: ${{ steps.check.outputs.deployable }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - id: check
@@ -131,7 +131,7 @@ jobs:
         (github.event_name == 'push' && github.ref_type == 'tag') ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'staging')
       )
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 5
     permissions:
       actions: read
@@ -140,7 +140,7 @@ jobs:
       gated: ${{ steps.check.outputs.gated }}
     steps:
       # Two commits: the one being deployed and its parent, which the version-only rule diffs.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 2
@@ -183,7 +183,7 @@ jobs:
         needs.ci.result == 'success' ||
         (needs.ci.result == 'skipped' && needs.gated.outputs.gated == 'true')
       )
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 20
     environment: staging
     # id-token: the deployer path authenticates with a GitHub OIDC token; unused otherwise.
@@ -196,7 +196,7 @@ jobs:
       TOML: apps/web/wrangler.staging.toml
       DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -331,7 +331,7 @@ jobs:
     if: |
       !cancelled() && needs.staging.result == 'success' &&
       vars.DEPLOYER_URL != '' && github.ref_type == 'tag'
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 10
     permissions:
       contents: write
@@ -339,7 +339,7 @@ jobs:
       TOML: apps/web/wrangler.staging.toml
       BUNDLE_TAG: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -386,7 +386,7 @@ jobs:
         github.event_name == 'release' ||
         (github.event_name == 'workflow_dispatch' && inputs.environment == 'production')
       )
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 20
     environment: production
     permissions:
@@ -398,7 +398,7 @@ jobs:
       TOML: apps/web/wrangler.toml
       DEPLOYER_OUTDIR: apps/web/dist/deploy
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
           ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}

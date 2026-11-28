@@ -63,12 +63,12 @@ jobs:
   # Which kit versions is this plugin proved against — its floor, and the kit's own ceiling?
   versions:
     name: Resolve kit versions
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 10
     outputs:
       pairs: ${{ steps.resolve.outputs.pairs }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
           path: plugin
@@ -254,7 +254,7 @@ jobs:
   gate:
     name: ${{ matrix.label }} on kit ${{ matrix.kit }}
     needs: versions
-    runs-on: ubuntu-latest
+    runs-on: blacksmith-4vcpu-ubuntu-2604
     timeout-minutes: 30
     strategy:
       fail-fast: false # which END broke — the floor or the ceiling — is the whole diagnosis
@@ -263,7 +263,7 @@ jobs:
         # proved against its OWN floor, and a shared ceiling is normal while a shared floor is not.
         include: ${{ fromJson(needs.versions.outputs.pairs) }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: useblacksmith/checkout@v1 # v7.0.1
         with:
           persist-credentials: false
           path: plugin
