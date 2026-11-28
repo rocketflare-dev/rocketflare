@@ -23,7 +23,7 @@
  * builds. `makeRequestCtx` is the exception and says so on itself.
  */
 
-import { isEmbeddableMimeType } from '@rocketflare/shared/files'
+import { isEmbeddableImageMimeType, isEmbeddableMimeType } from '@rocketflare/shared/files'
 import type { GroupRef } from '@rocketflare/shared/groups'
 import type { PaginationQuery } from '@rocketflare/shared/pagination'
 import type { Actions, Subjects } from '@rocketflare/shared/permissions'
@@ -263,7 +263,7 @@ export function makeRequestCtx(options: RequestCtxOptions): FakeRequestCtx {
     // The same decision as the real adapter, recorded on `framed` instead of a header.
     embeddable: contentType => {
       const type = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
-      if (!isEmbeddableMimeType(type)) return false
+      if (!isEmbeddableMimeType(type) && !isEmbeddableImageMimeType(type)) return false
       framed = true
       return true
     },

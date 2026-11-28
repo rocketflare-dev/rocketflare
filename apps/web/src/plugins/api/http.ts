@@ -26,7 +26,7 @@
  */
 
 import { ERROR_CODES } from '@rocketflare/shared/errors'
-import { isEmbeddableMimeType } from '@rocketflare/shared/files'
+import { isEmbeddableImageMimeType, isEmbeddableMimeType } from '@rocketflare/shared/files'
 import type { GroupRef, ResourceVisibility } from '@rocketflare/shared/groups'
 import type { JobEnvelope, JobInput } from '@rocketflare/shared/jobs'
 import type { PaginationMeta, PaginationQuery } from '@rocketflare/shared/pagination'
@@ -176,7 +176,8 @@ export interface RequestCtx extends PluginContext, PluginAuth {
    * `frame-ancestors 'self'` instead of `DENY` + `'none'`) — the opt-in `/api/files/:id` uses for
    * the document viewer's PDF embed. Pass the content type of the body you are about to return,
    * read from YOUR row, never from the request: only an `EMBEDDABLE_MIME_TYPES` type
-   * (`@rocketflare/shared/files`, today `application/pdf`) is let through, and the answer says
+   * (`@rocketflare/shared/files`, `application/pdf`) or an `EMBEDDABLE_IMAGE_MIME_TYPES` raster
+   * image (PNG, JPEG, GIF, WebP; never SVG) is let through, and the answer says
    * whether it was. Call it before any early return (an `If-None-Match` 304 included), or a
    * revalidation from inside the frame loses the header and the embed goes blank.
    */
@@ -345,7 +346,7 @@ export function requestCtx(c: AppContext): RequestCtx {
     page: (items, total, query) => paginated(items, total, query),
     embeddable: contentType => {
       const type = contentType.split(';')[0]?.trim().toLowerCase() ?? ''
-      if (!isEmbeddableMimeType(type)) return false
+      if (!isEmbeddableMimeType(type) && !isEmbeddableImageMimeType(type)) return false
       c.set('embeddable', true)
       return true
     },

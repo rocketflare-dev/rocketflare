@@ -33,6 +33,22 @@ outside the app, acting as one person, so write every tool for it. In a plugin, 
   that writes. Offer a write tool only when `ctx.can('manage', YOUR_SUBJECT)` allows it, never
   because `scope.bypass` is set. `durable: true` only if the handler passes
   `call.idempotencyKey` to a system that deduplicates on it.
+- **`egress` on every tool: can this tool send your data outside your organisation — by email, a
+  webhook, a web request, or by publishing a page?** Answer it from what the HANDLER itself does.
+  `true`: it emails, calls a webhook, fetches a URL, calls a remote MCP tool, or writes something
+  another organisation or the public can see (a published page). `false`: it only reads or writes
+  this organisation's own records. The app's own AI providers are part of the app: calling the
+  embeddings model, the reranker or the chat model is not egress (`search_knowledge` is `false`).
+  Which surfaces a tool is offered on is a separate question (`surfaces`, the MCP rules); never
+  fold it into `egress`. Never default it to `false` to silence the warning. Optional for now: the
+  value check calls each `tools(ctx)` with a stub context and WARNS for a tool without it, in
+  `pnpm gate` and `pnpm plugin check`; a later release makes it required.
+- **`readsContent: false` only for a tool that returns no organisation text** (a terminal tool, a
+  count, an id). Absent reads as `true`: what it returns is private and untrusted, because a
+  document or a message can carry instructions somebody planted.
+- **Build tools before you query.** The value check's stub context has no database: a `tools(ctx)`
+  that reads a settings row first is unreadable there, and `plugin check` falls back to reading
+  your `defineTool({ … })` calls statically, so write `egress:` in the call itself.
 - **Tools that never reach MCP.** A terminal tool (no handler) and an approval-gated one
   (`requiresApproval[When]`) are never offered there (`offeredOn` in
   `apps/web/src/api/services/agents/tools/surfaces.ts`). Do not work around this. A write that

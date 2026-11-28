@@ -156,8 +156,9 @@ the CLI command `<id>`; skills `<id>` / `<id>-<what>`; AG-UI CUSTOM events `<id>
   `invalid_custom_event`. Validate the body and do anything else that can fail BEFORE calling it.
   Test it with `scriptPlatformChat(env, turns)` from `@testkit/integration`, never a `vi.mock` of
   the resolver.
-- **A route serving a PDF a page frames calls `ctx.embeddable(row.contentType)`** — the type from
-  YOUR row, before any 304 early return; only an `EMBEDDABLE_MIME_TYPES` type is let through
+- **A route serving a PDF or raster image a page frames calls `ctx.embeddable(row.contentType)`** —
+  the type from YOUR row, before any 304 early return; only an `EMBEDDABLE_MIME_TYPES` type or an
+  `EMBEDDABLE_IMAGE_MIME_TYPES` raster image (never SVG) is let through
   (`SAMEORIGIN` + `frame-ancestors 'self'` for that response). Never a header of your own.
 - **A file upload is an `uploadTargets` entry** (`PluginUploadTarget`, `<id>.<name>`, ≤ 5 GiB,
   `uploadTargetIssues`), never a route taking the bytes — no body above 1 MB reaches the Worker.

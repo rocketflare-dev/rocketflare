@@ -81,6 +81,7 @@ import {
   claudeHookProblems,
   coreEditsByFile,
   coreLineOwner,
+  declaredToolEgress,
   declaredTools,
   declaresProperty,
   declaresPublicSites,
@@ -90,6 +91,7 @@ import {
   deprecatedServerMembers,
   describeClash,
   describeClaudeHook,
+  egressProblems,
   eventClashes,
   floorOf,
   hasBarrelLine,
@@ -1061,6 +1063,27 @@ function cmdAdd(args, host) {
  * `pnpm dev` the moment it lands instead of 503ing until someone hand-writes a block. Best-effort:
  * a host without the provisioning scripts (or a failure) is a note with the command to run.
  */
+/**
+ * The egress value check's report: `apps/web/scripts/tool-egress.ts` calls every unit's
+ * `tools(ctx)` with a stub context under tsx and prints one JSON document. `null` when it cannot
+ * run here (no script, no tsx, a crash) — the caller then reads every plugin statically.
+ */
+function readToolEgressReport() {
+  if (!existsSync(abs('apps/web/scripts/tool-egress.ts'))) return null
+  const r = spawnSync('pnpm', ['--dir', 'apps/web', 'exec', 'tsx', 'scripts/tool-egress.ts'], {
+    cwd: REPO_ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    encoding: 'utf8',
+  })
+  if (r.error || r.status !== 0) return null
+  try {
+    const report = JSON.parse(r.stdout)
+    return Array.isArray(report?.tools) && Array.isArray(report?.unreadable) ? report : null
+  } catch {
+    return null
+  }
+}
+
 function writeDeclarations(m) {
   const declares = ['bindings', 'crons', 'vars'].some(k => (m[k] ?? []).length > 0)
   if (!declares) return []
@@ -2769,6 +2792,7 @@ function cmdCheck(args, host) {
   // and drops the rest at runtime; this names them before that silently happens. Best effort: a
   // name a static read cannot resolve is left to the runtime check.
   const toolDeclarations = []
+  const egressDeclarations = []
   for (const { manifest } of anchors) {
     const tree = `apps/web/src/plugins/${manifest.id}`
     if (!existsSync(abs(tree))) continue
@@ -2786,6 +2810,8 @@ function cmdCheck(args, host) {
     for (const { file, text } of sources) {
       const tools = declaredTools(text, constants)
       if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+      const egress = declaredToolEgress(text, constants)
+      if (egress.length > 0) egressDeclarations.push({ pluginId: manifest.id, file, tools: egress })
     }
     // **A multipart route under the 1 MB cap.** Server sources only: the UI half reads no request.
     const serverSources = sources.filter(s => !/\/ui\//.test(s.file.slice(tree.length)))
@@ -2804,6 +2830,32 @@ function cmdCheck(args, host) {
       problem: p.problem,
       fix: p.fix,
     })
+  }
+  // **Egress, read as a VALUE.** Can each tool send this organisation's data outside it? A type
+  // cannot say — `as Tool` casts are common, and a unit's tools exist only once `tools(ctx)` is
+  // called — so this CALLS every builder with a stub context and reads `egress` off what comes
+  // back. A warning for now, never a failure; `<id>:egress:<tool>` is what the matrix counts.
+  if (host.plugins.length > 0) {
+    const report = readToolEgressReport()
+    if (!report) {
+      notes.push(
+        "the egress value check could not run (`pnpm --dir apps/web exec tsx scripts/tool-egress.ts`), so every plugin's tools were read statically"
+      )
+    } else {
+      for (const u of report.unreadable) {
+        if (u.kind === 'plugin')
+          notes.push(
+            `${u.unit}: tools(ctx) could not be called with the stub context (${u.error}), so its egress was read statically`
+          )
+      }
+    }
+    for (const p of egressProblems(report, egressDeclarations)) {
+      add(p.severity, `${p.unit}:egress:${p.tool}`, {
+        file: p.file,
+        problem: p.problem,
+        fix: p.fix,
+      })
+    }
   }
   // **Two plugins declaring one table name.** The prefix convention is what keeps them apart and
   // nothing enforces it, because nothing derives a table name from an id — so the collision is the

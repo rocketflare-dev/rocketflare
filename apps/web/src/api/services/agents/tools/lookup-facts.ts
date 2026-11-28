@@ -56,6 +56,9 @@ export function lookupFactsTool(ctx: AgentToolContext): Tool<LookupFactsInput> {
     description:
       "Look up the facts this workspace's documents state about an entity — a customer, supplier, service or similar: prices, contacts, dates, terms. Each fact comes with the document it was read from, the exact quote, and a `state`. accepted: state it, citing the document. unconfirmed: use it, and say it is unconfirmed. conflicting: the sources DISAGREE — the other sides are in the same answer (`conflictsWith`); give every side with its value and its document and say they disagree, never pick one silently (you may lead with the one marked `preferred`). Use it for questions about a specific entity's details; use search_knowledge for everything else, or to read the surrounding passage.",
     schema: lookupFactsInputSchema,
+    // Facts extracted from this organisation's documents, read from its own database.
+    egress: false,
+    readsContent: true,
     async handler(input) {
       return JSON.stringify(await lookupFacts(ctx.db, ctx.scope, input))
     },

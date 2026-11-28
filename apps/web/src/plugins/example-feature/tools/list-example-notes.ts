@@ -61,6 +61,9 @@ export function listExampleNotesTool(ctx: ToolCtx): Tool<ListExampleNotesInput> 
       'List the example notes saved in this workspace, newest first, with their titles and text. ' +
       'Call it when the question is about what the team has written down here.',
     schema: listExampleNotesInputSchema,
+    // Reads this organisation's notes from its own tables; nothing leaves.
+    egress: false,
+    readsContent: true,
     mcp: {
       title: 'List example notes',
       // Reads only this workspace's own rows: nothing outside it, so not an open world.

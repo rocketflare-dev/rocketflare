@@ -7,7 +7,11 @@
  * and this is the test that says so — they must differ in `frame-ancestors` and in nothing else.
  */
 
-import { EMBEDDABLE_MIME_TYPES, INLINE_MIME_TYPES } from '@rocketflare/shared/files'
+import {
+  EMBEDDABLE_IMAGE_MIME_TYPES,
+  EMBEDDABLE_MIME_TYPES,
+  INLINE_MIME_TYPES,
+} from '@rocketflare/shared/files'
 import { describe, expect, it } from 'vitest'
 import {
   CONTENT_SECURITY_POLICY,
@@ -41,5 +45,13 @@ describe('inline vs embeddable media types', () => {
     // And the lists are not the same object — an app adding an inline type must not widen framing.
     expect(EMBEDDABLE_MIME_TYPES.length).toBeLessThan(INLINE_MIME_TYPES.length)
     expect(EMBEDDABLE_MIME_TYPES).toEqual(['application/pdf'])
+    // The raster images a plugin route may frame are their own list, and never an SVG.
+    expect(EMBEDDABLE_IMAGE_MIME_TYPES).toEqual([
+      'image/png',
+      'image/jpeg',
+      'image/gif',
+      'image/webp',
+    ])
+    expect(EMBEDDABLE_IMAGE_MIME_TYPES as readonly string[]).not.toContain('image/svg+xml')
   })
 })

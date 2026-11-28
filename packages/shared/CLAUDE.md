@@ -52,7 +52,9 @@ takes), `jobEnvelopeSchema` (`+ id, enqueuedAt, attempt?`, what the consumer par
 `CoreJobType` / `JOB_TYPES`, `JobOf<T>` ·
 `files.ts` — `FILE_SCOPES`/`fileScopeSchema`, `MAX_UPLOAD_BYTES`, `AVATAR_MIME_TYPES`/`isAvatarMimeType`,
 `INLINE_MIME_TYPES`/`isInlineMimeType` (served `Content-Disposition: inline`) and
-`EMBEDDABLE_MIME_TYPES`/`isEmbeddableMimeType` (may ALSO be framed) — two lists on purpose, because
+`EMBEDDABLE_MIME_TYPES`/`isEmbeddableMimeType` (may ALSO be framed) and
+`EMBEDDABLE_IMAGE_MIME_TYPES`/`isEmbeddableImageMimeType` (raster images a plugin route may frame through
+`ctx.embeddable`, never SVG) — separate lists on purpose, because
 inline and framable are different properties, `filePath(id)`, `fileSchema`/`uploadResponseSchema` ·
 `uploads.ts` — the direct upload: `CORE_UPLOAD_TARGETS`, `UPLOAD_TARGET_PATTERN`
 (`<name>` or `<plugin id>.<name>`), `UPLOAD_URL_TTL_SECONDS`, `createUploadRequestSchema`

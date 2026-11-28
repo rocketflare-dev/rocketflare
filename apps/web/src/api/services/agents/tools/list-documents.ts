@@ -118,6 +118,9 @@ export function listDocumentsTool(ctx: AgentToolContext): Tool<ListDocumentsInpu
     description:
       "List the documents in this workspace's knowledge base, newest first, with their titles, ids and sizes. Call it when you need to know what material exists — to choose search wording, to pick a document to read in full with `get_document`, or to state honestly that a topic is not covered. Only indexed (searchable) documents are listed.",
     schema: listDocumentsInputSchema,
+    // Document titles and details from this organisation's own database; nothing leaves.
+    egress: false,
+    readsContent: true,
     async handler(input) {
       const result = await listKnowledgeDocuments(ctx, input)
       if (result.total === 0) {

@@ -533,6 +533,41 @@ export interface ToolProblem {
 export function toolProblems(
   declarations: readonly { pluginId: string; file: string; tools: readonly DeclaredTool[] }[]
 ): ToolProblem[]
+export interface DeclaredToolEgress {
+  name: string | null
+  /** The `defineTool({ … })` call writes an `egress:` key. */
+  answers: boolean
+}
+/** The static half of the egress check: which `defineTool` calls answer `egress`. */
+export function declaredToolEgress(
+  source: string,
+  constants?: Map<string, string>
+): DeclaredToolEgress[]
+/** What `apps/web/scripts/tool-egress.ts` prints: each tool as its builder returned it. */
+export interface ToolEgressReport {
+  tools: {
+    kind: string
+    unit: string
+    tool: string
+    egress?: boolean
+    readsContent?: boolean
+  }[]
+  unreadable: { kind: string; unit: string; error: string }[]
+}
+export interface EgressProblem {
+  severity: 'warn'
+  unit: string
+  tool: string
+  file: string
+  kind: 'egress'
+  problem: string
+  fix: string
+}
+/** One warning per tool with no `egress` answer: from the values, else statically. */
+export function egressProblems(
+  report: ToolEgressReport | null,
+  declarations?: readonly { pluginId: string; file: string; tools: readonly DeclaredToolEgress[] }[]
+): EgressProblem[]
 export interface UploadBodyProblem {
   severity: 'warn'
   pluginId: string
