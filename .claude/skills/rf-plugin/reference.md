@@ -4,7 +4,7 @@ What `pnpm plugin` reads, what it refuses, and what each command proves. The des
 reasons are `docs/CONCEPTS.md` §16; the seam is `apps/web/src/plugins/CLAUDE.md`. This file is for
 looking things up mid-run.
 
-**Contents:** [Exit codes](#exit-codes-pnpm-plugin---help-is-authoritative) ·
+**Contents:** [What you want to do](#what-you-want-to-do) · [Exit codes](#exit-codes-pnpm-plugin---help-is-authoritative) ·
 [The catalogue](#the-catalogue--plugin-list---available) ·
 [The manifest](#the-manifest--rocketflare-pluginjson-in-the-repo-pluginjson-in-the-host) ·
 [How `add` classifies each file](#how-add-classifies-each-file-of-the-source-repo) ·
@@ -15,6 +15,66 @@ looking things up mid-run.
 [Public mounts — the host's guard](#public-mounts--the-hosts-guard) ·
 [Identity and SSO](#identity-and-sso) ·
 [Two things nothing else will catch](#two-things-nothing-else-will-catch)
+
+## What you want to do
+
+One line per thing a plugin actually does, and the single name that does it. Hand-written (no
+extraction can know that "restrict a row to groups" means `sharedWithMyGroups`) and checked: every
+`Use` must be a member of its `From` entry in `docs/plugin-surface.json`
+(`apps/web/tests/kit-only/plugin-surface.test.ts`), so a name here is a name you can import today.
+A dotted name is a member of a context type (`RequestCtx.guard` is `ctx.guard(…)`). For a
+signature, read the entry file (`docs/plugin-api.md` lists them).
+
+| To… | Use | From |
+|---|---|---|
+| Handle a request | `requestCtx` | `@/plugins/api` |
+| Build a router, validate a body | `createRouter` | `@/plugins/api` |
+| Check what a role may do | `RequestCtx.guard` | `@/plugins/api` |
+| Check what a row-level reader may see | `RequestCtx.scope` | `@/plugins/api` |
+| Check whether this deployment ships a surface | `hasFeature` | `@/plugins/api` |
+| Gate a whole mount on a feature flag | `requireFeature` | `@/plugins/api` |
+| Read a `:id` parameter safely | `RequestCtx.uuid` | `@/plugins/api` |
+| Answer a paginated list | `RequestCtx.page` | `@/plugins/api` |
+| Fail with the shared error envelope | `RequestCtx.notFound` | `@/plugins/api` |
+| Run a side effect after the response | `RequestCtx.defer` | `@/plugins/api` |
+| Enqueue a job | `RequestCtx.enqueue` | `@/plugins/api` |
+| Handle a job | `jobCtx` | `@/plugins/api` |
+| Run a scheduled task | `cronCtx` | `@/plugins/api` |
+| Run a durable multi-step workflow | `workflowCtx` | `@/plugins/api` |
+| Park a run until somebody answers | `WorkflowCtx.waitForEvent` | `@/plugins/api` |
+| Tell open tabs a family of rows moved | `RequestCtx.nudge` | `@/plugins/api` |
+| Notify one person | `notify` | `@/plugins/api` |
+| Write to the audit log | `recordActivity` | `@/plugins/api` |
+| Reach a per-tenant Durable Object | `durableObject` | `@/plugins/api` |
+| Store or read a file | `RequestCtx.storage` | `@/plugins/api` |
+| Write several rows as one transaction | `transaction` | `@/plugins/api` |
+| Seed a new organisation | `HookCtx` | `@/plugins/api` |
+| Add rows to `pnpm seed --demo` | `SeedCtx` | `@/plugins/api` |
+| Give every agent run a tool | `defineTool` | `@/plugins/api` |
+| Read what the run’s requester may read | `ToolCtx` | `@/plugins/api` |
+| Write an agent | `AgentCtx` | `@/plugins/api` |
+| Make a side effect happen once per run | `AgentCtx.once` | `@/plugins/api` |
+| Ledger a model call | `recordUsage` | `@/plugins/api` |
+| Trace a model call | `withAgentTrace` | `@/plugins/api` |
+| Restrict a row to groups | `sharedWithMyGroups` | `@/plugins/api` |
+| Read or write who may see a row | `RequestCtx.visibility` | `@/plugins/api` |
+| Read the reader’s groups and their types | `RequestCtx.groups` | `@/plugins/api` |
+| Escape a handler with a snapshot | `RequestCtx.detached` | `@/plugins/api` |
+| Read what other plugins contributed | `extensions` | `@/plugins/api/peers` |
+| Hand a library the whole schema | `allTables` | `@/plugins/api/peers` |
+| Declare a tenant-scoped table | `tenantRef` | `@/db/schema/kit` |
+| Give a table its RLS policy | `tenantIsolation` | `@/db/schema/kit` |
+| Add a nav item and a route | `UiPlugin` | `@/plugins/types` |
+| Guard a nav item on a flag | `featureGuard` | `@/plugins/api/ui-wiring` |
+| Call the API from a page | `api` | `@/plugins/api/ui` |
+| Declare contracts, jobs, subjects, flags | `SharedPlugin` | `@rocketflare/shared/plugins/api` |
+| Answer a paginated list, in the contract | `paginatedResponse` | `@rocketflare/shared/plugins/api` |
+| Add a CLI command | `CliPlugin` | `'./types' (apps/cli/src/plugins/types.ts)` |
+| Call the API from a command | `requireClient` | `'../api' (apps/cli/src/plugins/api.ts)` |
+| Prove tenant isolation | `request` | `@testkit/integration` |
+| Prove a cron task is dispatched | `dispatchScheduled` | `@testkit/integration` |
+| Build a fake request context | `makeRequestCtx` | `@testkit/unit` |
+| Assert only your own entries in a shared registry | `expectOwnContributions` | `@testkit/unit` |
 
 ## Exit codes (`pnpm plugin --help` is authoritative)
 
@@ -118,7 +178,7 @@ Field notes, in the order they bite:
   only half of compatibility a plugin can state honestly.
 - **`uses`** is the other half and is **DERIVED, never hand-written**: `{ "<entry>": ["<symbol>"] }`,
   the host symbols this plugin imports, written by `pnpm plugin export` from its own files. The kit
-  emits the matching `## Surface ledger` in `docs/plugin-api.md`, and compatibility is the set
+  emits the matching surface in `docs/plugin-surface.json`, and compatibility is the set
   difference — every symbol `uses` names that the ledger does not carry fails the install, naming
   the symbol and the import that replaces it. A hand-written `uses` is a claim rather than a
   measurement, which is the failure mode all of this replaced.

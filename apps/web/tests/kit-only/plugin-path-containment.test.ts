@@ -71,7 +71,14 @@ function makeHost(
     'apps/cli/tsconfig.json',
     'packages/shared/tsconfig.json',
   ]
-  for (const file of ['scripts', 'package.json', 'docs/plugin-api.md', ...tsconfigs, ...files]) {
+  for (const file of [
+    'scripts',
+    'package.json',
+    'docs/plugin-api.md',
+    'docs/plugin-surface.json',
+    ...tsconfigs,
+    ...files,
+  ]) {
     mkdirSync(path.dirname(path.join(host, file)), { recursive: true })
     cpSync(path.join(KIT_ROOT, file), path.join(host, file), { recursive: true })
   }

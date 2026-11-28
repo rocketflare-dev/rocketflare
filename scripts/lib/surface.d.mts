@@ -12,6 +12,13 @@ export interface LedgerEntry {
 }
 export const LEDGER_ENTRIES: readonly LedgerEntry[]
 
+export const SURFACE_JSON: string
+export const SURFACE_SCHEMA_VERSION: number
+/** `{ '@rf': '@/plugins/api', '@rf/*': '@/plugins/api/*' }` — second names for a declared entry. */
+export const SURFACE_ALIASES: Readonly<Record<string, string>>
+/** `specifier` with its alias applied, or unchanged. */
+export function unalias(specifier: string, aliases?: Readonly<Record<string, string>>): string
+
 export const PLUGIN_ROOTS: readonly string[]
 export const DECLARED_ENTRIES: readonly string[]
 export const RESERVED_PLUGIN_IDS: ReadonlySet<string>
@@ -61,14 +68,25 @@ export interface LedgerMember {
 
 /** The kit's surface, with membership keyed `"<entry> :: <name>"`. */
 export interface Ledger {
+  /** Which file it was read from: `docs/plugin-surface.json`, or the Markdown fallback. */
+  source?: 'json' | 'markdown'
+  /** The aliases the JSON records (`{}` from the Markdown, which has none). */
+  aliases?: Readonly<Record<string, string>>
   members: ReadonlyMap<string, LedgerMember>
   size: number
   has(entry: string, name: string): boolean
   get(entry: string, name: string): LedgerMember | undefined
 }
 
-/** Null when the file, the section or the fenced block is absent — never a throw. */
+/**
+ * `docs/plugin-surface.json` when it is present and well-formed, else the Markdown ledger; null when
+ * neither has anything to read — never a throw.
+ */
 export function readLedger(repoRoot: string): Ledger | null
+/** The JSON alone: null when absent, unparseable or the wrong shape. */
+export function readSurfaceJson(repoRoot: string): Ledger | null
+/** The `## Surface ledger` block of `docs/plugin-api.md` alone. */
+export function readMarkdownLedger(repoRoot: string): Ledger | null
 
 /**
  * `{ [entry]: [sorted unique symbol names] }`, derived from the plugin's own imports.

@@ -47,7 +47,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
-      # plugin-api-doc.mjs parses the declared entries with the TypeScript compiler.
+      # plugin-api-doc.mjs parses the declared entries with oxc-parser.
       - run: pnpm install --frozen-lockfile
 
       # The Launch kit contract (D36): `launch.kit.json` and the files it names conform — the same
@@ -66,15 +66,15 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'HEAD~1' }}
         run: node scripts/release-check.mjs --unreleased --base "$BASE"
 
-      # `docs/plugin-api.md` is generated from the source of the declared entries (D31), and it is
-      # the kit's PUBLISHED plugin API: the committed document is the previous snapshot, so a
-      # member that changed or went away fails HERE, naming the member. It protects plugins in
+      # `docs/plugin-surface.json` and the ledger in `docs/plugin-api.md` are generated from the
+      # source of the declared entries (D31), and they are the kit's PUBLISHED plugin API: the
+      # committed files are the previous snapshot, so a member that went away fails HERE, naming it. It protects plugins in
       # OTHER repositories — "it compiles and the tests pass" only speaks for the ones installed
       # here — which is why it is the kit's check and not a copy's.
-      - name: docs/plugin-api.md is up to date
+      - name: docs/plugin-surface.json and docs/plugin-api.md are up to date
         run: |
           node scripts/plugin-api-doc.mjs
-          git diff --exit-code -- docs/plugin-api.md
+          git diff --exit-code -- docs/plugin-api.md docs/plugin-surface.json
 
       # The same audit `plugin add|upgrade --apply` ends with, over the vendored reference plugin.
       - name: pnpm plugin check

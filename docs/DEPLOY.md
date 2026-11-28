@@ -437,7 +437,7 @@ All steps run at the repository root; the root scripts fan out with `pnpm -r` / 
                                   │           — or, verified, `pnpm gate build` only
                                   │
                                   └─► kit.yml (the kit only — `kitOnly`, so a copy has no such file)
-                                        ├─ kit-checks → porting note → plugin-api.md diff → plugin check
+                                        ├─ kit-checks → porting note → plugin surface diff → plugin check
                                         │               → CI plugin list (no database)
                                         ├─ renamed    → rename to `my-app`, commit → pnpm gate
                                         └─ plugins    → plugin add each `defaultPlugins` +

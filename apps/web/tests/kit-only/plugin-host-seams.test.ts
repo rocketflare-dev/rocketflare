@@ -403,6 +403,7 @@ function makeHost({ settings = false }: { settings?: boolean } = {}): string {
   for (const rel of [
     'package.json',
     'docs/plugin-api.md',
+    'docs/plugin-surface.json',
     '.claude/skills/rf-plugin/SKILL.md',
     ...Object.values(BARRELS).map(b => b.file),
     'tsconfig.base.json',
