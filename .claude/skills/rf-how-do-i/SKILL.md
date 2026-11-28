@@ -55,7 +55,8 @@ context. Both use the same slots and namespaces, and one boundary check covers b
 across domains and across apps.** A second process ("add expense approvals to my app") is another
 domain in the same app, not a plugin and not a new copy; a new copy needs a reason a domain cannot
 meet (`docs/POSITIONING.md`). An app-owned plugin they already have stays a plugin unless they
-choose to move it (`docs/ADAPTING.md` §3c). Core is still right when the change is to the kit's
+choose to move it (the adoption recipe in `docs/CONCEPTS.md` §20). Core is still right when the
+change is to the kit's
 OWN tables (`tenants`, `users`, `tenant_users`, `documents`…), to auth or tenancy, or to a
 cross-cutting middleware — the things a unit composes ON TOP of and must not redefine. A domain that needs another domain imports its
 `public.ts` and lists it in `dependsOn`, or handles its event; `example-hr/` and `example-sales/`

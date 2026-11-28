@@ -27,7 +27,7 @@ The rule for where code goes, used everywhere in these docs:
 - Both are **units**: an id, a namespace, the same slots, one boundary check over both.
 
 An app-owned plugin written before domains existed stays a plugin. It keeps working, and moving it
-is a choice the owner makes by following the recipe in `docs/ADAPTING.md` §3c.
+is a choice the owner makes by following the recipe in `docs/CONCEPTS.md` §20.
 
 A new copy is a decision someone argues for, with a reason a domain cannot meet: a separate trust
 or customer boundary that tenants cannot express, a regulatory or data-residency boundary, a
