@@ -4,7 +4,7 @@ previous: 0.46.0
 date: null
 breaking: false
 migrations: []
-areas: [api, shared, ui, config, docs]
+areas: [api, cli, db, shared, ui, plugins, config, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -26,6 +26,10 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
 - Fix: `pnpm design:docs --adopt-default-look` keeps an app's own statements in `apps/web/src/shared/theme-tokens.css` outside the token blocks: a standalone rule such as `[data-brand-logo] { … }`, a per-theme or `@media` rule, and its changed or extra `:root` values (the logo mark's colours). It rebuilt the file from the kit's and dropped them without a word; each one now prints a `kept …` line. `adoptDefaultLook` (`scripts/lib/brand.mjs`) returns them as `carried`; `topLevelRules` is new.
 - Fix: `scripts/detach.sh` keeps every file the kit tracks. It re-added the tree with `git add -A`, which obeys the person's own global gitignore, so a machine that ignores `.claude` got a first commit with no skills, rules or hooks. It now adds exactly the tracked list, and still adds no ignored file.
+- Fix: a plugin UI posting `FormData` to its own deprecated `uploadPaths` route compiles and works again. 0.46.0 kept such a route working on the server but dropped the client call. `api.postForm(url, formData, { schema })` (UI, also `@/plugins/api/ui`) and `ApiClient.postForm(path, form, { schema })` (CLI) are back, deprecated. Each sends the same cookie or API key, CSRF marker and error envelope as the rest of the client. The 0.45 call `api.upload(url, formData, options)` is a deprecated overload of `api.upload` that does the same.
+- `pnpm plugin check` warns when a plugin's server source reads a form body (`parseBody()` / `formData()`) and the plugin declares no `uploadTargets`, `uploadPaths`, `uploadLimits` or public-mount `bodyLimitBytes`. Such a route gets the 1 MB body cap, so any larger file is a 413 whatever the route's own `bodyLimit` says (`docs/CONCEPTS.md` §16).
+- `pnpm db:generate` refuses a new migration in which a generated column's expression reads a column that the same file only adds further down (Postgres: 42703 `column … does not exist`). The check is static, so it also runs where the scratch check is skipped. `--check` now runs it over every migration. A 42703 from the scratch check says to move the `ADD COLUMN` first.
+- Docs: `docs/upgrades/0.45.0.md` step 13 says to check the statement order of the `kit-knowledge-context` migration and to move the two `ADD COLUMN`s above the `search_vector` regeneration.
 
 ## How to apply
 
@@ -39,8 +43,13 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
 9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
 10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+11. If you ported 0.46.0 by hand and rewrote a plugin's UI or CLI call that posted `FormData` to the plugin's own `uploadPaths` route, you may restore the original call. In the UI, use `api.postForm(url, formData, options)`, or leave `api.upload(url, formData, options)` as it was before 0.46.0. In the CLI, use `client.postForm(path, form, { schema })`. Both are deprecated: the lasting fix is an `uploadTargets` entry in the plugin's own release (0.46.0 step 7).
+12. Run `pnpm plugin check`. For each `upload-body-cap` warning, decide whether the route takes files above 1 MB. If it does, declare its prefix in the plugin's `uploadPaths` (`'/api/<id>/…'`, up to 10 MB) or its exact path in `uploadLimits` (up to 50 MiB), or move it to `uploadTargets`. A small text-only form needs neither.
 
 ## Conflicts to expect
+
+- `apps/web/src/ui/lib/api-client.ts` → `upload` is a standalone overloaded function and `postForm` is new, and `request()` again leaves out the JSON `Content-Type` for a `FormData` body → take the kit's file.
+- `apps/cli/src/api.ts` → `postForm` is back on `ApiClient`, and `sendRaw` takes `'POST'` → take the kit's lines.
 
 - `apps/web/src/ui/lib/login-panel.ts` → the type is imported from `@rocketflare/shared/branding` and the comment calls the constant a fallback → keep the app's `art` and `tagline` values.
 - `apps/web/src/ui/components/AuthCard.tsx` → `LoginPanel` reads `useAppInfo()` instead of `LOGIN_PANEL` → take the kit's lines.
@@ -55,4 +64,7 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 4. `curl -s http://localhost:3001/api/health` shows `name`, `tagline` and `loginPanelArt` with the values from `apps/web/.dev.vars` or the toml.
 5. After `pnpm web build:ui`, `apps/web/dist/ui/index.html` has `APP_NAME` from `apps/web/wrangler.toml` in `<title>` and `APP_TAGLINE` in `<meta name="description">`.
 6. `pnpm test config apps/web/tests/config/ui-shell-identity.test.ts` passes.
-7. `pnpm gate` passes.
+7. `pnpm test ui apps/web/tests/ui/api-client.test.ts` passes, including the `postForm (deprecated)` cases.
+8. `pnpm --filter @rocketflare/cli test` passes, including `postForm (deprecated)`.
+9. `pnpm test config apps/web/tests/config/migration-check.test.ts` passes.
+10. `pnpm gate` passes.

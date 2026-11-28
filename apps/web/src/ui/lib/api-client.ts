@@ -8,6 +8,7 @@
  * - Non-2xx → `ApiError`, parsed from the shared error envelope (`@rocketflare/shared/errors`)
  * - Optional zod `schema` validates the response body
  * - `api.upload(target, file)` is the direct upload: presign, `PUT` straight to storage, confirm
+ * - `api.postForm(url, formData)` (deprecated) posts multipart to a plugin's own `uploadPaths` route
  * - 401 → the registered unauthorized handler. `AuthProvider` wires it to
  *   `queryClient.clear()` + redirect to `/login?returnUrl=…`.
  */
@@ -136,7 +137,8 @@ export async function parseErrorBody(response: Response): Promise<ApiErrorBody> 
   }
 }
 
-type RequestBody = string
+// `FormData` only for the deprecated `postForm` (a plugin's own multipart route).
+type RequestBody = string | FormData
 
 async function request<T>(
   url: string,
@@ -151,11 +153,13 @@ async function request<T>(
     ...fetchOptions
   } = options
 
+  // multipart: the browser writes `Content-Type` with its boundary.
+  const isMultipart = typeof FormData !== 'undefined' && fetchOptions.body instanceof FormData
   const response = await fetch(url, {
     credentials: 'include',
     ...fetchOptions,
     headers: {
-      'Content-Type': 'application/json',
+      ...(isMultipart ? {} : { 'Content-Type': 'application/json' }),
       'X-Requested-With': 'fetch',
       ...fetchOptions.headers,
     },
@@ -228,48 +232,85 @@ export const api = {
       ...options,
     })
   },
-  /**
-   * Upload a file STRAIGHT to storage — the bytes never pass through the Worker. Three steps:
-   * `POST /api/uploads` (every check the target makes, before a byte moves), `PUT` the file to the
-   * URL it answers with exactly its headers, then `POST /api/uploads/:id/confirm`, whose answer is
-   * the target's (`schema` parses it). A refused `PUT` is an `ApiError` with code
-   * `upload_refused`; the server's own errors keep their codes. Errors toast, as for any mutation.
-   */
-  async upload<T>(
-    target: string,
-    file: File,
-    options: ApiRequestOptions<T> & { fields?: Record<string, unknown> } = {}
-  ): Promise<T> {
-    const { fields, ...rest } = options
-    const toastOnError = rest.showErrorToast ?? true
-    const ticket = await request(UPLOADS_PATH, {
-      method: 'POST',
-      ...withBody({ target, name: file.name, contentType: file.type, size: file.size, fields }),
-      schema: createUploadResponseSchema,
-      showErrorToast: toastOnError,
-    })
-    // No cookie: the URL is its own credential, and R2 is another origin.
-    const put = await fetch(ticket.url, {
-      method: ticket.method,
-      headers: ticket.headers,
-      body: file,
-      credentials: 'omit',
-    }).catch(() => null)
-    if (!put?.ok) {
-      const error = new ApiError({
-        error: 'The file could not be uploaded — try again',
-        statusCode: put?.status ?? 0,
-        code: 'upload_refused',
-      })
-      if (toastOnError) showToast(error.message, 'error')
-      throw error
-    }
-    return request<T>(confirmUploadPath(ticket.uploadId), {
-      method: 'POST',
-      showErrorToast: true,
-      ...rest,
-    })
-  },
+  upload,
+  postForm,
 }
 
 const UPLOADS_PATH = '/api/uploads'
+
+type UploadOptions<T> = ApiRequestOptions<T> & { fields?: Record<string, unknown> }
+
+/**
+ * Upload a file STRAIGHT to storage — the bytes never pass through the Worker. Three steps:
+ * `POST /api/uploads` (every check the target makes, before a byte moves), `PUT` the file to the
+ * URL it answers with exactly its headers, then `POST /api/uploads/:id/confirm`, whose answer is
+ * the target's (`schema` parses it). A refused `PUT` is an `ApiError` with code
+ * `upload_refused`; the server's own errors keep their codes. Errors toast, as for any mutation.
+ */
+function upload<T>(target: string, file: File, options?: UploadOptions<T>): Promise<T>
+/**
+ * The 0.45 call: multipart `POST` of `form` to `url`, exactly as {@link postForm}.
+ *
+ * @deprecated Kept so a plugin UI posting to its own `uploadPaths` route keeps compiling. Move the
+ * route to an `uploadTargets` entry and call `api.upload('<id>.<name>', file, { fields })`.
+ */
+function upload<T>(url: string, form: FormData, options?: ApiRequestOptions<T>): Promise<T>
+function upload<T>(
+  targetOrUrl: string,
+  body: File | FormData,
+  options: UploadOptions<T> = {}
+): Promise<T> {
+  if (typeof FormData !== 'undefined' && body instanceof FormData) {
+    return postForm<T>(targetOrUrl, body, options)
+  }
+  return directUpload<T>(targetOrUrl, body as File, options)
+}
+
+/**
+ * Multipart `POST` of a `FormData` to a plugin's OWN upload route (one under its `uploadPaths`).
+ * The same cookie, `X-Requested-With` marker, error envelope and `schema` handling as every other
+ * call; no JSON `Content-Type`, so the browser writes the multipart one. Errors toast.
+ *
+ * @deprecated Kept so a plugin that has not moved to `uploadTargets` keeps its upload page. Declare
+ * an `uploadTargets` entry and call `api.upload('<id>.<name>', file, { fields })` instead. It goes
+ * in a release that only removes deprecated API.
+ */
+function postForm<T>(url: string, form: FormData, options?: ApiRequestOptions<T>): Promise<T> {
+  return request<T>(url, { method: 'POST', body: form, showErrorToast: true, ...options })
+}
+
+async function directUpload<T>(
+  target: string,
+  file: File,
+  options: UploadOptions<T> = {}
+): Promise<T> {
+  const { fields, ...rest } = options
+  const toastOnError = rest.showErrorToast ?? true
+  const ticket = await request(UPLOADS_PATH, {
+    method: 'POST',
+    ...withBody({ target, name: file.name, contentType: file.type, size: file.size, fields }),
+    schema: createUploadResponseSchema,
+    showErrorToast: toastOnError,
+  })
+  // No cookie: the URL is its own credential, and R2 is another origin.
+  const put = await fetch(ticket.url, {
+    method: ticket.method,
+    headers: ticket.headers,
+    body: file,
+    credentials: 'omit',
+  }).catch(() => null)
+  if (!put?.ok) {
+    const error = new ApiError({
+      error: 'The file could not be uploaded — try again',
+      statusCode: put?.status ?? 0,
+      code: 'upload_refused',
+    })
+    if (toastOnError) showToast(error.message, 'error')
+    throw error
+  }
+  return request<T>(confirmUploadPath(ticket.uploadId), {
+    method: 'POST',
+    showErrorToast: true,
+    ...rest,
+  })
+}

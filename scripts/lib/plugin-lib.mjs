@@ -3456,6 +3456,69 @@ export function declaredTools(source, constants = new Map()) {
   return out
 }
 
+/** The request-body readers that take a form: Hono's `c.req.parseBody()`, `Request.formData()`. */
+const FORM_BODY_READERS = new Set(['parseBody', 'formData'])
+/** What lifts the host's 1 MB body cap for a plugin: the upload seams and a public body limit. */
+const BODY_CAP_DECLARATIONS = ['uploadTargets', 'uploadPaths', 'uploadLimits', 'bodyLimitBytes']
+
+/**
+ * A plugin route that reads a form body while the plugin declares nothing that lifts the host's
+ * 1 MB body cap (`apiBodyLimit`): no `uploadTargets`, no deprecated `uploadPaths` / `uploadLimits`,
+ * no public mount `bodyLimitBytes`. Such a route answers 413 for any file above 1 MB, whatever its
+ * own `bodyLimit` allows — and nothing says so until somebody uploads a large file.
+ *
+ * A `warn`, never a `fail`: a small urlencoded form is a fine use of `parseBody`. Parsed (the
+ * TypeScript AST), so a comment or a string naming either reader is not a read, and a comment
+ * naming `uploadPaths` is not a declaration. One finding per plugin, at the first read.
+ *
+ * @param {string} pluginId
+ * @param {readonly { file: string, text: string }[]} sources the plugin's non-test sources
+ */
+export function uploadBodyProblems(pluginId, sources) {
+  const ts = typescript()
+  if (sources.some(s => BODY_CAP_DECLARATIONS.some(name => declaresProperty(s.text, name)))) {
+    return []
+  }
+  for (const { file, text } of sources) {
+    const sf = ts.createSourceFile(file, String(text), ts.ScriptTarget.Latest, true)
+    let at = null
+    const walk = node => {
+      if (at) return
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        FORM_BODY_READERS.has(node.expression.name.text)
+      ) {
+        at = node
+        return
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(sf)
+    if (!at) continue
+    const reader = at.expression.name.text
+    return [
+      {
+        severity: 'warn',
+        pluginId,
+        file,
+        line: sf.getLineAndCharacterOfPosition(at.getStart(sf)).line + 1,
+        kind: 'upload-body-cap',
+        problem:
+          `reads a form body (\`${reader}()\`) but declares no uploadTargets, uploadPaths or ` +
+          'uploadLimits, so the host caps that request at 1 MB: a larger file is a 413 whatever ' +
+          "the route's own bodyLimit allows",
+        fix:
+          'move the upload to an `uploadTargets` entry (docs/CONCEPTS.md §16). For a route that ' +
+          "must keep taking the bytes until then, declare its prefix in the deprecated `uploadPaths` (`'/api/" +
+          `${pluginId}/upload'\`, 10 MB) or its exact path in \`uploadLimits\` (up to 50 MiB). ` +
+          'A small text-only form needs neither: ignore this warning',
+      },
+    ]
+  }
+  return []
+}
+
 /**
  * The kit's own name in a plugin tool's title or description. Built from parts so the rename
  * leaves it alone: in a copy too, a plugin's tool text must not carry the kit's name (a client

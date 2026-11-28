@@ -146,6 +146,7 @@ import {
   undeclaredManifestEvents,
   undeclaredSkillDirs,
   unresolvedPluginImports,
+  uploadBodyProblems,
   withoutDependencies,
   workerExportNames,
 } from './lib/plugin-lib.mjs'
@@ -2758,6 +2759,16 @@ function cmdCheck(args, host) {
     for (const { file, text } of sources) {
       const tools = declaredTools(text, constants)
       if (tools.length > 0) toolDeclarations.push({ pluginId: manifest.id, file, tools })
+    }
+    // **A multipart route under the 1 MB cap.** Server sources only: the UI half reads no request.
+    const serverSources = sources.filter(s => !/\/ui\//.test(s.file.slice(tree.length)))
+    for (const p of uploadBodyProblems(manifest.id, serverSources)) {
+      add(p.severity, `${p.pluginId}:${p.kind}`, {
+        file: p.file,
+        line: p.line,
+        problem: p.problem,
+        fix: p.fix,
+      })
     }
   }
   for (const p of toolProblems(toolDeclarations)) {
