@@ -234,7 +234,8 @@ never deletes one, and `pnpm remove` on a dependency is printed rather than run.
 plugin's Claude Code hooks, and lists under **Left in place** the host files it seeded — relay that
 list; they are the person's to delete or keep.
 
-**Moving an app-owned plugin into a domain is not a removal.** Follow `docs/ADAPTING.md` §3c: copy
+**Moving an app-owned plugin into a domain is not a removal.** Follow the adoption recipe in
+`docs/CONCEPTS.md` §20: copy
 its trees to `apps/web/src/<id>/` and the other domain roots FIRST, then
 `pnpm plugin remove <id> --apply --allow-dirty` only to unwire it, and **skip the drop migration**:
 the domain re-exports the same tables, so `pnpm db:generate` must print "No schema changes". Show

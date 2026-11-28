@@ -7,7 +7,7 @@
  * A domain is where this app's own concepts and logic live — `apps/web/src/<id>/` with `index.ts`
  * (`defineDomain`), `server/`, `ui/`, `db/` and at most one `public.ts`. A plugin is a reusable
  * capability that works across domains and across apps; it goes through `pnpm plugin add` and never
- * appears here. Moving an app-owned plugin here: `docs/ADAPTING.md` §3c.
+ * appears here. Moving an app-owned plugin here: `docs/CONCEPTS.md` §20.
  *
  * App-owned: `kit:upgrade` never writes to this file (it creates it, empty, in a copy that has
  * none) and the core guard never asks about it. Its twins: `app-ui.ts` (UI halves), `app-schema.ts`

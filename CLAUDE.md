@@ -26,7 +26,7 @@ zod contracts (`packages/shared`). `AGENTS.md` symlinks here.
 > **Domain or plugin?** (`docs/CONCEPTS.md` §20) A **domain** holds this app's own concepts and logic
 > (`apps/web/src/<id>/`, `defineDomain`, listed by hand in `src/app.ts` and its twins); a **plugin**
 > is a reusable capability that works across domains and across apps. A new process is a domain, not
-> a new copy; an app-owned plugin stays one unless moved (`docs/ADAPTING.md` §3c). Both are **units**:
+> a new copy; an app-owned plugin stays one unless moved (`docs/CONCEPTS.md` §20). Both are **units**:
 > same slots and namespaces, one boundary check (`scripts/lib/units.mjs`). Another domain is reached
 > through its `public.ts` along a `dependsOn` edge, or by its event; its tables only with a warning.
 > `example-hr` / `example-sales` are the examples (fresh copies only).

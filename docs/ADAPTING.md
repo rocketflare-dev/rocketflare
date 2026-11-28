@@ -191,7 +191,8 @@ redefine. Domains and plugins are both **units**: the same slots, the same names
 prefixed from the id, `<id>.x` jobs and events, `/api/<id>`, `<id>:…` query keys) and one boundary
 check, `scripts/lib/units.mjs`, run by `tests/config/units.test.ts` and `pnpm plugin check`. A
 domain reaches another through that domain's `public.ts` along a `dependsOn` edge, or by handling
-its event. An app-owned plugin you built before domains existed can stay a plugin; §3c moves it.
+its event. An app-owned plugin you built before domains existed can stay a plugin;
+`docs/CONCEPTS.md` §20 has the recipe that moves it.
 
 The layer walk is the same whichever it is; what changes is where the line goes. The contract comes
 first and lives in the shared package, so the API, the UI and the CLI parse one schema.
@@ -449,78 +450,9 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 
 ## 3c. Adopting an app-owned plugin as a domain
 
-A copy made before domains existed may hold its own processes as in-tree plugins. They keep
-working as plugins, and each one is already a unit. Move one only when it holds this app's own
-concepts, no other app installs it, and no other repository imports its entries. It is a recipe,
-not a command, and it keeps the id and every table name, so there is no migration and no data
-change. It was rehearsed on the kit's own `example-feature`, whose example SSO slots are the
-"before you start" case below.
-
-**Before you start.** A domain cannot fill `loginMethods`, `ssoPolicy`, `publicSites` or
-`apiPrefixes` (nor the deprecated `agentTools`, `uploadPaths`, `uploadLimits`). A plugin that does
-keeps those in a plugin: split them into a small plugin of their own, or leave the whole thing a
-plugin. A plugin never imports a domain, so another plugin that imports this one's entries, or
-names it in `requires.plugins`, moves with it or first. Start from a clean branch.
-
-1. **Copy the trees to their domain places**, same id. Copy rather than move, because step 2
-   deletes the originals:
-   - `apps/web/src/plugins/<id>/` → `apps/web/src/<id>/`, leaving out `plugin.json`, with its
-     `tests/` → `apps/web/tests/<id>/` (the `api/`, `ui/`, `config/` folders keep their names and
-     join the same vitest projects);
-   - `packages/shared/src/plugins/<id>/` → `packages/shared/src/<id>/`;
-   - `apps/cli/src/plugins/<id>/` → `apps/cli/src/<id>/`.
-2. **Unwire the plugin**: `pnpm plugin remove <id>`, read the plan, then
-   `pnpm plugin remove <id> --apply --allow-dirty` (the copies make the tree dirty). It deletes the
-   old trees and the plugin's skill, takes its lines out of the six barrels (an emptied `schema.ts`
-   keeps its `export {}` marker) and drops its surface from `.rocketflare.json`. **Skip the human
-   step it prints**: there is no drop migration, because the tables are about to come back under
-   the same names. Keep the skill with `git restore --source=HEAD .claude/skills/<id>` if you want
-   it. Never edit the barrels by hand; the core guard seals them.
-3. **Rewrite the imports** for the new depth:
-   - `@rocketflare/shared/plugins/<id>/…` → `@rocketflare/shared/<id>/…`, everywhere;
-   - in the shared tree, one `../` fewer to a kit module (`../../pagination` → `../pagination`)
-     and `../types` → `../plugins/types`;
-   - in a table file, one `../` fewer to `db/schema/kit` (`../../../../db/schema/kit` →
-     `../../../db/schema/kit`); it stays relative, because drizzle-kit resolves no alias;
-   - in the CLI tree, `../api` → `../plugins/api`;
-   - in the moved tests, `../../<file>` → `../../../src/<id>/<file>`;
-   - in any other unit, `@/plugins/<id>` → `@/<id>/public`: move what those callers used out of
-     the old published entry into one `apps/web/src/<id>/public.ts` (types, zod contracts and
-     functions that take the caller's context, never module state).
-4. **Declare it.** The server entry's object `satisfies ServerPlugin<typeof shared>` becomes
-   `defineDomain({ id: shared.id, shared, …the same slots })` from `@/plugins/api`; the UI entry's
-   becomes `defineDomainUi({ id: shared.id, shared, … })` from `@/plugins/api/ui-wiring`. The
-   shared and CLI entries keep their shapes (`SharedDomain` is `SharedPlugin`). Then:
-   - **tables**: the plugin's tables already start with the id's first segment and `_`, which is
-     also a domain's default, so declare nothing. Add `tablePrefix` only when they do not. When
-     another unit's id shares that first segment (`crm-leads` and `crm-deals`), give each an exact
-     `tables: [...]` list;
-   - **`dependsOn: ['<other>']`** for every domain whose `public.ts` it now imports;
-   - a test that read a slot off the entry (`server.mounts[0]`) now sees `ServerDomain`, where
-     every slot is optional: write `server.mounts?.[0]`.
-5. **List it**: one line in each app list it has a half for — `apps/web/src/app.ts`, `app-ui.ts`,
-   `app-schema.ts` (`export * from './<id>/db/schema'`), `packages/shared/src/app.ts`,
-   `apps/cli/src/app.ts`. These files are app-owned; nothing else names the domain.
-6. **Check**, in this order: `pnpm lint:fix`, `pnpm typecheck`, `pnpm db:generate` (it must print
-   "No schema changes, nothing to migrate"), `pnpm test config apps/web/tests/config/units.test.ts`
-   (the boundary check), `pnpm test api apps/web/tests/<id>`, then `pnpm gate`.
-
-What the checks say when a step is missed:
-
-| Missed | Who says it | What it says |
-|---|---|---|
-| step 2 (trees moved, plugin not removed) | `pnpm plugin check` | `apps/web/src/plugins/<id>/plugin.json is missing, and the surface says '<id>' is installed` |
-| an identity slot left in `defineDomain` | `pnpm typecheck` | TS2353 `'loginMethods' does not exist in type 'DomainDefinition<…>'` |
-| two units in one table namespace | boundary check | `defines the table <t>, inside the domain '<d>'s namespace ('<p>_') — give '<d>' an exact tables: [...] list` |
-| `dependsOn` | boundary check | `imports '@/<d>/public' from the domain '<d>', which its dependsOn does not list` |
-| a caller reaching past `public.ts` | boundary check | `imports '@/<d>/…', inside the domain '<d>' — reach '<d>' through '@/<d>/public'` |
-| a plugin still importing it | boundary check | `imports '…' from the app's domain '<d>'` |
-| a table name changed | `pnpm db:generate` | a rename prompt or a new migration: put the old name back |
-
-`pnpm plugin check` runs the same boundary check, but once the last plugin is gone it prints "No
-plugins installed — nothing to check" when nothing fails, so use the config test as the record.
-The way back, a domain into a plugin, is the same steps reversed plus a `plugin.json` (§16 of
-`docs/CONCEPTS.md`, "authoring" in `/rf-plugin`); there is no command for either direction yet.
+The recipe is `docs/CONCEPTS.md` §20, "Adopting an app-owned plugin as a domain". It lives there
+because `kit:upgrade` ports CONCEPTS into a copy and never ports this file, and the copies made
+before domains existed are the ones that need it.
 
 ## 4. Keep the docs true
 

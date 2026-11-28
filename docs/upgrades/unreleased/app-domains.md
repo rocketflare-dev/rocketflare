@@ -23,7 +23,7 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 - `@/plugins/api/ui-wiring` exports `defineDomainUi` first, so a domain's UI entry loads when a test imports it before anything else (it crashed with "defineDomainUi is not a function" once a second domain was listed); `tests/example-hr/config/ui-entry.test.ts` pins it.
 - `tests/config/knowledge-entity-types.test.ts` and the events check in `tests/config/plugins.test.ts` read every unit, not only plugins, so a domain's entity types and events pass them.
 - The rule for where code goes is the same in every doc and skill: a domain holds this app's own concepts and logic; a plugin is a reusable capability that works across domains and across apps. `docs/POSITIONING.md` is new and holds the positioning; `CLAUDE.md`, the README, `docs/CONCEPTS.md` and `docs/ADAPTING.md` open with its first line.
-- `docs/ADAPTING.md` §3c is the recipe for adopting an app-owned plugin as a domain, rehearsed on `example-feature`; `/rf-how-do-i` plans an app's own process as a domain, and its worked orders slice is now a domain.
+- `docs/CONCEPTS.md` §20 ("Adopting an app-owned plugin as a domain") is the recipe for adopting an app-owned plugin as a domain, rehearsed on `example-feature`; `/rf-how-do-i` plans an app's own process as a domain, and its worked orders slice is now a domain.
 
 ## How to apply
 
@@ -31,9 +31,9 @@ An app can now hold its own concepts in app domains (`defineDomain`, listed in `
 - Skip migration `0038_kit-example-domains.sql`: it creates only the example tables. Run `pnpm db:generate` and confirm it produces no migration.
 - Leave `example-hr` and `example-sales` out; the upgrade records them absent in `.rocketflare.json`.
 - If one of your plugins has the id `core`, `kit` or `app`, rename it before `pnpm plugin check`.
-- An app-owned plugin may stay a plugin: it is already a unit. To move one into a domain, follow `docs/ADAPTING.md` §3c after this upgrade — copy its trees out, `pnpm plugin remove <id> --apply --allow-dirty`, `defineDomain`, one line per app list, and no migration (`pnpm db:generate` must print "No schema changes").
+- An app-owned plugin may stay a plugin: it is already a unit. To move one into a domain, follow the recipe in `docs/CONCEPTS.md` §20 after this upgrade — copy its trees out, `pnpm plugin remove <id> --apply --allow-dirty`, `defineDomain`, one line per app list, and no migration (`pnpm db:generate` must print "No schema changes").
 - Take `apps/web/src/plugins/api/ui-wiring.ts` as it is, keeping the `biome-ignore-all` comment, or `pnpm lint:fix` moves the export back.
-- Take the docs as they are where you have not rewritten them (`docs/POSITIONING.md`, `docs/ADAPTING.md` §3 and §3c, `docs/CONCEPTS.md` §16 and §20, the `rf-how-do-i`, `rf-plugin` and `rf-design` skills); where you have, carry over the rule's wording.
+- Take the docs as they are where you have not rewritten them (`docs/POSITIONING.md`, `docs/ADAPTING.md` §3, `docs/CONCEPTS.md` §16 and §20, the `rf-how-do-i`, `rf-plugin` and `rf-design` skills); where you have, carry over the rule's wording.
 
 ## Conflicts to expect
 
