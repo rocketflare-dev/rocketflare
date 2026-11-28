@@ -191,3 +191,39 @@ describe('upload', () => {
     expect(calls).toHaveLength(2)
   })
 })
+
+// Deprecated (0.46.0): a plugin command posting to its own multipart route under `uploadPaths`.
+describe('postForm (deprecated)', () => {
+  it('posts the FormData with the API key and parses the answer', async () => {
+    const { fetch, calls } = mockFetch({
+      '/api/plugin-x/upload': () => jsonResponse({ id: 'f' }, 201),
+    })
+    const api = createApiClient({ serverUrl: 'http://test.local', apiKey: 'k', fetch })
+    const form = new FormData()
+    form.append('file', new Blob(['hi'], { type: 'text/plain' }), 'a.txt')
+    const schema = z.object({ id: z.string() })
+    expect(await api.postForm('/api/plugin-x/upload', form, { schema })).toEqual({ id: 'f' })
+    const init = calls[0]?.init
+    expect(init?.method).toBe('POST')
+    expect(init?.body).toBe(form)
+    expect(new Headers(init?.headers).get('authorization')).toBe('Bearer k')
+    expect(new Headers(init?.headers).get('content-type')).toBeNull()
+  })
+
+  it('maps the error envelope to CliApiError, and a schema mismatch to invalid_response', async () => {
+    const { fetch } = mockFetch({
+      '/api/plugin-x/upload': () =>
+        jsonResponse({ error: 'Too large', statusCode: 413, code: 'payload_too_large' }, 413),
+      '/api/plugin-x/odd': () => jsonResponse({ nope: true }, 201),
+    })
+    const api = createApiClient({ serverUrl: 'http://test.local', apiKey: 'k', fetch })
+    await expect(api.postForm('/api/plugin-x/upload', new FormData())).rejects.toMatchObject({
+      status: 413,
+      code: 'payload_too_large',
+    })
+    const schema = z.object({ id: z.string() })
+    await expect(
+      api.postForm('/api/plugin-x/odd', new FormData(), { schema })
+    ).rejects.toMatchObject({ code: 'invalid_response' })
+  })
+})

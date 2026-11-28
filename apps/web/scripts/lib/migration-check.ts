@@ -86,6 +86,13 @@ export function describeMigrationFailure(error: unknown, added: readonly string[
     const short = statement.length > 400 ? `${statement.slice(0, 400)}…` : statement
     lines.push('  The statement:', `    ${short}`)
   }
+  if (root.code === '42703') {
+    lines.push(
+      '  A column that does not exist YET is usually one this migration adds further down:',
+      '  drizzle-kit can write a generated column (`GENERATED ALWAYS AS (…)`) or an index that',
+      '  reads a new column before the `ADD COLUMN` for it. Move the `ADD COLUMN` statements first.'
+    )
+  }
   lines.push(
     added.length > 0
       ? `  New in this run: ${added.map(f => `migrations/${f}`).join(', ')} — written, applied nowhere.`
@@ -95,4 +102,87 @@ export function describeMigrationFailure(error: unknown, added: readonly string[
     '  then check again with `pnpm db:generate --check`.'
   )
   return lines
+}
+
+export interface GeneratedColumnOrderIssue {
+  table: string
+  /** The generated column whose expression reads `column`. */
+  generated: string
+  column: string
+  /** 1-based statement numbers in the file. */
+  usedAt: number
+  addedAt: number
+}
+
+const ALTER_TABLE_RE = /^\s*ALTER TABLE\s+(?:"[^"]+"\.)?"([^"]+)"/i
+const ADD_COLUMN_RE = /ADD COLUMN\s+(?:IF NOT EXISTS\s+)?"([^"]+)"/gi
+const GENERATED_RE = /ADD COLUMN\s+(?:IF NOT EXISTS\s+)?"([^"]+)"[^;]*?GENERATED ALWAYS AS\s*\(/i
+
+/** The parenthesised expression opening just before `start`, with string literals blanked. */
+function expressionAt(sql: string, start: number): string {
+  let depth = 1
+  let out = ''
+  let inString = false
+  for (let i = start; i < sql.length; i++) {
+    const ch = sql[i]
+    if (ch === "'") {
+      inString = !inString
+      out += ' '
+      continue
+    }
+    if (inString) {
+      out += ' '
+      continue
+    }
+    if (ch === '(') depth++
+    if (ch === ')') {
+      depth--
+      if (depth === 0) break
+    }
+    out += ch
+  }
+  return out
+}
+
+/**
+ * A generated column whose expression reads a column the SAME migration adds only later. Postgres
+ * refuses it (42703, column does not exist); drizzle-kit writes this order when one generate run
+ * carries a generated column's new input together with other schema changes. A static read, so it
+ * runs where the scratch check cannot (a Neon `DATABASE_URL`). Statements split on drizzle's
+ * `--> statement-breakpoint`; a word inside a string literal is not a reference.
+ */
+export function generatedColumnOrderIssues(sql: string): GeneratedColumnOrderIssue[] {
+  const statements = sql.split(/-->\s*statement-breakpoint/)
+  const added: { table: string; column: string; index: number }[] = []
+  statements.forEach((statement, index) => {
+    const table = ALTER_TABLE_RE.exec(statement)?.[1]
+    if (!table) return
+    for (const m of statement.matchAll(ADD_COLUMN_RE)) {
+      const column = m[1] ?? ''
+      if (!added.some(a => a.table === table && a.column === column)) {
+        added.push({ table, column, index })
+      }
+    }
+  })
+  const issues: GeneratedColumnOrderIssue[] = []
+  statements.forEach((statement, index) => {
+    const table = ALTER_TABLE_RE.exec(statement)?.[1]
+    const generated = GENERATED_RE.exec(statement)
+    if (!table || !generated) return
+    const expression = expressionAt(statement, generated.index + generated[0].length)
+    for (const a of added) {
+      if (a.table !== table || a.index <= index) continue
+      const escaped = a.column.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      if (new RegExp(`(^|[^A-Za-z0-9_"])"?${escaped}"?(?![A-Za-z0-9_])`).test(expression)) {
+        issues.push({
+          table,
+          generated: generated[1] ?? '',
+          column: a.column,
+          usedAt: index + 1,
+          addedAt: a.index + 1,
+        })
+      }
+    }
+  })
+  return issues
 }

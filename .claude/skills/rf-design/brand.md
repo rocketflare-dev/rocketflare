@@ -141,3 +141,11 @@ tomls, never a second rename. Re-running this step when a real brand guide arriv
 rename, `pnpm design:docs --apply-brand` writes it into the two token files, and `pnpm web test:ui`
 confirms it. When a later kit release brings a new default look, `pnpm design:docs
 --adopt-default-look` takes it and re-applies `brand.css` on top; it runs only when asked.
+If they keep their own look instead, `pnpm design:docs --add-missing-tokens` writes the tokens the
+new look added (the rail, the series, the flare, the selection and bubble surfaces, the radii)
+derived from their palette, held to the contrast floors, and never changes a token they have;
+show them the `added …` lines and the app, and tune any value they dislike in place. Both
+commands warn when `@theme` names a face the app does not load and print the `main.tsx` import
+and the `pnpm --filter ./apps/web add …` to run: do both, or the app renders in the fallback face.
+A copy whose own `scripts/design-docs.mjs` predates a fix runs the newer kit's instead:
+`node <kit>/scripts/design-docs.mjs --root <app> --from <kit> --add-missing-tokens`.

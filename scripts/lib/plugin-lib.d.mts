@@ -532,6 +532,20 @@ export interface ToolProblem {
 export function toolProblems(
   declarations: readonly { pluginId: string; file: string; tools: readonly DeclaredTool[] }[]
 ): ToolProblem[]
+export interface UploadBodyProblem {
+  severity: 'warn'
+  pluginId: string
+  file: string
+  line: number
+  kind: 'upload-body-cap'
+  problem: string
+  fix: string
+}
+/** A route reading a form body in a plugin that declares nothing lifting the 1 MB body cap. */
+export function uploadBodyProblems(
+  pluginId: string,
+  sources: readonly { file: string; text: string }[]
+): UploadBodyProblem[]
 
 export function resolveSubdir(input: {
   flag?: string | null

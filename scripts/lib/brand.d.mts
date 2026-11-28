@@ -7,6 +7,9 @@ export function parseBrand(brandCss: string | null | undefined): {
   overrides: Record<BlockKind, Record<string, string>>
   problems: string[]
 }
+export function topLevelRules(
+  css: string
+): Array<{ prelude: string; start: number; end: number; open: number; body: string | null }>
 export function setDeclaration(body: string, prop: string, value: string): string | null
 export interface BrandResult {
   tokensCss: string
@@ -59,6 +62,45 @@ export function adoptDefaultLook(inputs: {
   indexHtml: string | null
   /** `<file> <block> <prop>` for each of the app's own tokens kept beside the defaults. */
   kept: string[]
+  /** `<file> <prelude>` or `<file> <prelude> <prop>` for each statement of the app's own outside the token blocks carried into the rebuilt theme-tokens.css. */
+  carried: string[]
   missing: string[]
   brand: BrandResult | null
 }
+export interface AddedToken {
+  file: 'theme-tokens.css' | 'index.css'
+  kind: BlockKind
+  prop: string
+  value: string
+  /** The app token the value was derived from, or null (a fixed hue, a turned shadow). */
+  from: string | null
+  /** Its lightness was moved to pass a contrast pair. */
+  adjusted: boolean
+}
+export function addMissingTokens(inputs: { current: LookFiles; defaults: LookFiles }): {
+  tokensCss: string
+  indexCss: string
+  added: AddedToken[]
+  skipped: string[]
+  missing: string[]
+  /** Pairs no added value could pass; when set, write nothing. */
+  failing: string[]
+}
+export function fontsourcePackage(family: string): string
+export interface FontLoad {
+  family: string
+  tokens: string[]
+  pkg: string
+  version: string | null
+  imported: boolean
+  declared: boolean
+  loaded: boolean
+}
+export function fontLoading(inputs: {
+  tokensCss: string
+  indexCss?: string
+  mainTsx?: string
+  packageJson?: string
+  indexHtml?: string
+  kit?: { mainTsx?: string; packageJson?: string }
+}): FontLoad[]

@@ -4,7 +4,7 @@ previous: 0.46.0
 date: null
 breaking: false
 migrations: []
-areas: [api, shared, ui, config, docs]
+areas: [api, cli, db, shared, ui, plugins, config, docs]
 touches_surfaces: []
 requires_surfaces: []
 manual: false
@@ -24,11 +24,19 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - The Vite build fills `index.html`'s `<title>` from `APP_NAME` and its meta description from `APP_TAGLINE` (the name when there is no tagline), read from `[vars]` in `apps/web/wrangler.toml` (`pageIdentityPlugin` in `apps/web/vite.config.ts`, new `scripts/lib/page-identity.mjs`).
 - `scripts/rename.mjs` writes `design.json` `app.tagline` to `APP_TAGLINE` in both wrangler tomls (`applyTagline` in `scripts/lib/rename-lib.mjs` now takes a toml), no longer to `login-panel.ts`.
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
+- Fix: `pnpm design:docs --adopt-default-look` keeps an app's own statements in `apps/web/src/shared/theme-tokens.css` outside the token blocks: a standalone rule such as `[data-brand-logo] { … }`, a per-theme or `@media` rule, and its changed or extra `:root` values (the logo mark's colours). It rebuilt the file from the kit's and dropped them without a word; each one now prints a `kept …` line. `adoptDefaultLook` (`scripts/lib/brand.mjs`) returns them as `carried`; `topLevelRules` is new.
+- New: `pnpm design:docs --add-missing-tokens` keeps an app's own look across a release whose look added tokens. It writes each token the kit release's look defines and the app's token files lack, derived from the app's own palette (a token the kit holds equal to one of the app's takes the app's value; a colour keeps the kit's offset from its nearest app colour), nudges each added value's lightness until every contrast pair passes, prints an `added …` line per token, and changes no token the app has. It reads the same defaults as `--adopt-default-look` (`--from`, `--kit-ref`) and exits 1, writing nothing, when a pair cannot pass against a token of the app's that already fails. `addMissingTokens` in `scripts/lib/brand.mjs`; `docs/CONCEPTS.md` §7.
+- Fix: `--adopt-default-look` (and `--add-missing-tokens`, `--apply-brand`) now warn when `@theme` names a face the app does not load, with the `main.tsx` import and the `pnpm --filter ./apps/web add <package>@<version>` to run. Adopting the look named IBM Plex Sans in `@theme` while the app still loaded another face, so the app rendered in the system fallback without a word. `fontLoading` in `scripts/lib/brand.mjs`.
+- Fix: `scripts/design-docs.mjs` run from inside another checkout without `--root` now exits 2 and names the `--root` to pass, and `--from` naming the checkout being worked on is refused; both were silent no-ops. A newer kit's script runs on a copy as `node <kit>/scripts/design-docs.mjs --root <copy> --from <kit> …`.
 - Fix: `pnpm plugin upgrade` and `pnpm plugin remove` no longer delete a core-edit line the kit itself now carries. Reverting an edit the release dropped keeps one copy of any line the kit's own copy of the file contains at the app's kit release (read from the `.upgrade/kit.git` mirror), any vite dev-proxy entry for a path the kit reserves (`/mcp`, `/oauth`, the OAuth discovery documents), and any line another installed plugin still declares (`revertCoreEditsKeeping`, `coreLineOwner` in `scripts/lib/plugin-lib.mjs`). An analytics upgrade from 3.11 had deleted the kit's `'/mcp': proxyTo(),` line from `apps/web/vite.config.ts`.
 - Fix: `pnpm plugin upgrade <id>` on a plugin whose recorded `repo` cannot be reached (an app's own in-tree plugin) stops with exit 3 before any clone, saying `<id> has no reachable source` and that an app's own plugin is edited in place. It used to try two clones and print only git's errors.
 - Fix: `pnpm dev:db:up` keeps or refuses a port somebody chose, and never moves it. `--port <n>` (new) or `DEV_DB_PORT=<n>`, or a `.dev.vars` port other than the example's 5432, is used when free or this checkout's own, and otherwise `up` exits 1 naming the container or program that holds it. Only a fresh checkout still on 5432 moves, and `--json` adds the `reason`. A port now counts as held when any running container publishes it or a bind or connect test fails. Before, a port outside 5432–5451 always read as taken, and a container published on one address could pass the bind test on another, so a database could move silently onto another project's.
 - Fix: `/rf-agent-docs`'s check no longer reports a placeholder link as broken: a link inside a code span or a fenced block, and a target such as `url`, `<path>` or `…`, are skipped.
 - Fix: `scripts/detach.sh` keeps every file the kit tracks. It re-added the tree with `git add -A`, which obeys the person's own global gitignore, so a machine that ignores `.claude` got a first commit with no skills, rules or hooks. It now adds exactly the tracked list, and still adds no ignored file.
+- Fix: a plugin UI posting `FormData` to its own deprecated `uploadPaths` route compiles and works again. 0.46.0 kept such a route working on the server but dropped the client call. `api.postForm(url, formData, { schema })` (UI, also `@/plugins/api/ui`) and `ApiClient.postForm(path, form, { schema })` (CLI) are back, deprecated. Each sends the same cookie or API key, CSRF marker and error envelope as the rest of the client. The 0.45 call `api.upload(url, formData, options)` is a deprecated overload of `api.upload` that does the same.
+- `pnpm plugin check` warns when a plugin's server source reads a form body (`parseBody()` / `formData()`) and the plugin declares no `uploadTargets`, `uploadPaths`, `uploadLimits` or public-mount `bodyLimitBytes`. Such a route gets the 1 MB body cap, so any larger file is a 413 whatever the route's own `bodyLimit` says (`docs/CONCEPTS.md` §16).
+- `pnpm db:generate` refuses a new migration in which a generated column's expression reads a column that the same file only adds further down (Postgres: 42703 `column … does not exist`). The check is static, so it also runs where the scratch check is skipped. `--check` now runs it over every migration. A 42703 from the scratch check says to move the `ADD COLUMN` first.
+- Docs: `docs/upgrades/0.45.0.md` step 13 says to check the statement order of the `kit-knowledge-context` migration and to move the two `ADD COLUMN`s above the `search_vector` regeneration.
 
 ## How to apply
 
@@ -36,16 +44,23 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 2. Check that `APP_NAME` in `[vars]` of both tomls is the name the UI should show: the UI now shows that value, where it previously showed the `APP_NAME` constant in `apps/web/src/ui/hooks/useAppInfo.ts`.
 3. `apps/web/src/ui/components/shared/LogoMark.tsx` is a `manual` path, so the upgrade does not replace it. To use the logo setting, port the kit's `LogoMark` wrapper (it reads `logoUrl` from `useAppInfo()` and renders an `<img data-brand-logo>` with an `onError` fallback) around the app's own inline mark; an app that keeps its inline mark and sets no `APP_LOGO_URL` needs no change.
 4. Optional: to serve the logo as a setting, put the files under `apps/web/src/ui/public/` and set `APP_LOGO_URL` and `APP_FAVICON_URL` in `[vars]` of both tomls to their root-relative paths, or to `https://` URLs.
-5. Optional: to style a configured logo (round a JPEG's corners, add a ring, filter it in the dark theme), add a rule such as `[data-brand-logo] { border-radius: 22%; }` to `apps/web/src/shared/theme-tokens.css`, and `[data-theme$="-dark"] [data-brand-logo] { … }` for a dark-theme difference; the rule needs the `data-brand-logo` attribute on the `<img>` in the app's `LogoMark.tsx`, and `pnpm design:docs --adopt-default-look` drops the rule from `theme-tokens.css`, so re-add the rule after running that command.
+5. Optional: to style a configured logo (round a JPEG's corners, add a ring, filter it in the dark theme), add a rule such as `[data-brand-logo] { border-radius: 22%; }` to `apps/web/src/shared/theme-tokens.css`, and `[data-theme$="-dark"] [data-brand-logo] { … }` for a dark-theme difference; the rule needs the `data-brand-logo` attribute on the `<img>` in the app's `LogoMark.tsx`. `pnpm design:docs --adopt-default-look` keeps it (it prints `kept theme-tokens.css [data-brand-logo]`).
 6. Replace any app import of `LOGIN_PANEL` that decides what a page shows with `useAppInfo()`'s `loginPanelArt` and `tagline`.
 7. Check that `apps/web/src/ui/index.html` has a `<title>` element: the build now fails without one.
 8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
 9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
-10. If `apps/web/vite.config.ts` lost its `'/mcp': proxyTo(),` line after an earlier `pnpm plugin upgrade analytics` (it sits in `server.proxy`, after `'/ws'`), put the line back. The other kit proxy entries, `'/oauth'` and the `'^/\\.well-known/…'` entry, should be there too: compare that block with the kit's `apps/web/vite.config.ts`.
-11. If an app's `.dev.vars` carries a `DATABASE_URL` port that something else now holds, `pnpm dev:db:up` stops and names the holder: free the port, or pick another with `pnpm dev:db:up --port <n>`.
-12. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+11. If you ported 0.46.0 by hand and rewrote a plugin's UI or CLI call that posted `FormData` to the plugin's own `uploadPaths` route, you may restore the original call. In the UI, use `api.postForm(url, formData, options)`, or leave `api.upload(url, formData, options)` as it was before 0.46.0. In the CLI, use `client.postForm(path, form, { schema })`. Both are deprecated: the lasting fix is an `uploadTargets` entry in the plugin's own release (0.46.0 step 7).
+12. Run `pnpm plugin check`. For each `upload-body-cap` warning, decide whether the route takes files above 1 MB. If it does, declare its prefix in the plugin's `uploadPaths` (`'/api/<id>/…'`, up to 10 MB) or its exact path in `uploadLimits` (up to 50 MiB), or move it to `uploadTargets`. A small text-only form needs neither.
+13. Take `scripts/design-docs.mjs`, `scripts/lib/brand.{mjs,d.mts}` as they are.
+14. Optional, for an app that kept its own look when it crossed 0.45.0 (that note's step 25): after this upgrade is applied, run `pnpm design:docs --add-missing-tokens` to write any token of the look the app's blocks still lack, in place of adding them by hand, then `pnpm design:docs --contrast` and look at the app. Tune any added value in place: the command never changes a token the app already has.
+15. If `apps/web/vite.config.ts` lost its `'/mcp': proxyTo(),` line after an earlier `pnpm plugin upgrade analytics` (it sits in `server.proxy`, after `'/ws'`), put the line back. The other kit proxy entries, `'/oauth'` and the `'^/\\.well-known/…'` entry, should be there too: compare that block with the kit's `apps/web/vite.config.ts`.
+16. If an app's `.dev.vars` carries a `DATABASE_URL` port that something else now holds, `pnpm dev:db:up` stops and names the holder: free the port, or pick another with `pnpm dev:db:up --port <n>`.
 
 ## Conflicts to expect
+
+- `apps/web/src/ui/lib/api-client.ts` → `upload` is a standalone overloaded function and `postForm` is new, and `request()` again leaves out the JSON `Content-Type` for a `FormData` body → take the kit's file.
+- `apps/cli/src/api.ts` → `postForm` is back on `ApiClient`, and `sendRaw` takes `'POST'` → take the kit's lines.
 
 - `apps/web/src/ui/lib/login-panel.ts` → the type is imported from `@rocketflare/shared/branding` and the comment calls the constant a fallback → keep the app's `art` and `tagline` values.
 - `apps/web/src/ui/components/AuthCard.tsx` → `LoginPanel` reads `useAppInfo()` instead of `LOGIN_PANEL` → take the kit's lines.
@@ -60,5 +75,9 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 4. `curl -s http://localhost:3001/api/health` shows `name`, `tagline` and `loginPanelArt` with the values from `apps/web/.dev.vars` or the toml.
 5. After `pnpm web build:ui`, `apps/web/dist/ui/index.html` has `APP_NAME` from `apps/web/wrangler.toml` in `<title>` and `APP_TAGLINE` in `<meta name="description">`.
 6. `pnpm test config apps/web/tests/config/ui-shell-identity.test.ts` passes.
-7. `pnpm dev:db:up --port <a free port>` starts the database on that port and writes it to `apps/web/.dev.vars`.
-8. `pnpm gate` passes.
+7. `pnpm test ui apps/web/tests/ui/api-client.test.ts` passes, including the `postForm (deprecated)` cases.
+8. `pnpm --filter @rocketflare/cli test` passes, including `postForm (deprecated)`.
+9. `pnpm test config apps/web/tests/config/migration-check.test.ts` passes.
+10. After step 14, running `pnpm design:docs --add-missing-tokens` again prints `Nothing to add`, and `pnpm design:docs --contrast` passes.
+11. `pnpm dev:db:up --port <a free port>` starts the database on that port and writes it to `apps/web/.dev.vars`.
+12. `pnpm gate` passes.

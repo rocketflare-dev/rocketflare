@@ -132,4 +132,53 @@ describe('api-client', () => {
     stubFetch(new Response('', { status: 200 }))
     await expect(api.get('/api/thing/1')).resolves.toBeUndefined()
   })
+
+  // Deprecated (0.46.0): a plugin's own multipart route under `uploadPaths` keeps a client.
+  describe('postForm (deprecated)', () => {
+    function form() {
+      const body = new FormData()
+      body.append('file', new File(['hi'], 'a.txt', { type: 'text/plain' }))
+      body.append('title', 'A')
+      return body
+    }
+
+    it('posts the FormData itself, with the cookie and the CSRF marker but no JSON type', async () => {
+      const fetchMock = stubFetch(jsonResponse({ id: 'f' }, 201))
+      const body = form()
+      const schema = z.object({ id: z.string() })
+      await expect(api.postForm('/api/plugin-x/upload', body, { schema })).resolves.toEqual({
+        id: 'f',
+      })
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(url).toBe('/api/plugin-x/upload')
+      expect(init.method).toBe('POST')
+      expect(init.credentials).toBe('include')
+      expect(init.body).toBe(body)
+      // The browser writes the multipart Content-Type with its boundary; a JSON one breaks it.
+      expect(new Headers(init.headers).get('content-type')).toBeNull()
+      expect(new Headers(init.headers).get('x-requested-with')).toBe('fetch')
+    })
+
+    it('answers the shared error envelope as ApiError', async () => {
+      stubFetch(
+        jsonResponse({ error: 'Too large', statusCode: 413, code: 'payload_too_large' }, 413)
+      )
+      const error = (await api
+        .postForm('/api/plugin-x/upload', form(), { showErrorToast: false })
+        .catch(e => e)) as ApiError
+      expect(error).toBeInstanceOf(ApiError)
+      expect(error).toMatchObject({ status: 413, code: 'payload_too_large' })
+    })
+
+    it('api.upload(url, formData), the 0.45 call, still posts the form', async () => {
+      const fetchMock = stubFetch(jsonResponse({ id: 'f' }, 201))
+      const body = form()
+      await expect(api.upload('/api/plugin-x/upload', body)).resolves.toEqual({ id: 'f' })
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(url).toBe('/api/plugin-x/upload')
+      expect(init.body).toBe(body)
+      expect(new Headers(init.headers).get('content-type')).toBeNull()
+    })
+  })
 })
