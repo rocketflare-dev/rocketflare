@@ -102,6 +102,7 @@ credentials into it, not even as comments.
 ### 1.4 Database
 ```bash
 pnpm dev:db:up        # pgvector/pgvector:pg17, first free port from :5432 (apps/web/scripts/dev-db.mjs)
+pnpm dev:db:up --port 5682  # or DEV_DB_PORT=5682: that port, or a clear refusal naming who holds it
 pnpm dev:db:status    # every dev database on this machine, and which one is this checkout's
 pnpm web db:check     # apps/web/scripts/test-db-connection.ts
 pnpm db:migrate       # db-roles --phase=role → migrations → db-roles --phase=grants
@@ -117,8 +118,12 @@ A non-local `DATABASE_URL` skips the check with a note.
 
 **The port is chosen, not fixed.** `dev:db:up` runs `apps/web/scripts/dev-db.mjs`, which gives this
 checkout its own compose project, container and port: it keeps the port already in `DATABASE_URL`
-whenever that is still free or still this checkout's, and otherwise takes the next free one from
-5432 (skipping 5433, the test database) and writes it back to `apps/web/.dev.vars`. So a SECOND
+whenever that is still free or still this checkout's. A port somebody CHOSE — `--port <n>`,
+`DEV_DB_PORT=<n>`, or a `.dev.vars` port other than the example's `5432` — is never moved: when
+another container or program holds it, `up` stops and names the holder. Only a fresh checkout
+still on `5432` moves, to the next free port from 5432 (skipping 5433, the test database), says
+who held it, and writes the new port back to `apps/web/.dev.vars`. A port counts as held when any
+running container publishes it, or when a bind or connect test on it fails. So a SECOND
 checkout on the same machine starts its own database instead of failing on a taken port or quietly
 attaching to the first one's container — and a re-run never moves a database that is working.
 Everything downstream reads that one value: `db:migrate`, `seed` and `drizzle-kit` through dotenv,

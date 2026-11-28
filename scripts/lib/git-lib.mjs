@@ -42,6 +42,22 @@ export function makeGit(cwd) {
   return { git, quiet }
 }
 
+/**
+ * True when `repo` answers `git ls-remote` — one quiet round trip that never prompts for
+ * credentials. Asked before a FIRST clone, so a repo that leads nowhere fails once, at once,
+ * instead of through `ensureMirror`'s two clone attempts and git's own error text.
+ */
+export function repoReachable(repo, cwd = process.cwd()) {
+  if (typeof repo !== 'string' || repo === '') return false
+  const r = spawnSync('git', ['ls-remote', '-q', repo, 'HEAD'], {
+    cwd,
+    stdio: 'ignore',
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    timeout: 60_000,
+  })
+  return r.status === 0
+}
+
 /** True when the working tree at `cwd` has no uncommitted change. Returns the porcelain text. */
 export function dirtyTree(cwd) {
   return makeGit(cwd).quiet(['status', '--porcelain']).out.trim()

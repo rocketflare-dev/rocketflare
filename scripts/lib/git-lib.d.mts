@@ -14,6 +14,8 @@ export interface Git {
   quiet(args: string[], opts?: Record<string, unknown>): GitResult
 }
 export function makeGit(cwd: string): Git
+/** True when `repo` answers a quiet `git ls-remote` (no credential prompt). */
+export function repoReachable(repo: string, cwd?: string): boolean
 export function dirtyTree(cwd: string): string
 
 export interface Mirror {

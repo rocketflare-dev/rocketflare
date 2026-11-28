@@ -611,6 +611,122 @@ describe('pnpm plugin, with skills, end to end', () => {
     })
   })
 
+  // A plugin's old core edit that the kit later adopted: reverting the edit must not take the
+  // kit's own line with it (a copy's dev server once lost its `/mcp` proxy this way).
+  describe('core edits the kit owns', () => {
+    const vite = (extra?: string) =>
+      [
+        'export default {',
+        '  proxy: {',
+        "    '/api': proxyTo(),",
+        "    '/ws': proxyTo(),",
+        "    '/mcp': proxyTo(),",
+        ...(extra ? [extra] : []),
+        '  },',
+        '}',
+        '',
+      ].join('\n')
+    const edit = (lines: string[]) => ({
+      coreEdits: [{ file: 'apps/web/vite.config.ts', after: "'/ws': proxyTo(", lines }],
+    })
+
+    function installed(lines: string[], hostVite = vite()) {
+      const host = makeHost()
+      write(host, 'apps/web/vite.config.ts', hostVite)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'vite'])
+      const plugin = makePlugin({ skills: [], files: {}, manifest: edit(lines) })
+      const added = run(host, ['add', plugin, '--local', '--apply', '--allow-dirty'])
+      expect(added.status, added.out).toBe(0)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'installed'])
+      return { host, plugin }
+    }
+    const count = (text: string, needle: string) => text.split(needle).length - 1
+    const readVite = (host: string) =>
+      readFileSync(path.join(host, 'apps/web/vite.config.ts'), 'utf8')
+
+    it('upgrade keeps a reserved proxy line the release stopped declaring', () => {
+      const { host, plugin } = installed(["'/orders-api': proxyTo(),", "'/mcp': proxyTo(),"])
+      expect(count(readVite(host), "'/mcp'")).toBe(1)
+      writePluginVersion(plugin, {
+        version: '1.1.0',
+        skills: [],
+        files: {},
+        manifest: edit(["'/orders-api': proxyTo(),"]),
+      })
+      const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply'])
+      expect(up.status, up.out).toBe(0)
+      expect(count(readVite(host), "'/mcp': proxyTo(),")).toBe(1)
+      expect(readVite(host)).toContain("'/orders-api': proxyTo(),")
+      expect(up.out).toContain('kept (the kit or another plugin owns it): apps/web/vite.config.ts')
+    })
+
+    it("upgrade and remove keep a line the kit's own release carries, read from the kit mirror", () => {
+      // The host's kit release (`.rocketflare.json` kit.version) ships `/reports` itself.
+      const kitVite = vite("    '/reports': proxyTo(),")
+      const { host, plugin } = installed(
+        ["'/orders-api': proxyTo(),", "'/reports': proxyTo(),"],
+        kitVite
+      )
+      const kitSrc = mkdtempSync(path.join(tmpdir(), 'rf-kit-src-'))
+      sandboxes.push(kitSrc)
+      git(kitSrc, ['init', '-q'])
+      write(kitSrc, 'apps/web/vite.config.ts', kitVite)
+      git(kitSrc, ['add', '-A'])
+      git(kitSrc, ['commit', '-qm', 'kit'])
+      const { version } = JSON.parse(readFileSync(path.join(host, '.rocketflare.json'), 'utf8')).kit
+      git(kitSrc, ['tag', version])
+      git(host, ['clone', '-q', '--bare', kitSrc, path.join(host, '.upgrade/kit.git')])
+
+      writePluginVersion(plugin, {
+        version: '1.1.0',
+        skills: [],
+        files: {},
+        manifest: edit(["'/orders-api': proxyTo(),"]),
+      })
+      const up = run(host, ['upgrade', 'orders', '--to', '1.1.0', '--apply'])
+      expect(up.status, up.out).toBe(0)
+      expect(count(readVite(host), "'/reports': proxyTo(),")).toBe(1)
+      git(host, ['add', '-A'])
+      git(host, ['commit', '-qm', 'upgraded'])
+
+      const gone = run(host, ['remove', 'orders', '--apply'])
+      expect(gone.status, gone.out).toBe(0)
+      expect(readVite(host)).toBe(kitVite)
+    })
+
+    it('remove keeps a reserved proxy line and reverts the rest', () => {
+      const { host } = installed(["'/orders-api': proxyTo(),", "'/mcp': proxyTo(),"])
+      const gone = run(host, ['remove', 'orders', '--apply'])
+      expect(gone.status, gone.out).toBe(0)
+      expect(readVite(host)).toBe(vite())
+    })
+  })
+
+  describe('an app-owned plugin with no reachable source', () => {
+    it('upgrade stops at once, saying the plugin lives only in this app', () => {
+      const host = makeHost()
+      const plugin = makePlugin({ skills: [], files: {} })
+      expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+      // What an app records for a plugin it wrote itself: a repo URL that leads nowhere.
+      const nowhere = path.join(tmpdir(), `rf-no-such-repo-${process.pid}-${Date.now()}.git`)
+      const file = path.join(host, '.rocketflare.local.json')
+      const record = JSON.parse(readFileSync(file, 'utf8'))
+      for (const s of record.surfaces) if (s.source) s.source.repo = nowhere
+      writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`)
+
+      const up = run(host, ['upgrade', 'orders'])
+      expect(up.status, up.out).toBe(3)
+      expect(up.out).toContain(`orders has no reachable source (repo ${nowhere})`)
+      expect(up.out).toContain('lives only in this app')
+      expect(up.out).not.toMatch(/cannot clone/)
+      // `check` and `list` still read it from the tree.
+      expect(run(host, ['check']).status).toBe(0)
+      expect(run(host, ['list']).status).toBe(0)
+    })
+  })
+
   describe('appOwned paths', () => {
     const owned = 'apps/web/src/plugins/orders/app'
     const manifest = { appOwned: [owned] }
