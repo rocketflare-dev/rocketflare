@@ -116,6 +116,7 @@ import {
   pluginAnchor,
   pluginAppOwned,
   pluginClaudeHooks,
+  pluginCodeDirectories,
   pluginHostFiles,
   pluginIdProblem,
   pluginManifestProblems,
@@ -2721,7 +2722,9 @@ function cmdCheck(args, host) {
     // **Plugin imports resolve.** An import that resolves to nothing types as `any`, and every
     // type-level check over it then passes without checking anything — so an unresolved import
     // fails here instead (and a tree with no node_modules fails as one: run `pnpm install`).
-    const pluginSourceFiles = surfaceDirectories(s)
+    // Only the trees the host compiles: an example under `docs/plugins/<id>/` imports relative to
+    // where a reader will copy it, and nothing ever builds it where it sits.
+    const pluginSourceFiles = pluginCodeDirectories(s)
       .filter(d => existsSync(abs(d)))
       .flatMap(d => walk(abs(d)).map(f => `${d}/${f}`))
       .filter(f => /\.[cm]?[jt]sx?$/.test(f))
