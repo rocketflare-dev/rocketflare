@@ -38,6 +38,17 @@ export const KIT = Object.freeze({
    */
   preservedPattern: /\brocketflare-dev(?:\/[\w.-]+|(?![\w-]))/g,
   /**
+   * The kit's own website, restored after the pass like the org: the APEX `rocketflare.dev` with
+   * nothing before it but a scheme, a space or punctuation — the plugin catalogue
+   * (`rocketflare.dev/plugins`), the installer (`/install.sh`), the security page and its track
+   * record (`/security/…`), and the site itself. Every address of the APP's sits on a prefix
+   * (`app.`, `staging.`, `noreply@`, `admin@`) and still moves, so `[\w.@-]` before it is what
+   * tells the two apart. Rewritten, the kit's links became pages on the app's own domain that do
+   * not exist. `security@rocketflare.dev` moves on purpose: it is the default contact of a public
+   * audit report (`/rf-security`), which in a copy is the app's own report.
+   */
+  sitePattern: /(?<![\w.@-])rocketflare\.dev\b/g,
+  /**
    * Literal strings restored after the pass, longest first: the three filenames that keep the
    * KIT's name in a renamed app.
    *
@@ -182,11 +193,13 @@ export function applyReplacements(text, names) {
   let out = text
   let preservedHits = 0
   const upstream = []
-  out = out.replace(KIT.preservedPattern, ref => {
-    preservedHits += 1
-    upstream.push(ref)
-    return UPSTREAM_MARK(upstream.length - 1)
-  })
+  for (const pattern of [KIT.preservedPattern, KIT.sitePattern]) {
+    out = out.replace(pattern, ref => {
+      preservedHits += 1
+      upstream.push(ref)
+      return UPSTREAM_MARK(upstream.length - 1)
+    })
+  }
   KIT.preserved.forEach((literal, i) => {
     const parts = out.split(literal)
     preservedHits += parts.length - 1

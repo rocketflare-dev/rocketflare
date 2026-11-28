@@ -241,6 +241,55 @@ describe('applyReplacements', () => {
     expect(text).not.toContain('https://app.rocketflare.dev')
   })
 
+  it('keeps every page of the kit website, and moves every address that is the app’s', () => {
+    const input = [
+      'curl -fsSL https://rocketflare.dev/install.sh | bash',
+      'is at [rocketflare.dev/security](https://rocketflare.dev/security/) and its',
+      '[track record](https://rocketflare.dev/security/track-record/).',
+      "export const PLUGIN_CATALOGUE_URL = 'https://rocketflare.dev/plugins'",
+      "updating rocketflare.dev's changelog",
+      'APP_URL=https://app.rocketflare.dev STAGING=https://staging.rocketflare.dev',
+      'from noreply@rocketflare.dev, report to security@rocketflare.dev, admin@rocketflare.local',
+    ].join('\n')
+    const { text } = applyReplacements(input, deriveNames('acme', 'Acme'))
+    const lines = text.split('\n')
+    expect(lines.slice(0, 5)).toEqual(input.split('\n').slice(0, 5))
+    expect(lines[5]).toBe(
+      'APP_URL=https://app.acme.example.com STAGING=https://staging.acme.example.com'
+    )
+    expect(lines[6]).toBe(
+      'from noreply@acme.example.com, report to security@acme.example.com, admin@acme.example.com'
+    )
+  })
+
+  it('keeps every kit-website link the tree ships, in every file the rename translates', () => {
+    const root = path.resolve(__dirname, '../../../..')
+    const manifest = JSON.parse(readFileSync(path.join(root, '.rocketflare.json'), 'utf8'))
+    const files = execFileSync('git', ['ls-files'], { cwd: root, encoding: 'utf8' })
+      .split('\n')
+      .filter(f => f && !isExcluded(f) && !matchesAny(f, kitOnlyGlobs(manifest)))
+    const names = deriveNames('acme', 'Acme')
+    let links = 0
+    for (const f of files) {
+      let text: string
+      try {
+        text = readFileSync(path.join(root, f), 'utf8')
+      } catch {
+        continue
+      }
+      const site = text.match(/(?<![\w.@-])rocketflare\.dev[\w/.#-]*/g) ?? []
+      if (site.length === 0) continue
+      const renamed = applyReplacements(text, names).text
+      for (const link of site) {
+        links += 1
+        expect(renamed, `${f}: ${link}`).toContain(link)
+      }
+      expect(renamed, f).not.toMatch(/(?<![\w.@-])acme\.example\.com\/(plugins|install|security)/)
+    }
+    // Vacuous if the tree had none: the catalogue page alone is named in several files.
+    expect(links).toBeGreaterThan(3)
+  })
+
   it('applies the classes longest-first: the env class takes the bare ENV_PREFIX too', () => {
     const { text, counts } = applyReplacements("'ROCKETFLARE' ROCKETFLARE_X", deriveNames('a-b'))
     expect(text).toBe("'A_B' A_B_X")

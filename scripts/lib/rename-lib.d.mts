@@ -10,6 +10,8 @@ export interface KitNames {
   readonly domains: readonly string[]
   /** Global: `rocketflare-dev` or `rocketflare-dev/<repo>` — upstream, never renamed. */
   readonly preservedPattern: RegExp
+  /** Global: the kit's own website, the apex `rocketflare.dev` with no subdomain or `@` before it. */
+  readonly sitePattern: RegExp
   readonly preserved: readonly string[]
 }
 export const KIT: KitNames

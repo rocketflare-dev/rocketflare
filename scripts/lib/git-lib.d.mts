@@ -32,6 +32,8 @@ export interface Mirror {
   isAncestor(ancestor: string, descendant: string): boolean
   /** Fetch the blobs of `paths` at `ref` in one round trip (best effort). */
   prefetch(ref: string, paths: readonly string[]): void
+  /** Every `X.Y.Z` release tag, newest first. */
+  releaseTags(): string[]
   latestTag(): string | null
 }
 export function mirror(dir: string): Mirror

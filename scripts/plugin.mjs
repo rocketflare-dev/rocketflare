@@ -46,6 +46,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { formatWritten as formatWrittenIn, runBiome as runBiomeIn } from './lib/biome-run.mjs'
 import {
   collectChanges,
   dirtyTree,
@@ -192,23 +193,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 // repositories to read their manifests — one clone, not two that take turns being stale.
 const WORK_DIR = PLUGIN_MIRROR_ROOT
 
-/**
- * The host's own Biome, run directly rather than through `pnpm exec`, which is a second Node start
- * per call and fails anyway, after that start, where Biome is not installed. Null when the host
- * has none; every caller then skips formatting with the warning a failed run gives.
- */
-const BIOME_BIN = path.join(
-  REPO_ROOT,
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'biome.cmd' : 'biome'
-)
-
-/** Biome with these arguments in the host, or a failed result when the host has none. */
-function runBiome(args, options) {
-  if (!existsSync(BIOME_BIN)) return { status: 1, error: new Error('no biome'), stdout: null }
-  return spawnSync(BIOME_BIN, args, { cwd: REPO_ROOT, ...options })
-}
+/** The host's own Biome (`scripts/lib/biome-run.mjs`, shared with `kit:upgrade`). */
+const runBiome = (args, options) => runBiomeIn(REPO_ROOT, args, options)
 
 /** Set while a nested audit runs under `--json`, so stdout stays ONE document. */
 let muted = false
@@ -1126,32 +1112,10 @@ function auditAfterApply(args) {
 }
 
 /**
- * Biome over what was just written, and this is not tidiness.
- *
- * A plugin is authored in the KIT's vocabulary and translated on the way in, so its import
- * specifiers change length AND sort order: `@heroicons/react` sorts BEFORE `@rocketflare/shared`
- * and AFTER `@acme/shared`. The kit's own file is correctly sorted; the same file translated into
- * an app whose scope sorts the other way is not, and `pnpm lint` — the first line of the gate the
- * plan tells you to run next — fails on a file the tool wrote. `rename.mjs` solves the identical
- * problem the identical way (it runs `pnpm lint:fix` at the end of its pass).
- *
- * Best-effort, like the rename's: a host without biome, or a rule biome cannot fix, is a warning
- * and not a failed install. Scoped to the paths this install touched, so it never reformats
- * somebody's unrelated work in progress.
+ * Biome over what was just written — a translated plugin file is not formatted for the app's
+ * names (`formatWritten` in `scripts/lib/biome-run.mjs`, which `kit:upgrade` runs too).
  */
-function formatWritten(paths) {
-  // No paths would be the whole repository — never what an install or upgrade means.
-  if (paths.length === 0) return null
-  const r = runBiome(['check', '--write', ...paths], { stdio: ['ignore', 'pipe', 'pipe'] })
-  if (r.error || r.status === null) {
-    warn('note: biome did not run — check the formatting of the copied files with `pnpm lint`.')
-    return null
-  }
-  if (r.status !== 0) {
-    warn('note: biome reported problems it could not fix — `pnpm lint` will show them.')
-  }
-  return 'formatted with biome (translation changes import order)'
-}
+const formatWritten = paths => formatWrittenIn(REPO_ROOT, paths, { warn })
 
 /**
  * Dependencies are the HOST's: a plugin declares them, the host installs them into its own
