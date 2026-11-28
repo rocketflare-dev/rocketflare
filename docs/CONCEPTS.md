@@ -2039,7 +2039,9 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   when the host still owns it — the kit's own copy of the file at the host's release carries it
   (read from the `.upgrade/kit.git` mirror `kit:upgrade` keeps), it is a vite proxy entry for a
   path the kit reserves (`/mcp`, `/oauth`, the discovery documents), or another installed plugin
-  declares it (`revertCoreEditsKeeping`). Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
+  declares it (`revertCoreEditsKeeping`). A plugin whose recorded `repo` cannot be reached (an
+  app's own in-tree plugin) makes `upgrade` stop with exit 3 before any clone, saying it lives only
+  in this app. Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
   `pnpm provision cloudflare <env>`.
 - **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
   `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys

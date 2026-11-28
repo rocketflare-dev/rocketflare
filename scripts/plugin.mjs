@@ -56,6 +56,7 @@ import {
   mirrorDirFor,
   notesBetween,
   PLUGIN_MIRROR_ROOT,
+  repoReachable,
 } from './lib/git-lib.mjs'
 import { hostKitVersion, pluginSurfaces, readManifest } from './lib/manifest.mjs'
 import {
@@ -1257,11 +1258,26 @@ function cmdUpgrade(args, host) {
   if (args.continue) args.apply = true
   else if (args.apply) requireClean(args)
 
-  const m = ensureMirror(source.repo, pluginMirrorDir(source.repo), {
-    fetch: args.fetch,
-    cwd: REPO_ROOT,
-    warn,
-  })
+  // An app records its OWN in-tree plugins too, often with a repo that does not exist or that
+  // this machine cannot read. Said once, before any clone, rather than after two failed clones
+  // and git's own error text — which never mention that the plugin lives only here.
+  const unreachable = () =>
+    stop(
+      3,
+      `error: ${id} has no reachable source (repo ${source.repo ?? 'not recorded'}).`,
+      `If it is your own plugin, it lives only in this app: edit it in place under ${surface.anchor ? path.dirname(surface.anchor) : `apps/web/src/plugins/${id}`}/.`,
+      'If it is published, check the repo URL recorded for it and your access, then re-run.'
+    )
+  const mirrorDir = source.repo ? pluginMirrorDir(source.repo) : null
+  if (!mirrorDir) unreachable()
+  if (!existsSync(mirrorDir) && args.fetch && !repoReachable(source.repo, REPO_ROOT)) unreachable()
+  let m
+  try {
+    m = ensureMirror(source.repo, mirrorDir, { fetch: args.fetch, cwd: REPO_ROOT, warn })
+  } catch (err) {
+    if (err?.exitCode === 3) unreachable()
+    throw err
+  }
   const subdir = (source.subdir ?? '').replace(/^\/|\/$/g, '')
   const relative = subdir === '' ? null : subdir
   const from = args.from ?? source.commit

@@ -201,7 +201,9 @@ not stamp the new version until the `*.rej` files are gone: resolve each by hand
 tomls, dependencies — and stamps; it never re-patches). An upgrade also formats every file it wrote,
 and warns when a core edit's lines were partly in the file already — check that block by eye. A
 core-edit line the release dropped but the kit (or another plugin) owns is `kept`, never deleted.
-A
+A plugin whose `repo` cannot be reached stops at once with **exit 3, "no reachable source"**: if it
+is the app's own plugin it lives only in this tree — tell the person to edit it in place, there is
+nothing to upgrade from. A
 **vendored** plugin (its `source.repo`
 is this kit's own repository with no subdirectory — `example-feature` is one) answers *"upgrade it
 with `pnpm kit:upgrade`"* and does nothing: the kit release that moves it forward is the one that

@@ -704,6 +704,29 @@ describe('pnpm plugin, with skills, end to end', () => {
     })
   })
 
+  describe('an app-owned plugin with no reachable source', () => {
+    it('upgrade stops at once, saying the plugin lives only in this app', () => {
+      const host = makeHost()
+      const plugin = makePlugin({ skills: [], files: {} })
+      expect(run(host, ['add', plugin, '--local', '--apply', '--allow-dirty']).status).toBe(0)
+      // What an app records for a plugin it wrote itself: a repo URL that leads nowhere.
+      const nowhere = path.join(tmpdir(), `rf-no-such-repo-${process.pid}-${Date.now()}.git`)
+      const file = path.join(host, '.rocketflare.local.json')
+      const record = JSON.parse(readFileSync(file, 'utf8'))
+      for (const s of record.surfaces) if (s.source) s.source.repo = nowhere
+      writeFileSync(file, `${JSON.stringify(record, null, 2)}\n`)
+
+      const up = run(host, ['upgrade', 'orders'])
+      expect(up.status, up.out).toBe(3)
+      expect(up.out).toContain(`orders has no reachable source (repo ${nowhere})`)
+      expect(up.out).toContain('lives only in this app')
+      expect(up.out).not.toMatch(/cannot clone/)
+      // `check` and `list` still read it from the tree.
+      expect(run(host, ['check']).status).toBe(0)
+      expect(run(host, ['list']).status).toBe(0)
+    })
+  })
+
   describe('appOwned paths', () => {
     const owned = 'apps/web/src/plugins/orders/app'
     const manifest = { appOwned: [owned] }
