@@ -1,5 +1,8 @@
 # CONCEPTS — what is built, and why
 
+The kit for agentic business applications: one multi-tenant app holding every process as a domain,
+with agents acting on its records under each user's permissions (`docs/POSITIONING.md`).
+
 One section per subsystem: what it does, the invariant it protects, the decision behind it
 (D-numbers), and its **Known gaps**. Check here before assuming a capability exists; update it when
 you change one. **Keep it short** — a section states the rule and points at where the detail lives.
@@ -2086,6 +2089,9 @@ the Bearer path; flags cannot gate pre-tenant surfaces.
 
 ## 16. Plugins
 
+**A plugin is a reusable capability that works across domains and across apps; this app's own
+concepts and logic are a domain (§20).** Both are units, read by every registry through one list.
+
 **A plugin is a git repository COPIED into an app, never an npm package (D31)**, translated through
 `applyReplacements()` like kit code. Only first-party plugins for now: installing one is as trusting
 as merging a PR. A plugin repo mirrors the host tree and ships **no migration, no toml and no
@@ -2180,7 +2186,8 @@ opens with "What you want to do", the name to import for each job), `docs/plugin
   `Commercial plugins` heading with a `licence:` pointer, only when the person's git credentials can
   read it, and is otherwise not mentioned. `/rf-plugin add` with no id shows it, and
   `/rf-how-do-i` asks "does a plugin already do this?" first: the order is an existing plugin, else
-  the app itself, and a plugin only for what another app will install too.
+  a domain of this app (§20), and a new plugin only for a reusable capability that works across
+  domains and across apps.
   https://rocketflare.dev/plugins is the browsing page. `pnpm plugin add <id>[@X.Y.Z]` resolves a
   bare id through the same catalogue — the first-party repository, else the commercial one, at
   its newest release tag (or the one typed), with `--subdir` where the catalogue found it — and
@@ -2908,10 +2915,13 @@ resources, prompts, approval tools or agents.
 
 ## 20. App domains
 
-**A domain holds this app's own concepts; a plugin is a capability another app could install.**
-Both are UNITS: an id, a tree, the same slots (`ServerPlugin` minus the plugin-only ones), the same
-namespaces, read by every registry through one list (`units/server.ts`, `units/ui.ts`,
-`@rocketflare/shared/units` — plugins first, then domains). A domain is simpler than a plugin: no
+**A domain holds this app's own concepts and logic; a plugin is a reusable capability that works
+across domains and across apps.** A second process is another domain, not a new copy
+(`docs/POSITIONING.md`). An app-owned plugin stays a plugin unless its owner follows the adoption
+recipe, `docs/ADAPTING.md` §3c. Both are UNITS ("unit" means a plugin or a domain): an id, a
+tree, the same slots (`ServerPlugin` minus the plugin-only ones), the same namespaces, read by every
+registry through one list (`units/server.ts`, `units/ui.ts`, `@rocketflare/shared/units` — plugins
+first, then domains). A domain is simpler than a plugin: no
 manifest, no barrel line, no `pnpm plugin`; it is written in place and listed by hand.
 
 - **Layout**: `apps/web/src/<id>/` — `index.ts` (`defineDomain` from `@/plugins/api`), `server/`,

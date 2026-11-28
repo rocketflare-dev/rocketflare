@@ -27,8 +27,10 @@ they want to do. **`add` with no target** shows the catalogue (step 2) and asks 
 "which repository?".
 
 **Before anyone writes a plugin:** check that none already does the job (`pnpm plugin list
---available`). If none fits, the feature is usually built in the app itself; a plugin is for a
-capability meant to be installed in ANOTHER app too (step 6).
+--available`). If none fits, decide with the one rule (`docs/CONCEPTS.md` §20): this app's own
+concepts and logic are a **domain** of the app (`/rf-how-do-i` plans one); a **plugin** is a
+reusable capability that works across domains and across apps (step 6). Both are units, checked by
+one boundary check.
 
 ## 1. Check the ground
 
@@ -223,6 +225,13 @@ also prints what to deprovision as HUMAN steps: provisioning creates a plugin's 
 never deletes one, and `pnpm remove` on a dependency is printed rather than run. It removes the
 plugin's Claude Code hooks, and lists under **Left in place** the host files it seeded — relay that
 list; they are the person's to delete or keep.
+
+**Moving an app-owned plugin into a domain is not a removal.** Follow `docs/ADAPTING.md` §3c: copy
+its trees to `apps/web/src/<id>/` and the other domain roots FIRST, then
+`pnpm plugin remove <id> --apply --allow-dirty` only to unwire it, and **skip the drop migration**:
+the domain re-exports the same tables, so `pnpm db:generate` must print "No schema changes". Show
+the person that plan like any other. An app-owned plugin may also stay a plugin; it is already a
+unit.
 
 ## 6. Authoring a plugin
 

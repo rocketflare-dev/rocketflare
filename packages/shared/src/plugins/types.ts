@@ -52,8 +52,9 @@ export type UnitKind = 'plugin' | 'domain'
 
 /**
  * The shared half of an app domain: the same shape as a plugin's, so every composer reads the two
- * as one list (`units.ts`). A domain is where an app's own concepts live; a plugin is a capability
- * another app could install. Their contracts look the same on purpose.
+ * as one list (`units.ts`). A domain is where an app's own concepts and logic live; a plugin is a
+ * reusable capability that works across domains and across apps. Their contracts look the same on
+ * purpose.
  */
 export type SharedDomain = SharedPlugin
 

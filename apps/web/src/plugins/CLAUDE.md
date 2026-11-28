@@ -26,9 +26,11 @@ host ever names a plugin.
 
 ## Plugin or app domain?
 
-A **plugin** is a capability another app could install; this app's own concepts go in an **app
-domain** instead (`apps/web/src/<id>/`, `defineDomain`, one hand-written line in `src/app.ts` and its
-twins — `docs/CONCEPTS.md` §20). Both are units: same slots, same namespaces, and one boundary check
+A **plugin** is a reusable capability that works across domains and across apps; this app's own
+concepts and logic go in an **app domain** instead (`apps/web/src/<id>/`, `defineDomain`, one
+hand-written line in `src/app.ts` and its twins — `docs/CONCEPTS.md` §20). An app-owned plugin
+stays a plugin unless its owner moves it with the recipe in `docs/ADAPTING.md` §3c (copy the trees,
+`pnpm plugin remove --apply --allow-dirty`, `defineDomain`). Both are units: same slots, same namespaces, and one boundary check
 (`scripts/lib/units.mjs`) — a plugin never imports a domain, never shares a domain's id, and never
 defines a table in a domain's namespace. The registries iterate `serverUnits` / `uiUnits`, so a
 new registry reads those, never the plugin barrel.

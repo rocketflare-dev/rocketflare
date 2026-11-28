@@ -1,5 +1,8 @@
 # ADAPTING — you just copied the kit
 
+The kit for agentic business applications: one multi-tenant app holding every process as a domain,
+with agents acting on its records under each user's permissions (`docs/POSITIONING.md`).
+
 Read this once, do the checklist, then run `SETUP.md` Part 1. Everything below is a rename or a
 delete; no design decisions are needed to get to a running app.
 
@@ -164,25 +167,36 @@ tell it. That is what makes deleting safe.
 
 ## 3. Your first three features — where each goes
 
-**Ask first: is this a feature of YOUR app, or a capability somebody else could install?** (D31,
-`docs/CONCEPTS.md` §16.) A plugin is a separate git repository copied into an app — never installed
-from npm, exactly like the kit itself — that contributes contracts, schema, routes, jobs, agents,
-UI and CLI commands through six barrels it is the only thing allowed to write a line into — and
-which imports the kit only through the declared entries (`docs/plugin-api.md`), receiving everything
-else as injected context. Written
-as a plugin, a feature is one tree you can lift out, version and install somewhere else; written
-into core, it is diffused across twenty files nobody can separate again.
+**Ask first: is this one of THIS app's own concepts, or a reusable capability?** (`docs/CONCEPTS.md`
+§20 and §16.) One rule decides it:
 
-Default to the plugin. **Core is still right when the change is to the kit's OWN tables
-(`tenants`, `users`, `tenant_users`, `documents`…), to auth or tenancy, or to a cross-cutting
-middleware** — the things a plugin composes ON TOP of and must not redefine. Everything else — a
-resource with its own table, its own screens, its own jobs — is a plugin, and
-`apps/web/src/plugins/example-feature/` is the worked example of every slot below.
+- **A domain holds this app's own concepts and logic** — its orders, its expenses, its leave
+  requests, the rules for moving them. It is written in place: `apps/web/src/<id>/` (`index.ts` with
+  `defineDomain` from `@/plugins/api`, `server/`, `ui/`, `db/schema.ts`, at most one `public.ts`),
+  its contracts in `packages/shared/src/<id>/index.ts`, optional commands in `apps/cli/src/<id>/`,
+  tests in `apps/web/tests/<id>/`, and one hand-written line in each of the five app lists
+  (`apps/web/src/app.ts`, `app-ui.ts`, `app-schema.ts`, `packages/shared/src/app.ts`,
+  `apps/cli/src/app.ts`). No manifest, no barrels, no `pnpm plugin`. `example-hr/` and
+  `example-sales/` are the worked examples, one depending on the other.
+- **A plugin is a reusable capability that works across domains and across apps** — sign-in,
+  analytics, a CMS, a connector. It is a separate git repository copied in (never npm, exactly like
+  the kit itself) through six barrels it is the only thing allowed to write a line into, importing
+  the kit only through the declared entries (`docs/plugin-api.md`) and receiving everything else as
+  injected context. Check `pnpm plugin list --available` before building one.
 
-The layer walk is the same either way; what changes is where the line goes. The contract comes
+A second process is another domain in this app, not a new copy. **Core is still right when the
+change is to the kit's OWN tables (`tenants`, `users`, `tenant_users`, `documents`…), to auth or
+tenancy, or to a cross-cutting middleware** — the things a unit composes ON TOP of and must not
+redefine. Domains and plugins are both **units**: the same slots, the same namespaces (tables
+prefixed from the id, `<id>.x` jobs and events, `/api/<id>`, `<id>:…` query keys) and one boundary
+check, `scripts/lib/units.mjs`, run by `tests/config/units.test.ts` and `pnpm plugin check`. A
+domain reaches another through that domain's `public.ts` along a `dependsOn` edge, or by handling
+its event. An app-owned plugin you built before domains existed can stay a plugin; §3c moves it.
+
+The layer walk is the same whichever it is; what changes is where the line goes. The contract comes
 first and lives in the shared package, so the API, the UI and the CLI parse one schema.
 
-| Layer | Core location | The plugin slot |
+| Layer | Core location | The unit slot (a domain or a plugin) |
 |---|---|---|
 | contract | `packages/shared/src/<feature>.ts` | `packages/shared/src/plugins/<id>/index.ts` |
 | job types | `CORE_JOB_VARIANTS` (`shared/src/jobs.ts`) | `SharedPlugin.jobs` |
@@ -229,6 +243,16 @@ Written into core, the loop is:
 6. **Command** (optional) — `apps/cli/src/commands/<feature>.ts`: a thin commander command over
    `apps/cli/src/api.ts`, parsing the response with the same `@rocketflare/shared/<feature>` schema;
    `--json` on every list; exit codes per `.claude/rules/cli.md`. Register it in `cli.ts`.
+
+Written as a domain, the same six steps land in the domain's trees, and every slot in the table's
+right-hand column is a key of the one `defineDomain({ id, shared, … })` call (the `UiPlugin` ones of
+`defineDomainUi`): the contract in `packages/shared/src/<id>/index.ts` (a `SharedDomain`, imported
+as `@rocketflare/shared/<id>/index`), the table in `apps/web/src/<id>/db/schema.ts` re-exported by
+one line in `app-schema.ts`, routes, jobs, agents and tools under `apps/web/src/<id>/server/`, the
+hook and page under `ui/`, the command in `apps/cli/src/<id>/`. The domain's own migration is
+generated with the kit's (`pnpm db:generate`, read the SQL, `pnpm db:migrate`). A domain may not
+fill the identity slots (`loginMethods`, `ssoPolicy`), `publicSites` or `apiPrefixes`: those are a
+plugin's.
 
 Written as a plugin, the same six steps land in the four published files instead — the shared
 entry (1, and every key the plugin owns), the server entry (2, 3), the UI entry (4, 5) and the CLI
@@ -303,10 +327,11 @@ PLUGIN now, and the instructions live with the code: `apps/web/src/plugins/analy
 `cubes/CLAUDE.md`, `services/fact-tables/CLAUDE.md` and `dashboards/DASHBOARD_PATTERNS.md`, once
 the plugin is installed. Two things are worth knowing before you open them.
 
-**Where your code goes depends on whose feature it is.** A cube over YOUR tables, in an app you own,
-goes inside the plugin's tree like any other file you have adopted — it is ordinary source in your
-repository. A cube that belongs to a SECOND plugin goes through the extension seam instead
-(D31 decision 6), because one plugin may not reach into another's internals:
+**Where your code goes depends on whose feature it is.** A cube over the kit's own tables, in an app
+you own, can go inside the plugin's tree like any other file you have adopted — it is ordinary
+source in your repository. A cube over a DOMAIN's tables, or one that belongs to a second plugin,
+goes through the extension seam instead (D31 decision 6; `extensions` is a `defineDomain` slot
+too), because one unit may not reach into another's internals:
 
 ```ts
 import { analyticsExtensions } from '@/plugins/analytics'
@@ -323,8 +348,10 @@ export const ordersServer = {
 ```
 
 with `requires: { plugins: ['analytics'] }` in your `plugin.json`, so installing without it is
-refused rather than quietly doing nothing. Each list is zod-narrowed by the analytics plugin and
-**throws naming your plugin** when it cannot be parsed.
+refused rather than quietly doing nothing. A domain has no manifest: it imports
+`@/plugins/analytics` (a published entry, which a domain may import), so removing the plugin
+fails its typecheck instead. Each list is zod-narrowed by the analytics plugin and **throws naming
+your unit** when it cannot be parsed.
 
 **The one rule that has no second line of defence** is unchanged wherever the cube lives: its `sql()`
 scopes by `tenantIdOf(ctx)`, and it is not done until it has a case in `cube-isolation.test.ts` —
@@ -419,6 +446,81 @@ limits are an app change (`MAX_UPLOAD_BYTES` is one constant today).
 - **Headless CLI login** (CI, agents, no browser): skip `pnpm cli login`; create a tenant API key in
   Settings → API keys (or `POST /api/keys` with a session cookie) and export `ROCKETFLARE_API_KEY` +
   `ROCKETFLARE_URL`. `pnpm cli whoami` confirms.
+
+## 3c. Adopting an app-owned plugin as a domain
+
+A copy made before domains existed may hold its own processes as in-tree plugins. They keep
+working as plugins, and each one is already a unit. Move one only when it holds this app's own
+concepts, no other app installs it, and no other repository imports its entries. It is a recipe,
+not a command, and it keeps the id and every table name, so there is no migration and no data
+change. It was rehearsed on the kit's own `example-feature`, whose example SSO slots are the
+"before you start" case below.
+
+**Before you start.** A domain cannot fill `loginMethods`, `ssoPolicy`, `publicSites` or
+`apiPrefixes` (nor the deprecated `agentTools`, `uploadPaths`, `uploadLimits`). A plugin that does
+keeps those in a plugin: split them into a small plugin of their own, or leave the whole thing a
+plugin. A plugin never imports a domain, so another plugin that imports this one's entries, or
+names it in `requires.plugins`, moves with it or first. Start from a clean branch.
+
+1. **Copy the trees to their domain places**, same id. Copy rather than move, because step 2
+   deletes the originals:
+   - `apps/web/src/plugins/<id>/` → `apps/web/src/<id>/`, leaving out `plugin.json`, with its
+     `tests/` → `apps/web/tests/<id>/` (the `api/`, `ui/`, `config/` folders keep their names and
+     join the same vitest projects);
+   - `packages/shared/src/plugins/<id>/` → `packages/shared/src/<id>/`;
+   - `apps/cli/src/plugins/<id>/` → `apps/cli/src/<id>/`.
+2. **Unwire the plugin**: `pnpm plugin remove <id>`, read the plan, then
+   `pnpm plugin remove <id> --apply --allow-dirty` (the copies make the tree dirty). It deletes the
+   old trees and the plugin's skill, takes its lines out of the six barrels (an emptied `schema.ts`
+   keeps its `export {}` marker) and drops its surface from `.rocketflare.json`. **Skip the human
+   step it prints**: there is no drop migration, because the tables are about to come back under
+   the same names. Keep the skill with `git restore --source=HEAD .claude/skills/<id>` if you want
+   it. Never edit the barrels by hand; the core guard seals them.
+3. **Rewrite the imports** for the new depth:
+   - `@rocketflare/shared/plugins/<id>/…` → `@rocketflare/shared/<id>/…`, everywhere;
+   - in the shared tree, one `../` fewer to a kit module (`../../pagination` → `../pagination`)
+     and `../types` → `../plugins/types`;
+   - in a table file, one `../` fewer to `db/schema/kit` (`../../../../db/schema/kit` →
+     `../../../db/schema/kit`); it stays relative, because drizzle-kit resolves no alias;
+   - in the CLI tree, `../api` → `../plugins/api`;
+   - in the moved tests, `../../<file>` → `../../../src/<id>/<file>`;
+   - in any other unit, `@/plugins/<id>` → `@/<id>/public`: move what those callers used out of
+     the old published entry into one `apps/web/src/<id>/public.ts` (types, zod contracts and
+     functions that take the caller's context, never module state).
+4. **Declare it.** The server entry's object `satisfies ServerPlugin<typeof shared>` becomes
+   `defineDomain({ id: shared.id, shared, …the same slots })` from `@/plugins/api`; the UI entry's
+   becomes `defineDomainUi({ id: shared.id, shared, … })` from `@/plugins/api/ui-wiring`. The
+   shared and CLI entries keep their shapes (`SharedDomain` is `SharedPlugin`). Then:
+   - **tables**: the plugin's tables already start with the id's first segment and `_`, which is
+     also a domain's default, so declare nothing. Add `tablePrefix` only when they do not. When
+     another unit's id shares that first segment (`crm-leads` and `crm-deals`), give each an exact
+     `tables: [...]` list;
+   - **`dependsOn: ['<other>']`** for every domain whose `public.ts` it now imports;
+   - a test that read a slot off the entry (`server.mounts[0]`) now sees `ServerDomain`, where
+     every slot is optional: write `server.mounts?.[0]`.
+5. **List it**: one line in each app list it has a half for — `apps/web/src/app.ts`, `app-ui.ts`,
+   `app-schema.ts` (`export * from './<id>/db/schema'`), `packages/shared/src/app.ts`,
+   `apps/cli/src/app.ts`. These files are app-owned; nothing else names the domain.
+6. **Check**, in this order: `pnpm lint:fix`, `pnpm typecheck`, `pnpm db:generate` (it must print
+   "No schema changes, nothing to migrate"), `pnpm test config apps/web/tests/config/units.test.ts`
+   (the boundary check), `pnpm test api apps/web/tests/<id>`, then `pnpm gate`.
+
+What the checks say when a step is missed:
+
+| Missed | Who says it | What it says |
+|---|---|---|
+| step 2 (trees moved, plugin not removed) | `pnpm plugin check` | `apps/web/src/plugins/<id>/plugin.json is missing, and the surface says '<id>' is installed` |
+| an identity slot left in `defineDomain` | `pnpm typecheck` | TS2353 `'loginMethods' does not exist in type 'DomainDefinition<…>'` |
+| two units in one table namespace | boundary check | `defines the table <t>, inside the domain '<d>'s namespace ('<p>_') — give '<d>' an exact tables: [...] list` |
+| `dependsOn` | boundary check | `imports '@/<d>/public' from the domain '<d>', which its dependsOn does not list` |
+| a caller reaching past `public.ts` | boundary check | `imports '@/<d>/…', inside the domain '<d>' — reach '<d>' through '@/<d>/public'` |
+| a plugin still importing it | boundary check | `imports '…' from the app's domain '<d>'` |
+| a table name changed | `pnpm db:generate` | a rename prompt or a new migration: put the old name back |
+
+`pnpm plugin check` runs the same boundary check, but once the last plugin is gone it prints "No
+plugins installed — nothing to check" when nothing fails, so use the config test as the record.
+The way back, a domain into a plugin, is the same steps reversed plus a `plugin.json` (§16 of
+`docs/CONCEPTS.md`, "authoring" in `/rf-plugin`); there is no command for either direction yet.
 
 ## 4. Keep the docs true
 

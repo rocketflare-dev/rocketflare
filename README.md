@@ -4,7 +4,12 @@
 
 <h1 align="center">Rocketflare</h1>
 
-<p align="center"><strong>A multi-tenant SaaS starter kit for Cloudflare Workers — copy it, rename it, ship an internal tool or a B2B product.</strong></p>
+<p align="center"><strong>The kit for agentic business applications: one multi-tenant app holding every process as a domain, with agents acting on its records under each user's permissions.</strong></p>
+
+It runs on Cloudflare Workers. Copy it, rename it and ship an internal tool or a B2B product; each
+new process then goes into the same app as another domain. It works alongside the agent platforms
+rather than replacing them, as the governed tool server they reach over MCP
+([`docs/POSITIONING.md`](docs/POSITIONING.md), which also says when to buy instead).
 
 Rocketflare is one repository that already solves the platform work every internal or B2B product
 needs before its first real feature: tenancy, sign-in, roles and permissions, background jobs,
@@ -163,7 +168,8 @@ is the page for browsing them.
 - **Release dance** — tag = root version → staging deploys; publish the GitHub Release → production ships the same tag. Migrations run in CI against the environment's Neon branch before deploy. Or set `DEPLOYER_URL` and an external deployer ships it instead, so CI holds no Cloudflare token and no production database credential ([`docs/DEPLOYER.md`](docs/DEPLOYER.md)).
 - **Tests that mean something** — API tests drive the real Hono app against a real Postgres; queue consumers, Workflow steps, the Durable Object and cron tasks are plain functions tested directly; UI tests in jsdom; a config project checks tomls, permissions and dashboard templates with no database.
 - **Agent-readable** — `CLAUDE.md` (also `AGENTS.md`), path-scoped rules in `.claude/rules/`, a `CLAUDE.md` in every significant directory, and `docs/CONCEPTS.md` describing each subsystem, its invariant and its known gaps.
-- **Plugins** — a feature can be a separate git repository copied in (never npm-installed, exactly like the kit): six barrels take one line each, and a plugin contributes contracts, tables with RLS policies, routes, jobs, agent tools, lifecycle hooks, Durable Object and Workflow classes, lazy pages, nav items and CLI commands without a core file naming it. In the other direction it imports the kit only through declared entries — a family of injected execution contexts, versioned as `PLUGIN_API` and documented in a generated, diff-checked `docs/plugin-api.md` — so the plugin surface can stand still while kit internals move. `pnpm plugin check` is an exhaustive audit whose every finding carries the file, the line and the exact edit, and CI runs the same command; `example-feature` is the vendored reference plugin, and it is meant to be deleted.
+- **Domains** — each of the app's own processes is a domain: its trees under `apps/web/src/<id>/` (with its contracts and commands beside them), one `defineDomain` call and one hand-written line in each app list, with the same slots a plugin has. A domain reaches another only through that domain's `public.ts` along a declared `dependsOn` edge, or by handling its events, and one boundary check covers domains and plugins together. `example-hr` and `example-sales` are the worked pair.
+- **Plugins** — a reusable capability that works across domains and across apps is a separate git repository copied in (never npm-installed, exactly like the kit): six barrels take one line each, and a plugin contributes contracts, tables with RLS policies, routes, jobs, agent tools, lifecycle hooks, Durable Object and Workflow classes, lazy pages, nav items and CLI commands without a core file naming it. In the other direction it imports the kit only through declared entries — a family of injected execution contexts, versioned as `PLUGIN_API` and documented in a generated, diff-checked `docs/plugin-api.md` — so the plugin surface can stand still while kit internals move. `pnpm plugin check` is an exhaustive audit whose every finding carries the file, the line and the exact edit, and CI runs the same command; `example-feature` is the vendored reference plugin, and it is meant to be deleted.
 - **Design tokens** — two DaisyUI themes whose brand values live in one header block; a contrast test gates the emitted tokens.
 
 ## Layout
@@ -198,7 +204,7 @@ only, `install.sh` and the release and maintainer-hook scripts, which the rename
 
 Billing and subscriptions, Vectorize (vectors live in pgvector under the tenant predicate), OCR of
 images (document conversion covers PDF/Office/HTML, not pictures), prompt versioning,
-reporting/export, and any product domain. Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
+reporting/export, and your product's own domains (those are what you write). Each is a documented extension point in `docs/CONCEPTS.md`; the subsystem sections
 there list every known gap.
 
 ## Documentation
@@ -208,7 +214,8 @@ there list every known gap.
 | [`CLAUDE.md`](CLAUDE.md) (`AGENTS.md`) | always — the canonical agent context: stack, commands, map, non-negotiables |
 | [`SETUP.md`](SETUP.md) | getting a clone running, the CLI's first login, configuring OAuth/email/AI providers (or a local OpenAI-compatible mock)/tracing, deploying to Cloudflare |
 | [`docs/CONCEPTS.md`](docs/CONCEPTS.md) | before assuming a capability exists or building a new one — one section per subsystem with its invariant and known gaps |
-| [`docs/ADAPTING.md`](docs/ADAPTING.md) | you just copied the kit to start an app (package names, CLI bin, config dir, env prefix, what to delete, where the first features go) |
+| [`docs/POSITIONING.md`](docs/POSITIONING.md) | what the kit is for, the domain and plugin rule, when a new copy is justified, and when to buy instead |
+| [`docs/ADAPTING.md`](docs/ADAPTING.md) | you just copied the kit to start an app (package names, CLI bin, config dir, env prefix, what to delete, where the first features go, adopting an app-owned plugin as a domain) |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | Cloudflare topology, the two tomls, resources, release dance, rollback, bundle size |
 | [`docs/DEPLOYER.md`](docs/DEPLOYER.md) | you are building a service that deploys kit apps from CI (the versioned v1 protocol behind `DEPLOYER_URL`) |
 | [`docs/RLS.md`](docs/RLS.md) | tenant isolation posture and how to turn row-level security on |

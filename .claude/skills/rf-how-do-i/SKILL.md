@@ -1,6 +1,6 @@
 ---
 name: rf-how-do-i
-description: Coach someone through adding a feature to this kit — where each layer goes, the decisions the kit forces, and the traps it will fail them on. Use when the user asks how to add or build a feature, resource or screen ("how do I add orders", "I want approvals and a dashboard"), or wants a plan before writing code. Produces a plan, never an implementation.
+description: Coach someone through adding a feature to this kit — where each layer goes, the decisions the kit forces, and the traps it will fail them on. Use when the user asks how to add or build a feature, resource or screen ("how do I add orders", "add expense approvals to my app", "I want approvals and a dashboard"), or wants a plan before writing code. Produces a plan, never an implementation.
 argument-hint: "[what you want to build]"
 ---
 
@@ -44,16 +44,20 @@ that does).
 
 **Then: domain, plugin, or core?** Ask it before the interview, because it changes where every
 file lands (`docs/CONCEPTS.md` §20 and §16). An **app domain** is this app's own concept — its
-leads, its leave requests — written in place under `apps/web/src/<id>/` with `defineDomain` and one
-hand-written line in `src/app.ts` (and its twins). A **plugin** is a capability another app could
-install: a separate git repository copied in — never npm — through six barrels, importing the kit
+leads, its leave requests and the logic that moves them — written in place under
+`apps/web/src/<id>/` with `defineDomain` and one hand-written line in `src/app.ts` (and its twins).
+A **plugin** is a reusable capability that works across domains and across apps: a separate git
+repository copied in — never npm — through six barrels, importing the kit
 only through the declared entries (`docs/plugin-api.md`) and receiving everything else as injected
 context. Both use the same slots and namespaces, and one boundary check covers both.
 
-**Default to the domain for this app's own concepts; a plugin when it is reusable across apps.**
-Core is still right when the change is to the kit's OWN tables (`tenants`, `users`,
-`tenant_users`, `documents`…), to auth or tenancy, or to a cross-cutting middleware — the things a
-unit composes ON TOP of and must not redefine. A domain that needs another domain imports its
+**A domain for this app's own concepts and logic; a plugin only for a reusable capability that works
+across domains and across apps.** A second process ("add expense approvals to my app") is another
+domain in the same app, not a plugin and not a new copy; a new copy needs a reason a domain cannot
+meet (`docs/POSITIONING.md`). An app-owned plugin they already have stays a plugin unless they
+choose to move it (`docs/ADAPTING.md` §3c). Core is still right when the change is to the kit's
+OWN tables (`tenants`, `users`, `tenant_users`, `documents`…), to auth or tenancy, or to a
+cross-cutting middleware — the things a unit composes ON TOP of and must not redefine. A domain that needs another domain imports its
 `public.ts` and lists it in `dependsOn`, or handles its event; `example-hr/` and `example-sales/`
 show both.
 
@@ -65,7 +69,7 @@ Two things to say out loud when the answer is "plugin", because they surprise pe
   `pnpm plugin` (`/rf-plugin`), and the host generates its migration — the plugin ships none, ever.
   `apps/web/src/plugins/example-feature/` is the worked example of every slot.
 
-Everything the plugin keys carries its id: tables prefixed from it (`example-feature` →
+Everything a unit (domain or plugin) keys carries its id: tables prefixed from it (`example-feature` →
 `example_*`), job types `<id>.verb`, the API prefix
 `/api/<id>`, query-key roots `<id>:…`, the CLI command `<id>`, feature/prompt/agent keys, and AG-UI
 CUSTOM events `<id>.` — **never `kit.`**, which is the kit's own namespace.
@@ -86,7 +90,7 @@ Ask only what you cannot infer, and ask it in the kit's terms:
 | Who may do each transition? | Becomes a CASL subject and the role row you will add to the matrix. "Admins approve, members request" is a permission design, not an `if` in a handler |
 | What must happen but not on the request? | Email, indexing, anything over a second: the route enqueues, never runs (`.claude/rules/api.md`) |
 | What will someone want to count? | Decides whether the slice ends at a page or continues into a cube, a fact table and a dashboard |
-| Is any of this somebody else's too? | The step-0 question again, now with a real noun: a thing two products would both want is a plugin |
+| Is any of this somebody else's too? | The step-0 question again, now with a real noun: a capability other apps would install is a plugin; this organisation's own process is a domain |
 | Does it need to feel live? | A nudge is one line in the service; polling is a fallback, not the default |
 
 **Done when** you can name the entity, list its states, and say who performs each transition — and
@@ -96,12 +100,15 @@ they have agreed with that summary. Read it back before moving on.
 
 `docs/ADAPTING.md` §3 is the authority on *where each file goes* — read it and teach from it rather
 than restating it here, so there is one source of truth. **Its table has two columns, "Core location"
-and "The plugin slot", one row per layer — read the row for the answer from step 0 and quote that
-column.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
+and "The unit slot (a domain or a plugin)", one row per layer — read the row for the answer from
+step 0 and quote that column; for a domain, its "Written as a domain" paragraph says which file of
+the domain's trees each slot lands in.** The slots, in the table's own words, are `SharedPlugin.jobs` / `subjects` / `features` /
 `config` / `realtimeRoots` / `agentKeys`, `ServerPlugin.mounts` / `jobHandlers` / `agents` /
 `tools` / `scheduledTasks` / `grants` / `rlsExcludedTables` / `unscopedAllowlist` /
 `visibilityResources` / `hooks` / `knowledgeEntityTypes`, `UiPlugin.routes` / `nav` / `settingsTabs` / `queryKeys` /
-`agentForms`, and `CliPlugin.register` — each reached through one of the four published entry files
+`agentForms`, and `CliPlugin.register` — a domain fills them in `defineDomain` / `defineDomainUi`
+(`apps/web/src/<id>/index.ts`, `.../ui/index.ts`) beside `packages/shared/src/<id>/index.ts` and
+`apps/cli/src/<id>/index.ts`; a plugin through its four published entry files
 (`apps/web/src/plugins/<id>/index.ts`, `.../ui/index.ts`,
 `packages/shared/src/plugins/<id>/index.ts`, `apps/cli/src/plugins/<id>/index.ts`) and nothing else.
 
@@ -178,7 +185,8 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
 - **"Start an agent when X happens"** (D42) — a form is submitted, a note is created, a sync
   finds a new record. Do not coach a job that calls `startAgentRun`, and never a route that starts
   the run inline: X is a declared plugin EVENT and the agent subscribes to it. Ask one question
-  first — **does the event alone decide, or does a person choose the agent per subject?**
+  first — **does the event alone decide, or does a person choose the agent per subject?** (A
+  domain declares and handles events exactly as a plugin does; "plugin" below means either.)
   - **The event decides** → `triggers: [eventTrigger('<id>.<thing>.<happened>', { where?, input })]`
     on the agent definition. `where` filters the payload, `input` builds the agent's input (its
     `inputSchema` validates it; invalid input is logged and dropped, not retried). One run per
@@ -192,9 +200,11 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
     listed in `plugin.json` `"events"`), then `await ctx.emit(name, { payload, idempotencyKey:
     '<thing>:<id>' })` after the row is stored. Keep the payload to ids and what subscribers need —
     it is kept 7 days (`EVENTS_RETENTION_DAYS`) and may hold personal data; never log it.
-  - The app's own code subscribes in `apps/web/src/api/services/events/app-handlers.ts`. Worked
-    example: `example-feature` (`POST /notes` emits, `events/note-created.ts` handles,
-    `agents/note-stats.ts` is triggered). `docs/CONCEPTS.md` §16 "Plugin events".
+  - A domain subscribes with its own `eventHandlers`; code outside any unit subscribes in
+    `apps/web/src/api/services/events/app-handlers.ts`. Worked examples: `example-hr` emits
+    `example-hr.leave.approved` and `example-sales` handles it; `example-feature` (`POST /notes`
+    emits, `events/note-created.ts` handles, `agents/note-stats.ts` is triggered).
+    `docs/CONCEPTS.md` §16 "Plugin events".
 
 - **"Let Claude / ChatGPT use our app" / "expose this to MCP"** — do not coach a new route, an API
   key for the client, or a tool that takes a `tenantId`. The kit's MCP server (`docs/CONCEPTS.md`
@@ -208,7 +218,7 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
   not coach a new extraction job, a prompt or a column the model fills in. **Register an entity
   type** and the kit's `knowledge.extract` job does the rest: in the app, an entry in
   `APP_ENTITY_TYPES` (`apps/web/src/api/services/knowledge/entity-types.ts` — its header comment is
-  the template); in a plugin, `ServerPlugin.knowledgeEntityTypes`, type `<id>.<name>` (copy
+  the template); in a domain or a plugin, its `knowledgeEntityTypes` slot, type `<id>.<name>` (copy
   `apps/web/src/plugins/example-feature/knowledge/entity-types.ts`). Settle with them:
   - **The type and its table.** `table` + `labelColumn` (+ `aliasColumns`) when the rows already
     exist, so the default trigram resolver matches a mention to a row; no table when the thing
@@ -230,6 +240,15 @@ ones their slice touches, and say what enforces each, so the rule is a test and 
     finds another tenant's row — `example-feature`'s `tests/api/knowledge-entity-type.test.ts`).
     For quality, `pnpm eval facts` over a corpus of their own documents with a `facts.jsonl` (hand
     over to `rf-evals`).
+
+Two more when the answer to step 0 was "domain", both enforced by `tests/config/units.test.ts`:
+
+- **Another domain is reached through its `public.ts` only, and only along a `dependsOn` edge.**
+  An import past `public.ts`, an edge not declared and a cycle each fail the gate. Using another
+  unit's table objects directly passes with a warning; steer to the owner's public functions, so
+  its rules apply. Something that *happened* is an event instead, with no import at all.
+- **The tables sit in the domain's namespace** (`<first segment of the id>_`, or a declared
+  `tablePrefix` / `tables` list), and no two units may define one name.
 
 Four more when the answer to step 0 was "plugin", and every one of them is a test rather than
 advice:
@@ -278,7 +297,7 @@ what was decided, in their vocabulary:
 
 **Layers.** <each layer: destination path · the file to copy · how you know it works>
 
-**App or plugin.** <which, and the one reason from step 0 that decided it; the plugin id if a plugin>
+**Domain, plugin or core.** <which, and the one reason from step 0 that decided it; the unit id>
 
 **Async / realtime / analytics.** <only the ones this slice needs, or "none">
 
@@ -305,7 +324,7 @@ end this skill first, then work from the plan like any other request.
 ## A worked slice
 
 `example-orders.md` beside this file is one complete slice — orders with an approval step and a
-dashboard, **built as a plugin**, which is the default answer to step 0 — from the interview through
-every layer to the traps. Read it when the person's feature resembles it, or when you want the shape
-of a good answer. Its "Core location" column is in `docs/ADAPTING.md` §3 if the slice turns out to
-belong in the app instead.
+dashboard, **built as a domain**, the answer to step 0 for an app's own process — from the
+interview through every layer to the traps. Read it when the person's feature resembles it, or when
+you want the shape of a good answer. `docs/ADAPTING.md` §3 has the plugin and core destinations if
+the slice turns out to be a reusable capability or a change to the kit itself.

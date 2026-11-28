@@ -1,8 +1,9 @@
 # Rocketflare
 
-Multi-tenant SaaS starter for internal tools and B2B products, a **pnpm workspace**: Hono API + React UI in one
-Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
-(`packages/shared`). `AGENTS.md` symlinks here.
+The kit for agentic business applications: one multi-tenant app holding every process as a domain,
+with agents acting on its records under each user's permissions (`docs/POSITIONING.md`). A **pnpm
+workspace**: Hono API + React UI in one Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private
+zod contracts (`packages/shared`). `AGENTS.md` symlinks here.
 
 > **How it works**: `docs/CONCEPTS.md` — one section per subsystem with its known gaps. **Check it
 > before assuming a capability exists; update it when you change one.**
@@ -22,11 +23,12 @@ Cloudflare Worker (`apps/web`), a CLI (`apps/cli`), private zod contracts
 > plan before `--apply`. `pnpm plugin list --available` lists what is published: check it before building. It imports the host only through the DECLARED entries (`docs/plugin-api.md`,
 > generated and diff-checked) and receives everything else as injected context. `defaultPlugins` in
 > `.rocketflare.json` is what a fresh clone installs (bootstrap step `6/10 plugins`; kit: `[]`).
-> **Domain or plugin?** (`docs/CONCEPTS.md` §20) A **domain** holds this app's own concepts
+> **Domain or plugin?** (`docs/CONCEPTS.md` §20) A **domain** holds this app's own concepts and logic
 > (`apps/web/src/<id>/`, `defineDomain`, listed by hand in `src/app.ts` and its twins); a **plugin**
-> is a reusable capability another app could install. Same slots and namespaces; one boundary check
-> (`scripts/lib/units.mjs`) over both. Another domain is reached through its `public.ts` along a
-> `dependsOn` edge, or by handling its event; its tables directly only with a warning.
+> is a reusable capability that works across domains and across apps. A new process is a domain, not
+> a new copy; an app-owned plugin stays one unless moved (`docs/ADAPTING.md` §3c). Both are **units**:
+> same slots and namespaces, one boundary check (`scripts/lib/units.mjs`). Another domain is reached
+> through its `public.ts` along a `dependsOn` edge, or by its event; its tables only with a warning.
 > `example-hr` / `example-sales` are the examples (fresh copies only).
 > **Copies of the kit upgrade.** `.rocketflare.json` records the kit version, the app's names and the
 > manifest of replaceable surfaces; `/rf-upgrade` ports later releases into a copy and never

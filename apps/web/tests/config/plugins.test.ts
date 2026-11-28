@@ -58,6 +58,7 @@ import type { Database } from '@/db/client'
 import { SERVER_PLUGINS, serverPlugins } from '@/plugins/server'
 import { UI_PLUGINS, uiPlugins } from '@/plugins/ui'
 import { queryKeys } from '@/ui/lib/query-keys'
+import { serverUnits } from '@/units/server'
 import {
   DECLARED_ENTRIES,
   deepImportIssue,
@@ -873,15 +874,17 @@ describe('installed plugins', () => {
     ])
   })
 
+  // Over every unit, not only plugins: an agent's trigger may name a domain's event, and a domain
+  // handles another unit's events exactly as a plugin does.
   it('declares its events under its own id, once, and subscribes only to declared ones', () => {
     const issues = eventDeclarationIssues({
-      declared: serverPlugins.map(p => ({
-        id: p.shared.id,
-        events: Object.keys(p.shared.events ?? {}),
+      declared: serverUnits.map(u => ({
+        id: u.id,
+        events: Object.keys(u.shared.events ?? {}),
       })),
       handlers: [
-        ...serverPlugins.flatMap(p =>
-          (p.eventHandlers ?? []).map(h => ({ owner: p.shared.id, event: h.event, name: h.name }))
+        ...serverUnits.flatMap(u =>
+          (u.eventHandlers ?? []).map(h => ({ owner: u.id, event: h.event, name: h.name }))
         ),
         ...APP_EVENT_HANDLERS.map(h => ({ owner: 'app', event: h.event, name: h.name })),
       ],

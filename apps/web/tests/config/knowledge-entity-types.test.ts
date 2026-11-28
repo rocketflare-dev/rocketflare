@@ -24,7 +24,7 @@ import {
 } from '@/api/services/knowledge/registry'
 import { registrationTableIssues, resolverFor } from '@/api/services/knowledge/resolve'
 import type { EntityTypeRegistration } from '@/api/services/knowledge/types'
-import { serverPlugins } from '@/plugins/server'
+import { serverUnits } from '@/units/server'
 
 const widgets = pgTable('fixture_widgets', {
   id: uuid('id').primaryKey(),
@@ -165,16 +165,16 @@ describe('the table half', () => {
 })
 
 describe('the installed set', () => {
-  it('composes: the app types plus every installed plugin type, each under its id', () => {
+  it('composes: the app types plus every unit type (plugins, then domains), each under its id', () => {
     const all = knowledgeEntityTypes()
     const expected = [
       ...APP_ENTITY_TYPES,
-      ...serverPlugins.flatMap(p => p.knowledgeEntityTypes ?? []),
+      ...serverUnits.flatMap(u => u.knowledgeEntityTypes ?? []),
     ].map(t => t.type)
     expect(all.map(t => t.type)).toEqual(expected)
-    for (const plugin of serverPlugins) {
-      for (const t of plugin.knowledgeEntityTypes ?? []) {
-        expect(t.type.startsWith(`${plugin.shared.id}.`)).toBe(true)
+    for (const unit of serverUnits) {
+      for (const t of unit.knowledgeEntityTypes ?? []) {
+        expect(t.type.startsWith(`${unit.id}.`)).toBe(true)
         expect(entityTypeSchema.safeParse(t).success).toBe(true)
       }
     }

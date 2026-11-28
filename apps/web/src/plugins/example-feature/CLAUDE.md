@@ -4,6 +4,10 @@
 every slot the seam has, on the smallest thing that could need one: a notes list. Nothing in the
 host depends on it. `../CLAUDE.md` is the seam it plugs into.
 
+It is a plugin because it demonstrates the plugin seam. In a real app a notes list is the app's own
+concept, so it would be a domain: `example-hr/` and `example-sales/` show that form, and
+`docs/ADAPTING.md` §3c is the recipe that moves an app-owned plugin like this one into it.
+
 | Slot | Here |
 |---|---|
 | `SharedPlugin.features` | `example-feature`, one flag gating the nav item, the page and the mount (core ships none) |
