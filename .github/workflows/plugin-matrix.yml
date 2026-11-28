@@ -121,11 +121,13 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: tools/.nvmrc
-      # A kit tag proves that tag; otherwise the input, else the newest kit release.
+      # A kit tag proves that tag; otherwise the input, else the newest kit release. Only the KIT's
+      # own tag push: a plugin repository's release calls this from ITS tag push, and its tag
+      # (`3.15.0`) names no kit — or, worse, an unrelated one.
       - id: kit
         env:
           INPUT_REF: ${{ inputs.kit_ref }}
-          TAG: ${{ github.event_name == 'push' && github.ref_name || '' }}
+          TAG: ${{ github.repository == 'rocketflare-dev/rocketflare' && github.event_name == 'push' && github.ref_name || '' }}
         run: |
           set -euo pipefail
           ref="${INPUT_REF:-$TAG}"
@@ -140,8 +142,8 @@ jobs:
         env:
           PLUGINS: ${{ inputs.plugins }}
           PLUGINS_REF: ${{ inputs.plugins_ref }}
-          # A tag push has no inputs: the full house runs.
-          FULL_HOUSE: ${{ github.event_name == 'push' || inputs.full_house }}
+          # The kit's tag push has no inputs: the full house runs. A caller passes its own.
+          FULL_HOUSE: ${{ (github.repository == 'rocketflare-dev/rocketflare' && github.event_name == 'push') || inputs.full_house }}
         run: |
           set -euo pipefail
           args=(resolve --plugins-repo "$PLUGINS_REPO" --github-output)
@@ -163,14 +165,7 @@ jobs:
       KIT_REF: ${{ needs.resolve.outputs.kit_ref }}
       PLUGINS_REF: ${{ needs.resolve.outputs.plugins_ref }}
     steps:
-      # --depth 2: the kit's suite resolves HEAD~1 in places (plugin-ci.yml says why).
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ env.KIT_REPOSITORY }}
-          ref: ${{ env.KIT_REF }}
-          path: kit
-          fetch-depth: 2
-          persist-credentials: false
+      # The script first, so a kit ref that will not check out still records a result.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.KIT_REPOSITORY }}
@@ -182,6 +177,14 @@ jobs:
             /scripts/plugin-matrix.mjs
             /.nvmrc
           sparse-checkout-cone-mode: false
+      # --depth 2: the kit's suite resolves HEAD~1 in places (plugin-ci.yml says why).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.KIT_REPOSITORY }}
+          ref: ${{ env.KIT_REF }}
+          path: kit
+          fetch-depth: 2
+          persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           package_json_file: kit/package.json
