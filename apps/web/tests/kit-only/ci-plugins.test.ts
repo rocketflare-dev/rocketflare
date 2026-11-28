@@ -42,7 +42,8 @@ describe('the committed lists', () => {
     const entries = ciPluginEntries(manifest, readCiPlugins(REPO_ROOT))
     expect(defaultPluginEntryProblems(entries)).toEqual([])
     const analytics = entries.find(e => e.id === 'analytics')
-    expect(analytics?.ref).toMatch(/^\d+\.\d+\.\d+$/)
+    // A release tag of either form (#181): `analytics-vX.Y.Z`, or the lockstep `X.Y.Z`.
+    expect(analytics?.ref).toMatch(/^(analytics-v)?\d+\.\d+\.\d+$/)
     expect(analytics?.subdir).toBe('plugins/analytics')
   })
 

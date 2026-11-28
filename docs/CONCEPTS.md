@@ -1178,7 +1178,8 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   Search is hybrid dense + lexical (the lexical half matches ANY query word against
   `chunks.search_vector` — a GENERATED tsvector over context + heading path + table header + text with a GIN
   index, in `SEARCH_TEXT_CONFIG` — ranked by `ts_rank_cd`; `anyTermTsquery`, so a sentence's filler
-  words cannot veto it) with RRF, scoped by `AccessScope` (§1). **Each dense leg reads only chunks
+  words cannot veto it) with RRF, scoped by `AccessScope` (§1). Every leg breaks score ties by
+  `chunks.id`, and so does the fusion, so equal-scored passages come back in one order. **Each dense leg reads only chunks
   whose `embedding_model` is the query vector's model** (migration `0027` backfilled it from the
   document), so a document embedded by another model stays findable by keyword alone. A hit
   carries `headingPath`, `page` and `charOffset` (the stored `char_start`; `position()` of the text
@@ -2023,7 +2024,8 @@ cycle). Detail: `packages/shared/CLAUDE.md`.
 `.claude/settings.json` is `manual`, so that upgrade must add the hook entry by hand); summaries
 only for a GitHub-hosted kit; tomls and `.dev.vars.example` are diffed, not merged; the reject rate is not
 predicted; pre-manifest copies need `--adopt`; no partial upgrades; nothing checks the adopter ran
-migrations; lockstep plugin releases bump every plugin in a monorepo; a copy on 0.15.7 or older deletes
+migrations; a lockstep plugin release bumps every plugin in a monorepo (per-plugin `<id>-vX.Y.Z` tags, §16,
+avoid it); a copy on 0.15.7 or older deletes
 its kit-only tests by hand once (its upgrader predates `kitOnly`); a copy renamed before 0.24.0
 keeps the maintainer scripts, `CONTRIBUTING.md`/`CODE_OF_CONDUCT.md` and the two nudge hooks until
 it deletes them by hand (`kit:upgrade` stops porting a `kitOnly` file but never deletes one — that
@@ -2167,8 +2169,8 @@ opens with "What you want to do", the name to import for each job), `docs/plugin
   `requires.plugins` from the same checkout first and takes the highest `minKit` across the set
   as the floor.
 - **The plugin matrix** (`.github/workflows/plugin-matrix.yml`, logic in kit-only
-  `scripts/plugin-matrix.mjs`): the LATEST release of every published plugin (the plugins
-  repository's newest tag, lockstep) against ONE kit ref — one `matrix <id>` job per plugin, its
+  `scripts/plugin-matrix.mjs`): the LATEST release of every published plugin (each plugin's
+  newest release tag of either form, below) against ONE kit ref — one `matrix <id>` job per plugin, its
   `requires.plugins` installed first, plus a `full-house` job with every plugin installed together.
   It runs on every kit tag (against that tag), on `workflow_dispatch` (`kit_ref`, `plugins`,
   `full_house`, `plugins_ref`, `force_fail` — a rehearsal that fails one job on purpose —
@@ -2187,14 +2189,28 @@ opens with "What you want to do", the name to import for each job), `docs/plugin
   shows it). `@testkit/unit` has `ownContributions(id, items, keyOf?)` and
   `expectOwnContributions(id, items, expectedKeys, keyOf?)` — exact over the plugin's own
   namespaced keys (`<id>`, `<id>:`, `<id>.`, `<id>/`), blind to everyone else's.
+- **Release tags, two forms** (#181): a plugin's own release is tagged `<id>-vX.Y.Z`
+  (`analytics-v3.15.0` — `-v`, not `@`, because `add <repo>@<ref>` splits on its last `@`); a
+  lockstep release, every plugin in the repository at one version, is a bare `X.Y.Z` (how the
+  first-party repositories released through 3.14.0, and how a one-plugin repository still may).
+  A plugin's newest release is the higher version of its own newest tag and the newest lockstep
+  tag that holds it, its own on a tie; another plugin's tag never counts. `add` and `upgrade` with
+  no ref, `list --available`, the matrix and `kit:release`'s CI-plugin check all resolve it that
+  way (`releaseCandidates` in `scripts/lib/git-lib.mjs`; the self-contained matrix script repeats
+  it), and a typed bare `X.Y.Z` (`add analytics@3.15.0`, `upgrade analytics --to 3.15.0`, a
+  `ref` in `.github/ci-plugins.json` or `defaultPlugins`) means `<id>-vX.Y.Z` when that tag exists,
+  else the lockstep tag. The id is the plugin's directory name (else its manifest's `id` on the
+  default branch). A copy whose kit predates this resolver reads lockstep tags only, so it keeps
+  seeing the last one (3.14.0) until `kit:upgrade` brings the resolver.
 - **Discovery**: `pnpm plugin list --available [--json]` is the catalogue — every
-  `rocketflare-plugin.json` in `rocketflare-dev/rocketflare-plugins` at its newest release tag, one
+  `rocketflare-plugin.json` in `rocketflare-dev/rocketflare-plugins`, each at its newest release, one
   line each (id, version, installed here or not, description: the manifest's `description`, else
   its README's lede, else its `label`), read through the same mirror `add` uses with the fetch made
   mandatory. Nothing is copied into the kit, so it cannot go stale; unreachable is one line and
   exit 3, never a cached list. `rocketflare-dev/rocketflare-commercial-plugins` follows under its own
   `Commercial plugins` heading with a `licence:` pointer, only when the person's git credentials can
-  read it, and is otherwise not mentioned. `/rf-plugin add` with no id shows it, and
+  read it, and is otherwise not mentioned. The heading names the tag when every plugin is at one
+  (`at 3.14.0`), else `each at its newest release`; `--json` gives each plugin's `tag`. `/rf-plugin add` with no id shows it, and
   `/rf-how-do-i` asks "does a plugin already do this?" first: the order is an existing plugin, else
   the app itself, and a plugin only for what another app will install too.
   https://rocketflare.dev/plugins is the browsing page. `pnpm plugin add <id>[@X.Y.Z]` resolves a

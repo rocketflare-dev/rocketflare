@@ -51,12 +51,12 @@ pnpm plugin list --available
 ```
 
 Expect one line per plugin under `Plugins (github.com/rocketflare-dev/rocketflare-plugins at
-<tag>)` — `id  version  [installed]  description` — read live from the repository at its newest
-release tag, and, only when the person's git credentials can read it, a second block headed
+<tag>)` (or `…, each at its newest release` once plugins carry their own tags) —
+`id  version  [installed]  description` — each plugin read live at its newest release, and, only when the person's git credentials can read it, a second block headed
 `Commercial plugins (…)` with a `licence:` line. Say the commercial ones are licensed separately
 and point at that line; never offer one as if it were free. Exit 3 with one `error:` line means the
 repository could not be reached: say so and stop — never answer from memory or an old list.
-`--json` gives `{ catalogues: [{ repo, tag, commercial, licence, plugins: [{ id, version,
+`--json` gives `{ catalogues: [{ repo, tag, commercial, licence, plugins: [{ id, version, tag,
 description, subdir, installed, installedVersion }] }] }`. Ask (`AskUserQuestion`) which to
 install, offering the ones not yet installed, then continue below with that id. People browsing
 rather than installing can read https://rocketflare.dev/plugins.
@@ -70,8 +70,12 @@ it up in the same catalogue `list --available` reads and prints what it resolved
 (`analytics → <repo>@<newest tag> --subdir plugins/analytics`) — the first-party repository, else
 the commercial one, at its newest release tag, never the default branch, which can be ahead of
 every release. `<id>@X.Y.Z` pins the release. Leaving the `@ref` off a repository does the same: it
-is read at its newest `X.Y.Z` tag. An id in neither repository stops (exit 1): it is not
-published, so ask for the repository.
+is read at the plugin's newest release tag. **A release tag has two forms**: a plugin's own
+`<id>-vX.Y.Z` (`analytics-v3.15.0`) and a lockstep `X.Y.Z` (every plugin in the repository at one
+version, as the first-party ones released through 3.14.0). The newest release is the higher
+version of the two, its own tag on a tie, and a typed `X.Y.Z` means `<id>-vX.Y.Z` when that tag
+exists — so `analytics@3.15.0` works in either world. An id in neither repository stops (exit 1):
+it is not published, so ask for the repository.
 
 A **repo URL** is mirrored under `.upgrade/plugins/` (`--no-fetch` reuses the cache offline); a
 **local path** is read directly, which is the authoring loop (step 6). Expect a plan with these
@@ -185,6 +189,10 @@ uses on the kit:
 pnpm plugin upgrade <id> [--to <ref>]        # the plan
 pnpm plugin upgrade <id> [--to <ref>] --apply
 ```
+
+With no `--to` it moves to the plugin's newest release of either tag form (above); `--to X.Y.Z`
+means its own `<id>-vX.Y.Z` when that tag exists. A plugin installed at a lockstep tag upgrades to
+its own tag with no extra step.
 
 The plan ends with a **`Dependencies`** block: each dependency whose declaration the release
 changes, marked `+` added, `~` range changed or `-` removed, with what `--apply` will do — `install`

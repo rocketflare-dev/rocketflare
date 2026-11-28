@@ -55,8 +55,11 @@ import {
   makeWriter,
   mirror,
   mirrorDirFor,
+  newestReleases,
   notesBetween,
   PLUGIN_MIRROR_ROOT,
+  parseReleaseTag,
+  pluginReleaseTag,
   repoReachable,
 } from './lib/git-lib.mjs'
 import { hostKitVersion, pluginSurfaces, readManifest } from './lib/manifest.mjs'
@@ -673,9 +676,13 @@ function openSource(spec, args) {
     cwd: REPO_ROOT,
     warn,
   })
-  const at = ref ?? m.latestTag() ?? 'HEAD'
-  if (!m.resolves(at)) stop(1, `error: '${at}' is not in ${target}`)
   const full = p => (subdir === '' ? p : `${subdir}/${p}`)
+  // Per-plugin tags (#181) are named for the plugin's id, which the directory usually is; a root
+  // plugin, or a directory named otherwise, is asked of its manifest on the default branch.
+  const id = pluginIdIn(m, subdir, full(PLUGIN_MANIFEST_FILE))
+  const at =
+    m.releaseRef(id, ref) ?? m.latestTagFor(id, { manifest: full(PLUGIN_MANIFEST_FILE) }) ?? 'HEAD'
+  if (!m.resolves(at)) stop(1, `error: '${at}' is not in ${target}`)
   return {
     kind: 'git',
     origin: target,
@@ -687,6 +694,23 @@ function openSource(spec, args) {
     files: () => m.listFiles(at, subdir).map(p => (subdir === '' ? p : p.slice(subdir.length + 1))),
     read: rel => m.showRaw(at, full(rel)),
     has: rel => m.tryShow(at, full(rel)).ok,
+  }
+}
+
+/**
+ * The plugin id its own `<id>-vX.Y.Z` release tags would carry: the directory's name when it is a
+ * valid id, else the `id` of the manifest at the mirror's HEAD, else null (lockstep tags only).
+ */
+function pluginIdIn(m, subdir, manifestPath) {
+  const dirName = subdir.split('/').at(-1) ?? ''
+  if (/^[a-z][a-z0-9-]*$/.test(dirName)) return dirName
+  const shown = m.tryShow('HEAD', manifestPath)
+  if (!shown.ok) return null
+  try {
+    const id = JSON.parse(shown.out)?.id
+    return typeof id === 'string' && /^[a-z][a-z0-9-]*$/.test(id) ? id : null
+  } catch {
+    return null
   }
 }
 
@@ -1276,7 +1300,8 @@ function cmdUpgrade(args, host) {
   }
   const subdir = (source.subdir ?? '').replace(/^\/|\/$/g, '')
   const relative = subdir === '' ? null : subdir
-  const from = args.from ?? source.commit
+  const manifestInRepo = subdir === '' ? PLUGIN_MANIFEST_FILE : `${subdir}/${PLUGIN_MANIFEST_FILE}`
+  const from = m.releaseRef(id, args.from) ?? source.commit
   if (!from) {
     stop(
       1,
@@ -1285,13 +1310,13 @@ function cmdUpgrade(args, host) {
     )
   }
   if (!m.resolves(from)) stop(1, `error: '${from}' is not in ${source.repo}`)
-  const to = args.to ?? m.latestTag() ?? 'HEAD'
+  const to = m.releaseRef(id, args.to) ?? m.latestTagFor(id, { manifest: manifestInRepo }) ?? 'HEAD'
   if (!m.resolves(to)) stop(1, `error: '${to}' is not in ${source.repo}`)
   if (m.commitOf(from) === m.commitOf(to)) {
     out(`${id} is already at ${to} — nothing to do.`)
     return 0
   }
-  const toVersion = /^\d+\.\d+\.\d+$/.test(to) ? to : null
+  const toVersion = parseReleaseTag(to)?.version ?? null
 
   const notes = notesBetween(m, to, {
     after: source.version ?? null,
@@ -2236,20 +2261,44 @@ function readCatalogue(source, { fetch = true } = {}) {
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) }
   }
-  const tag = m.latestTag()
+  // Each plugin at its newest release (#181): the newest lockstep `X.Y.Z` tag for every plugin
+  // in it, and a plugin's own `<id>-vX.Y.Z` tag where that is at least as new.
+  const tags = m.run(['tag', '--list']).trim().split('\n').filter(Boolean)
+  const readAt = ref => {
+    const files = m.listFiles(ref)
+    m.prefetch(ref, catalogueReads(files))
+    const read = rel => {
+      const r = m.tryShow(ref, rel)
+      return r.ok ? r.out : null
+    }
+    return { files, read }
+  }
+  const { lockstep } = newestReleases(tags)
+  const atLockstep = lockstep ? readAt(lockstep) : null
+  const plugins = new Map(
+    (atLockstep ? catalogueEntries(atLockstep.files, atLockstep.read) : []).map(p => [
+      p.id,
+      { ...p, tag: lockstep },
+    ])
+  )
+  const { own } = newestReleases(tags, { inLockstep: id => plugins.has(id) })
+  const tag = lockstep ?? [...own.values()][0] ?? null
   if (!tag) return { error: `${source.repo} has no release tag` }
-  const files = m.listFiles(tag)
-  m.prefetch(tag, catalogueReads(files))
-  const read = rel => {
-    const r = m.tryShow(tag, rel)
-    return r.ok ? r.out : null
+  const base = atLockstep ?? readAt(tag)
+  for (const [id, ownTag] of own) {
+    const at = readAt(ownTag)
+    const entry = catalogueEntries(at.files, at.read).find(p => p.id === id)
+    if (entry) plugins.set(id, { ...entry, tag: ownTag })
   }
   return {
     repo: source.repo,
     tag,
     commercial: Boolean(source.commercial),
-    licence: source.commercial ? licenceTerms(files, read, { repo: source.repo, ref: tag }) : null,
-    plugins: catalogueEntries(files, read),
+    licence: source.commercial
+      ? licenceTerms(base.files, base.read, { repo: source.repo, ref: tag })
+      : null,
+    plugins: [...plugins.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    tags,
   }
 }
 
@@ -2279,8 +2328,11 @@ function resolveBareId(spec, args) {
     }
     const entry = c.plugins.find(p => p.id === id)
     if (!entry) continue
+    // A typed bare version is the plugin's own `<id>-vX.Y.Z` when that tag exists (#181).
+    const typed =
+      ref && c.tags.includes(pluginReleaseTag(id, ref)) ? pluginReleaseTag(id, ref) : ref
     return {
-      spec: `${c.repo}@${ref ?? c.tag}`,
+      spec: `${c.repo}@${typed ?? entry.tag ?? c.tag}`,
       subdir: args.subdir ?? entry.subdir,
     }
   }
