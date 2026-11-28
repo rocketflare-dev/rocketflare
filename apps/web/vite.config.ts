@@ -1,9 +1,20 @@
+import { readFileSync } from 'node:fs'
 import type http from 'node:http'
 import path from 'node:path'
 import react from '@vitejs/plugin-react'
-import type { HttpProxy } from 'vite'
+import type { HttpProxy, Plugin } from 'vite'
 import { defineConfig } from 'vite'
 import { devAllowedHosts, devPorts } from '../../scripts/lib/dev-ports.mjs'
+import { applyPageIdentity, pageIdentity } from '../../scripts/lib/page-identity.mjs'
+
+/** Fills `index.html`'s `<title>` and description from `[vars]` in `wrangler.toml` (CONCEPTS §7). */
+function pageIdentityPlugin(): Plugin {
+  const toml = path.resolve(import.meta.dirname, 'wrangler.toml')
+  return {
+    name: 'page-identity',
+    transformIndexHtml: html => applyPageIdentity(html, pageIdentity(readFileSync(toml, 'utf8'))),
+  }
+}
 
 /** Prevent proxy errors from crashing Vite when the API (wrangler dev) is restarting */
 function onProxyError(proxy: HttpProxy.ProxyServer) {
@@ -37,7 +48,7 @@ const proxyTo = (target = API, extra: Record<string, unknown> = {}) => ({
 })
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), pageIdentityPlugin()],
   root: 'src/ui',
   build: {
     outDir: '../../dist/ui',
