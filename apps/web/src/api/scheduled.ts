@@ -128,9 +128,12 @@ export async function runPruneAgentTurns(db: Database, retentionDays: number, no
   return { turns, cutoff: cutoff.toISOString() }
 }
 
-/** An active run whose row has not changed for this long is checked against the runtime. */
+/**
+ * An active run whose row has not changed for this long is checked against the runtime.
+ * An idleness test, not the cadence: the hourly sweep checks every run idle this long by then.
+ */
 export const SWEEP_STALE_MS = 10 * 60 * 1000
-/** Runs checked per sweep: each costs a Workflow `status()` subrequest. Oldest first. */
+/** Runs checked per (hourly) sweep: each costs a Workflow `status()` subrequest. Oldest first. */
 export const SWEEP_BATCH = 100
 
 /**
@@ -219,7 +222,7 @@ export async function runSendReminders(db: Database, logger: Logger, now = new D
   return { due: due.length, sent }
 }
 
-/** Every ten minutes: remind the people an agent is still waiting on. */
+/** Hourly (:16): remind the people an agent is still waiting on. */
 export const sendReminders: ScheduledTask = {
   name: 'sendReminders',
   async run({ db, logger }) {
@@ -228,7 +231,7 @@ export const sendReminders: ScheduledTask = {
   },
 }
 
-/** Every ten minutes: settle agent runs whose Workflow instance ended without settling them. */
+/** Hourly (:16): settle agent runs whose Workflow instance ended without settling them. */
 export const sweepLostRuns: ScheduledTask = {
   name: 'sweepLostRuns',
   async run({ db, env, logger }) {
@@ -308,7 +311,7 @@ const CORE_SCHEDULED_TASKS: Record<string, ScheduledTask[]> = {
     pruneMcp,
     prunePendingUploadsTask,
   ],
-  '*/10 * * * *': [sweepLostRuns, sendReminders],
+  '16 * * * *': [sweepLostRuns, sendReminders],
 }
 
 /**

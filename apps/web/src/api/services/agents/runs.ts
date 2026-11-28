@@ -1203,7 +1203,7 @@ export async function reconcileRun(
 }
 
 /**
- * The sweeper's per-row repair (`sweepLostRuns`, every 10 minutes): the read path's settle, for a
+ * The sweeper's per-row repair (`sweepLostRuns`, hourly): the read path's settle, for a
  * run NOBODY is reading. Without it a run whose instance died is only settled when someone opens
  * it, and until then it holds its exclusive slot and counts toward the tenant's active cap.
  *

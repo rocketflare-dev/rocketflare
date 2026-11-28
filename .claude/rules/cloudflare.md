@@ -306,6 +306,7 @@ killed:
 ```bash
 # Fire a cron (wrangler 4.x; the older /cdn-cgi/handler/scheduled path is rewritten to this):
 curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=0+4+*+*+*"     # nightly prune
+curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=16+*+*+*+*"    # hourly: settle lost agent runs, HITL reminders
 curl "http://localhost:3001/cdn-cgi/local/scheduled?cron=15+*+*+*+*"    # the analytics plugin's fact rebuild
 # Alternative: `wrangler dev --test-scheduled` exposes /__scheduled?cron=…
 # For ONE organisation: `pnpm cli analytics refresh-facts`, then `pnpm cli analytics check-facts`

@@ -155,7 +155,9 @@ id = "<KV_RATE_LIMIT_ID>"
 [triggers]
 crons = [
   "0 4 * * *",     # Daily 04:00 UTC — prune expired sessions, magic links, rate-limit state
-  "*/10 * * * *",  # Every 10 minutes — settle agent runs whose Workflow instance ended unsettled
+  "16 * * * *",    # Hourly at :16 — settle agent runs whose Workflow instance ended unsettled, send
+                   # HITL reminders. Hourly so an idle Neon compute can suspend; :16 so it shares
+                   # the wake of the analytics plugin's "15 * * * *" without sharing its expression
   # An installed plugin's crons go here too, identical in both files (D31): a plugin declares the
   # EXPRESSION in its `plugin.json` and contributes the TASK through `ServerPlugin.scheduledTasks`,
   # and a task registered under an expression no toml declares simply never runs. The analytics

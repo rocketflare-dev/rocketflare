@@ -565,8 +565,9 @@ work goes to `AGENT_RUN_WORKFLOW`, and cron only dispatches.
   `ACTIVE_RUN_STATUSES` (exclusive index, includes parked runs) ⊃ `CLAIMABLE_RUN_STATUSES`
   (the claim). Keep those two lists separate. A lost instance is settled on read, and by the
   `sweepLostRuns` cron for a run nobody reads (below).
-- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; `*/10 * * * *`
-  runs `sweepLostRuns` — up to 100 active runs untouched for 10 minutes, oldest first, each
+- **Cron**: `scheduled.ts` looks up the task by expression. `0 4 * * *` prunes; `16 * * * *`
+  (hourly, so an idle Neon compute can suspend between sweeps) runs `sweepLostRuns` — up to 100
+  active runs untouched for 10 minutes, oldest first, each
   through `sweepRun`: a `queued` row that never got its instance gets one, `queued`/`running`
   goes through `reconcileRun` (settles only what the runtime says has ended), `awaiting_input`
   through `expireParkedRun`. Without it a dead run nobody opens holds its exclusive slot and counts
@@ -1005,12 +1006,12 @@ Server: `api/services/{ai,agents}/**` (read their `CLAUDE.md`), `services/prompt
   check (`apps/web/tests/agent-recordings/*.json`, written by `agent:replay --record <dir>`)
   replays each committed run on every gate and fails with "bump `meta.version`" when such a change
   arrives at the same version. **HITL**: `meta.hitl = { timeout, remindAfter, onTimeout }` — an
-  ask's deadline is `timeout` capped at `AGENT_INTERRUPT_TIMEOUT`; the `*/10` cron's
-  `sendReminders` reminds ONCE at `remindAfter`; `onTimeout: 'reject'` answers an expired ask as a
-  rejection by nobody (`cancelled`, note `Nobody answered before the deadline`) and wakes the run,
-  where the default `expire` cancels it. An ask may name `assignees: { userIds, groupIds }`
-  (visibility groups): they are the ones notified, see it in their inbox, may read the run and
-  answer — the requester then may not; an owner/admin always may. An ask's notifications (the
+  ask's deadline is `timeout` capped at `AGENT_INTERRUPT_TIMEOUT`; the hourly `16 * * * *`
+  cron's `sendReminders` reminds ONCE at `remindAfter` (up to an hour late); `onTimeout: 'reject'`
+  answers an expired ask as a rejection by nobody (`cancelled`, note `Nobody answered before the
+  deadline`) and wakes the run, where the default `expire` cancels it. An ask may name
+  `assignees: { userIds, groupIds }` (visibility groups): they are the ones notified, see it in their inbox, may read
+  the run and answer — the requester then may not; an owner/admin always may. An ask's notifications (the
   first and the reminder, every recipient's) are marked read the moment it stops being pending —
   answered, declined, expired or settled with its run (`resolveInterrupt` / `expireInterrupts`),
   with a `notification.read` nudge — so the bell never counts a question that is over. "Waiting on
@@ -1700,7 +1701,7 @@ code; a `ctx.once` without `inputs` is still the author's key; `callStructuredTo
 covers the Workflow step only — jobs, realtime and storage are still Worker bindings, unlike
 Rocketpod's `Platform`. Operability (D44 phase 2): cancel is polled (up to 3 s late, one indexed
 read per poll while an attempt runs), and a model call abandoned mid-flight may be billed by the
-provider with no `ai_usage` row; the sweeper checks 100 runs per 10 minutes, so a backlog of lost
+provider with no `ai_usage` row; the sweeper checks 100 runs an hour, so a backlog of lost
 runs drains over several sweeps; Workflows' per-Workflow `concurrency.limit` (2026-11-10) is NOT
 set — it caps instances across ALL tenants and does not count `waiting` ones, so it cannot back
 the per-tenant active-run cap (counted, then inserted); it is a platform-wide cost/noisy-neighbour
