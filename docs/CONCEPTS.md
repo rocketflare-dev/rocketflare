@@ -2035,7 +2035,11 @@ as merging a PR. A plugin repo mirrors the host tree and ships **no migration, n
   wrapped onto several lines still counts as present and is reverted whole, so an upgrade never
   writes it twice. `upgrade` also drops from `run_worker_first` the API prefixes the release no
   longer declares and no other plugin needs (`pruneWorkerFirst`; one entry of a kit-owned path
-  stays). Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
+  stays). The same rule holds for core edits: a line `upgrade` or `remove` reverts stays (one copy)
+  when the host still owns it — the kit's own copy of the file at the host's release carries it
+  (read from the `.upgrade/kit.git` mirror `kit:upgrade` keeps), it is a vite proxy entry for a
+  path the kit reserves (`/mcp`, `/oauth`, the discovery documents), or another installed plugin
+  declares it (`revertCoreEditsKeeping`). Never a hand edit. Crons go in `plugin.json` `crons`, written into both tomls by
   `pnpm provision cloudflare <env>`.
 - **Namespacing**: the id is `^[a-z][a-z0-9-]*$` (never a reserved barrel or host directory name —
   `api` included) and `^[a-z][a-z0-9-]*$` and namespaces jobs (`<id>.x`), query keys

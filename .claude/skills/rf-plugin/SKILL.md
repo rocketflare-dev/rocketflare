@@ -200,6 +200,8 @@ not stamp the new version until the `*.rej` files are gone: resolve each by hand
 `pnpm plugin upgrade <id> --to <version> --continue` (re-applies the idempotent parts — core edits,
 tomls, dependencies — and stamps; it never re-patches). An upgrade also formats every file it wrote,
 and warns when a core edit's lines were partly in the file already — check that block by eye. A
+core-edit line the release dropped but the kit (or another plugin) owns is `kept`, never deleted.
+A
 **vendored** plugin (its `source.repo`
 is this kit's own repository with no subdirectory — `example-feature` is one) answers *"upgrade it
 with `pnpm kit:upgrade`"* and does nothing: the kit release that moves it forward is the one that

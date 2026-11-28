@@ -165,7 +165,10 @@ Field notes, in the order they bite:
 - **`coreEdits`** are `{ file, after, lines[] }` — lines a CORE file needs (the analytics plugin's
   `/cubejs-api` dev-proxy line and `@nivo/heatmap` alias in `apps/web/vite.config.ts`).
   `add` inserts `lines` after the first line containing `after`, at its indentation, idempotently;
-  `remove` reverts them byte for byte; `upgrade` follows the new release's list. Anchored on text,
+  `remove` reverts them byte for byte; `upgrade` follows the new release's list. A reverted line
+  the host still owns stays — the kit's release carries it (the `.upgrade/kit.git` mirror), it is a
+  dev-proxy entry for a kit-reserved path (`/mcp`, `/oauth`, discovery), or another installed
+  plugin declares it — and the summary lists it as `kept`. Anchored on text,
   never a line number; a missing anchor THROWS naming the file. The plugin still edits nothing.
 - **`skills`** are the agent skills the plugin ships, one directory name each. The plugin keeps
   them at `skills/<dir>/SKILL.md` (plus any companion files — `reference.md`, one file per

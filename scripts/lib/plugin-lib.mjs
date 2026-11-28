@@ -372,13 +372,36 @@ export function partialCoreEdits(text, edits) {
 
 /** The exact inverse of `applyCoreEdits`: a round trip returns the original bytes. */
 export function revertCoreEdits(text, edits) {
+  return revertCoreEditsKeeping(text, edits).text
+}
+
+/**
+ * `revertCoreEdits`, except for the lines `hostOwns` claims: a line the host's own kit release
+ * carries (or another installed plugin still declares) keeps ONE copy, and only a duplicate
+ * goes. Analytics 3.11 declared `'/mcp': proxyTo(),` in the vite proxy table; kit 0.41.0 took the
+ * line over, and an upgrade that dropped the edit deleted the kit's line with it, so the dev
+ * server lost its `/mcp` proxy without a word. `pruneWorkerFirst` is the same rule for the tomls.
+ * Returns the text and the lines kept.
+ */
+export function revertCoreEditsKeeping(text, edits, hostOwns = () => false) {
   let next = text
+  const kept = []
   for (const edit of edits) {
     for (const line of edit.lines) {
+      if (hostOwns(line)) {
+        if (!findEditLine(next.split('\n'), line)) continue
+        let seen = 0
+        next = next
+          .split('\n')
+          .filter(existing => existing.trim() !== line.trim() || ++seen === 1)
+          .join('\n')
+        kept.push(line.trim())
+        continue
+      }
       const lines = next.split('\n')
-      const kept = lines.filter(existing => existing.trim() !== line.trim())
-      if (kept.length !== lines.length) {
-        next = kept.join('\n')
+      const rest = lines.filter(existing => existing.trim() !== line.trim())
+      if (rest.length !== lines.length) {
+        next = rest.join('\n')
         continue
       }
       // Not there as one line: the host's formatter may have wrapped it (#178).
@@ -386,7 +409,35 @@ export function revertCoreEdits(text, edits) {
       if (span) next = [...lines.slice(0, span.start), ...lines.slice(span.end)].join('\n')
     }
   }
-  return next
+  return { text: next, kept }
+}
+
+/**
+ * A line of a core file the KIT owns whatever its release: an entry in the vite dev-proxy table
+ * for a path core reserves (`isReservedPluginPath` — the MCP server, its authorization server, the
+ * OAuth discovery documents). The fallback for `revertCoreEditsKeeping` when the kit's own copy of
+ * the file cannot be read (no `.upgrade/kit.git` mirror, or the kit repository itself).
+ */
+export function kitOwnsCoreLine(file, line) {
+  if (!/(^|\/)vite\.config\.[cm]?[jt]s$/.test(String(file))) return false
+  const m = /^\s*(['"])(.+?)\1\s*:\s*proxyTo\(/.exec(String(line))
+  if (!m) return false
+  const key = m[2]
+  return isReservedPluginPath(key) || key.startsWith('^/\\.well-known/')
+}
+
+/**
+ * Who still owns a core-edit line once a plugin stops declaring it: the kit's own copy of the file
+ * (`kitText`, at the host's kit release, null when unreadable), a path the kit reserves, or another
+ * installed plugin's declared edits (`otherEdits`). The predicate `revertCoreEditsKeeping` takes.
+ */
+export function coreLineOwner(file, { kitText = null, otherEdits = [] } = {}) {
+  const kitLines = typeof kitText === 'string' ? kitText.split('\n') : null
+  const others = otherEdits.filter(e => e.file === file).flatMap(e => e.lines)
+  return line =>
+    kitOwnsCoreLine(file, line) ||
+    (kitLines !== null && findEditLine(kitLines, line) !== null) ||
+    others.some(o => editKey(o.trim()) === editKey(line.trim()))
 }
 
 /**

@@ -24,6 +24,7 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 - The Vite build fills `index.html`'s `<title>` from `APP_NAME` and its meta description from `APP_TAGLINE` (the name when there is no tagline), read from `[vars]` in `apps/web/wrangler.toml` (`pageIdentityPlugin` in `apps/web/vite.config.ts`, new `scripts/lib/page-identity.mjs`).
 - `scripts/rename.mjs` writes `design.json` `app.tagline` to `APP_TAGLINE` in both wrangler tomls (`applyTagline` in `scripts/lib/rename-lib.mjs` now takes a toml), no longer to `login-panel.ts`.
 - `/rf-adapt` row (f) and `/rf-design` describe the tagline, panel art and logo as settings.
+- Fix: `pnpm plugin upgrade` and `pnpm plugin remove` no longer delete a core-edit line the kit itself now carries. Reverting an edit the release dropped keeps one copy of any line the kit's own copy of the file contains at the app's kit release (read from the `.upgrade/kit.git` mirror), any vite dev-proxy entry for a path the kit reserves (`/mcp`, `/oauth`, the OAuth discovery documents), and any line another installed plugin still declares (`revertCoreEditsKeeping`, `coreLineOwner` in `scripts/lib/plugin-lib.mjs`). An analytics upgrade from 3.11 had deleted the kit's `'/mcp': proxyTo(),` line from `apps/web/vite.config.ts`.
 - Fix: `scripts/detach.sh` keeps every file the kit tracks. It re-added the tree with `git add -A`, which obeys the person's own global gitignore, so a machine that ignores `.claude` got a first commit with no skills, rules or hooks. It now adds exactly the tracked list, and still adds no ignored file.
 
 ## How to apply
@@ -37,7 +38,8 @@ The sign-in tagline, panel art, logo and favicon become `[vars]` served by `GET 
 7. Check that `apps/web/src/ui/index.html` has a `<title>` element: the build now fails without one.
 8. Check that `APP_NAME` and `APP_TAGLINE` in `[vars]` of `apps/web/wrangler.toml` are the title and the one-line description a link preview of the app should show: the build now writes `APP_NAME` into `<title>` and `APP_TAGLINE` into `<meta name="description">`, for a staging deploy too.
 9. Run `pnpm typecheck` so `apps/web/worker-configuration.d.ts` is regenerated with the new vars, and commit that file.
-10. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
+10. If `apps/web/vite.config.ts` lost its `'/mcp': proxyTo(),` line after an earlier `pnpm plugin upgrade analytics` (it sits in `server.proxy`, after `'/ws'`), put the line back. The other kit proxy entries, `'/oauth'` and the `'^/\\.well-known/…'` entry, should be there too: compare that block with the kit's `apps/web/vite.config.ts`.
+11. Run `git ls-files .claude | wc -l` in the app. If it prints 0 while the `.claude/` folder exists on disk, the app was detached on a machine whose global gitignore matches `.claude`: run `git add -f .claude` and commit, so the skills, rules and hooks reach every clone.
 
 ## Conflicts to expect
 
