@@ -704,9 +704,22 @@ rows records a key, so a plugin deleting a confirmed object inside that window o
   size stays the caller's `className`. `BrandFavicon` (mounted once in `App`) points
   `<link rel="icon">` at the configured favicon once it has loaded as an image, so a wrong URL
   leaves the bundled icon in place. The tagline is neutral in the kit; the rename
-  sets `APP_TAGLINE` in both tomls from `docs/design/design.json` `app.tagline`. Known gaps: until
-  `/api/health` answers, the page shows the bundled name, mark and tab icon; `index.html`'s
-  `<title>`, description and `theme-color` stay compiled in; a configured logo is one image for
+  sets `APP_TAGLINE` in both tomls from `docs/design/design.json` `app.tagline`. The tab title
+  and the meta description are the one part set at build, not at run time: the Vite build
+  (`pageIdentityPlugin` in `vite.config.ts`, `scripts/lib/page-identity.mjs`) fills `index.html`'s
+  `<title>` from `APP_NAME` and its description from `APP_TAGLINE` (the name when there is no
+  tagline), read from `[vars]` in `wrangler.toml`. So the first paint, a bookmark and a link
+  preview carry the name with no request and no Worker in front of the page, and changing the
+  name is one `[vars]` edit and `pnpm run deploy`, which builds. What is written in `index.html`
+  is only what shows when the toml sets no `APP_NAME`; the build fails on a page with no
+  `<title>`, and leaves a page with no description element without one. `theme-color` is a
+  colour, so it belongs to the build-time brand (`--apply-brand` writes it). Known gaps: until
+  `/api/health` answers, the page shows the bundled name, mark and tab icon; the tab title and
+  description come from `wrangler.toml` for every build, so a staging toml with another
+  `APP_NAME` or `APP_TAGLINE` still gets production's, a `.dev.vars` override does not reach
+  them, and neither does a change made without a build (`wrangler deploy --var`, the
+  dashboard), which moves the name on the page and leaves the tab's; a
+  configured logo is one image for
   both themes (a dark-theme rule on the hook can filter it, not swap it); the logo's styling is
   compiled in, so deployments of one build share it — a per-deployment `APP_LOGO_STYLE` was
   weighed and left out, because a copy has one brand and the setting needs a CSS allowlist that
